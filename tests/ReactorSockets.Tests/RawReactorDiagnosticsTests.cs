@@ -1,4 +1,3 @@
-using System.Net;
 using FluentAssertions;
 using Xunit;
 
@@ -19,7 +18,7 @@ public class RawReactorDiagnosticsTests
         using RawReactorHarness harness = new(scratchBufferSize: 16, minimumLevel: DiagnosticLevel.Error);
 
         // Act
-        ProvokeTruncation(harness);
+        harness.ProvokeTruncation();
 
         // Assert
         harness.Sink.Received.Should().BeEmpty("DatagramTruncated is Warn, below the configured Error floor");
@@ -32,7 +31,7 @@ public class RawReactorDiagnosticsTests
         using RawReactorHarness harness = new(scratchBufferSize: 16, minimumLevel: DiagnosticLevel.Warn);
 
         // Act
-        ProvokeTruncation(harness);
+        harness.ProvokeTruncation();
 
         // Assert
         harness.Sink.Received.Should().ContainSingle()
@@ -47,7 +46,7 @@ public class RawReactorDiagnosticsTests
         using RawReactorHarness harness = new(scratchBufferSize: 16, sinkOverride: disabledSink);
 
         // Act
-        ProvokeTruncation(harness);
+        harness.ProvokeTruncation();
 
         // Assert
         disabledSink.Received.Should().BeEmpty();
@@ -60,7 +59,7 @@ public class RawReactorDiagnosticsTests
         using RawReactorHarness harness = new(scratchBufferSize: 16);
 
         // Act
-        ProvokeTruncation(harness);
+        harness.ProvokeTruncation();
 
         // Assert
         DiagnosticRecord record = harness.Sink.Received.Should().ContainSingle().Subject;
@@ -80,9 +79,9 @@ public class RawReactorDiagnosticsTests
         // Act
         Action act = () =>
         {
-            ProvokeTruncation(harness);
-            ProvokeTruncation(harness);
-            ProvokeTruncation(harness);
+            harness.ProvokeTruncation();
+            harness.ProvokeTruncation();
+            harness.ProvokeTruncation();
         };
 
         // Assert
@@ -98,8 +97,8 @@ public class RawReactorDiagnosticsTests
         using RawReactorHarness harness = new(scratchBufferSize: 16, sinkOverride: throwingSink);
 
         // Act
-        ProvokeTruncation(harness);
-        ProvokeTruncation(harness);
+        harness.ProvokeTruncation();
+        harness.ProvokeTruncation();
 
         // Assert
         harness.Reactor.Counters.SinkFaulted.Should().Be(1);
@@ -113,17 +112,10 @@ public class RawReactorDiagnosticsTests
         using RawReactorHarness harness = new(scratchBufferSize: 16, withoutDiagnostics: true);
 
         // Act
-        Action act = () => ProvokeTruncation(harness);
+        Action act = () => harness.ProvokeTruncation();
 
         // Assert
         act.Should().NotThrow();
     }
 
-    /// <summary>Sends a datagram larger than the Reactor's scratch buffer and Pumps once.</summary>
-    private static void ProvokeTruncation(RawReactorHarness harness)
-    {
-        (_, IPEndPoint localEndPoint) = harness.BindLoopbackLink();
-        harness.SendFromCounterparty(localEndPoint, new byte[100]);
-        harness.Reactor.Pump();
-    }
 }

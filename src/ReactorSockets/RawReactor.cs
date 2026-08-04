@@ -11,7 +11,7 @@ namespace ReactorSockets;
 /// own loop. Nothing is delivered except in response to a call the consumer made, on the thread that
 /// constructed this Reactor. This slice implements the datagram half only — TCP joins in slice 2.
 /// </summary>
-public sealed class RawReactor
+public sealed class RawReactor : IDisposable
 {
     /// <summary>
     /// The largest a UDP datagram can be, and this Reactor's default scratch buffer size and arena
@@ -28,6 +28,8 @@ public sealed class RawReactor
     private readonly byte[] _scratchBuffer;
     private readonly List<PendingEvent> _pendingEvents = [];
     private readonly int _constructingThreadId;
+    private bool _inPump;
+    private bool _disposed;
 
     /// <summary>
     /// Constructs a Reactor bound to the calling thread (ADR 0002) — every future mutating call must
@@ -76,20 +78,37 @@ public sealed class RawReactor
     internal int PendingEventCount => _pendingEvents.Count;
 
     /// <summary>A point-in-time snapshot of this Reactor's own counters (ADR 0013). No reset.</summary>
-    public ReactorCounters Counters => _counters.Snapshot();
+    public ReactorCounters Counters
+    {
+        get
+        {
+            EnsureUsable();
+            return _counters.Snapshot();
+        }
+    }
 
     /// <summary>
     /// One synchronous advance: wipes the previous Frame's events and arena, then runs the readiness
     /// dispatch that reads whatever registered Link is ready right now. Throws
     /// <see cref="InvalidOperationException"/> if called from any thread other than the one that
-    /// constructed this Reactor.
+    /// constructed this Reactor, or from inside a Pump already in progress.
     /// </summary>
     public void Pump()
     {
+        EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
-        _pendingEvents.Clear();
-        _arena.Reset();
-        _dispatcher.Pump();
+
+        _inPump = true;
+        try
+        {
+            _pendingEvents.Clear();
+            _arena.Reset();
+            _dispatcher.Pump();
+        }
+        finally
+        {
+            _inPump = false;
+        }
     }
 
     /// <summary>
@@ -97,7 +116,47 @@ public sealed class RawReactor
     /// produced. Every drained <see cref="RawEvent"/>'s <see cref="RawEvent.Payload"/> is valid only
     /// until the next <see cref="Pump"/>.
     /// </summary>
-    public RawEventEnumerator Drain() => new(this);
+    public RawEventEnumerator Drain()
+    {
+        EnsureUsable();
+        return new(this);
+    }
+
+    /// <summary>
+    /// Closes every Link still open and releases its socket. A Reactor owns every socket it bound, so
+    /// a consumer that drops one without disposing it leaks those sockets until the finalizer each
+    /// <see cref="Socket"/> carries runs. No <see cref="RawEventKind.Closed"/> events are queued:
+    /// nothing can drain a disposed Reactor. Idempotent; every other member throws
+    /// <see cref="ObjectDisposedException"/> afterwards.
+    /// </summary>
+    /// <remarks>
+    /// There is deliberately no finalizer here. This type holds nothing unmanaged of its own — the
+    /// sockets do, and each already finalizes itself — so a finalizer would add a GC cost to every
+    /// Reactor to duplicate a guarantee the runtime already makes.
+    /// </remarks>
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        EnsureCallingThreadIsConstructingThread();
+        EnsureNotInsideAPump();
+
+        for (int index = 0; index < _slots.Length; index++)
+        {
+            if (_slots[index] is LinkSlot slot)
+            {
+                _dispatcher.Unregister(slot.Link.Socket);
+                slot.Link.Dispose();
+                _slots[index] = null;
+            }
+        }
+
+        _pendingEvents.Clear();
+        _disposed = true;
+    }
 
     /// <summary>
     /// Binds a new UDP socket to <paramref name="endpoint"/> and returns the <see cref="LinkId"/> that
@@ -106,6 +165,7 @@ public sealed class RawReactor
     /// </summary>
     public LinkId Bind(IPEndPoint endpoint)
     {
+        EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
         ArgumentNullException.ThrowIfNull(endpoint);
 
@@ -123,6 +183,7 @@ public sealed class RawReactor
     /// </summary>
     public Result SendTo(LinkId link, Source destination, ReadOnlySpan<byte> payload)
     {
+        EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
 
         LinkSlot? slot = ResolveSlot(link);
@@ -149,15 +210,21 @@ public sealed class RawReactor
     /// <see cref="Result"/> naming the illegality rather than throwing (ADR 0008) — Raw has no stream
     /// Links until slice 2, so every Link this Reactor can hand out is datagram-only.
     /// </summary>
-    public Result Send(LinkId link, ReadOnlySpan<byte> payload) =>
-        Result.Failure("Send is illegal on a datagram Link — use SendTo.");
+    public Result Send(LinkId link, ReadOnlySpan<byte> payload)
+    {
+        EnsureUsable();
+        return Result.Failure("Send is illegal on a datagram Link — use SendTo.");
+    }
 
     /// <summary>
     /// <c>Shutdown</c> is stream-only and illegal on a datagram Link. Always returns a failed
     /// <see cref="Result"/> naming the illegality rather than throwing (ADR 0008).
     /// </summary>
-    public Result Shutdown(LinkId link) =>
-        Result.Failure("Shutdown is illegal on a datagram Link.");
+    public Result Shutdown(LinkId link)
+    {
+        EnsureUsable();
+        return Result.Failure("Shutdown is illegal on a datagram Link.");
+    }
 
     /// <summary>
     /// Returns the bound address of <paramref name="link"/>. Link state, constant for the Link's
@@ -166,6 +233,8 @@ public sealed class RawReactor
     /// </summary>
     public IPEndPoint LocalOf(LinkId link)
     {
+        EnsureUsable();
+
         LinkSlot? slot = ResolveSlot(link) ?? throw new ArgumentException($"Link {link} is not open.", nameof(link));
 
         return slot.Link.LocalEndPoint;
@@ -179,6 +248,7 @@ public sealed class RawReactor
     /// </summary>
     public void Close(LinkId link)
     {
+        EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
 
         LinkSlot? slot = ResolveSlot(link);
@@ -193,6 +263,8 @@ public sealed class RawReactor
     /// <summary>A point-in-time snapshot of one Link's counters (ADR 0013). Throws if the Link is not open.</summary>
     public LinkCounters CountersOf(LinkId link)
     {
+        EnsureUsable();
+
         LinkSlot? slot = ResolveSlot(link) ?? throw new ArgumentException($"Link {link} is not open.", nameof(link));
 
         return slot.Counters.Snapshot();
@@ -332,6 +404,32 @@ public sealed class RawReactor
         }
 
         return _generations[link.Index] == link.Generation ? _slots[link.Index] : null;
+    }
+
+    /// <summary>
+    /// The two checks every public member starts with: this Reactor still owns its sockets, and the
+    /// call is not arriving from inside its own Pump.
+    /// </summary>
+    private void EnsureUsable()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        EnsureNotInsideAPump();
+    }
+
+    /// <summary>
+    /// Rejects re-entry (ADR 0005). The only caller the library hands control to mid-Pump is a
+    /// Diagnostic Sink, so this is what stops a Sink acting on the Reactor it is reporting on —
+    /// which would clear the pending-event list halfway through the Frame that is producing it.
+    /// A Sink that lets this exception escape has thrown, so the gateway then faults and disables
+    /// it exactly as it would for any other Sink bug, and the Frame still completes.
+    /// </summary>
+    private void EnsureNotInsideAPump()
+    {
+        if (_inPump)
+        {
+            throw new InvalidOperationException(
+                "This Reactor is already inside Pump — a Diagnostic Sink may not call back into the Reactor it is reporting on. Copy what the record carries and act on it after Pump returns.");
+        }
     }
 
     private void EnsureCallingThreadIsConstructingThread()

@@ -57,6 +57,29 @@ clean.
 | #8 | L1 UDP transport and the Raw datagram surface | 5/5 | Truncation detection was rewritten mid-issue; see the review list. |
 | #9 | Binding, address family policy, admission cap | 4/4 | The admission cap has no consuming path in this slice (no accepts or handshakes exist yet), as #7 also noted. |
 
+## Update — review items 1, 2, 6 and 7 have been fixed
+
+Items 6 and 7 are closed by a second follow-up commit, which also closes the one acceptance criterion
+the slice shipped unmet (#7's fifth).
+
+**Sink re-entrancy now throws (item 7).** `RawReactor` carries an `_inPump` flag set for the whole of
+`Pump`, and every public member starts with a guard that rejects a call arriving from inside a Frame.
+A Sink that calls back gets an `InvalidOperationException` naming the rule; if it lets that escape,
+it has thrown, so the gateway faults and disables it exactly as it would for any other Sink bug and
+the Frame still completes. Both paths are tested, and the re-entrancy tests assert the exception
+*message*, not just its type — a nested `Pump` would throw `InvalidOperationException` anyway once it
+mutated the scan list mid-iteration, so a type-only assertion would have passed with no guard at all.
+
+**`RawReactor` is `IDisposable` (item 6).** `Dispose` unregisters and closes every Link still open,
+is idempotent, and makes every other member throw `ObjectDisposedException`. It queues no `Closed`
+events, since nothing can drain a disposed Reactor. There is deliberately no finalizer: this type
+holds nothing unmanaged of its own, and each `Socket` already finalizes itself. `RawReactorHarness`
+now disposes the Reactor, so the tests no longer leak their bound sockets. The releasing is asserted
+by binding a pinned port in one Reactor, disposing it, and binding the same port in another — which
+only works if the socket was really closed, because binds are exclusive.
+
+Suite is 80 tests. Items 3, 4, 5, and 8 to 11 are unchanged.
+
 ## Update — review items 1 and 2 have been fixed
 
 Items 1 and 2 below described the slice as it stood when this PR was opened. They have since been

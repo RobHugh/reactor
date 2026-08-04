@@ -68,6 +68,18 @@ internal sealed class RawReactorHarness : IDisposable
         counterparty.SendTo(payload, destination);
     }
 
+    /// <summary>
+    /// Binds a Link, sends it a 100-byte datagram and Pumps once. With a scratch buffer smaller than
+    /// that — every caller passes <c>scratchBufferSize: 16</c> — this is the cheapest way to make the
+    /// Reactor emit a real <c>Warn</c> record, which is what the diagnostics tests need.
+    /// </summary>
+    public void ProvokeTruncation()
+    {
+        (_, IPEndPoint localEndPoint) = BindLoopbackLink();
+        SendFromCounterparty(localEndPoint, new byte[100]);
+        Reactor.Pump();
+    }
+
     /// <summary>Drains the current Frame into a list, copying each payload out before the next Pump invalidates it.</summary>
     public List<(RawEventKind Kind, LinkId Link, byte[] Payload)> DrainToList()
     {
@@ -95,6 +107,7 @@ internal sealed class RawReactorHarness : IDisposable
 
     public void Dispose()
     {
+        Reactor.Dispose();
         foreach (Socket socket in _counterpartySockets)
         {
             socket.Dispose();
