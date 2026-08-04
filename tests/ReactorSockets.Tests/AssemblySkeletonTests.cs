@@ -33,6 +33,8 @@ public class AssemblySkeletonTests
             nameof(ReactorOptions),
             nameof(IReactorDiagnostics),
             nameof(DiagnosticRecord),
-            nameof(DiagnosticLevel));
+            nameof(DiagnosticLevel),
+            nameof(Source),
+            nameof(SourceFamily));
     }
 }
