@@ -12,8 +12,8 @@
  */
 
 import { claudeCode, createWorktree } from "@ai-hero/sandcastle";
-import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 import type { Sandbox, SandboxRunResult } from "@ai-hero/sandcastle";
+import { hostShell } from "./hostShell.ts";
 
 /** Sub-issues of #1, in dependency order (1.1 … 1.8). */
 const SUB_ISSUES = [2, 3, 4, 5, 6, 7, 8, 9];
@@ -29,20 +29,32 @@ const GATES = [
 ];
 
 /**
- * `noSandbox` runs the agent on the host, so Sandcastle does not pass
- * `--dangerously-skip-permissions`. Without an explicit permission mode an AFK
- * run would block on the first prompt. "auto" gives AI-mediated per-tool
- * approval, which is what this flag exists for on unsandboxed host runs.
+ * The agent runs on the host (see hostShell.ts), so an explicit permission mode
+ * is required — without one an AFK run blocks on the first tool prompt. "auto"
+ * gives AI-mediated per-tool approval, which is what the flag exists for on
+ * unsandboxed host runs, and it takes precedence over the
+ * `--dangerously-skip-permissions` Sandcastle would otherwise pass.
  */
-const IMPLEMENTER = claudeCode("claude-sonnet-5", {
+/**
+ * `captureSessions: false` is required, not a preference. Sandcastle's
+ * `encodeProjectPath` does not match what Claude Code 2.1.221 writes — it
+ * leaves `_` and `.` intact where the real encoder turns both into `-` — and it
+ * looks for the JSONL under a container home (`/home/agent`) that does not
+ * exist on a host run. Capture therefore throws ENOENT *after* the agent has
+ * finished and committed, destroying an otherwise successful run.
+ *
+ * The cost is that `SandboxRunResult.resume` is unavailable, so the repair path
+ * below starts a fresh agent rather than continuing the session.
+ */
+const AGENT_OPTIONS = {
   effort: "medium",
   permissionMode: "auto",
-});
+  captureSessions: false,
+} as const;
 
-const REVIEWER = claudeCode("claude-opus-5", {
-  effort: "medium",
-  permissionMode: "auto",
-});
+const IMPLEMENTER = claudeCode("claude-sonnet-5", AGENT_OPTIONS);
+
+const REVIEWER = claudeCode("claude-opus-5", AGENT_OPTIONS);
 
 /** Runs every gate, returning the first command that failed. */
 const firstFailingGate = async (sandbox: Sandbox): Promise<string | undefined> => {
@@ -60,7 +72,7 @@ await using worktree = await createWorktree({
   branchStrategy: { type: "branch", branch: BRANCH, baseBranch: BASE },
 });
 
-await using sandbox = await worktree.createSandbox({ sandbox: noSandbox() });
+await using sandbox = await worktree.createSandbox({ sandbox: hostShell() });
 
 console.log(`worktree ${sandbox.worktreePath} on ${sandbox.branch}`);
 
@@ -80,20 +92,24 @@ for (const issue of SUB_ISSUES) {
   const failure = await firstFailingGate(sandbox);
 
   if (failure) {
-    if (!result.resume) {
-      throw new Error(
-        `#${issue} left the tree red (\`${failure}\`) and the session cannot be resumed. ` +
-          `Branch ${BRANCH} kept at ${sandbox.worktreePath}.`,
-      );
-    }
-
     console.log(`  repairing #${issue}…`);
-    await result.resume(
-      `The orchestrator ran \`${failure}\` after you finished, outside your session, and it failed. ` +
-        `Reproduce it, fix the cause, re-run format/build/test until all three pass, ` +
-        `amend .sandcastle/reports/issue-${issue}.md to say what went wrong, and commit.`,
-      { name: `slice-1-issue-${issue}-repair` },
-    );
+    await sandbox.run({
+      agent: IMPLEMENTER,
+      prompt:
+        `The agent implementing sub-issue #${issue} of #1 finished and committed, but the ` +
+        `orchestrator then ran \`${failure}\` and it failed.\n\n` +
+        `Read .sandcastle/reports/issue-${issue}.md for what it believed it had done, and ` +
+        `\`gh issue view ${issue}\` for what was asked. Reproduce the failure, fix the cause, ` +
+        `and re-run \`dotnet format\`, \`dotnet build\` and \`dotnet test\` until all three pass.\n\n` +
+        `Fix the code, not the test — if an acceptance criterion genuinely cannot be met, say so ` +
+        `in the report rather than weakening the test. Append a "Repair" section to ` +
+        `.sandcastle/reports/issue-${issue}.md explaining what was wrong, then commit.\n\n` +
+        `Emit <promise>COMPLETE</promise> when done.`,
+      name: `slice-1-issue-${issue}-repair`,
+      maxIterations: 3,
+      idleTimeoutSeconds: 900,
+      logging: { type: "file", path: `.sandcastle/logs/issue-${issue}-repair.log`, verbose: true },
+    });
 
     const stillFailing = await firstFailingGate(sandbox);
     if (stillFailing) {
