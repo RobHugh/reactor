@@ -38,6 +38,7 @@ public class AssemblySkeletonTests
             nameof(SourceFamily),
             nameof(FrameArena),
             nameof(ArenaReservation),
-            nameof(ArenaReservationOutcome));
+            nameof(ArenaReservationOutcome),
+            nameof(ReadinessDispatcher));
     }
 }
