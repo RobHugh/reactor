@@ -1,0 +1,14 @@
+{
+  "name": "reactor-orchestrator",
+  "private": true,
+  "type": "module",
+  "description": "Sandcastle orchestrator for running agents over the sub-issues of a slice. Not part of the ReactorSockets library.",
+  "scripts": {
+    "orchestrate": "node .sandcastle/orchestrate.ts"
+  },
+  "devDependencies": {
+    "@ai-hero/sandcastle": "^0.12.0",
+    "@types/node": "^26.1.2",
+    "typescript": "^7.0.2"
+  }
+}
