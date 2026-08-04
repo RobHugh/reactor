@@ -21,6 +21,68 @@ public class RawReactorTests
     }
 
     [Fact]
+    public void Bind_SamePinnedPortTwice_ThrowsNamingThePort()
+    {
+        // Arrange
+        using RawReactorHarness harness = new();
+        LinkId first = harness.Reactor.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        int pinnedPort = harness.Reactor.LocalOf(first).Port;
+
+        // Act
+        Action act = () => harness.Reactor.Bind(new IPEndPoint(IPAddress.Loopback, pinnedPort));
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>().WithMessage($"*{pinnedPort}*");
+    }
+
+    [Fact]
+    public void Bind_IPv6AnyAndIPv4AnyOnSamePort_ReturnsTwoIndependentLinks()
+    {
+        // Arrange
+        using RawReactorHarness harness = new();
+        LinkId ipv6Link = harness.Reactor.Bind(new IPEndPoint(IPAddress.IPv6Any, 0));
+        int pinnedPort = harness.Reactor.LocalOf(ipv6Link).Port;
+
+        // Act
+        LinkId ipv4Link = harness.Reactor.Bind(new IPEndPoint(IPAddress.Any, pinnedPort));
+
+        // Assert
+        ipv4Link.Should().NotBe(ipv6Link);
+        harness.Reactor.LocalOf(ipv4Link).Port.Should().Be(pinnedPort);
+        harness.Reactor.LocalOf(ipv6Link).Port.Should().Be(pinnedPort);
+    }
+
+    [Fact]
+    public void Drain_CounterpartySendsIPv4ToIPv6AnyLink_NeverYieldsDatagramReceived()
+    {
+        // Arrange
+        using RawReactorHarness harness = new();
+        LinkId ipv6Link = harness.Reactor.Bind(new IPEndPoint(IPAddress.IPv6Any, 0));
+        int pinnedPort = harness.Reactor.LocalOf(ipv6Link).Port;
+
+        using Socket ipv4Counterparty = harness.CreateCounterpartySocket();
+        ipv4Counterparty.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        ipv4Counterparty.SendTo([1, 2, 3], new IPEndPoint(IPAddress.Loopback, pinnedPort));
+
+        // Act
+        bool datagramReceivedSeen = false;
+        for (int i = 0; i < 5; i++)
+        {
+            harness.Reactor.Pump();
+            foreach (RawEvent evt in harness.Reactor.Drain())
+            {
+                if (evt.Kind == RawEventKind.DatagramReceived)
+                {
+                    datagramReceivedSeen = true;
+                }
+            }
+        }
+
+        // Assert
+        datagramReceivedSeen.Should().BeFalse();
+    }
+
+    [Fact]
     public void Drain_AfterCounterpartySendsAndOnePump_YieldsOneDatagramReceivedWithCorrectSource()
     {
         // Arrange

@@ -33,9 +33,11 @@ internal sealed class UdpLink : IDisposable
     public Socket Socket { get; }
 
     /// <summary>
-    /// Binds a new UDP socket to <paramref name="endpoint"/>. Disposes the socket and rethrows if the
-    /// bind fails, so a duplicated fixture or an undisposed Reactor is reported identically on every
-    /// platform rather than silently splitting traffic (ADR 0014).
+    /// Binds a new UDP socket to <paramref name="endpoint"/>. Disposes the socket and throws an
+    /// <see cref="InvalidOperationException"/> naming <paramref name="endpoint"/> if the bind fails —
+    /// a duplicated fixture or an undisposed Reactor is reported identically on every platform rather
+    /// than silently splitting traffic (ADR 0014). The underlying <see cref="SocketException"/>, with
+    /// its platform <see cref="SocketError"/>, is preserved as the inner exception.
     /// </summary>
     public static UdpLink Bind(IPEndPoint endpoint)
     {
@@ -48,6 +50,13 @@ internal sealed class UdpLink : IDisposable
             }
 
             socket.Bind(endpoint);
+        }
+        catch (SocketException exception)
+        {
+            socket.Dispose();
+            throw new InvalidOperationException(
+                $"Bind to {endpoint} failed: {exception.SocketErrorCode} — binds are exclusive, so a port already in use fails at registration rather than being shared.",
+                exception);
         }
         catch
         {
