@@ -1,0 +1,212 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1310" height="1080" viewBox="0 0 1310 1080" font-family="Arial, Helvetica, sans-serif">
+  <title>ReactorSockets :: L2 :: Raw profile</title>
+  <style>
+    .page   { fill: #ffffff; }
+    .frame  { fill: none; stroke: #9c9c9c; stroke-width: 1; }
+    .tab    { fill: #f2f2f2; stroke: #9c9c9c; stroke-width: 1; }
+    .cls    { fill: #fdfdd7; stroke: #4d4d4d; stroke-width: 1; }
+    .note   { fill: #fffde0; stroke: #b6b06a; stroke-width: 1; }
+    .sep    { stroke: #4d4d4d; stroke-width: 1; }
+    .nm     { font-size: 12.5px; font-weight: bold; fill: #14171c; }
+    .st     { font-size: 10px; fill: #3f4650; }
+    .sb     { font-size: 10px; font-style: italic; fill: #5a6270; }
+    .mem    { font-size: 11px; fill: #1c2128; }
+    .der    { font-size: 11px; fill: #1c2128; font-style: italic; }
+    .lbl    { font-size: 10.5px; fill: #33383f; }
+    .ntxt   { font-size: 11px; fill: #2b2b20; }
+    .ttl    { font-size: 13px; font-weight: bold; fill: #2b2f36; }
+    .assoc  { fill: none; stroke: #4d4d4d; stroke-width: 1; }
+    .dep    { fill: none; stroke: #4d4d4d; stroke-width: 1; stroke-dasharray: 6 4; }
+    .notel  { fill: none; stroke: #b6b06a; stroke-width: 1; stroke-dasharray: 3 3; }
+    .head   { fill: none; stroke: #4d4d4d; stroke-width: 1.2; }
+    .hollow { fill: #ffffff; stroke: #4d4d4d; stroke-width: 1; }
+    .solidshape { fill: #4d4d4d; stroke: #4d4d4d; stroke-width: 1; }
+  </style>
+  <rect class="page" x="0" y="0" width="1310" height="1080"/>
+  <rect class="frame" x="14" y="14" width="1282" height="1052"/>
+  <path class="tab" d="M14,14 h250 l-14,24 h-236 z"/>
+  <text class="ttl" x="26" y="32">ReactorSockets :: L2 :: Raw profile</text>
+  <polyline class="dep" points="311,143 420.5,143 420.5,130 530,130"/>
+  <polyline class="head" points="520,134 530,130 520,126"/>
+  <text class="lbl" x="427.5" y="134">drains</text>
+  <polyline class="dep" points="190.5,355 190.5,377.5 177.5,377.5 177.5,400"/>
+  <polyline class="head" points="173.5,390 177.5,400 181.5,390"/>
+  <text class="lbl" x="184.5" y="381.5">constructed with</text>
+  <polyline class="assoc" points="177.5,500 177.5,527.5 187.5,527.5 187.5,555"/>
+  <polygon class="solidshape" points="177.5,500 172.5,507 177.5,514 182.5,507"/>
+  <text class="lbl" x="194.5" y="531.5">Common  1</text>
+  <polyline class="dep" points="311,333.8 420.5,333.8 420.5,635.5 530,635.5"/>
+  <polyline class="head" points="520,639.5 530,635.5 520,631.5"/>
+  <text class="lbl" x="427.5" y="639.5">Counters()</text>
+  <polyline class="assoc" points="618,250 618,267.5 625,267.5 625,285"/>
+  <text class="lbl" x="632" y="271.5">Link, Listener</text>
+  <polyline class="assoc" points="530,218 488,218 488,469 530,469"/>
+  <text class="lbl" x="495" y="473">Source</text>
+  <polyline class="assoc" points="750,138 850,138 850,155.6 950,155.6"/>
+  <text class="lbl" x="857" y="159.6">Kind</text>
+  <polyline class="assoc" points="750,226 850,226 850,327.5 950,327.5"/>
+  <text class="lbl" x="857" y="331.5">Reason</text>
+  <polyline class="dep" points="1064,568 1064,591 1054.5,591 1054.5,614"/>
+  <polyline class="head" points="1050.5,604 1054.5,614 1058.5,604"/>
+  <text class="lbl" x="1061.5" y="595">Log(in ...)</text>
+  <polyline class="assoc" points="1054.5,773 1054.5,786.5 1045,786.5 1045,800"/>
+  <text class="lbl" x="1052" y="790.5">Id</text>
+  <polyline class="notel" points="70,798.4 28,798.4 28,696.8 70,696.8"/>
+  <polyline class="notel" points="70,921.2 28,921.2 28,249 70,249"/>
+  <polyline class="notel" points="530,777.9 488,777.9 488,154 530,154"/>
+  <polyline class="notel" points="530,914 488,914 488,508 530,508"/>
+  <polyline class="notel" points="950,1000.2 908,1000.2 908,528 950,528"/>
+  <rect class="cls" x="70" y="90" width="241" height="265"/>
+  <text class="st" x="190.5" y="107" text-anchor="middle">«class»</text>
+  <text class="nm" x="190.5" y="125" text-anchor="middle">RawReactor</text>
+  <line class="sep" x1="70" y1="131" x2="311" y2="131"/>
+  <line class="sep" x1="70" y1="142" x2="311" y2="142"/>
+  <text class="mem" x="82" y="160">+ Pump() : void</text>
+  <text class="mem" x="82" y="175">+ Drain() : RawEventReader</text>
+  <text class="mem" x="82" y="190">+ Bind(local : IPEndPoint) : Result&lt;LinkId&gt;</text>
+  <text class="mem" x="82" y="205">+ Listen(local : IPEndPoint) : Result&lt;LinkId&gt;</text>
+  <text class="mem" x="82" y="220">+ Dial(remote : IPEndPoint) : Result&lt;LinkId&gt;</text>
+  <text class="mem" x="82" y="235">+ Send(link, data) : Result&lt;int&gt;</text>
+  <text class="mem" x="82" y="250">+ SendTo(link, to : Source, data) : Result</text>
+  <text class="mem" x="82" y="265">+ Shutdown(link) : Result</text>
+  <text class="mem" x="82" y="280">+ Close(link) : Result</text>
+  <text class="mem" x="82" y="295">+ RemoteOf(link) : IPEndPoint</text>
+  <text class="mem" x="82" y="310">+ LocalOf(link) : IPEndPoint</text>
+  <text class="mem" x="82" y="325">+ Counters() : CounterSnapshot</text>
+  <text class="mem" x="82" y="340">+ Dispose() : void</text>
+  <rect class="cls" x="70" y="400" width="215" height="100"/>
+  <text class="st" x="177.5" y="417" text-anchor="middle">«options»</text>
+  <text class="nm" x="177.5" y="435" text-anchor="middle">RawOptions</text>
+  <line class="sep" x1="70" y1="441" x2="285" y2="441"/>
+  <text class="mem" x="82" y="459">+ Common : SharedOptions  {required}</text>
+  <text class="mem" x="82" y="474">+ ReceiveBuffer : int = 65507</text>
+  <line class="sep" x1="70" y1="484" x2="285" y2="484"/>
+  <rect class="cls" x="70" y="555" width="235" height="189"/>
+  <text class="st" x="187.5" y="572" text-anchor="middle">«options»</text>
+  <text class="nm" x="187.5" y="590" text-anchor="middle">SharedOptions</text>
+  <text class="sb" x="187.5" y="603" text-anchor="middle">composed into all three</text>
+  <line class="sep" x1="70" y1="609" x2="305" y2="609"/>
+  <text class="mem" x="82" y="627">+ Capacity : int  {required}</text>
+  <text class="mem" x="82" y="642">+ AdmissionCap : int = Capacity</text>
+  <text class="mem" x="82" y="657">+ ArenaBytes : int = one maximum unit</text>
+  <text class="mem" x="82" y="672">+ TimeProvider : TimeProvider = System</text>
+  <text class="mem" x="82" y="687">+ Sink : IReactorDiagnostics = none</text>
+  <text class="mem" x="82" y="702">+ MinimumLevel : DiagnosticLevel</text>
+  <text class="der" x="82" y="717">+ /ReadShare : int = ArenaBytes / Capacity</text>
+  <line class="sep" x1="70" y1="727" x2="305" y2="727"/>
+  <rect class="cls" x="530" y="90" width="220" height="160"/>
+  <text class="st" x="640" y="107" text-anchor="middle">«ref struct»</text>
+  <text class="nm" x="640" y="125" text-anchor="middle">RawEvent</text>
+  <line class="sep" x1="530" y1="131" x2="750" y2="131"/>
+  <text class="mem" x="542" y="149">+ Kind : RawEventKind</text>
+  <text class="mem" x="542" y="164">+ Link : LinkId</text>
+  <text class="mem" x="542" y="179">+ Listener : LinkId  {Accepted}</text>
+  <text class="mem" x="542" y="194">+ Source : Source  {DatagramReceived}</text>
+  <text class="mem" x="542" y="209">+ Payload : ReadOnlySpan&lt;byte&gt;</text>
+  <text class="mem" x="542" y="224">+ Reason : CloseReason  {Closed}</text>
+  <line class="sep" x1="530" y1="234" x2="750" y2="234"/>
+  <rect class="cls" x="530" y="285" width="190" height="115"/>
+  <text class="st" x="625" y="302" text-anchor="middle">«readonly struct»</text>
+  <text class="nm" x="625" y="320" text-anchor="middle">LinkId</text>
+  <line class="sep" x1="530" y1="326" x2="720" y2="326"/>
+  <text class="mem" x="542" y="344">- index : int</text>
+  <text class="mem" x="542" y="359">- generation : int</text>
+  <text class="mem" x="542" y="374">+ IsValid : bool</text>
+  <line class="sep" x1="530" y1="384" x2="720" y2="384"/>
+  <rect class="cls" x="530" y="430" width="190" height="130"/>
+  <text class="st" x="625" y="447" text-anchor="middle">«readonly struct»</text>
+  <text class="nm" x="625" y="465" text-anchor="middle">Source</text>
+  <line class="sep" x1="530" y1="471" x2="720" y2="471"/>
+  <text class="mem" x="542" y="489">+ Family : AddressFamily</text>
+  <text class="mem" x="542" y="504">+ Address : 16 bytes</text>
+  <text class="mem" x="542" y="519">+ ScopeId : uint</text>
+  <text class="mem" x="542" y="534">+ Port : ushort</text>
+  <line class="sep" x1="530" y1="544" x2="720" y2="544"/>
+  <rect class="cls" x="530" y="590" width="200" height="130"/>
+  <text class="st" x="630" y="607" text-anchor="middle">«readonly struct»</text>
+  <text class="nm" x="630" y="625" text-anchor="middle">CounterSnapshot</text>
+  <line class="sep" x1="530" y1="631" x2="730" y2="631"/>
+  <text class="mem" x="542" y="649">+ Reactor scope : from construction</text>
+  <text class="mem" x="542" y="664">+ Subject scope : per Link, per Peer</text>
+  <text class="mem" x="542" y="679">+ SinkFaulted : ulong</text>
+  <text class="mem" x="542" y="694">+ ArenaHighWater : ulong</text>
+  <line class="sep" x1="530" y1="704" x2="730" y2="704"/>
+  <rect class="cls" x="950" y="90" width="190" height="164"/>
+  <text class="st" x="1045" y="107" text-anchor="middle">«enumeration»</text>
+  <text class="nm" x="1045" y="125" text-anchor="middle">RawEventKind</text>
+  <line class="sep" x1="950" y1="131" x2="1140" y2="131"/>
+  <text class="mem" x="962" y="149">Accepted</text>
+  <text class="mem" x="962" y="164">Connected</text>
+  <text class="mem" x="962" y="179">SegmentReceived</text>
+  <text class="mem" x="962" y="194">DatagramReceived</text>
+  <text class="mem" x="962" y="209">Writable</text>
+  <text class="mem" x="962" y="224">EndOfStream</text>
+  <text class="mem" x="962" y="239">Closed</text>
+  <rect class="cls" x="950" y="294" width="190" height="134"/>
+  <text class="st" x="1045" y="311" text-anchor="middle">«enumeration»</text>
+  <text class="nm" x="1045" y="329" text-anchor="middle">CloseReason</text>
+  <line class="sep" x1="950" y1="335" x2="1140" y2="335"/>
+  <text class="mem" x="962" y="353">LocalClose</text>
+  <text class="mem" x="962" y="368">ResetByPeer</text>
+  <text class="mem" x="962" y="383">Refused</text>
+  <text class="mem" x="962" y="398">Unreachable</text>
+  <text class="mem" x="962" y="413">Failed</text>
+  <rect class="cls" x="950" y="468" width="228" height="100"/>
+  <text class="st" x="1064" y="485" text-anchor="middle">«interface»</text>
+  <text class="nm" x="1064" y="503" text-anchor="middle">IReactorDiagnostics</text>
+  <line class="sep" x1="950" y1="509" x2="1178" y2="509"/>
+  <line class="sep" x1="950" y1="520" x2="1178" y2="520"/>
+  <text class="mem" x="962" y="538">+ IsEnabled(level) : bool</text>
+  <text class="mem" x="962" y="553">+ Log(record : in DiagnosticRecord) : void</text>
+  <rect class="cls" x="950" y="614" width="209" height="159"/>
+  <text class="st" x="1054.5" y="631" text-anchor="middle">«readonly struct»</text>
+  <text class="nm" x="1054.5" y="649" text-anchor="middle">DiagnosticRecord</text>
+  <text class="sb" x="1054.5" y="662" text-anchor="middle">about 56 bytes</text>
+  <line class="sep" x1="950" y1="668" x2="1159" y2="668"/>
+  <text class="mem" x="962" y="686">+ Id : DiagnosticId</text>
+  <text class="mem" x="962" y="701">+ Level : DiagnosticLevel</text>
+  <text class="mem" x="962" y="716">+ Subject : Peer | Link | Source | none</text>
+  <text class="mem" x="962" y="731">+ Value0 : ulong</text>
+  <text class="mem" x="962" y="746">+ Value1 : ulong</text>
+  <line class="sep" x1="950" y1="756" x2="1159" y2="756"/>
+  <rect class="cls" x="950" y="800" width="190" height="148"/>
+  <text class="st" x="1045" y="817" text-anchor="middle">«enumeration»</text>
+  <text class="nm" x="1045" y="835" text-anchor="middle">DiagnosticId</text>
+  <text class="sb" x="1045" y="848" text-anchor="middle">common and Raw blocks</text>
+  <line class="sep" x1="950" y1="854" x2="1140" y2="854"/>
+  <text class="mem" x="962" y="872">AdmissionCapReached = 1</text>
+  <text class="mem" x="962" y="887">ArenaExhausted = 2</text>
+  <text class="mem" x="962" y="902">LinkFailed = 100</text>
+  <text class="mem" x="962" y="917">DestinationUnreachable = 101</text>
+  <text class="mem" x="962" y="932">DatagramTruncated = 102</text>
+  <path class="note" d="M70,775 h269 l12,12 v66 h-281 z"/>
+  <path class="note" d="M339,775 v12 h12 z"/>
+  <text class="ntxt" x="80" y="792">Composed into every options type, never inherited:</text>
+  <text class="ntxt" x="80" y="807">a base is how a profile inherits a knob it does not</text>
+  <text class="ntxt" x="80" y="822">use. Nothing protocol-specific may enter it — Raw</text>
+  <text class="ntxt" x="80" y="837">has no Messages.  (ADR 0012)</text>
+  <path class="note" d="M70,890 h255 l12,12 v66 h-267 z"/>
+  <path class="note" d="M325,890 v12 h12 z"/>
+  <text class="ntxt" x="80" y="907">Send and Shutdown are stream-only, SendTo is</text>
+  <text class="ntxt" x="80" y="922">datagram-only, and none of them is legal on a</text>
+  <text class="ntxt" x="80" y="937">listening Link. The wrong call returns a failed</text>
+  <text class="ntxt" x="80" y="952">Result rather than throwing.  (ADR 0008)</text>
+  <path class="note" d="M530,750 h259 l12,12 v81 h-271 z"/>
+  <path class="note" d="M789,750 v12 h12 z"/>
+  <text class="ntxt" x="540" y="767">The Kind determines exactly which fields are</text>
+  <text class="ntxt" x="540" y="782">present, so no field is ever conditionally</text>
+  <text class="ntxt" x="540" y="797">meaningless. A Link is any registered transport:</text>
+  <text class="ntxt" x="540" y="812">a listener, a connection and a bound UDP socket</text>
+  <text class="ntxt" x="540" y="827">alike.  (ADR 0008)</text>
+  <path class="note" d="M530,875 h266 l12,12 v66 h-278 z"/>
+  <path class="note" d="M796,875 v12 h12 z"/>
+  <text class="ntxt" x="540" y="892">Scope is part of equality — a link-local address</text>
+  <text class="ntxt" x="540" y="907">means nothing without its zone index. Family is an</text>
+  <text class="ntxt" x="540" y="922">explicit tag because no socket is dual-mode, so</text>
+  <text class="ntxt" x="540" y="937">nothing else tells the two apart.  (ADR 0014)</text>
+  <path class="note" d="M950,975 h256 l12,12 v51 h-268 z"/>
+  <path class="note" d="M1206,975 v12 h12 z"/>
+  <text class="ntxt" x="960" y="992">Offered to the Sink during the Pump, on the</text>
+  <text class="ntxt" x="960" y="1007">consumer's thread. A Sink that throws is caught,</text>
+  <text class="ntxt" x="960" y="1022">counted, and disabled.  (ADR 0005)</text>
+</svg>

@@ -1,0 +1,251 @@
+# The diagnostic roster
+
+ADR 0005 fixed the *shape* of a diagnostic — a closed `DiagnosticId`, a level, a subject, two numeric
+slots, a static formatter — and warned that every member is a permanent public API addition that can
+never be withdrawn. Four ADRs since have deferred candidates into this gap: ADR 0008 an unreachable, an
+oversized datagram and a link failure carrying a `SocketError`; ADR 0009 a horizon deferral, an RTO
+backoff, a cookie rejection and a version refusal; ADR 0011 the re-dial, the resume match and its
+failure, the accept cap and the receive-idle expiry; ADR 0012 the admission cap and the read share.
+
+Deciding those one at a time would have settled nothing about the next one. So this ADR is four rules
+and the roster they produce, in that order.
+
+## What earns a member
+
+**Events say what happened to a Peer or a Link. Counters say how often. Diagnostics say why this one.**
+
+A record therefore earns a `DiagnosticId` only if it carries something a count cannot — an identity, a
+reason, or a number specific to that occurrence. **If the only interesting thing about an occurrence is
+how often it happens, it is a Counter and gets no member.**
+
+The constraint being respected here is not scarcity for its own sake. `DiagnosticId` only grows, so the
+expensive mistake is not a missing member — that is one additive change later — but a member shipped for
+something that turned out to be pure volume, which we are then formatting, documenting and adapting
+forever. A generous roster filtered at runtime by `MinimumLevel` was rejected on exactly that ground:
+the level filters volume, and cannot un-ship an enum member, so it manages the wrong cost.
+
+**A rejected candidate does not automatically become a Counter.** ADR 0005's snapshot is read by field,
+so every field in it is as permanent as an enum member and every increment is an add on the hot path.
+Counters have their own test: **a counter earns a field only if it is not derivable from the other
+counters, and its rate or ratio names a condition the consumer could act on.** Non-derivability is
+objective in a way an argument about usefulness never is — "datagrams discarded" and "datagrams
+received" already give the discard ratio, so a discard-ratio field is not a decision to weigh but
+provably redundant. A candidate failing the record test and the counter test simply does not exist.
+
+## A member names a condition, not a category
+
+Members are **flat: one per condition.** A malformed datagram, a duplicate, an out-of-window packet, a
+rejected cookie and a refused version are separate members, not one `DatagramDiscarded` with a reason in
+`Value0`.
+
+The deciding argument is the gate rather than the roster size. ADR 0005's pre-gate is a `MinimumLevel`
+comparison, so it **filters by level, not by id** — and grouping forces every reason in a category to
+share one level. These plainly do not: a malformed datagram from an unknown Source is evidence someone
+is probing you, while a duplicate inside the window is routine. Grouped, you either raise the duplicate
+until the level means nothing, or lower the malformed until it can only be seen inside the volume you
+enabled to find it. Grouping does not even save the formatter work — it switches on `Value0` instead of
+on the id — so the complexity moves and the level distinction is lost for nothing.
+
+The line that keeps this from unbounded growth: **a reason we invented gets its own member; a code we
+are passing through from outside gets a value slot.** Raw's link failure is one member with the
+`SocketError` in `Value0`, because the OS error space is not ours to enumerate and mirroring it would be
+an unbounded, partly platform-specific, permanent commitment.
+
+## What a level means
+
+A level is evidence about a category of cause, not a severity ranking and not a volume tier:
+
+| Level | Means |
+| --- | --- |
+| `Error` | The local process is in a state the consumer must fix. |
+| `Warn` | The consumer can act on this, and nothing is locally broken. |
+| `Info` | A lifecycle transition that never became an Event. |
+| `Trace` | Protocol machinery working correctly. |
+
+**Anything a remote party can cause at will can never be `Error`.** This is ADR 0008's rule — anything a
+remote can generate at will goes to the Sink, never the event stream — applied one level further down.
+Having refused to let a stranger consume the consumer's Drain, it would be strange to let one fill their
+error log instead. A malformed datagram is *normal* on a public port; making it an `Error` wires every
+consumer's alerting to a condition anyone can trigger, and the first thing they do is stop trusting the
+level. This is why `LinkFailed` is `Warn` despite genuinely being a failure: a reset causes it, and a
+reset is a stranger's prerogative.
+
+`Warn` is deliberately wider than "a remote broke the protocol". Drafting the roster produced a whole
+class the narrow reading had no slot for — **a configured bound was hit**: the admission cap, the arena,
+the read share, a lowered Raw buffer truncating. Nothing is locally broken and no remote misbehaved,
+because connecting and sending are permitted. But a bound is a number the consumer chose, which makes it
+the *most* actionable thing the library can report. The two causes differ in origin and not at all in
+what the consumer does about them, and a level's only job is to answer "do I want to see this". A fifth
+level was rejected: it costs a public change to ADR 0005's four for a distinction the formatter's
+wording already carries, and five levels is where consumers stop remembering the order.
+
+A prediction of the rule, which the roster confirms: **`Error` is empty.** A library that owns no
+threads, allocates at construction and treats bugs as throws has almost nothing that is both non-fatal
+and locally broken. `SinkFaulted` would have been the archetype and is a counter, because there is by
+definition nowhere to send a record about the Sink.
+
+## One enum, in reserved blocks
+
+Separate enums per profile were foreclosed by ADR 0008, which committed `IReactorDiagnostics`,
+`DiagnosticFormatter` and `ReactorSockets.Logging` to staying single and made the subject
+profile-neutral. Since the record carries its id as a typed field, per-profile ids mean either a generic
+record or three record types, and either way three facades.
+
+The single enum has **explicit numeric values in reserved blocks**: common `1–99`, Raw `100–199`,
+datagram session `200–299`, stream session `300–399`. Explicit values are not optional for a permanent
+public enum — implicit ordinals mean inserting a member alphabetically silently renumbers everything
+after it, breaking any consumer who persisted an id. Once the numbers are written down, blocks are free:
+a Raw-only Sink range-checks instead of listing members, and a member added in two years lands beside its
+relatives, so reading the enum stays a way of learning what a profile does rather than a record of our
+development order.
+
+The block that justifies the scheme is **common** — the Sink, the arena and the admission cap exist in
+all three profiles, so a strict per-profile split would have been wrong even had we wanted one. That is
+ADR 0012's composed shared options value showing up in a second place.
+
+**There is no `None` or `Unknown` member and zero is not used.** Every record has a cause by
+construction; a zero value would exist only to be a bug that formats as text.
+
+## The subject includes a Source
+
+`DatagramMalformed`, `CookieRejected` and `VersionRefused` fire on datagrams from a party that is *by
+construction* not a Peer — that is the whole reason ADR 0009 has a cookie. With the subject limited to a
+Peer or a Link, all three reduce to "it happened", which a counter already said, so all three failed the
+admission rule above.
+
+**The subject becomes a small tagged value: none, Peer, Link, or Source**, the Source holding a full
+endpoint. Widening the subject rather than adding a parallel field keeps the invariant that a record has
+exactly one subject, so the formatter and every adapter stay a single switch — and it is structurally
+honest, because a Source is not a degraded Peer but a different kind of thing, and the tag says so at the
+type level.
+
+Packing the address into the value slots was rejected: an IPv4 endpoint fits in one `ulong`, but IPv6
+consumes both slots for the address alone and still has no room for the port. That would make this the
+only place in the library where IPv6 is second class, immediately before the binding and dual-stack gap.
+
+**What makes the growth affordable is a consequence of the admission rule that was not visible when ADR
+0005 sized this struct.** That struct was designed for a hot path this ADR has emptied: everything
+per-packet is now a counter, and every surviving record is rare, built only after the `MinimumLevel`
+comparison passes, living on the stack and passed by `in`. Roughly 24 bytes to roughly 56, on an event
+that by construction does not recur, is a different trade from the one ADR 0005 refused.
+
+**The formatter renders a Source as a claim, not a fact.** `CONTEXT.md` commits to a Source being
+unauthenticated by construction — a hint about origin, never an identity — so the wording must not invite
+a consumer to firewall on it, because an attacker chooses what it says.
+
+## The roster
+
+Value slot meanings belong in XML docs on each member, per ADR 0005; they are given here to fix intent.
+
+### Common
+
+| # | Member | Level | Subject | `Value0` / `Value1` |
+| --- | --- | --- | --- | --- |
+| 1 | `AdmissionCapReached` | `Warn` | none | cap / admissions deferred |
+| 2 | `ArenaExhausted` | `Warn` | Peer or Link | bytes requested / bytes free |
+
+### Raw
+
+| # | Member | Level | Subject | `Value0` / `Value1` |
+| --- | --- | --- | --- | --- |
+| 100 | `LinkFailed` | `Warn` | Link | `SocketError` / — |
+| 101 | `DestinationUnreachable` | `Warn` | Link | `SocketError` / — |
+| 102 | `DatagramTruncated` | `Warn` | Source | buffer size / — |
+
+### Datagram session
+
+| # | Member | Level | Subject | `Value0` / `Value1` |
+| --- | --- | --- | --- | --- |
+| 200 | `DatagramMalformed` | `Warn` | Source | bytes received / — |
+| 201 | `CookieRejected` | `Warn` | Source | epoch offered / epoch current |
+| 202 | `VersionRefused` | `Warn` | Source | version offered / version required |
+| 203 | `FragmentSetAbandoned` | `Warn` | Peer | fragments held / fragments expected |
+| 204 | `RetransmissionTimerBackedOff` | `Trace` | Peer | new RTO in ms / consecutive backoffs |
+
+### Stream session
+
+| # | Member | Level | Subject | `Value0` / `Value1` |
+| --- | --- | --- | --- | --- |
+| 300 | `PeerRefused` | `Info` | Source | capacity / — |
+| 301 | `LingerNegotiated` | `Info` | Peer | ours in ms / effective in ms |
+| 302 | `ResumeMatched` | `Info` | Peer | bytes rewound / — |
+| 303 | `ResumeUnmatched` | `Warn` | Source | — / — |
+| 304 | `RedialAttempted` | `Info` | Peer | attempt number / delay in ms |
+| 305 | `RedialFailed` | `Info` | Peer | `SocketError` / attempt number |
+
+Sixteen members. What the rules **removed** is the more useful half of the exercise:
+
+- **`DatagramDuplicate` and `PacketOutOfWindow`** are per-packet volume driven by loss and reordering.
+  They fail the record test and become per-Peer counters.
+- **`HorizonDeferred` and `ReadShareReached`** were the two I expected to be contested, and both resolve
+  the same way: each can recur every Pump under sustained load, so both are counters. Neither loses its
+  identity, because counters now have a per-Peer scope — which is that decision earning its place
+  immediately.
+- **`ReceiveIdleExpired`** gets no member at all. The transition to Interrupted is already an Event, and
+  `Info` is explicitly for lifecycle that *never became* one.
+- **The stream profile's accept cap has no member of its own**, because ADR 0012 unified it into the one
+  admission cap. That consolidation pays out here, in a place we were not looking when we made it.
+- **`SinkFaulted`** stays a counter, being the one record that has nowhere to go.
+
+## Counters, and their two scopes
+
+Counters exist at **two scopes that are different quantities, not the same quantity at two
+resolutions.** The Reactor's figures run from construction; a subject's run from that association's
+start and end with it. Neither is computable from the other — summing live Peers loses everything closed
+Peers contributed, and a Reactor total cannot be split back out — which is how both survive the
+derivability test honestly. Per-subject only was the more elegant answer and was rejected because it
+makes every Reactor-lifetime figure unobtainable under Peer churn, which is exactly the situation being
+investigated.
+
+**A counter lives where its subject lives.** `SinkFaulted`, the arena high-water and datagrams discarded
+from an unknown Source have no Peer *by construction* and exist only on the Reactor. Retransmissions,
+retention high-water and discards belong to a Peer. Very few appear in both.
+
+| Scope | Counters |
+| --- | --- |
+| Reactor | `SinkFaulted`, datagrams sent, datagrams received, datagrams discarded from an unknown Source, arena high-water in bytes, admissions deferred |
+| Per subject | bytes sent, bytes received, packets retransmitted, duplicate packets, out-of-window packets, horizon deferrals, read-share exhaustions, retention high-water in bytes, resumes |
+
+**Counters are monotonic `ulong` and there is no reset.** A reset is a *write* to observation state, and
+observation state is the one thing here with more than one plausible reader: a consumer's metrics export
+and their debug overlay will both sample it, and whichever resets first silently destroys the other's
+baseline — an invisible, intermittent bug in the component you reach for when something else is already
+wrong. Diffing two snapshots gives everything a reset would, from state the consumer owns. `ulong` makes
+wraparound moot at roughly 584 years of nanosecond increments.
+
+**A per-subject counter's lifetime is the Peer's, not the transport's, so a Resume does not reset it.**
+That follows from the Peer being the stable identity rather than being a nicety, and it is the more
+useful behaviour: a retransmission count spanning three resumes is how a flapping path shows itself, and
+a counter zeroing on every reconnect would hide the pattern it exists to reveal.
+
+The per-subject snapshot is **fetched by value and keyed by `PeerId` or Link**, so nothing lets a
+consumer hold a pointer into live state across a Pump. **There is no enumerate-all-subjects accessor in
+1.0** — the consumer already holds the identities, and a roster-walking API invites sampling all 64 every
+Pump.
+
+At the design scale this is cheap: a per-subject counter block is a few dozen bytes inside an allocation
+ADR 0011 already makes per Peer, so it adds no allocation and no per-Pump cost beyond the adds.
+
+## Consequences
+
+- **The record/counter/Event split is now a stated rule rather than a habit**, and it is the first
+  question asked of any future candidate. "Is it derivable?" is likewise the first question asked of any
+  future counter.
+- **ADR 0005's counter list was written before either wire format existed** and is superseded by the
+  table above — retention high-water moves to the per-subject scope, and the discard counter is narrowed
+  to unknown Sources, because a discard attributable to a Peer belongs to that Peer.
+- **`DiagnosticRecord` grows to roughly 56 bytes and its subject becomes a tagged value.** This revises
+  ADR 0008's profile-neutral subject a second time, and the justification is only sound because the
+  admission rule emptied the path the original size was protecting.
+- **Sixteen permanent public members, plus fifteen permanent counter fields.** That is the real cost of
+  this ADR, and it is deliberate: every one of them was argued against a rule rather than added because
+  it was easy.
+- **`Error` ships empty.** If a member is ever proposed for it, that is a signal to check whether the
+  condition should be a thrown exception instead, which is where local, must-fix states go.
+- **A Sink written against the blocks keeps working as the enum grows**, and a Sink written against a
+  `switch` over every member does not. The XML docs should say which of those we support.
+- **Every value-slot meaning is a positional convention that will be miscopied**, which ADR 0005 already
+  accepted; the table above exists so there is one place to check, and it must be kept in step with the
+  XML docs rather than replacing them.
+- **Binding and dual-stack is now the only open gap**, and the Source subject decided here is the first
+  thing it will have to satisfy for IPv6.
