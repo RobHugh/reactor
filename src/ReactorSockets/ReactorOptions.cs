@@ -35,8 +35,8 @@ public sealed class ReactorOptions
     /// <summary>
     /// The frame arena's size in bytes. Left unset, a Reactor defaults it to its own profile
     /// floor — one maximum deliverable unit, since the floor is profile-specific and only the
-    /// profile's constructor knows what it must exceed (ADR 0012). Call
-    /// <see cref="ResolveArenaSize"/> to apply that default and validate the result.
+    /// profile's constructor knows what it must exceed (ADR 0012). A value below that floor throws
+    /// at construction, naming the arithmetic.
     /// </summary>
     public int? ArenaSize { get; init; }
 
@@ -68,9 +68,11 @@ public sealed class ReactorOptions
     /// <summary>
     /// Validates every knob that does not depend on a profile's arena floor, throwing
     /// <see cref="ArgumentOutOfRangeException"/> for a single bad value or
-    /// <see cref="ArgumentException"/> for a combination that cannot work.
+    /// <see cref="ArgumentException"/> for a combination that cannot work. Internal because a
+    /// consumer never validates an options value themselves — every profile's constructor calls
+    /// this, so a combination that cannot work throws at construction and nowhere else.
     /// </summary>
-    public void Validate()
+    internal void Validate()
     {
         if (Capacity < 1)
         {
@@ -108,7 +110,7 @@ public sealed class ReactorOptions
     /// What the floor represents in the calling profile, e.g. "one maximum UDP datagram of 65 507
     /// bytes", used verbatim in the failure message.
     /// </param>
-    public int ResolveArenaSize(int arenaFloor, string floorDescription)
+    internal int ResolveArenaSize(int arenaFloor, string floorDescription)
     {
         int arenaSize = ArenaSize ?? arenaFloor;
         if (arenaSize < arenaFloor)

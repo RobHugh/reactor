@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using ReactorSockets.Core;
 using ReactorSockets.Transports;
 
 namespace ReactorSockets;
@@ -33,9 +34,9 @@ public sealed class RawReactor
     /// come from this same thread or it throws.
     /// </summary>
     /// <param name="options">
-    /// The shared options value. <see cref="ReactorOptions.Validate"/> and
-    /// <see cref="ReactorOptions.ResolveArenaSize"/> run here; a combination that cannot work throws at
-    /// construction.
+    /// The shared options value. Every knob on it is validated here, and
+    /// <see cref="ReactorOptions.ArenaSize"/> is resolved against this profile's floor; a
+    /// combination that cannot work throws at construction and nowhere else.
     /// </param>
     /// <param name="scratchBufferSize">
     /// The single scratch buffer every Link's receive lands in, reused across Links since only one is

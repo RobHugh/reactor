@@ -3,16 +3,20 @@ using Xunit;
 
 namespace ReactorSockets.Tests;
 
+/// <summary>
+/// The shared options value is validated at construction and nowhere else, so every test here builds a
+/// <see cref="RawReactor"/> — the profile constructor is the only caller a consumer can reach.
+/// </summary>
 public class ReactorOptionsTests
 {
     [Fact]
-    public void Validate_CapacityOmitted_ThrowsArgumentOutOfRangeException()
+    public void Constructor_CapacityOmitted_ThrowsArgumentOutOfRangeException()
     {
         // Arrange
         ReactorOptions options = new();
 
         // Act
-        Action act = options.Validate;
+        Action act = () => new RawReactor(options);
 
         // Assert
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(ReactorOptions.Capacity));
@@ -21,13 +25,13 @@ public class ReactorOptionsTests
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public void Validate_CapacityBelowOne_ThrowsArgumentOutOfRangeException(int capacity)
+    public void Constructor_CapacityBelowOne_ThrowsArgumentOutOfRangeException(int capacity)
     {
         // Arrange
         ReactorOptions options = new() { Capacity = capacity };
 
         // Act
-        Action act = options.Validate;
+        Action act = () => new RawReactor(options);
 
         // Assert
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(ReactorOptions.Capacity));
@@ -36,106 +40,96 @@ public class ReactorOptionsTests
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    public void Validate_AdmissionCapBelowOne_ThrowsArgumentOutOfRangeException(int admissionCap)
+    public void Constructor_AdmissionCapBelowOne_ThrowsArgumentOutOfRangeException(int admissionCap)
     {
         // Arrange
         ReactorOptions options = new() { Capacity = 4, AdmissionCap = admissionCap };
 
         // Act
-        Action act = options.Validate;
+        Action act = () => new RawReactor(options);
 
         // Assert
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(ReactorOptions.AdmissionCap));
     }
 
     [Fact]
-    public void Validate_AdmissionCapOmitted_ResolvesToCapacity()
+    public void ResolvedAdmissionCap_AdmissionCapOmitted_ResolvesToCapacity()
     {
         // Arrange
         ReactorOptions options = new() { Capacity = 7 };
 
         // Act
-        options.Validate();
+        int resolved = options.ResolvedAdmissionCap;
 
         // Assert
-        options.ResolvedAdmissionCap.Should().Be(7);
+        resolved.Should().Be(7);
     }
 
     [Fact]
-    public void Validate_SinkWithoutMinimumLevel_ThrowsArgumentException()
+    public void Constructor_SinkWithoutMinimumLevel_ThrowsArgumentException()
     {
         // Arrange
-        RecordingDiagnostics sink = new();
-        ReactorOptions options = new() { Capacity = 4, Sink = sink };
+        ReactorOptions options = new() { Capacity = 4, Sink = new RecordingDiagnosticsSink() };
 
         // Act
-        Action act = options.Validate;
+        Action act = () => new RawReactor(options);
 
         // Assert
         act.Should().Throw<ArgumentException>().WithParameterName(nameof(ReactorOptions.Sink));
     }
 
     [Fact]
-    public void Validate_MinimumLevelWithoutSink_ThrowsArgumentException()
+    public void Constructor_MinimumLevelWithoutSink_ThrowsArgumentException()
     {
         // Arrange
         ReactorOptions options = new() { Capacity = 4, MinimumLevel = DiagnosticLevel.Warn };
 
         // Act
-        Action act = options.Validate;
+        Action act = () => new RawReactor(options);
 
         // Assert
         act.Should().Throw<ArgumentException>().WithParameterName(nameof(ReactorOptions.MinimumLevel));
     }
 
     [Fact]
-    public void Validate_SinkAndMinimumLevelBothSupplied_DoesNotThrow()
+    public void Constructor_SinkAndMinimumLevelBothSupplied_DoesNotThrow()
     {
         // Arrange
-        RecordingDiagnostics sink = new();
-        ReactorOptions options = new() { Capacity = 4, Sink = sink, MinimumLevel = DiagnosticLevel.Error };
+        ReactorOptions options = new()
+        {
+            Capacity = 4,
+            Sink = new RecordingDiagnosticsSink(),
+            MinimumLevel = DiagnosticLevel.Error,
+        };
 
         // Act
-        Action act = options.Validate;
+        Action act = () => new RawReactor(options);
 
         // Assert
         act.Should().NotThrow();
     }
 
     [Fact]
-    public void Validate_SinkAndMinimumLevelBothAbsent_DoesNotThrow()
+    public void Constructor_SinkAndMinimumLevelBothAbsent_DoesNotThrow()
     {
         // Arrange
         ReactorOptions options = new() { Capacity = 4 };
 
         // Act
-        Action act = options.Validate;
+        Action act = () => new RawReactor(options);
 
         // Assert
         act.Should().NotThrow();
     }
 
     [Fact]
-    public void ResolveArenaSize_ArenaSizeOmitted_ResolvesToFloor()
+    public void Constructor_ArenaSizeBelowTheProfileFloor_ThrowsArgumentExceptionStatingArithmetic()
     {
-        // Arrange
-        ReactorOptions options = new() { Capacity = 4 };
-
-        // Act
-        int resolved = options.ResolveArenaSize(arenaFloor: 65_507, floorDescription: "one maximum UDP datagram");
-
-        // Assert
-        resolved.Should().Be(65_507);
-    }
-
-    [Fact]
-    public void ResolveArenaSize_ArenaSizeBelowProfileFloor_ThrowsArgumentExceptionStatingArithmetic()
-    {
-        // Arrange
+        // Arrange — the floor is one maximum-sized read, which for Raw is the scratch buffer.
         ReactorOptions options = new() { Capacity = 4, ArenaSize = 512 };
 
         // Act
-        Action act = () => options.ResolveArenaSize(arenaFloor: 1200, floorDescription: "one maximum UDP datagram of 1200 bytes");
+        Action act = () => new RawReactor(options, scratchBufferSize: 1200);
 
         // Assert
         act.Should().Throw<ArgumentException>()
@@ -144,16 +138,29 @@ public class ReactorOptionsTests
     }
 
     [Fact]
-    public void ResolveArenaSize_ArenaSizeAtOrAboveProfileFloor_ResolvesToSuppliedValue()
+    public void Constructor_ArenaSizeAtOrAboveTheProfileFloor_DoesNotThrow()
     {
         // Arrange
         ReactorOptions options = new() { Capacity = 4, ArenaSize = 2000 };
 
         // Act
-        int resolved = options.ResolveArenaSize(arenaFloor: 1200, floorDescription: "one maximum UDP datagram of 1200 bytes");
+        Action act = () => new RawReactor(options, scratchBufferSize: 1200);
 
         // Assert
-        resolved.Should().Be(2000);
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Constructor_ScratchBufferSizeBelowOne_ThrowsArgumentOutOfRangeException()
+    {
+        // Arrange
+        ReactorOptions options = new() { Capacity = 4 };
+
+        // Act
+        Action act = () => new RawReactor(options, scratchBufferSize: 0);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName("scratchBufferSize");
     }
 
     [Fact]
@@ -164,14 +171,5 @@ public class ReactorOptionsTests
 
         // Act & Assert
         options.TimeProvider.Should().BeSameAs(TimeProvider.System);
-    }
-
-    private sealed class RecordingDiagnostics : IReactorDiagnostics
-    {
-        public bool IsEnabled(DiagnosticLevel level) => true;
-
-        public void Log(in DiagnosticRecord record)
-        {
-        }
     }
 }

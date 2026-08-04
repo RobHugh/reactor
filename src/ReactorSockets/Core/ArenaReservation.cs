@@ -1,11 +1,11 @@
-namespace ReactorSockets;
+namespace ReactorSockets.Core;
 
 /// <summary>
 /// The result of a single <see cref="FrameArena.Reserve"/> call. A <see langword="ref struct"/>
-/// because <see cref="Payload"/> aliases the arena's backing memory directly — it must never
+/// because <see cref="Payload"/> aliases the arena's backing memory directly â€” it must never
 /// outlive the Frame, and a <see langword="ref struct"/> is the compiler-enforced way to say so.
 /// </summary>
-public readonly ref struct ArenaReservation
+internal readonly ref struct ArenaReservation
 {
     internal ArenaReservation(ArenaReservationOutcome outcome, Span<byte> payload, int bytesRequested, int bytesFree)
     {

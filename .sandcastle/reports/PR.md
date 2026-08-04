@@ -57,6 +57,44 @@ clean.
 | #8 | L1 UDP transport and the Raw datagram surface | 5/5 | Truncation detection was rewritten mid-issue; see the review list. |
 | #9 | Binding, address family policy, admission cap | 4/4 | The admission cap has no consuming path in this slice (no accepts or handshakes exist yet), as #7 also noted. |
 
+## Update — review items 1 and 2 have been fixed
+
+Items 1 and 2 below described the slice as it stood when this PR was opened. They have since been
+acted on in a follow-up commit; the text is left as written so the finding and the fix can be read
+together.
+
+L0 now lives in `src/ReactorSockets/Core/` under the `ReactorSockets.Core` namespace, and
+`FrameArena`, `ArenaReservation`, `ArenaReservationOutcome`, `ReadinessDispatcher`,
+`DiagnosticGateway`, `ReactorCounterSet` and `LinkCounterSet` are all `internal`.
+`ReactorOptions.Validate()` and `ResolveArenaSize()` are internal too — they were public for the
+same reason and had the same fix. The exported surface is now seventeen types, all in the root
+namespace: `RawReactor`, `RawEvent`, `RawEventKind`, `RawEventEnumerator`, `CloseReason`, `Result`,
+`LinkId`, `Source`, `SourceFamily`, `ReactorOptions`, `IReactorDiagnostics`, `DiagnosticRecord`,
+`DiagnosticLevel`, `DiagnosticId`, `DiagnosticSubjectKind`, `ReactorCounters`, `LinkCounters`.
+
+The allow-list test that item 2 called a rubber stamp is replaced by a namespace guard —
+`ReactorSocketsAssembly_ExportedTypes_ContainNothingFromL0OrL1` fails if any type in `Core/` or
+`Transports/` is public, so a future sub-issue cannot re-open the leak by extending a list. The five
+direct L0 unit-test files are deleted and re-expressed against `RawReactor`: `RawReactorPumpTests`,
+`RawReactorFrameTests`, `RawReactorDiagnosticsTests` and `RawReactorCountersTests`, and
+`ReactorOptionsTests` now drives every options failure through `new RawReactor(...)`.
+
+**Coverage genuinely lost, since no test can reach an internal type without `InternalsVisibleTo`:**
+the arena's `ReadShare` arithmetic across several (arena, capacity) pairs — only one configuration
+is now pinned, through the escape; `ShareExhausted`, which item 4 already established is unreachable
+through Raw; the `FrameArena` constructor and `shareHolderId` range guards, unreachable because
+`ReactorOptions` validates first; and `ReadinessDispatcher.ObservedPumpInterval`, which nothing
+consumes (item 11) and which now has no test — it should be consumed by slice 3's RTO work or
+deleted. The suite is 73 tests, down from 88.
+
+**Item 3 is now partly closed.** `Drain_DatagramLargerThanTheReadShare_IsDeliveredWholeViaTheEscape`
+pins the escape at the observable layer, and
+`Drain_SeveralLinksEachSentTwoOversizedDatagrams_YieldsExactlyOnePerLinkPerPump` pins the
+one-per-Link-per-Pump behaviour a consumer sees. **Item 4 stands unchanged** — that second test
+passes because a ready Link is read once per Pump, not because of the share cap, and its comment
+says so in the test file rather than leaving the next reader to rediscover it. Items 5 to 11 are
+untouched.
+
 ## Review this carefully
 
 **1. L0 is public and at the root, not internal in `Core/`.** `src/ReactorSockets/Core/` contains

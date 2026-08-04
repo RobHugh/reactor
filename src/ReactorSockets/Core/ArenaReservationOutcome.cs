@@ -1,9 +1,9 @@
-namespace ReactorSockets;
+namespace ReactorSockets.Core;
 
 /// <summary>
 /// The outcome of a single <see cref="FrameArena.Reserve"/> call.
 /// </summary>
-public enum ArenaReservationOutcome
+internal enum ArenaReservationOutcome
 {
     /// <summary>
     /// The requested bytes were copied into the arena. The returned payload is valid only until

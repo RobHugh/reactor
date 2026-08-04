@@ -1,25 +1,40 @@
+using System.Net;
 using System.Net.Sockets;
 using Microsoft.Extensions.Time.Testing;
 
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// The fixture every <see cref="RawReactor"/> test is written against (see tests/CLAUDE.md's testing
+/// The fixture every test in this project is written against (see tests/CLAUDE.md's testing
 /// decisions): a real Reactor on loopback, a <see cref="FakeTimeProvider"/>, a recording Sink, and a
-/// place to register BCL counterparty sockets so they get disposed with the harness.
+/// place to register BCL counterparty sockets so they get disposed with the harness. L0 and L1 are
+/// internal, so this — the public surface a consumer has — is the only seam the tests use.
 /// </summary>
 internal sealed class RawReactorHarness : IDisposable
 {
     private readonly List<Socket> _counterpartySockets = [];
 
-    public RawReactorHarness(int capacity = 4, int? scratchBufferSize = null, DiagnosticLevel minimumLevel = DiagnosticLevel.Trace)
+    /// <param name="sinkOverride">
+    /// Installed instead of <see cref="Sink"/> when a test needs a Sink that throws or disables
+    /// itself. Such a test holds its own reference to it; <see cref="Sink"/> stays uninstalled.
+    /// </param>
+    /// <param name="withoutDiagnostics">Installs no Sink at all, and therefore no minimum level.</param>
+    public RawReactorHarness(
+        int capacity = 4,
+        int? scratchBufferSize = null,
+        DiagnosticLevel minimumLevel = DiagnosticLevel.Trace,
+        int? arenaSize = null,
+        IReactorDiagnostics? sinkOverride = null,
+        bool withoutDiagnostics = false)
     {
+        IReactorDiagnostics? installedSink = withoutDiagnostics ? null : sinkOverride ?? Sink;
         ReactorOptions options = new()
         {
             Capacity = capacity,
+            ArenaSize = arenaSize,
             TimeProvider = TimeProvider,
-            Sink = Sink,
-            MinimumLevel = minimumLevel,
+            Sink = installedSink,
+            MinimumLevel = installedSink is null ? null : minimumLevel,
         };
         Reactor = new RawReactor(options, scratchBufferSize);
     }
@@ -36,6 +51,33 @@ internal sealed class RawReactorHarness : IDisposable
         Socket socket = new(family, SocketType.Dgram, ProtocolType.Udp);
         _counterpartySockets.Add(socket);
         return socket;
+    }
+
+    /// <summary>Binds a loopback Link and returns it together with the address a counterparty sends to.</summary>
+    public (LinkId Link, IPEndPoint LocalEndPoint) BindLoopbackLink()
+    {
+        LinkId link = Reactor.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        return (link, Reactor.LocalOf(link));
+    }
+
+    /// <summary>Sends <paramref name="payload"/> to <paramref name="destination"/> from a fresh counterparty socket.</summary>
+    public void SendFromCounterparty(IPEndPoint destination, byte[] payload)
+    {
+        Socket counterparty = CreateCounterpartySocket();
+        counterparty.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        counterparty.SendTo(payload, destination);
+    }
+
+    /// <summary>Drains the current Frame into a list, copying each payload out before the next Pump invalidates it.</summary>
+    public List<(RawEventKind Kind, LinkId Link, byte[] Payload)> DrainToList()
+    {
+        List<(RawEventKind, LinkId, byte[])> drained = [];
+        foreach (RawEvent evt in Reactor.Drain())
+        {
+            drained.Add((evt.Kind, evt.Link, evt.Payload.ToArray()));
+        }
+
+        return drained;
     }
 
     /// <summary>

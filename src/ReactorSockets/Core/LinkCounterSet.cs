@@ -1,4 +1,4 @@
-namespace ReactorSockets;
+namespace ReactorSockets.Core;
 
 /// <summary>
 /// The mutable per-Link counter storage a Link holds for its own lifetime, incremented on the hot
@@ -6,7 +6,7 @@ namespace ReactorSockets;
 /// live as long as its identity does; a later Resume in a Session profile does not reset them, since
 /// a count spanning multiple transports is what shows a flapping path.
 /// </summary>
-public sealed class LinkCounterSet
+internal sealed class LinkCounterSet
 {
     private ulong _bytesSent;
     private ulong _bytesReceived;
