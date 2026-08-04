@@ -15,8 +15,14 @@ import { claudeCode, createWorktree } from "@ai-hero/sandcastle";
 import type { Sandbox, SandboxRunResult } from "@ai-hero/sandcastle";
 import { hostShell } from "./hostShell.ts";
 
-/** Sub-issues of #1, in dependency order (1.1 … 1.8). */
-const SUB_ISSUES = [2, 3, 4, 5, 6, 7, 8, 9];
+/**
+ * Sub-issues of #1, in dependency order (1.1 … 1.8).
+ *
+ * Resuming: #2–#7 are done and gate-verified on `agent/slice-1` (see
+ * .sandcastle/RESUME.md). Restore this to `[2, 3, 4, 5, 6, 7, 8, 9]` once the
+ * slice is complete, so the file describes the whole job again.
+ */
+const SUB_ISSUES = [8, 9];
 
 const BRANCH = "agent/slice-1";
 const BASE = "dev";
