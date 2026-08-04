@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="1000" viewBox="0 0 1120 1000" font-family="Segoe UI, Inter, Helvetica, Arial, sans-serif">
+  <title>ReactorSockets — high-level architecture</title>
+  <desc>The consumer's loop drives a single Reactor through Pump and Drain. L2 is the only public contract and holds the three Reactors; L1 (transports) and L0 (the Socket.Select dispatcher) are internal.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-end">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5b6472"/>
+    </marker>
+    <style>
+      .page   { fill: #fbfbfd; }
+      .band   { fill: #eef1f6; stroke: #c6ccd8; }
+      .layer  { fill: #ffffff; stroke: #9aa4b5; }
+      .card   { fill: #f4f7fc; stroke: #b3bccd; }
+      .strip  { fill: #eff5ee; stroke: #b9c9b6; }
+      .os     { fill: #e9ebef; stroke: #c0c6d2; }
+      .t      { fill: #1c2430; }
+      .m      { fill: #4a5464; }
+      .title  { font-size: 22px; font-weight: 700; }
+      .sub    { font-size: 13px; }
+      .head   { font-size: 15px; font-weight: 700; }
+      .cardt  { font-size: 15px; font-weight: 700; }
+      .body   { font-size: 12.5px; }
+      .edge   { font-size: 12px; fill: #5b6472; }
+      .edget  { font-size: 12px; fill: #3a4351; font-weight: 700; }
+      .foot   { font-size: 11.5px; fill: #6b7484; }
+      line.e  { stroke: #5b6472; stroke-width: 1.6; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="page" x="0" y="0" width="1120" height="1000"/>
+
+  <text class="t title" x="60" y="46">ReactorSockets — high-level architecture</text>
+  <text class="m sub" x="60" y="70">Single-threaded, pull-driven. Nothing reaches the consumer except in answer to a call the consumer made.</text>
+
+  <!-- Consumer -->
+  <rect class="band" x="60" y="96" width="1000" height="72" rx="8"/>
+  <text class="t head" x="80" y="126">The consumer's loop</text>
+  <text class="m body" x="80" y="148">Owns the thread and the timing. The library owns no threads and starts nothing of its own (ADR 0002).</text>
+
+  <!-- Consumer <-> L2 edges: three columns, no shared horizontal space -->
+  <line class="e" x1="180" y1="168" x2="180" y2="246"/>
+  <text class="edget" x="192" y="190">Pump()</text>
+  <text class="edge"  x="192" y="208">one synchronous advance</text>
+
+  <line class="e" x1="520" y1="168" x2="520" y2="246"/>
+  <text class="edget" x="532" y="190">Send(...)</text>
+  <text class="edge"  x="532" y="208">fails on a full Retention,</text>
+  <text class="edge"  x="532" y="226">never blocks and never grows</text>
+
+  <line class="e" x1="860" y1="246" x2="860" y2="168"/>
+  <text class="edget" x="872" y="190">Drain</text>
+  <text class="edge"  x="872" y="208">Events valid until</text>
+  <text class="edge"  x="872" y="226">the next Pump</text>
+
+  <!-- L2 -->
+  <rect class="layer" x="60" y="248" width="1000" height="306" rx="8"/>
+  <text class="t head" x="80" y="276">L2 — the only public contract (ADR 0003)</text>
+  <text class="m body" x="430" y="276">Every public type here is a permanent commitment, so the surface stays small.</text>
+
+  <rect class="card" x="82" y="290" width="304" height="152" rx="6"/>
+  <text class="t cardt" x="98" y="316">DatagramSessionReactor</text>
+  <text class="m body" x="98" y="338">UDP · deals in Peers</text>
+  <text class="m body" x="98" y="358">Builds reliability, ordering and delivery</text>
+  <text class="m body" x="98" y="376">modes over UDP: Spaces, Retention,</text>
+  <text class="m body" x="98" y="394">Fragments, cookie handshake.</text>
+  <text class="m body" x="98" y="418">One bound socket; the session id demuxes.</text>
+
+  <rect class="card" x="408" y="290" width="304" height="152" rx="6"/>
+  <text class="t cardt" x="424" y="316">StreamSessionReactor</text>
+  <text class="m body" x="424" y="338">TCP · deals in Peers</text>
+  <text class="m body" x="424" y="358">Inherits reliability and ordering from</text>
+  <text class="m body" x="424" y="376">TCP, adds what a stream lacks: framing,</text>
+  <text class="m body" x="424" y="394">Heartbeat, Linger, Resume.</text>
+  <text class="m body" x="424" y="418">One connection per Peer.</text>
+
+  <rect class="card" x="734" y="290" width="304" height="152" rx="6"/>
+  <text class="t cardt" x="750" y="316">RawReactor</text>
+  <text class="m body" x="750" y="338">TCP and UDP · deals in Links</text>
+  <text class="m body" x="750" y="358">Makes no claim about the bytes and</text>
+  <text class="m body" x="750" y="376">invents nothing on the wire. Segments</text>
+  <text class="m body" x="750" y="394">in, Segments out; Sources throughout.</text>
+  <text class="m body" x="750" y="418">Binds and dials at runtime, giving Links.</text>
+
+  <rect class="strip" x="82" y="456" width="956" height="80" rx="6"/>
+  <text class="t body" x="98" y="478" font-weight="700">Shared by all three</text>
+  <text class="m body" x="98" y="498">Events are drained · Diagnostics are pushed to a Sink inside the Pump · Counters are pulled and only ever rise</text>
+  <text class="m body" x="98" y="516">One arena, capacity ≤ 64 share-holders, each capped at arena ÷ capacity per Pump · TimeProvider, read monotonically</text>
+
+  <!-- L2 <-> L1 -->
+  <line class="e" x1="180" y1="554" x2="180" y2="588"/>
+  <line class="e" x1="860" y1="588" x2="860" y2="554"/>
+  <text class="edge" x="212" y="576">internal — no consumer names a type below this line</text>
+
+  <!-- L1 -->
+  <rect class="layer" x="60" y="590" width="1000" height="120" rx="8"/>
+  <text class="t head" x="80" y="618">L1 — transports (internal)</text>
+  <rect class="card" x="82" y="630" width="467" height="64" rx="6"/>
+  <text class="t cardt" x="98" y="654">UDP transport</text>
+  <text class="m body" x="98" y="676">Bound socket; one receive yields one whole Datagram.</text>
+  <rect class="card" x="571" y="630" width="467" height="64" rx="6"/>
+  <text class="t cardt" x="587" y="654">TCP transport</text>
+  <text class="m body" x="587" y="676">Listening and connected sockets; a byte stream with no framing.</text>
+
+  <!-- L1 <-> L0 -->
+  <line class="e" x1="180" y1="710" x2="180" y2="744"/>
+  <line class="e" x1="860" y1="744" x2="860" y2="710"/>
+  <text class="edge" x="212" y="732">L0 and L1 may be replaced wholesale without a major version</text>
+
+  <!-- L0 -->
+  <rect class="layer" x="60" y="746" width="1000" height="122" rx="8"/>
+  <text class="t head" x="80" y="774">L0 — the dispatcher (internal)</text>
+  <rect class="card" x="82" y="786" width="956" height="66" rx="6"/>
+  <text class="m body" x="98" y="810">A readiness demultiplexer on Socket.Select (ADR 0001) — not .NET's completion-based I/O, which would</text>
+  <text class="m body" x="98" y="832">hand results back on pool threads. Watches Handles, invokes Handlers, queues the Pump's Events.</text>
+
+  <!-- L0 <-> OS -->
+  <line class="e" x1="180" y1="868" x2="180" y2="898"/>
+  <line class="e" x1="860" y1="898" x2="860" y2="868"/>
+
+  <rect class="os" x="60" y="900" width="1000" height="56" rx="8"/>
+  <text class="t head" x="80" y="926">Operating-system sockets</text>
+  <text class="m body" x="330" y="926">Binds are exclusive everywhere · no socket is ever dual-mode · the library never resolves a name</text>
+
+  <text class="foot" x="60" y="984">A Reactor is owned by one thread and never shared; a process may run several. Not built for scale — capacity is fixed and small.</text>
+</svg>
