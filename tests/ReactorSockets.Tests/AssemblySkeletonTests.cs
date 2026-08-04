@@ -20,7 +20,7 @@ public class AssemblySkeletonTests
     }
 
     [Fact]
-    public void ReactorSocketsAssembly_PublicTypes_IsEmpty()
+    public void ReactorSocketsAssembly_PublicTypes_ContainsOnlyTheSharedOptionsAndDiagnosticsSurface()
     {
         // Arrange
         Assembly assembly = Assembly.Load(new AssemblyName("ReactorSockets"));
@@ -29,6 +29,10 @@ public class AssemblySkeletonTests
         Type[] publicTypes = assembly.GetExportedTypes();
 
         // Assert
-        publicTypes.Should().BeEmpty();
+        publicTypes.Select(type => type.Name).Should().BeEquivalentTo(
+            nameof(ReactorOptions),
+            nameof(IReactorDiagnostics),
+            nameof(DiagnosticRecord),
+            nameof(DiagnosticLevel));
     }
 }
