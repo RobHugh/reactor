@@ -68,7 +68,7 @@ Commit it.
 ## Open the PR
 
 ```
-gh pr create --draft --base dev --head {{TARGET_BRANCH}} \
+gh pr create --draft --base dev --head {{SOURCE_BRANCH}} \
   --title "Slice 1: L0 readiness dispatch, L1 UDP, and Raw datagram Links" \
   --body-file .sandcastle/reports/PR.md
 ```

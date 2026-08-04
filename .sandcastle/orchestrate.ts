@@ -18,11 +18,11 @@ import { hostShell } from "./hostShell.ts";
 /**
  * Sub-issues of #1, in dependency order (1.1 … 1.8).
  *
- * Resuming: #2–#7 are done and gate-verified on `agent/slice-1` (see
- * .sandcastle/RESUME.md). Restore this to `[2, 3, 4, 5, 6, 7, 8, 9]` once the
- * slice is complete, so the file describes the whole job again.
+ * When resuming a partial run, narrow this to the unfinished issues — the
+ * agents no-op on completed work, but that still costs session budget, which is
+ * the resource that runs out. See .sandcastle/RESUME.md.
  */
-const SUB_ISSUES = [8, 9];
+const SUB_ISSUES = [2, 3, 4, 5, 6, 7, 8, 9];
 
 const BRANCH = "agent/slice-1";
 const BASE = "dev";
@@ -142,8 +142,11 @@ if (push.exitCode !== 0) {
 
 await sandbox.run({
   agent: REVIEWER,
-  // {{TARGET_BRANCH}} is built in — Sandcastle sets it to the worktree branch,
-  // and passing it via promptArgs is rejected.
+  // The head branch comes from the built-in {{SOURCE_BRANCH}}, not
+  // {{TARGET_BRANCH}}. Despite the names, on this code path Sandcastle sets
+  // TARGET_BRANCH to the *host* checkout's branch — `dev` — so a `gh pr create
+  // --head {{TARGET_BRANCH}}` is rejected with "head branch is the same as base
+  // branch". Neither key may be passed via promptArgs; both are reserved.
   promptFile: ".sandcastle/review.md",
   name: "slice-1-review",
   maxIterations: 2,
