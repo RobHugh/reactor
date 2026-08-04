@@ -47,6 +47,12 @@ public class AssemblySkeletonTests
             nameof(FrameArena),
             nameof(ArenaReservation),
             nameof(ArenaReservationOutcome),
-            nameof(ReadinessDispatcher));
+            nameof(ReadinessDispatcher),
+            nameof(RawReactor),
+            nameof(RawEvent),
+            nameof(RawEventKind),
+            nameof(RawEventEnumerator),
+            nameof(CloseReason),
+            nameof(Result));
     }
 }

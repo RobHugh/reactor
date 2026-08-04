@@ -113,6 +113,15 @@ public sealed class FrameArena
     }
 
     /// <summary>
+    /// Returns the span previously committed at <paramref name="offset"/> for <paramref name="length"/>
+    /// bytes, so a caller that recorded a reservation's position — a <c>RawReactor</c> queuing an event
+    /// for a later <c>Drain</c> within the same Frame — can hand it back out without holding the
+    /// original <see cref="ArenaReservation"/> <see langword="ref struct"/> past its own stack frame.
+    /// Valid only until the next <see cref="Reset"/>.
+    /// </summary>
+    public Span<byte> GetCommitted(int offset, int length) => _buffer.AsSpan(offset, length);
+
+    /// <summary>
     /// Wipes the arena for the next Frame: every previously committed payload span is invalidated
     /// (the backing memory is reused, not cleared) and every share-holder's usage resets to zero.
     /// </summary>
