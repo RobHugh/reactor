@@ -35,6 +35,9 @@ public class AssemblySkeletonTests
             nameof(DiagnosticRecord),
             nameof(DiagnosticLevel),
             nameof(Source),
-            nameof(SourceFamily));
+            nameof(SourceFamily),
+            nameof(FrameArena),
+            nameof(ArenaReservation),
+            nameof(ArenaReservationOutcome));
     }
 }
