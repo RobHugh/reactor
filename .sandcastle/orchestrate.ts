@@ -127,6 +127,13 @@ for (const issue of SUB_ISSUES) {
 // and open a draft PR for a human.
 console.log(`\n=== review ===`);
 
+// `gh pr create` needs the branch on the remote, and nothing has pushed it —
+// the worktree and its branch are local until this point.
+const push = await sandbox.exec(`git push -u origin ${BRANCH}`);
+if (push.exitCode !== 0) {
+  throw new Error(`Could not push ${BRANCH}: ${push.stderr || push.stdout}`);
+}
+
 await sandbox.run({
   agent: REVIEWER,
   // {{TARGET_BRANCH}} is built in — Sandcastle sets it to the worktree branch,
@@ -138,4 +145,18 @@ await sandbox.run({
   logging: { type: "file", path: ".sandcastle/logs/review.log", verbose: true },
 });
 
-console.log(`\nDone. Draft PR opened from ${BRANCH} into ${BASE}.`);
+// Do not claim the PR exists — ask. The reviewer is instructed to stop rather
+// than open a PR it cannot stand behind, and that outcome must be reported as
+// what it is.
+const pr = await sandbox.exec(`gh pr list --head ${BRANCH} --state open --json number,url`);
+const opened: { number: number; url: string }[] = pr.exitCode === 0 ? JSON.parse(pr.stdout || "[]") : [];
+
+if (opened.length === 0) {
+  console.error(
+    `\nAll gates passed, but no PR was opened from ${BRANCH}. The reviewer declined to open one — ` +
+      `read .sandcastle/logs/review.log for why.`,
+  );
+  process.exitCode = 1;
+} else {
+  console.log(`\nDone. Draft PR ${opened[0]!.url} — ${BRANCH} into ${BASE}.`);
+}
