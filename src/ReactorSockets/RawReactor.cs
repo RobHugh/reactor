@@ -57,6 +57,7 @@ public sealed class RawReactor : IDisposable
     private readonly int[] _generations;
     private readonly byte[] _scratchBuffer;
     private readonly List<PendingEvent> _pendingEvents = [];
+    private readonly List<LinkId> _connectingLinks = [];
     private readonly int _constructingThreadId;
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
@@ -140,6 +141,7 @@ public sealed class RawReactor : IDisposable
             _admissionsThisFrame = 0;
             _admissionsDeferredThisFrame = 0;
             _dispatcher.Pump();
+            ProcessConnectingLinks();
             if (_admissionsDeferredThisFrame > 0)
             {
                 RecordAdmissionCapReached();
@@ -243,6 +245,39 @@ public sealed class RawReactor : IDisposable
         _dispatcher.Register(link.Socket, () => OnListenerReadable(index));
         _slots[index] = new ListeningLinkSlot(link);
         return new LinkId(index, _generations[index]);
+    }
+
+    /// <summary>
+    /// Begins dialling a new outbound TCP connection to <paramref name="endpoint"/> and returns the
+    /// <see cref="LinkId"/> that addresses it immediately — connecting is advanced by the consumer's
+    /// own loop like everything else, so this call never blocks and the handshake's outcome arrives
+    /// later, from whichever <see cref="Pump"/> first finds it resolved. A dial that succeeds produces
+    /// exactly one <see cref="RawEventKind.Connected"/>; a dial that fails produces a
+    /// <see cref="RawEventKind.Closed"/> naming <see cref="CloseReason.Refused"/> or
+    /// <see cref="CloseReason.Unreachable"/> (or <see cref="CloseReason.Failed"/> for anything else),
+    /// alongside a <see cref="DiagnosticId.LinkFailed"/> carrying the platform
+    /// <see cref="SocketError"/>. Nothing about a dial in progress is delivered except in response to a
+    /// Pump.
+    /// </summary>
+    /// <remarks>
+    /// There is no hostname overload and no connect-timeout knob (parent slice spec): nothing ticks
+    /// unless the consumer Pumps, and a dial going nowhere is closed by the consumer or by the OS, not
+    /// by a timer this library invented. The dialled Link consumes a capacity slot exactly like a Bind
+    /// or a Listen; <see cref="LocalOf"/> answers the address TCP bound implicitly the moment the
+    /// connect began, whether or not the handshake has finished.
+    /// </remarks>
+    public LinkId Connect(IPEndPoint endpoint)
+    {
+        EnsureUsable();
+        EnsureCallingThreadIsConstructingThread();
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        int index = FindFreeSlot();
+        TcpLink link = TcpLink.Dial(endpoint);
+        _slots[index] = new StreamLinkSlot(link);
+        LinkId linkId = new(index, _generations[index]);
+        _connectingLinks.Add(linkId);
+        return linkId;
     }
 
     /// <summary>
@@ -405,6 +440,7 @@ public sealed class RawReactor : IDisposable
                 pending.Link, pending.Source, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
             RawEventKind.Closed => RawEvent.ForClosed(pending.Link, pending.Reason),
             RawEventKind.Accepted => RawEvent.ForAccepted(pending.Listener, pending.Link),
+            RawEventKind.Connected => RawEvent.ForConnected(pending.Link),
             _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised RawEventKind."),
         };
     }
@@ -507,6 +543,63 @@ public sealed class RawReactor : IDisposable
         }
 
         CloseSlot(index, slot, CloseReason.Failed);
+    }
+
+    /// <summary>
+    /// Polls every Link still dialling for a resolved handshake, in the order each was begun. A
+    /// resolved dial is removed from the tracking list whether it succeeded or failed; one still in
+    /// flight is left for the next Pump to check again. Each entry's generation is re-checked against
+    /// the slot before polling, so a Link the consumer closed mid-dial — freeing its slot for reuse
+    /// this same Frame — is dropped rather than polling whatever now occupies that slot.
+    /// </summary>
+    private void ProcessConnectingLinks()
+    {
+        for (int i = _connectingLinks.Count - 1; i >= 0; i--)
+        {
+            LinkId link = _connectingLinks[i];
+            if (_generations[link.Index] != link.Generation || _slots[link.Index] is not StreamLinkSlot slot)
+            {
+                _connectingLinks.RemoveAt(i);
+                continue;
+            }
+
+            TcpConnectPollResult result = slot.Link.PollConnect();
+            switch (result.Outcome)
+            {
+                case TcpConnectPollOutcome.Pending:
+                    continue;
+                case TcpConnectPollOutcome.Connected:
+                    _connectingLinks.RemoveAt(i);
+                    _pendingEvents.Add(new PendingEvent { Kind = RawEventKind.Connected, Link = link });
+                    break;
+                case TcpConnectPollOutcome.Failed:
+                    _connectingLinks.RemoveAt(i);
+                    FailDial(link.Index, slot, result.Error);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Closes a Link whose dial failed, translating the platform <see cref="SocketError"/> into the
+    /// small, stable <see cref="CloseReason"/> roster a consumer's retry logic switches on — the exact
+    /// error still travels in the <see cref="DiagnosticId.LinkFailed"/> record this logs alongside.
+    /// </summary>
+    private void FailDial(int index, LinkSlot slot, SocketError error)
+    {
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForLinkFailed(new LinkId(index, _generations[index]), error));
+        }
+
+        CloseReason reason = error switch
+        {
+            SocketError.ConnectionRefused => CloseReason.Refused,
+            SocketError.HostUnreachable or SocketError.NetworkUnreachable => CloseReason.Unreachable,
+            _ => CloseReason.Failed,
+        };
+
+        CloseSlot(index, slot, reason);
     }
 
     /// <summary>
@@ -737,8 +830,10 @@ public sealed class RawReactor : IDisposable
     }
 
     /// <summary>
-    /// A slot occupied by a connected TCP Link, whether produced by an accept (this sub-issue) or a
-    /// dial (a later one of this slice).
+    /// A slot occupied by a stream TCP Link, whether produced by an accept or by dialling out — the two
+    /// are indistinguishable once registered, and a dialled one is still occupying this same kind of
+    /// slot while its handshake is in flight, before <see cref="RawEventKind.Connected"/> or a failed
+    /// <see cref="RawEventKind.Closed"/> resolves it.
     /// </summary>
     private sealed class StreamLinkSlot(TcpLink link) : LinkSlot(link.Socket, link.LocalEndPoint)
     {

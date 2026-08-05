@@ -117,6 +117,89 @@ internal sealed class RawReactorHarness : IDisposable
         return drained;
     }
 
+    /// <summary>Drains the current Frame into a list that also carries each event's <see cref="CloseReason"/>.</summary>
+    public List<(RawEventKind Kind, LinkId Link, CloseReason Reason)> DrainToReasonList()
+    {
+        List<(RawEventKind, LinkId, CloseReason)> drained = [];
+        foreach (RawEvent evt in Reactor.Drain())
+        {
+            drained.Add((evt.Kind, evt.Link, evt.Reason));
+        }
+
+        return drained;
+    }
+
+    /// <summary>
+    /// Pumps exactly <paramref name="pumps"/> times, draining and accumulating events after each one —
+    /// used instead of looping on a condition when an outcome (dial completion, connection
+    /// establishment) is known to need more than one Pump on loopback but the exact count is fixed and
+    /// deterministic rather than open-ended.
+    /// </summary>
+    public List<(RawEventKind Kind, LinkId Link, byte[] Payload)> PumpAndDrainAll(int pumps)
+    {
+        List<(RawEventKind, LinkId, byte[])> all = [];
+        for (int i = 0; i < pumps; i++)
+        {
+            Reactor.Pump();
+            all.AddRange(DrainToList());
+        }
+
+        return all;
+    }
+
+    /// <summary>The <see cref="CloseReason"/>-carrying counterpart to <see cref="PumpAndDrainAll"/>.</summary>
+    public List<(RawEventKind Kind, LinkId Link, CloseReason Reason)> PumpAndDrainReasons(int pumps)
+    {
+        List<(RawEventKind, LinkId, CloseReason)> all = [];
+        for (int i = 0; i < pumps; i++)
+        {
+            Reactor.Pump();
+            all.AddRange(DrainToReasonList());
+        }
+
+        return all;
+    }
+
+    /// <summary>
+    /// Pumps until <paramref name="link"/> produces a <see cref="RawEventKind.Closed"/> or
+    /// <paramref name="maxAttempts"/> is spent, sleeping <paramref name="delayMilliseconds"/> between
+    /// attempts. A refused TCP dial is not a loopback-local decision the way a UDP ICMP unreachable or
+    /// a successful loopback accept/connect is — the OS resolves the RST on its own real-time schedule,
+    /// observed here to take over a second even on loopback in this environment — so a bound on
+    /// wall-clock attempts, not on Pump count alone, is what determinism means for this one outcome.
+    /// </summary>
+    public List<(RawEventKind Kind, LinkId Link, CloseReason Reason)> PumpAndDrainReasonsUntilClosed(
+        LinkId link, int maxAttempts = 100, int delayMilliseconds = 50)
+    {
+        List<(RawEventKind, LinkId, CloseReason)> all = [];
+        for (int i = 0; i < maxAttempts; i++)
+        {
+            Reactor.Pump();
+            List<(RawEventKind, LinkId, CloseReason)> drained = DrainToReasonList();
+            all.AddRange(drained);
+            if (drained.Exists(evt => evt.Item1 == RawEventKind.Closed && evt.Item2 == link))
+            {
+                break;
+            }
+
+            Thread.Sleep(delayMilliseconds);
+        }
+
+        return all;
+    }
+
+    /// <summary>
+    /// Binds a loopback TCP socket, reads back the port the OS gave it, then closes it — a reliable way
+    /// to provoke a refused dial, since nothing is listening on that port once this returns but the
+    /// port itself was genuinely live a moment ago.
+    /// </summary>
+    public IPEndPoint ReserveAndReleaseLoopbackPort()
+    {
+        using Socket probe = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        probe.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        return (IPEndPoint)probe.LocalEndPoint!;
+    }
+
     /// <summary>
     /// Pumps up to <paramref name="maxPumps"/> times, stopping as soon as <paramref name="condition"/>
     /// is satisfied. Used instead of a sleep for the one place UDP's own asynchrony (an ICMP-driven

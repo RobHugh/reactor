@@ -4,9 +4,9 @@ namespace ReactorSockets;
 /// One event drained from a <see cref="RawReactor"/>. A <see langword="ref struct"/> because
 /// <see cref="Payload"/> aliases the frame arena directly and must never outlive the Frame it was
 /// drained in (ADR 0008). <see cref="Kind"/> determines exactly which other fields are populated —
-/// this slice implements <see cref="RawEventKind.DatagramReceived"/>, <see cref="RawEventKind.Closed"/>
-/// and <see cref="RawEventKind.Accepted"/>; the remaining stream kinds join this roster as the rest of
-/// slice 2 lands.
+/// this slice implements <see cref="RawEventKind.DatagramReceived"/>, <see cref="RawEventKind.Closed"/>,
+/// <see cref="RawEventKind.Accepted"/> and <see cref="RawEventKind.Connected"/>; the remaining stream
+/// kinds join this roster as the rest of slice 2 lands.
 /// </summary>
 public readonly ref struct RawEvent
 {
@@ -67,4 +67,12 @@ public readonly ref struct RawEvent
     /// </summary>
     internal static RawEvent ForAccepted(LinkId listener, LinkId link) =>
         new(RawEventKind.Accepted, link, listener, default, default, default);
+
+    /// <summary>
+    /// Builds a <see cref="RawEventKind.Connected"/> event for a dial that completed successfully.
+    /// Carries only <see cref="Link"/> — the address a dial reaches was supplied by the consumer's own
+    /// call to <c>Connect</c>, so repeating it here would tell them nothing new.
+    /// </summary>
+    internal static RawEvent ForConnected(LinkId link) =>
+        new(RawEventKind.Connected, link, default, default, default, default);
 }
