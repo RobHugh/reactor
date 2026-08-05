@@ -6,7 +6,7 @@ namespace ReactorSockets.Core;
 /// pre-construction gate every caller must pass before building a <see cref="DiagnosticRecord"/>,
 /// and <see cref="Log"/> is the only place the Sink is ever invoked. A Sink that throws is caught,
 /// counted as <c>SinkFaulted</c> on the supplied <see cref="ReactorCounterSet"/>, and disabled for
-/// the life of this gateway â€” a deliberate exception to bugs-always-throw, so the Frame that
+/// the life of this gateway — a deliberate exception to bugs-always-throw, so the Frame that
 /// provoked the fault still completes normally.
 /// </summary>
 internal sealed class DiagnosticGateway
@@ -18,7 +18,7 @@ internal sealed class DiagnosticGateway
 
     /// <summary>
     /// Constructs a gateway around <paramref name="sink"/> and <paramref name="minimumLevel"/>. Both
-    /// are <see langword="null"/> together to disable diagnostics entirely â€” the pairing
+    /// are <see langword="null"/> together to disable diagnostics entirely — the pairing
     /// <see cref="ReactorOptions.Validate"/> enforces at construction.
     /// </summary>
     public DiagnosticGateway(IReactorDiagnostics? sink, DiagnosticLevel? minimumLevel, ReactorCounterSet counters)

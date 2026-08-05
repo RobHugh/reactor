@@ -2,14 +2,14 @@ namespace ReactorSockets.Core;
 
 /// <summary>
 /// The Frame arena (ADR 0012, as corrected by ADR 0014): one buffer per Reactor, wiped every Pump,
-/// that every payload span the Reactor hands out is carved from. Bounds two things at once â€” the
+/// that every payload span the Reactor hands out is carved from. Bounds two things at once — the
 /// arena's own total size, and each share-holder's derived fair share of it (<see cref="ReadShare"/>
-/// = <see cref="ArenaSize"/> Ã· <see cref="Capacity"/>), with the escape that a share-holder may
+/// = <see cref="ArenaSize"/> ÷ <see cref="Capacity"/>), with the escape that a share-holder may
 /// always deliver one whole unit even when that exceeds its share. The escape never weakens the
-/// arena's own bound â€” reading still stops when the arena fills.
+/// arena's own bound — reading still stops when the arena fills.
 /// </summary>
 /// <remarks>
-/// A share-holder is identified by a zero-based index below <see cref="Capacity"/> â€” a Link in Raw,
+/// A share-holder is identified by a zero-based index below <see cref="Capacity"/> — a Link in Raw,
 /// a Peer in a Session (ADR 0014). Per-share-holder usage is tracked in a preallocated array sized
 /// once at construction, so no Frame allocates.
 /// </remarks>
@@ -35,7 +35,7 @@ internal sealed class FrameArena
             throw new ArgumentOutOfRangeException(
                 nameof(arenaSize),
                 arenaSize,
-                $"arena of {arenaSize} bytes cannot hold anything â€” arena size must be at least 1.");
+                $"arena of {arenaSize} bytes cannot hold anything — arena size must be at least 1.");
         }
 
         if (capacity < 1)
@@ -43,7 +43,7 @@ internal sealed class FrameArena
             throw new ArgumentOutOfRangeException(
                 nameof(capacity),
                 capacity,
-                $"capacity of {capacity} admits no share-holders â€” capacity must be at least 1.");
+                $"capacity of {capacity} admits no share-holders — capacity must be at least 1.");
         }
 
         ArenaSize = arenaSize;
@@ -60,8 +60,8 @@ internal sealed class FrameArena
     public int Capacity { get; }
 
     /// <summary>
-    /// The derived per-share-holder byte fair-share for one Frame: <see cref="ArenaSize"/> Ã·
-    /// <see cref="Capacity"/> (ADR 0012, as corrected by ADR 0014). Not a knob â€” it falls out of
+    /// The derived per-share-holder byte fair-share for one Frame: <see cref="ArenaSize"/> ÷
+    /// <see cref="Capacity"/> (ADR 0012, as corrected by ADR 0014). Not a knob — it falls out of
     /// the arena size and capacity a consumer already chose.
     /// </summary>
     public int ReadShare { get; }
@@ -69,7 +69,7 @@ internal sealed class FrameArena
     /// <summary>Bytes committed so far this Frame, across every share-holder.</summary>
     public int BytesUsed { get; private set; }
 
-    /// <summary>The arena's remaining room this Frame: <see cref="ArenaSize"/> âˆ’ <see cref="BytesUsed"/>.</summary>
+    /// <summary>The arena's remaining room this Frame: <see cref="ArenaSize"/> − <see cref="BytesUsed"/>.</summary>
     public int BytesFree => ArenaSize - BytesUsed;
 
     /// <summary>
@@ -77,11 +77,11 @@ internal sealed class FrameArena
     /// <paramref name="shareHolderId"/>. A share-holder's first request this Frame always escapes
     /// its fair share (though never the arena's own free space); a second request that would push
     /// it past <see cref="ReadShare"/> is refused as <see cref="ArenaReservationOutcome.ShareExhausted"/>
-    /// without touching the arena. A request that does not fit in <see cref="BytesFree"/> â€” by
-    /// either share-holder â€” is refused as <see cref="ArenaReservationOutcome.ArenaExhausted"/>.
+    /// without touching the arena. A request that does not fit in <see cref="BytesFree"/> — by
+    /// either share-holder — is refused as <see cref="ArenaReservationOutcome.ArenaExhausted"/>.
     /// </summary>
     /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
-    /// <param name="data">The bytes to commit â€” already read off the wire elsewhere.</param>
+    /// <param name="data">The bytes to commit — already read off the wire elsewhere.</param>
     public ArenaReservation Reserve(int shareHolderId, ReadOnlySpan<byte> data)
     {
         if (shareHolderId < 0 || shareHolderId >= Capacity)
@@ -114,8 +114,8 @@ internal sealed class FrameArena
 
     /// <summary>
     /// Returns the span previously committed at <paramref name="offset"/> for <paramref name="length"/>
-    /// bytes, so a caller that recorded a reservation's position â€” a <c>RawReactor</c> queuing an event
-    /// for a later <c>Drain</c> within the same Frame â€” can hand it back out without holding the
+    /// bytes, so a caller that recorded a reservation's position — a <c>RawReactor</c> queuing an event
+    /// for a later <c>Drain</c> within the same Frame — can hand it back out without holding the
     /// original <see cref="ArenaReservation"/> <see langword="ref struct"/> past its own stack frame.
     /// Valid only until the next <see cref="Reset"/>.
     /// </summary>

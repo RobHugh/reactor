@@ -3,7 +3,7 @@ namespace ReactorSockets.Core;
 /// <summary>
 /// The mutable Reactor-scope counter storage a Reactor holds for its own lifetime, incremented on
 /// the hot path with a single add and read only through <see cref="Snapshot"/> (ADR 0013). There is
-/// no reset: two readers sampling this independently â€” a metrics export and a debug overlay â€” must
+/// no reset: two readers sampling this independently — a metrics export and a debug overlay — must
 /// both see a monotonic figure, or whichever resets first silently destroys the other's baseline.
 /// </summary>
 internal sealed class ReactorCounterSet
