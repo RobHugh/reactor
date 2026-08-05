@@ -21,7 +21,7 @@ public class RawReactorSendTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
         byte[] payload = [1, 2, 3, 4, 5];
 
         // Act
@@ -67,6 +67,10 @@ public class RawReactorSendTests
 
         // Assert
         shortSend.Should().NotBeNull("a counterparty that never reads must eventually force a short send");
+
+        // `!` works around a limitation of the assertion library rather than the framework: the line
+        // above already establishes the value is present, but NotBeNull does not narrow nullability
+        // the way an `is not null` check the compiler can see would.
         shortSend!.Value.BytesSent.Should().BeLessThan(chunk.Length);
     }
 
@@ -182,7 +186,7 @@ public class RawReactorSendTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
         harness.DrainToList();
 
         // Act
@@ -203,7 +207,7 @@ public class RawReactorSendTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
         harness.DrainToList();
         harness.Reactor.Shutdown(acceptedLink).IsSuccess.Should().BeTrue();
 
@@ -226,7 +230,7 @@ public class RawReactorSendTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
         harness.DrainToList();
         harness.Reactor.Shutdown(acceptedLink).IsSuccess.Should().BeTrue();
 
@@ -246,7 +250,7 @@ public class RawReactorSendTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
         harness.DrainToList();
         harness.Reactor.Shutdown(acceptedLink).IsSuccess.Should().BeTrue();
 
@@ -265,7 +269,7 @@ public class RawReactorSendTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
         harness.DrainToList();
         LinkCounters before = harness.Reactor.CountersOf(acceptedLink);
         byte[] payload = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -277,18 +281,5 @@ public class RawReactorSendTests
         result.IsSuccess.Should().BeTrue();
         LinkCounters after = harness.Reactor.CountersOf(acceptedLink);
         (after.BytesSent - before.BytesSent).Should().Be((ulong)result.BytesSent);
-    }
-
-    private static LinkId FirstAccepted(RawReactorHarness harness)
-    {
-        foreach (RawEvent evt in harness.Reactor.Drain())
-        {
-            if (evt.Kind == RawEventKind.Accepted)
-            {
-                return evt.Link;
-            }
-        }
-
-        throw new InvalidOperationException("No Accepted event was drained.");
     }
 }

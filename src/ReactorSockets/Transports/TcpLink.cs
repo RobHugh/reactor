@@ -46,6 +46,10 @@ internal sealed class TcpLink : IDisposable
     public static TcpLink FromAccepted(Socket acceptedSocket)
     {
         acceptedSocket.Blocking = false;
+
+        // `!` works around a framework limitation: Socket.LocalEndPoint and RemoteEndPoint stay typed
+        // EndPoint? for a socket's whole lifetime, but a socket handed back by Accept is connected
+        // before it is returned, so both are populated by the time this runs.
         return new(acceptedSocket, (IPEndPoint)acceptedSocket.LocalEndPoint!, (IPEndPoint)acceptedSocket.RemoteEndPoint!);
     }
 
@@ -104,6 +108,9 @@ internal sealed class TcpLink : IDisposable
             return TcpConnectPollResult.ForPending();
         }
 
+        // `!` works around a framework limitation: GetSocketOption's object-returning overload is typed
+        // object? because the generic signature covers options that yield a byte[] or nothing at all,
+        // but SocketOptionName.Error is documented to return a boxed int on every platform.
         int errorCode = (int)Socket.GetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Error)!;
         return errorCode == 0
             ? TcpConnectPollResult.ForConnected()
@@ -188,5 +195,6 @@ internal sealed class TcpLink : IDisposable
         }
     }
 
+    /// <summary>Closes the underlying socket, releasing the port so it can be rebound.</summary>
     public void Dispose() => Socket.Dispose();
 }

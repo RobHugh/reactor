@@ -28,12 +28,15 @@ internal readonly ref struct TcpLinkReceiveResult
     /// <summary>The platform error, populated only for <see cref="TcpLinkReceiveOutcome.Failed"/>.</summary>
     public SocketError Error { get; }
 
+    /// <summary>Bytes arrived: <paramref name="payload"/> is the slice of the caller's scratch buffer they landed in.</summary>
     public static TcpLinkReceiveResult ForDelivered(ReadOnlySpan<byte> payload) =>
         new(TcpLinkReceiveOutcome.Delivered, payload, default);
 
+    /// <summary>The peer half-closed: a clean zero-length read, which is a usable state rather than a failure (ADR 0008).</summary>
     public static TcpLinkReceiveResult ForEndOfStream() =>
         new(TcpLinkReceiveOutcome.EndOfStream, default, default);
 
+    /// <summary>The receive failed with <paramref name="error"/>, which the caller maps to a <see cref="CloseReason"/>.</summary>
     public static TcpLinkReceiveResult ForFailed(SocketError error) =>
         new(TcpLinkReceiveOutcome.Failed, default, error);
 }

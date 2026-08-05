@@ -746,12 +746,15 @@ public sealed class RawReactor : IDisposable
     /// </summary>
     private void ProcessConnectingLinks()
     {
-        for (int i = _connectingLinks.Count - 1; i >= 0; i--)
+        // Forward, with a write index compacting the survivors down behind it, rather than the usual
+        // reverse loop that lets RemoveAt be safe: several dials resolving in the same Pump must queue
+        // their events in the order they were begun, and iterating backwards would reverse them.
+        int surviving = 0;
+        for (int i = 0; i < _connectingLinks.Count; i++)
         {
             LinkId link = _connectingLinks[i];
             if (_generations[link.Index] != link.Generation || _slots[link.Index] is not StreamLinkSlot slot)
             {
-                _connectingLinks.RemoveAt(i);
                 continue;
             }
 
@@ -759,18 +762,19 @@ public sealed class RawReactor : IDisposable
             switch (result.Outcome)
             {
                 case TcpConnectPollOutcome.Pending:
-                    continue;
+                    _connectingLinks[surviving++] = link;
+                    break;
                 case TcpConnectPollOutcome.Connected:
-                    _connectingLinks.RemoveAt(i);
                     _dispatcher.Register(slot.Link.Socket, () => OnLinkReadable(link.Index), () => OnLinkWritable(link.Index));
                     _pendingEvents.Add(new PendingEvent { Kind = RawEventKind.Connected, Link = link });
                     break;
                 case TcpConnectPollOutcome.Failed:
-                    _connectingLinks.RemoveAt(i);
                     FailDial(link.Index, slot, result.Error);
                     break;
             }
         }
+
+        _connectingLinks.RemoveRange(surviving, _connectingLinks.Count - surviving);
     }
 
     /// <summary>
@@ -822,6 +826,19 @@ public sealed class RawReactor : IDisposable
                 return;
             }
 
+            // Every slot is occupied — a different exhaustion than the admission cap, reachable
+            // because the cap can be configured above ReactorOptions.Capacity. Checked before the
+            // accept rather than after, so a connection this Reactor has no room for stays in the OS
+            // backlog untouched: accepting it first would complete the handshake and then drop it,
+            // showing the peer an established-then-closed connection where the slice spec requires
+            // that a Reactor at capacity say nothing on the wire at all. No slot frees up later in
+            // this same Pump, so there is nothing to gain by looping further either way.
+            int? freeIndex = TryFindFreeSlot();
+            if (freeIndex is null)
+            {
+                return;
+            }
+
             TcpAcceptResult result = listening.Link.TryAccept();
             switch (result.Outcome)
             {
@@ -831,49 +848,31 @@ public sealed class RawReactor : IDisposable
                     RecordListenerAcceptFailed(index, result.Error);
                     return;
                 case TcpAcceptOutcome.Accepted:
-                    if (!AdmitAccepted(index, result.Socket!))
-                    {
-                        // Every slot is occupied — a different exhaustion than the admission cap,
-                        // reachable because the cap can be configured above ReactorOptions.Capacity.
-                        // No slot will free up later in this same Pump, so looping further would only
-                        // accept and immediately drop every remaining backlogged connection instead of
-                        // leaving them for a Pump that runs after a slot closes.
-                        return;
-                    }
-
+                    AdmitAccepted(index, freeIndex.Value, result.Socket!);
                     break;
             }
         }
     }
 
     /// <summary>
-    /// Registers a socket a listening Link just accepted as a new stream Link, and queues the
-    /// <see cref="RawEventKind.Accepted"/> event naming both it and the listener. Returns
-    /// <see langword="false"/> if every slot is already occupied, in which case the accepted socket is
-    /// disposed immediately: it is already off the OS backlog and cannot be put back, so holding it
-    /// unregistered would leak the handle instead of merely deferring it.
+    /// Registers a socket a listening Link just accepted into <paramref name="freeIndex"/> as a new
+    /// stream Link, and queues the <see cref="RawEventKind.Accepted"/> event naming both it and the
+    /// listener. The caller finds the free slot before accepting rather than letting this method look
+    /// one up, so that a Reactor with nowhere to put a connection never takes it off the backlog in
+    /// the first place — see the remarks in <see cref="OnListenerReadable"/>.
     /// </summary>
-    private bool AdmitAccepted(int listenerIndex, Socket acceptedSocket)
+    private void AdmitAccepted(int listenerIndex, int freeIndex, Socket acceptedSocket)
     {
-        int? newIndex = TryFindFreeSlot();
-        if (newIndex is null)
-        {
-            acceptedSocket.Dispose();
-            return false;
-        }
-
         TcpLink link = TcpLink.FromAccepted(acceptedSocket);
-        _slots[newIndex.Value] = new StreamLinkSlot(link);
-        int acceptedIndex = newIndex.Value;
-        _dispatcher.Register(link.Socket, () => OnLinkReadable(acceptedIndex), () => OnLinkWritable(acceptedIndex));
+        _slots[freeIndex] = new StreamLinkSlot(link);
+        _dispatcher.Register(link.Socket, () => OnLinkReadable(freeIndex), () => OnLinkWritable(freeIndex));
         _admissionsThisFrame++;
         _pendingEvents.Add(new PendingEvent
         {
             Kind = RawEventKind.Accepted,
-            Link = new LinkId(newIndex.Value, _generations[newIndex.Value]),
+            Link = new LinkId(freeIndex, _generations[freeIndex]),
             Listener = new LinkId(listenerIndex, _generations[listenerIndex]),
         });
-        return true;
     }
 
     /// <summary>Logs the deferred admissions this Frame as a single <see cref="DiagnosticId.AdmissionCapReached"/> record.</summary>

@@ -14,6 +14,10 @@ internal sealed class RawReactorHarness : IDisposable
 {
     private readonly List<Socket> _counterpartySockets = [];
 
+    /// <summary>
+    /// Constructs a harness around a Reactor built from the given options, every one of which
+    /// defaults to the value the majority of tests want so that a test names only what it varies.
+    /// </summary>
     /// <param name="sinkOverride">
     /// Installed instead of <see cref="Sink"/> when a test needs a Sink that throws or disables
     /// itself. Such a test holds its own reference to it; <see cref="Sink"/> stays uninstalled.
@@ -41,10 +45,13 @@ internal sealed class RawReactorHarness : IDisposable
         Reactor = new RawReactor(options, scratchBufferSize);
     }
 
+    /// <summary>The clock the Reactor was built with — advance it to exercise anything time-dependent.</summary>
     public FakeTimeProvider TimeProvider { get; } = new();
 
+    /// <summary>The recording Sink installed on the Reactor, unless the harness was told to override or omit it.</summary>
     public RecordingDiagnosticsSink Sink { get; } = new();
 
+    /// <summary>The Reactor under test.</summary>
     public RawReactor Reactor { get; }
 
     /// <summary>Creates a BCL UDP socket the harness disposes on teardown, standing in for a counterparty.</summary>
@@ -154,6 +161,25 @@ internal sealed class RawReactorHarness : IDisposable
         }
 
         return drained;
+    }
+
+    /// <summary>
+    /// Drains the current Frame and returns the Link named by its first
+    /// <see cref="RawEventKind.Accepted"/> event, throwing if there was none. The Link rather than the
+    /// event itself, because a <see cref="RawEvent"/> aliases the frame arena and must not outlive the
+    /// drain — a <see cref="LinkId"/> is a value and survives it.
+    /// </summary>
+    public LinkId FirstAcceptedLink()
+    {
+        foreach (RawEvent evt in Reactor.Drain())
+        {
+            if (evt.Kind == RawEventKind.Accepted)
+            {
+                return evt.Link;
+            }
+        }
+
+        throw new InvalidOperationException("No Accepted event was drained.");
     }
 
     /// <summary>

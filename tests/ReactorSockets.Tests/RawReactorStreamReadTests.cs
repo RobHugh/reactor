@@ -21,7 +21,7 @@ public class RawReactorStreamReadTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
 
         byte[] payload = new byte[5000];
         Random.Shared.NextBytes(payload);
@@ -122,7 +122,7 @@ public class RawReactorStreamReadTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
 
         // Act
         counterparty.Shutdown(SocketShutdown.Send);
@@ -145,7 +145,7 @@ public class RawReactorStreamReadTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
         counterparty.Shutdown(SocketShutdown.Send);
         harness.Reactor.Pump();
         harness.DrainToList();
@@ -192,7 +192,7 @@ public class RawReactorStreamReadTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
         counterparty.Shutdown(SocketShutdown.Send);
         harness.Reactor.Pump();
         harness.DrainToList().Should().ContainSingle(evt => evt.Kind == RawEventKind.EndOfStream);
@@ -217,7 +217,7 @@ public class RawReactorStreamReadTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
 
         // Act
         RawReactorHarness.CloseCounterpartyAbruptly(counterparty);
@@ -237,7 +237,7 @@ public class RawReactorStreamReadTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
         harness.DrainToList();
 
         // Act
@@ -298,18 +298,5 @@ public class RawReactorStreamReadTests
             .ContainSingle(r => r.Id == DiagnosticId.ArenaExhausted).Subject;
         record.Value0.Should().Be(1000, "the refused Segment's size is reported");
         record.Value1.Should().Be(200, "so is the arena's free space at the moment it was refused");
-    }
-
-    private static LinkId FirstAccepted(RawReactorHarness harness)
-    {
-        foreach (RawEvent evt in harness.Reactor.Drain())
-        {
-            if (evt.Kind == RawEventKind.Accepted)
-            {
-                return evt.Link;
-            }
-        }
-
-        throw new InvalidOperationException("No Accepted event was drained.");
     }
 }

@@ -108,4 +108,28 @@ public class RawReactorDialTests
         // Assert
         result.IsSuccess.Should().BeFalse();
     }
+
+    [Fact]
+    public void Pump_SeveralDialsResolving_QueuesConnectedEventsInTheOrderTheDialsWereBegun()
+    {
+        // Arrange — three dials begun in a known order against the same listener. However many Pumps
+        // they take to resolve, their Connected events must come back in dial order: the consumer has
+        // nothing else to correlate them by, and a Reactor that polled its in-flight dials backwards
+        // would hand back an order that looks arbitrary from the outside.
+        using RawReactorHarness harness = new(capacity: 8);
+        (_, IPEndPoint serverEndPoint) = harness.ListenOnLoopback();
+        LinkId[] dialledInOrder =
+        [
+            harness.Reactor.Connect(serverEndPoint),
+            harness.Reactor.Connect(serverEndPoint),
+            harness.Reactor.Connect(serverEndPoint),
+        ];
+
+        // Act
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpAndDrainAll(5);
+
+        // Assert
+        drained.Where(evt => evt.Kind == RawEventKind.Connected).Select(evt => evt.Link)
+            .Should().Equal(dialledInOrder);
+    }
 }

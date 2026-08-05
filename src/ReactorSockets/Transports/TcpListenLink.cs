@@ -112,5 +112,6 @@ internal sealed class TcpListenLink : IDisposable
         }
     }
 
+    /// <summary>Closes the underlying listening socket, releasing the port so it can be rebound.</summary>
     public void Dispose() => Socket.Dispose();
 }

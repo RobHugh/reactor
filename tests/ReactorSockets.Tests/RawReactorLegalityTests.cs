@@ -42,7 +42,7 @@ public class RawReactorLegalityTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
 
         // Act
         IPEndPoint remote = harness.Reactor.RemoteOf(acceptedLink);
@@ -156,7 +156,7 @@ public class RawReactorLegalityTests
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
         harness.Reactor.Pump();
-        LinkId acceptedLink = FirstAccepted(harness);
+        LinkId acceptedLink = harness.FirstAcceptedLink();
         Source destination = Source.FromIPEndPoint(new IPEndPoint(IPAddress.Loopback, 12345));
 
         // Act
@@ -220,16 +220,30 @@ public class RawReactorLegalityTests
         act.Should().NotThrow();
     }
 
-    private static LinkId FirstAccepted(RawReactorHarness harness)
+    [Fact]
+    public void Dispose_WithLinksOfEveryKindOpen_LeavesNoEventsToDrainRatherThanQueueingAClosedForEach()
     {
-        foreach (RawEvent evt in harness.Reactor.Drain())
-        {
-            if (evt.Kind == RawEventKind.Accepted)
-            {
-                return evt.Link;
-            }
-        }
+        // Arrange — the other half of the disposal criterion: closing every Link must produce no
+        // Events, because by the time Dispose returns there is nobody left to drain them. Disposal
+        // also discards Events already queued, so this pends a real Closed first and proves even that
+        // one is unreachable afterwards, rather than only proving Dispose queued nothing new.
+        RawReactor reactor = new(new ReactorOptions { Capacity = 6 });
+        LinkId datagram = reactor.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        LinkId listener = reactor.Listen(new IPEndPoint(IPAddress.Loopback, 0));
+        reactor.Connect(reactor.LocalOf(listener));
+        reactor.Close(datagram);
 
-        throw new InvalidOperationException("No Accepted event was drained.");
+        // Act
+        reactor.Dispose();
+
+        // Assert — Drain is the only way to observe an Event at all, so a disposed Reactor refusing it
+        // is what "produces no Events" means from the outside.
+        Action drain = () =>
+        {
+            foreach (RawEvent _ in reactor.Drain())
+            {
+            }
+        };
+        drain.Should().Throw<ObjectDisposedException>();
     }
 }

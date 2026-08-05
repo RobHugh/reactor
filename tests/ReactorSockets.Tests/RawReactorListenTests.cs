@@ -216,6 +216,31 @@ public class RawReactorListenTests
         drained.Count(evt => evt.Kind == RawEventKind.Accepted).Should().Be(1);
     }
 
+    [Fact]
+    public void Pump_AfterASlotFreesUp_AdmitsTheConnectionLeftInTheBacklogRatherThanHavingDroppedIt()
+    {
+        // Arrange — the same slot exhaustion as above, but carried forward: a Reactor with nowhere to
+        // put a connection must leave it in the OS backlog untouched rather than accept it and close
+        // it, so that a later Pump with a free slot can still admit it. Accepting first and disposing
+        // would show the peer an established-then-closed connection and lose it for good.
+        using RawReactorHarness harness = new(capacity: 2, admissionCap: 5);
+        (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
+        using Socket first = harness.ConnectCounterpartyTo(localEndPoint);
+        using Socket second = harness.ConnectCounterpartyTo(localEndPoint);
+        harness.Reactor.Pump();
+        LinkId admitted = harness.FirstAcceptedLink();
+
+        // Act — free the one slot, then Pump again.
+        harness.Reactor.Close(admitted);
+        harness.DrainToList();
+        harness.Reactor.Pump();
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.DrainToList();
+
+        // Assert
+        drained.Count(evt => evt.Kind == RawEventKind.Accepted).Should()
+            .Be(1, "the connection this Reactor had no room for was still queued, not dropped");
+    }
+
     private static RawEvent FirstAccepted(RawReactorHarness harness)
     {
         foreach (RawEvent evt in harness.Reactor.Drain())
