@@ -21,11 +21,15 @@ Final gate: `dotnet format --verify-no-changes` clean, `dotnet build` 0 warnings
 88/88. Per-issue reports are in `.sandcastle/reports/`; the reviewer's assessment is
 `.sandcastle/reports/PR.md`, which is also the PR body.
 
-**Read `PR.md`'s "Review this carefully" section before merging.** Its first four items are the
-substantive ones: L0 shipped `public` at the assembly root instead of `internal` in `Core/`, the
-single-seam testing decision is broken and `AssemblySkeletonTests` codifies the breakage, the
-read-cap escape test #1 asks for about itself does not exist at the observable layer, and the
-one-datagram-per-Pump behaviour comes from a single read per callback rather than from the escape.
+**Since then (2026-08-05), ten of the eleven review items have been closed by hand** — branch is at
+`30b86d2`, suite at 92 tests. `.sandcastle/reports/review_slice_1.md` is the current state; read it
+rather than `PR.md`'s "Review this carefully" section, which describes the slice as it stood when #65
+was opened and is kept only so each finding reads next to its fix.
+
+**Item 5 is the one thing still open: truncation detection has only ever run on Windows.** It needs
+the suite run on Linux, not a decision. Everything else — L0 internal, the seam test, disposal, Sink
+re-entrancy, the read-cap decision, `Send`/`Shutdown`, `ObservedPumpInterval`, the standards items —
+is done.
 
 ## What this run proved about the harness
 
