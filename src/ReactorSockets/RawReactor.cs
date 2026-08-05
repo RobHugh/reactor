@@ -9,7 +9,12 @@ namespace ReactorSockets;
 /// The escape hatch (ADR 0007): a consumer registers UDP sockets at runtime, gets a <see cref="LinkId"/>
 /// back for each, and advances everything with a single synchronous <see cref="Pump"/> call from their
 /// own loop. Nothing is delivered except in response to a call the consumer made, on the thread that
-/// constructed this Reactor. This slice implements the datagram half only — TCP joins in slice 2.
+/// constructed this Reactor. TCP joins the datagram surface here: a listening Link and the connections
+/// it accepts are registered and admitted the same way, and a stream Link's reads drain as
+/// <see cref="RawEventKind.SegmentReceived"/> and <see cref="RawEventKind.EndOfStream"/> exactly like a
+/// datagram Link's. A stream Link's <see cref="Send"/> takes what the socket will take and reports the
+/// count, arming exactly one <see cref="RawEventKind.Writable"/> when it took fewer bytes than
+/// offered; <see cref="Shutdown"/> sends this Link's own FIN while it stays open for reading.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -17,18 +22,21 @@ namespace ReactorSockets;
 /// <see cref="Result"/> reports it as a failed Result: the channel exists, and a Link closing under a
 /// caller is an ordinary race rather than a programmer error, so <see cref="SendTo"/>,
 /// <see cref="Send"/> and <see cref="Shutdown"/> never throw for one. A member that returns data has
-/// no such channel — <see cref="LocalOf"/> and <see cref="CountersOf"/> would have to invent a
-/// sentinel or widen every call site into an unwrap — so they throw
-/// <see cref="ArgumentException"/> instead. <see cref="Close"/> is neither: it is idempotent by
-/// design, so a stale <see cref="LinkId"/> is simply a no-op.
+/// no such channel — <see cref="LocalOf"/>, <see cref="RemoteOf"/> and <see cref="CountersOf"/> would
+/// have to invent a sentinel or widen every call site into an unwrap — so they throw
+/// <see cref="ArgumentException"/> instead, whether the <see cref="LinkId"/> does not address an open
+/// Link at all, or it does but the Link is the wrong kind to answer the question (<see cref="RemoteOf"/>
+/// on a datagram or listening Link — the same wrong-kind case <see cref="Send"/>, <see cref="SendTo"/>
+/// and <see cref="Shutdown"/> report as a failed Result instead, because they can). <see cref="Close"/>
+/// is neither: it is idempotent by design, so a stale <see cref="LinkId"/> is simply a no-op.
 /// </para>
 /// <para>
 /// <b>Which members check the calling thread.</b> Every member that mutates this Reactor or its
 /// sockets enforces the constructing-thread rule (ADR 0002): <see cref="Pump"/>, <see cref="Bind"/>,
 /// <see cref="SendTo"/>, <see cref="Send"/>, <see cref="Shutdown"/>, <see cref="Close"/> and
-/// <see cref="Dispose"/>. The pure reads — <see cref="LocalOf"/>, <see cref="CountersOf"/> and
-/// <see cref="Counters"/> — deliberately do not, because each only copies out a value that the
-/// Reactor never mutates in place.
+/// <see cref="Dispose"/>. The pure reads — <see cref="LocalOf"/>, <see cref="RemoteOf"/>,
+/// <see cref="CountersOf"/> and <see cref="Counters"/> — deliberately do not, because each only
+/// copies out a value that the Reactor never mutates in place.
 /// </para>
 /// <para>
 /// That is not a claim that they are safe to call concurrently with a Pump. The counters behind
@@ -55,7 +63,12 @@ public sealed class RawReactor : IDisposable
     private readonly int[] _generations;
     private readonly byte[] _scratchBuffer;
     private readonly List<PendingEvent> _pendingEvents = [];
+    private readonly List<LinkId> _connectingLinks = [];
     private readonly int _constructingThreadId;
+    private readonly int _admissionCap;
+    private int _admissionsThisFrame;
+    private int _capDeferralsThisFrame;
+    private int _capacityDeferralsThisFrame;
     private bool _inPump;
     private bool _disposed;
 
@@ -101,6 +114,7 @@ public sealed class RawReactor : IDisposable
         _slots = new LinkSlot?[options.Capacity];
         _generations = new int[options.Capacity];
         _scratchBuffer = new byte[resolvedScratchBufferSize];
+        _admissionCap = options.ResolvedAdmissionCap;
     }
 
     internal int PendingEventCount => _pendingEvents.Count;
@@ -131,7 +145,12 @@ public sealed class RawReactor : IDisposable
         {
             _pendingEvents.Clear();
             _arena.Reset();
+            _admissionsThisFrame = 0;
+            _capDeferralsThisFrame = 0;
+            _capacityDeferralsThisFrame = 0;
             _dispatcher.Pump();
+            ProcessConnectingLinks();
+            RecordAdmissionDeferrals();
         }
         finally
         {
@@ -176,8 +195,8 @@ public sealed class RawReactor : IDisposable
         {
             if (_slots[index] is LinkSlot slot)
             {
-                _dispatcher.Unregister(slot.Link.Socket);
-                slot.Link.Dispose();
+                _dispatcher.Unregister(slot.Socket);
+                slot.Dispose();
                 _slots[index] = null;
             }
         }
@@ -200,8 +219,70 @@ public sealed class RawReactor : IDisposable
         int index = FindFreeSlot();
         UdpLink link = UdpLink.Bind(endpoint);
         _dispatcher.Register(link.Socket, () => OnLinkReadable(index));
-        _slots[index] = new LinkSlot(link);
+        _slots[index] = new DatagramLinkSlot(link);
         return new LinkId(index, _generations[index]);
+    }
+
+    /// <summary>
+    /// Binds and listens on a new TCP socket at <paramref name="endpoint"/>, returning the
+    /// <see cref="LinkId"/> that addresses it. A listening socket is a Link like any other — one
+    /// identity type, one lifecycle, one <see cref="RawEventKind.Closed"/> event — because "Listener"
+    /// is a role a Link plays for a consumer, not a kind of thing this library names (ADR 0008). It
+    /// consumes a capacity slot exactly like any other Link, but holds no read share: accepting reads
+    /// nothing into the frame arena (ADR 0014).
+    /// </summary>
+    /// <remarks>
+    /// Inbound connections are admitted by whichever <see cref="Pump"/> finds this Link ready, bounded
+    /// by the shared admission cap (<see cref="ReactorOptions.ResolvedAdmissionCap"/>) every accept and
+    /// handshake in this library draws from. Beyond the cap, a pending connection is left exactly where
+    /// it was — in the OS backlog — for a later Pump to admit; Raw invents nothing on the wire, so it
+    /// says nothing to a peer waiting past the cap (ADR 0007). Binding rules are unchanged from
+    /// <see cref="Bind"/>: exclusive, no dual-mode, no hostname, no configure callback.
+    /// </remarks>
+    public LinkId Listen(IPEndPoint endpoint)
+    {
+        EnsureUsable();
+        EnsureCallingThreadIsConstructingThread();
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        int index = FindFreeSlot();
+        TcpListenLink link = TcpListenLink.Listen(endpoint);
+        _dispatcher.Register(link.Socket, () => OnListenerReadable(index));
+        _slots[index] = new ListeningLinkSlot(link);
+        return new LinkId(index, _generations[index]);
+    }
+
+    /// <summary>
+    /// Begins dialling a new outbound TCP connection to <paramref name="endpoint"/> and returns the
+    /// <see cref="LinkId"/> that addresses it immediately — connecting is advanced by the consumer's
+    /// own loop like everything else, so this call never blocks and the handshake's outcome arrives
+    /// later, from whichever <see cref="Pump"/> first finds it resolved. A dial that succeeds produces
+    /// exactly one <see cref="RawEventKind.Connected"/>; a dial that fails produces a
+    /// <see cref="RawEventKind.Closed"/> naming <see cref="CloseReason.Refused"/> or
+    /// <see cref="CloseReason.Unreachable"/> (or <see cref="CloseReason.Failed"/> for anything else),
+    /// alongside a <see cref="DiagnosticId.LinkFailed"/> carrying the platform
+    /// <see cref="SocketError"/>. Nothing about a dial in progress is delivered except in response to a
+    /// Pump.
+    /// </summary>
+    /// <remarks>
+    /// There is no hostname overload and no connect-timeout knob (parent slice spec): nothing ticks
+    /// unless the consumer Pumps, and a dial going nowhere is closed by the consumer or by the OS, not
+    /// by a timer this library invented. The dialled Link consumes a capacity slot exactly like a Bind
+    /// or a Listen; <see cref="LocalOf"/> answers the address TCP bound implicitly the moment the
+    /// connect began, whether or not the handshake has finished.
+    /// </remarks>
+    public LinkId Connect(IPEndPoint endpoint)
+    {
+        EnsureUsable();
+        EnsureCallingThreadIsConstructingThread();
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        int index = FindFreeSlot();
+        TcpLink link = TcpLink.Dial(endpoint);
+        _slots[index] = new StreamLinkSlot(link);
+        LinkId linkId = new(index, _generations[index]);
+        _connectingLinks.Add(linkId);
+        return linkId;
     }
 
     /// <summary>
@@ -220,7 +301,17 @@ public sealed class RawReactor : IDisposable
             return Result.Failure($"Link {link} is not open.");
         }
 
-        UdpLinkSendResult result = slot.Link.SendTo(destination, payload);
+        if (slot is ListeningLinkSlot)
+        {
+            return Result.Failure("SendTo is illegal on a listening Link.");
+        }
+
+        if (slot is not DatagramLinkSlot datagram)
+        {
+            return Result.Failure("SendTo is illegal on a stream Link — use Send.");
+        }
+
+        UdpLinkSendResult result = datagram.Link.SendTo(destination, payload);
         if (!result.IsSuccess)
         {
             return result.Error == SocketError.Success
@@ -228,47 +319,122 @@ public sealed class RawReactor : IDisposable
                 : Result.Failure($"SendTo failed: {result.Error}.");
         }
 
-        slot.Counters.RecordBytesSent(payload.Length);
+        datagram.Counters.RecordBytesSent(payload.Length);
         _counters.RecordDatagramSent();
         return Result.Success();
     }
 
     /// <summary>
-    /// <c>Send</c> is stream-only and illegal on a datagram Link. Fails without throwing (ADR 0008),
-    /// naming whichever applies: <paramref name="link"/> does not address an open Link, or it does and
-    /// that Link is datagram.
+    /// <c>Send</c> is stream-only and illegal on a datagram or listening Link. Takes what the socket
+    /// will accept of <paramref name="payload"/> right now and reports the count — never blocks, never
+    /// copies and never queues (ADR 0008): whatever the socket did not take stays with the caller, who
+    /// decides whether and when to offer it again. Queuing was rejected on principle, not merely left
+    /// out: an unbounded queue is a memory leak with a network cause, and a bounded one needs a limit
+    /// this library would have to justify plus a way to learn when to retry — which reintroduces this
+    /// same event under another name. Either way the Reactor would be inventing a per-Link FIFO policy,
+    /// which is machinery a Session has and Raw was said not to lend.
     /// </summary>
     /// <remarks>
-    /// The open check comes first on purpose. Raw binds nothing but UDP, so the illegality is the only
-    /// outcome a caller can reach today — but answering "illegal on a datagram Link" to a stale or
-    /// garbage <see cref="LinkId"/> would be a lie about a Link that does not exist, and it is a lie
-    /// that survives: once slice 2 adds stream Links, a test that only ever asserted the illegality
-    /// message would keep passing while the answer became wrong for a stream Link.
+    /// <para>
+    /// A send that takes fewer bytes than <paramref name="payload"/>.Length arms exactly one
+    /// <see cref="RawEventKind.Writable"/> for <paramref name="link"/>: the next <see cref="Pump"/>
+    /// that finds the socket writable queues it and clears the mark, so a consumer using this Link
+    /// only ever sees one <c>Writable</c> per short send, never one for every Pump a socket happens to
+    /// be writable (nearly always). A Link never over-sent on produces no <c>Writable</c> at all — the
+    /// event is a reply to something the consumer did, not a status this Reactor volunteers.
+    /// </para>
+    /// <para>
+    /// Fails without throwing (ADR 0008), naming whichever applies: <paramref name="link"/> does not
+    /// address an open Link, it does but cannot take a stream send, it was already shut down for
+    /// writing by <see cref="Shutdown"/>, or the socket itself failed. The open check comes first —
+    /// answering an illegality to a stale or garbage <see cref="LinkId"/> would be a lie about a Link
+    /// that does not exist.
+    /// </para>
     /// </remarks>
-    public Result Send(LinkId link, ReadOnlySpan<byte> payload)
+    public SendResult Send(LinkId link, ReadOnlySpan<byte> payload)
     {
         EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
 
-        return ResolveSlot(link) is null
-            ? Result.Failure($"Link {link} is not open.")
-            : Result.Failure("Send is illegal on a datagram Link — use SendTo.");
+        LinkSlot? slot = ResolveSlot(link);
+        if (slot is null)
+        {
+            return SendResult.Failure($"Link {link} is not open.");
+        }
+
+        if (slot is DatagramLinkSlot)
+        {
+            return SendResult.Failure("Send is illegal on a datagram Link — use SendTo.");
+        }
+
+        if (slot is not StreamLinkSlot stream)
+        {
+            return SendResult.Failure("Send is illegal on a listening Link.");
+        }
+
+        if (stream.WriteShutdown)
+        {
+            return SendResult.Failure($"Link {link} was already shut down for writing — Shutdown is one-way.");
+        }
+
+        TcpLinkSendResult result = stream.Link.Send(payload);
+        if (!result.IsSuccess)
+        {
+            return SendResult.Failure($"Send failed: {result.Error}.");
+        }
+
+        stream.Counters.RecordBytesSent(result.BytesSent);
+        if (result.BytesSent < payload.Length)
+        {
+            _dispatcher.ArmWritable(stream.Link.Socket);
+        }
+
+        return SendResult.Success(result.BytesSent);
     }
 
     /// <summary>
-    /// <c>Shutdown</c> is stream-only and illegal on a datagram Link. Fails without throwing
-    /// (ADR 0008), naming whichever applies: <paramref name="link"/> does not address an open Link, or
-    /// it does and that Link is datagram. The open check comes first, for the reason on
-    /// <see cref="Send"/>.
+    /// <c>Shutdown</c> is stream-only and illegal on a datagram or listening Link. Sends this Link's
+    /// own FIN, closing the send half while the Link stays open for reading — this is what lets a
+    /// consumer build a request-response protocol that signals end-of-request by closing the write
+    /// half, and it is a one-way door: a further <see cref="Send"/> on this Link fails afterwards.
+    /// Fails without throwing (ADR 0008), naming whichever applies: <paramref name="link"/> does not
+    /// address an open Link, or it does and that Link cannot be shut down. The open check comes first,
+    /// for the reason on <see cref="Send"/>.
     /// </summary>
     public Result Shutdown(LinkId link)
     {
         EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
 
-        return ResolveSlot(link) is null
-            ? Result.Failure($"Link {link} is not open.")
-            : Result.Failure("Shutdown is illegal on a datagram Link.");
+        LinkSlot? slot = ResolveSlot(link);
+        if (slot is null)
+        {
+            return Result.Failure($"Link {link} is not open.");
+        }
+
+        if (slot is DatagramLinkSlot)
+        {
+            return Result.Failure("Shutdown is illegal on a datagram Link.");
+        }
+
+        if (slot is not StreamLinkSlot stream)
+        {
+            return Result.Failure("Shutdown is illegal on a listening Link.");
+        }
+
+        if (stream.WriteShutdown)
+        {
+            return Result.Failure($"Link {link} was already shut down for writing.");
+        }
+
+        TcpLinkShutdownResult result = stream.Link.Shutdown();
+        if (!result.IsSuccess)
+        {
+            return Result.Failure($"Shutdown failed: {result.Error}.");
+        }
+
+        stream.WriteShutdown = true;
+        return Result.Success();
     }
 
     /// <summary>
@@ -282,7 +448,33 @@ public sealed class RawReactor : IDisposable
 
         LinkSlot? slot = ResolveSlot(link) ?? throw new ArgumentException($"Link {link} is not open.", nameof(link));
 
-        return slot.Link.LocalEndPoint;
+        return slot.LocalEndPoint;
+    }
+
+    /// <summary>
+    /// Returns the remote address of the stream Link <paramref name="link"/> — Link state, constant
+    /// for the Link's lifetime and therefore not event data, which is exactly why
+    /// <see cref="RawEventKind.Accepted"/> carries no address (ADR 0014). Illegal on a datagram or
+    /// listening Link, since neither has a single peer for its whole lifetime the way a stream
+    /// connection does — a bound UDP socket answers many senders, and a listening socket answers
+    /// none. Throws <see cref="ArgumentException"/> if <paramref name="link"/> does not address an
+    /// open Link, or does but is the wrong kind, for the reason given on this type's own remarks: a
+    /// member that returns data has no <see cref="Result"/> channel to report a wrong-kind call
+    /// through instead.
+    /// </summary>
+    public IPEndPoint RemoteOf(LinkId link)
+    {
+        EnsureUsable();
+
+        LinkSlot? slot = ResolveSlot(link) ?? throw new ArgumentException($"Link {link} is not open.", nameof(link));
+
+        if (slot is not StreamLinkSlot stream)
+        {
+            throw new ArgumentException(
+                $"Link {link} is not a stream Link — RemoteOf is illegal on a datagram or listening Link.", nameof(link));
+        }
+
+        return stream.Link.RemoteEndPoint;
     }
 
     /// <summary>
@@ -323,6 +515,12 @@ public sealed class RawReactor : IDisposable
             RawEventKind.DatagramReceived => RawEvent.ForDatagramReceived(
                 pending.Link, pending.Source, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
             RawEventKind.Closed => RawEvent.ForClosed(pending.Link, pending.Reason),
+            RawEventKind.Accepted => RawEvent.ForAccepted(pending.Listener, pending.Link),
+            RawEventKind.Connected => RawEvent.ForConnected(pending.Link),
+            RawEventKind.SegmentReceived => RawEvent.ForSegmentReceived(
+                pending.Link, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
+            RawEventKind.EndOfStream => RawEvent.ForEndOfStream(pending.Link),
+            RawEventKind.Writable => RawEvent.ForWritable(pending.Link),
             _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised RawEventKind."),
         };
     }
@@ -332,25 +530,53 @@ public sealed class RawReactor : IDisposable
     /// arena's fair share — is what bounds how much of one Pump a single Link can consume, and it is
     /// the deliberate choice for the Raw profile: it is the strongest possible fairness guarantee
     /// (every ready Link is served before any Link is served twice) and it costs one syscall per Link
-    /// per Pump, which a consumer already controls by choosing how often to Pump.
+    /// per Pump, which a consumer already controls by choosing how often to Pump. A stream Link
+    /// delivering a run longer than one read is simply read again on a later Pump, once the dispatcher
+    /// finds it ready a second time — the same bound, applied to a transport with no message
+    /// boundaries of its own.
     /// </summary>
     /// <remarks>
     /// The consequence is that a Link cannot reach a second <c>Reserve</c> in one Frame, so
     /// <see cref="ArenaReservationOutcome.ShareExhausted"/> is unreachable through this Reactor's
     /// public surface. The arena's share is therefore a second, looser ceiling here: it only bites
-    /// through the one-whole-unit escape, when a single datagram exceeds a share. Both mechanisms are
-    /// kept because a later profile that reads a Link in a loop needs the share to be the bound —
-    /// changing this method to loop until <c>ShareExhausted</c> is what makes that switch, and the
-    /// arena is already sized for it.
+    /// through the one-whole-unit escape, when a single datagram or Segment exceeds a share. Both
+    /// mechanisms are kept because a later profile that reads a Link in a loop needs the share to be
+    /// the bound — changing this method to loop until <c>ShareExhausted</c> is what makes that switch,
+    /// and the arena is already sized for it.
     /// </remarks>
     private void OnLinkReadable(int index)
     {
-        LinkSlot? slot = _slots[index];
-        if (slot is null)
+        switch (_slots[index])
         {
-            return;
+            case DatagramLinkSlot datagramSlot:
+                OnDatagramLinkReadable(index, datagramSlot);
+                break;
+            case StreamLinkSlot streamSlot:
+                OnStreamLinkReadable(index, streamSlot);
+                break;
         }
+    }
 
+    /// <summary>
+    /// Queues exactly one <see cref="RawEventKind.Writable"/> for the stream Link at <paramref name="index"/>.
+    /// Called only by the dispatcher, and only for a socket it just found writable while armed
+    /// (<see cref="Core.ReadinessDispatcher.ArmWritable"/>) — the dispatcher itself disarms before
+    /// invoking this, so nothing here needs to re-check that the mark was still set.
+    /// </summary>
+    private void OnLinkWritable(int index)
+    {
+        if (_slots[index] is StreamLinkSlot)
+        {
+            _pendingEvents.Add(new PendingEvent
+            {
+                Kind = RawEventKind.Writable,
+                Link = new LinkId(index, _generations[index]),
+            });
+        }
+    }
+
+    private void OnDatagramLinkReadable(int index, DatagramLinkSlot slot)
+    {
         UdpLinkReceiveResult result = slot.Link.Receive(_scratchBuffer);
         switch (result.Outcome)
         {
@@ -364,6 +590,39 @@ public sealed class RawReactor : IDisposable
                 RecordDestinationUnreachable(new LinkId(index, _generations[index]), result.Error);
                 break;
             case UdpLinkReceiveOutcome.Failed:
+                FailLink(index, slot, result.Error);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Reads a ready stream Link exactly once, the same fairness rule <see cref="OnLinkReadable"/>
+    /// applies to a datagram Link. A Link that has already delivered <c>EndOfStream</c> is still read
+    /// once more: the FIN that produced it leaves the socket permanently readable, so the alternative
+    /// is to stop reading and never learn of a subsequent reset — but a second <c>EndOfStream</c> is
+    /// never queued, since the remote already said everything it is going to say.
+    /// </summary>
+    private void OnStreamLinkReadable(int index, StreamLinkSlot slot)
+    {
+        TcpLinkReceiveResult result = slot.Link.Receive(_scratchBuffer);
+        switch (result.Outcome)
+        {
+            case TcpLinkReceiveOutcome.Delivered:
+                DeliverSegment(index, slot, result.Payload);
+                break;
+            case TcpLinkReceiveOutcome.EndOfStream:
+                if (!slot.EndOfStreamDelivered)
+                {
+                    slot.EndOfStreamDelivered = true;
+                    _pendingEvents.Add(new PendingEvent
+                    {
+                        Kind = RawEventKind.EndOfStream,
+                        Link = new LinkId(index, _generations[index]),
+                    });
+                }
+
+                break;
+            case TcpLinkReceiveOutcome.Failed:
                 FailLink(index, slot, result.Error);
                 break;
         }
@@ -402,6 +661,46 @@ public sealed class RawReactor : IDisposable
         }
     }
 
+    /// <summary>
+    /// Commits a Segment's bytes into the frame arena and queues the <see cref="RawEventKind.SegmentReceived"/>
+    /// event, or records the refusal — <see cref="ArenaReservationOutcome.ShareExhausted"/> as a per-Link
+    /// counter (ADR 0013: the condition can recur every Pump under sustained load, so it fails the
+    /// record test) and <see cref="ArenaReservationOutcome.ArenaExhausted"/> as a <c>Warn</c> Diagnostic.
+    /// The reservation logic is identical to <see cref="DeliverDatagram"/>'s; only the event shape and
+    /// the absence of a claimed Source differ, because a stream Link has one peer for its whole
+    /// lifetime and nothing per-Segment to claim.
+    /// </summary>
+    private void DeliverSegment(int index, LinkSlot slot, ReadOnlySpan<byte> data)
+    {
+        int offsetBeforeReserve = _arena.BytesUsed;
+        ArenaReservation reservation = _arena.Reserve(index, data);
+        switch (reservation.Outcome)
+        {
+            case ArenaReservationOutcome.Committed:
+                _pendingEvents.Add(new PendingEvent
+                {
+                    Kind = RawEventKind.SegmentReceived,
+                    Link = new LinkId(index, _generations[index]),
+                    PayloadOffset = offsetBeforeReserve,
+                    PayloadLength = data.Length,
+                });
+                slot.Counters.RecordBytesReceived(data.Length);
+                _counters.ObserveArenaUsage(_arena.BytesUsed);
+                break;
+            case ArenaReservationOutcome.ShareExhausted:
+                slot.Counters.RecordReadShareExhaustion();
+                break;
+            case ArenaReservationOutcome.ArenaExhausted:
+                if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                {
+                    _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(
+                        new LinkId(index, _generations[index]), reservation.BytesRequested, reservation.BytesFree));
+                }
+
+                break;
+        }
+    }
+
     private void RecordDatagramTruncated(Source source)
     {
         if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
@@ -418,6 +717,14 @@ public sealed class RawReactor : IDisposable
         }
     }
 
+    /// <summary>
+    /// Closes a Link whose read failed outright, logging the platform <see cref="SocketError"/> first.
+    /// A reset is reported as <see cref="CloseReason.ResetByPeer"/> rather than the generic
+    /// <see cref="CloseReason.Failed"/> — a stranger resetting the connection is a condition a
+    /// consumer's retry logic wants to distinguish from every other read failure, and the one this
+    /// library already names for it (user story: a reset is a stranger's prerogative, reported
+    /// <c>Warn</c> rather than <c>Error</c>).
+    /// </summary>
     private void FailLink(int index, LinkSlot slot, SocketError error)
     {
         if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
@@ -425,13 +732,208 @@ public sealed class RawReactor : IDisposable
             _diagnostics.Log(DiagnosticRecord.ForLinkFailed(new LinkId(index, _generations[index]), error));
         }
 
-        CloseSlot(index, slot, CloseReason.Failed);
+        CloseReason reason = error == SocketError.ConnectionReset ? CloseReason.ResetByPeer : CloseReason.Failed;
+        CloseSlot(index, slot, reason);
+    }
+
+    /// <summary>
+    /// Polls every Link still dialling for a resolved handshake, in the order each was begun. A
+    /// resolved dial is removed from the tracking list whether it succeeded or failed; one still in
+    /// flight is left for the next Pump to check again. Each entry's generation is re-checked against
+    /// the slot before polling, so a Link the consumer closed mid-dial — freeing its slot for reuse
+    /// this same Frame — is dropped rather than polling whatever now occupies that slot.
+    /// </summary>
+    private void ProcessConnectingLinks()
+    {
+        // Forward, with a write index compacting the survivors down behind it, rather than the usual
+        // reverse loop that lets RemoveAt be safe: several dials resolving in the same Pump must queue
+        // their events in the order they were begun, and iterating backwards would reverse them.
+        int surviving = 0;
+        for (int i = 0; i < _connectingLinks.Count; i++)
+        {
+            LinkId link = _connectingLinks[i];
+            if (_generations[link.Index] != link.Generation || _slots[link.Index] is not StreamLinkSlot slot)
+            {
+                continue;
+            }
+
+            TcpConnectPollResult result = slot.Link.PollConnect();
+            switch (result.Outcome)
+            {
+                case TcpConnectPollOutcome.Pending:
+                    _connectingLinks[surviving++] = link;
+                    break;
+                case TcpConnectPollOutcome.Connected:
+                    _dispatcher.Register(slot.Link.Socket, () => OnLinkReadable(link.Index), () => OnLinkWritable(link.Index));
+                    _pendingEvents.Add(new PendingEvent { Kind = RawEventKind.Connected, Link = link });
+                    break;
+                case TcpConnectPollOutcome.Failed:
+                    FailDial(link.Index, slot, result.Error);
+                    break;
+            }
+        }
+
+        _connectingLinks.RemoveRange(surviving, _connectingLinks.Count - surviving);
+    }
+
+    /// <summary>
+    /// Closes a Link whose dial failed, translating the platform <see cref="SocketError"/> into the
+    /// small, stable <see cref="CloseReason"/> roster a consumer's retry logic switches on — the exact
+    /// error still travels in the <see cref="DiagnosticId.LinkFailed"/> record this logs alongside.
+    /// </summary>
+    private void FailDial(int index, LinkSlot slot, SocketError error)
+    {
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForLinkFailed(new LinkId(index, _generations[index]), error));
+        }
+
+        CloseReason reason = error switch
+        {
+            SocketError.ConnectionRefused => CloseReason.Refused,
+            SocketError.HostUnreachable or SocketError.NetworkUnreachable => CloseReason.Unreachable,
+            _ => CloseReason.Failed,
+        };
+
+        CloseSlot(index, slot, reason);
+    }
+
+    /// <summary>
+    /// Accepts as many pending connections as the shared admission cap still allows this Frame,
+    /// stopping the moment the cap is spent or the backlog runs dry — whichever comes first. Unlike
+    /// <see cref="OnLinkReadable"/>'s one-read-per-Pump fairness rule, a listening Link may produce
+    /// several <see cref="RawEventKind.Accepted"/> events in a single Pump: the admission cap, not a
+    /// per-Link read share, is what bounds a burst of inbound connections here, because accepting
+    /// holds no read share to bound it with in the first place (ADR 0012, ADR 0014).
+    /// </summary>
+    private void OnListenerReadable(int index)
+    {
+        if (_slots[index] is not ListeningLinkSlot listening)
+        {
+            return;
+        }
+
+        while (true)
+        {
+            if (_admissionsThisFrame >= _admissionCap)
+            {
+                if (listening.Link.HasPendingConnection)
+                {
+                    _capDeferralsThisFrame++;
+                }
+
+                return;
+            }
+
+            // Every slot is occupied — a different exhaustion than the admission cap, reachable
+            // because the cap can be configured above ReactorOptions.Capacity. Checked before the
+            // accept rather than after, so a connection this Reactor has no room for stays in the OS
+            // backlog untouched: accepting it first would complete the handshake and then drop it,
+            // showing the peer an established-then-closed connection where the slice spec requires
+            // that a Reactor at capacity say nothing on the wire at all. No slot frees up later in
+            // this same Pump, so there is nothing to gain by looping further either way. It carries
+            // its own diagnostic rather than borrowing AdmissionCapReached, because the two are
+            // fixed by different knobs: one wants Capacity raised, the other the cap lowered.
+            int? freeIndex = TryFindFreeSlot();
+            if (freeIndex is null)
+            {
+                if (listening.Link.HasPendingConnection)
+                {
+                    _capacityDeferralsThisFrame++;
+                }
+
+                return;
+            }
+
+            TcpAcceptResult result = listening.Link.TryAccept();
+            switch (result.Outcome)
+            {
+                case TcpAcceptOutcome.NoPendingConnection:
+                    return;
+                case TcpAcceptOutcome.Failed:
+                    RecordListenerAcceptFailed(index, result.Error);
+                    return;
+                case TcpAcceptOutcome.Accepted:
+                    AdmitAccepted(index, freeIndex.Value, result.Socket!);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Registers a socket a listening Link just accepted into <paramref name="freeIndex"/> as a new
+    /// stream Link, and queues the <see cref="RawEventKind.Accepted"/> event naming both it and the
+    /// listener. The caller finds the free slot before accepting rather than letting this method look
+    /// one up, so that a Reactor with nowhere to put a connection never takes it off the backlog in
+    /// the first place — see the remarks in <see cref="OnListenerReadable"/>.
+    /// </summary>
+    private void AdmitAccepted(int listenerIndex, int freeIndex, Socket acceptedSocket)
+    {
+        TcpLink link = TcpLink.FromAccepted(acceptedSocket);
+        _slots[freeIndex] = new StreamLinkSlot(link);
+        _dispatcher.Register(link.Socket, () => OnLinkReadable(freeIndex), () => OnLinkWritable(freeIndex));
+        _admissionsThisFrame++;
+        _pendingEvents.Add(new PendingEvent
+        {
+            Kind = RawEventKind.Accepted,
+            Link = new LinkId(freeIndex, _generations[freeIndex]),
+            Listener = new LinkId(listenerIndex, _generations[listenerIndex]),
+        });
+    }
+
+    /// <summary>
+    /// Logs this Frame's deferrals as at most one record per cause — a
+    /// <see cref="DiagnosticId.AdmissionCapReached"/> for the Links the admission cap turned away and
+    /// a <see cref="DiagnosticId.CapacityExhausted"/> for the Links that found no free slot. Both
+    /// feed the one <c>AdmissionDeferrals</c> counter, which does not distinguish them.
+    /// </summary>
+    private void RecordAdmissionDeferrals()
+    {
+        RecordAdmissionDeferrals(_capDeferralsThisFrame);
+        RecordAdmissionDeferrals(_capacityDeferralsThisFrame);
+
+        if (!_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            return;
+        }
+
+        if (_capDeferralsThisFrame > 0)
+        {
+            _diagnostics.Log(DiagnosticRecord.ForAdmissionCapReached(_admissionCap, _capDeferralsThisFrame));
+        }
+
+        if (_capacityDeferralsThisFrame > 0)
+        {
+            _diagnostics.Log(DiagnosticRecord.ForCapacityExhausted(_slots.Length, _capacityDeferralsThisFrame));
+        }
+    }
+
+    /// <summary>Adds <paramref name="deferrals"/> to the Reactor-scope deferral counter.</summary>
+    private void RecordAdmissionDeferrals(int deferrals)
+    {
+        for (int i = 0; i < deferrals; i++)
+        {
+            _counters.RecordAdmissionDeferral();
+        }
+    }
+
+    /// <summary>
+    /// Logs a failed accept attempt without closing the listening Link — see the remarks on
+    /// <see cref="TcpListenLink.TryAccept"/> for why one bad connection never stops a listener from
+    /// admitting the next one.
+    /// </summary>
+    private void RecordListenerAcceptFailed(int index, SocketError error)
+    {
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForLinkFailed(new LinkId(index, _generations[index]), error));
+        }
     }
 
     private void CloseSlot(int index, LinkSlot slot, CloseReason reason)
     {
-        _dispatcher.Unregister(slot.Link.Socket);
-        slot.Link.Dispose();
+        _dispatcher.Unregister(slot.Socket);
+        slot.Dispose();
         _slots[index] = null;
         int generation = _generations[index];
         _generations[index]++;
@@ -443,7 +945,16 @@ public sealed class RawReactor : IDisposable
         });
     }
 
-    private int FindFreeSlot()
+    private int FindFreeSlot() =>
+        TryFindFreeSlot() ?? throw new InvalidOperationException(
+            $"Reactor is at capacity ({_slots.Length}) — close a Link before binding another.");
+
+    /// <summary>
+    /// The non-throwing counterpart to <see cref="FindFreeSlot"/>, for callers inside a Pump — an
+    /// accept that finds the Reactor full must leave the connection to be dealt with rather than throw
+    /// out of a dispatcher callback (ADR 0007's "say nothing" applies here too).
+    /// </summary>
+    private int? TryFindFreeSlot()
     {
         for (int i = 0; i < _slots.Length; i++)
         {
@@ -453,8 +964,7 @@ public sealed class RawReactor : IDisposable
             }
         }
 
-        throw new InvalidOperationException(
-            $"Reactor is at capacity ({_slots.Length}) — close a Link before binding another.");
+        return null;
     }
 
     private LinkSlot? ResolveSlot(LinkId link)
@@ -503,11 +1013,73 @@ public sealed class RawReactor : IDisposable
         }
     }
 
-    private sealed class LinkSlot(UdpLink link)
+    /// <summary>
+    /// The state one occupied slot holds, common to every kind of Link this Reactor registers: the
+    /// underlying socket (so the dispatcher and <see cref="Dispose"/> never need to know which kind
+    /// they are unregistering or disposing), the bound local address, and this Link's own counters. A
+    /// listening Link, a stream Link and a datagram Link each subclass this only to add what makes
+    /// them able to send or receive differently — "Listener" and "stream" are never surfaced as
+    /// public types, only as which subclass a slot happens to be (ADR 0008).
+    /// </summary>
+    private abstract class LinkSlot(Socket socket, IPEndPoint localEndPoint)
+    {
+        public Socket Socket { get; } = socket;
+
+        public IPEndPoint LocalEndPoint { get; } = localEndPoint;
+
+        public LinkCounterSet Counters { get; } = new();
+
+        public abstract void Dispose();
+    }
+
+    /// <summary>A slot occupied by a bound UDP Link.</summary>
+    private sealed class DatagramLinkSlot(UdpLink link) : LinkSlot(link.Socket, link.LocalEndPoint)
     {
         public UdpLink Link { get; } = link;
 
-        public LinkCounterSet Counters { get; } = new();
+        public override void Dispose() => Link.Dispose();
+    }
+
+    /// <summary>
+    /// A slot occupied by a listening TCP Link — a Link like any other, consuming a capacity slot but
+    /// holding no read share, since accepting reads nothing into the frame arena (ADR 0014).
+    /// </summary>
+    private sealed class ListeningLinkSlot(TcpListenLink link) : LinkSlot(link.Socket, link.LocalEndPoint)
+    {
+        public TcpListenLink Link { get; } = link;
+
+        public override void Dispose() => Link.Dispose();
+    }
+
+    /// <summary>
+    /// A slot occupied by a stream TCP Link, whether produced by an accept or by dialling out — the two
+    /// are indistinguishable once registered, and a dialled one is still occupying this same kind of
+    /// slot while its handshake is in flight, before <see cref="RawEventKind.Connected"/> or a failed
+    /// <see cref="RawEventKind.Closed"/> resolves it.
+    /// </summary>
+    private sealed class StreamLinkSlot(TcpLink link) : LinkSlot(link.Socket, link.LocalEndPoint)
+    {
+        public TcpLink Link { get; } = link;
+
+        /// <summary>
+        /// Whether <see cref="RawEventKind.EndOfStream"/> has already been queued for this Link. The
+        /// FIN that produces it leaves the socket permanently readable, so this is what stops every
+        /// later Pump from queuing the same event again — the remote already said everything it is
+        /// going to say (ADR 0008).
+        /// </summary>
+        public bool EndOfStreamDelivered { get; set; }
+
+        /// <summary>
+        /// Whether <see cref="RawReactor.Shutdown"/> has already sent this Link's own FIN. Checked by
+        /// <see cref="RawReactor.Send"/> so a further send after Shutdown fails deterministically —
+        /// rather than relying on whatever <see cref="System.Net.Sockets.SocketError"/> a platform
+        /// happens to raise for writing to an already-shutdown socket, which is exactly the kind of
+        /// platform-specific detail <see cref="CloseReason"/> and this Result-based surface exist to
+        /// paper over. <c>Shutdown</c> is one-way: nothing ever clears this back.
+        /// </summary>
+        public bool WriteShutdown { get; set; }
+
+        public override void Dispose() => Link.Dispose();
     }
 
     private readonly record struct PendingEvent
@@ -515,6 +1087,8 @@ public sealed class RawReactor : IDisposable
         public RawEventKind Kind { get; init; }
 
         public LinkId Link { get; init; }
+
+        public LinkId Listener { get; init; }
 
         public Source Source { get; init; }
 

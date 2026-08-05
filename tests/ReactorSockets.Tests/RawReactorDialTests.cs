@@ -1,0 +1,184 @@
+using System.Net;
+using FluentAssertions;
+using Xunit;
+
+namespace ReactorSockets.Tests;
+
+/// <summary>
+/// Dialling outbound TCP connections and the two dial-failure reasons — sub-issue 2.2. Every assertion
+/// is against the drained <see cref="RawEvent"/>s, a <see cref="Result"/> or a
+/// <see cref="DiagnosticRecord"/>; nothing here reaches into how or when a connect was detected.
+/// </summary>
+/// <remarks>
+/// The two unroutable-destination tests below are verified on Windows only, and are expected to be the
+/// first thing that fails when this suite is first run on Linux. A dial is begun on a non-blocking
+/// socket, so Windows reports essentially every dial outcome later, through the pending socket error
+/// <c>PollConnect</c> reads; Linux instead returns some of them — including the unreachable-network
+/// case — synchronously from <c>connect</c> itself, where the dial path currently discards them and the
+/// socket then polls writable with no error pending. Making that path portable is deliberately deferred
+/// until the suite can actually be run on Linux rather than guessed at from here.
+/// </remarks>
+public class RawReactorDialTests
+{
+    [Fact]
+    public void Connect_ListeningPort_PumpBothSides_DrainsExactlyOneConnected()
+    {
+        // Arrange — one Reactor plays both roles: it listens, and it dials its own listener, on loopback.
+        using RawReactorHarness harness = new(capacity: 4);
+        (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
+
+        // Act
+        LinkId dialLink = harness.Reactor.Connect(localEndPoint);
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpAndDrainAll(pumps: 3);
+
+        // Assert
+        drained.Should().ContainSingle(evt => evt.Kind == RawEventKind.Connected && evt.Link == dialLink);
+    }
+
+    [Fact]
+    public void Connect_BeforeAnyPump_ProducesNoEvent()
+    {
+        // Arrange
+        using RawReactorHarness harness = new();
+        (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
+
+        // Act — Connect registers the Link; nothing has Pumped yet.
+        harness.Reactor.Connect(localEndPoint);
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.DrainToList();
+
+        // Assert
+        drained.Should().BeEmpty("nothing is delivered except in response to a Pump");
+    }
+
+    [Fact]
+    public void Connect_ClosedPort_DrainsClosedWithRefused()
+    {
+        // Arrange — a port that was genuinely bound a moment ago, then released, so nothing answers it.
+        using RawReactorHarness harness = new();
+        IPEndPoint closedEndPoint = harness.ReserveAndReleaseLoopbackPort();
+
+        // Act — a real RST for a refused loopback connect is not instant in every environment (observed
+        // over a second in this one), so this polls with a real delay rather than a fixed Pump count;
+        // see PumpAndDrainReasonsUntilClosed's remarks.
+        LinkId dialLink = harness.Reactor.Connect(closedEndPoint);
+        List<(RawEventKind Kind, LinkId Link, CloseReason Reason)> drained =
+            harness.PumpAndDrainReasonsUntilClosed(dialLink);
+
+        // Assert
+        drained.Should().ContainSingle(evt => evt.Kind == RawEventKind.Closed && evt.Link == dialLink)
+            .Which.Reason.Should().Be(CloseReason.Refused);
+    }
+
+    [Fact]
+    public void Connect_ClosedPort_LogsLinkFailedCarryingThePlatformSocketError()
+    {
+        // Arrange
+        using RawReactorHarness harness = new();
+        IPEndPoint closedEndPoint = harness.ReserveAndReleaseLoopbackPort();
+
+        // Act
+        LinkId dialLink = harness.Reactor.Connect(closedEndPoint);
+        harness.PumpAndDrainReasonsUntilClosed(dialLink);
+
+        // Assert
+        DiagnosticRecord record = harness.Sink.Received.Should()
+            .ContainSingle(r => r.Id == DiagnosticId.LinkFailed).Subject;
+        record.Level.Should().Be(DiagnosticLevel.Warn, "a reset or refusal is a stranger's prerogative (ADR 0013)");
+        record.Link.Should().Be(dialLink);
+        record.Value0.Should().NotBe(0, "Value0 carries the platform SocketError for a failed dial");
+    }
+
+    [Fact]
+    public void Connect_ReservedClassEAddress_DrainsClosedWithUnreachable()
+    {
+        // Arrange — 240.0.0.0/4 is reserved and no IP stack will route it, so the kernel rejects the
+        // destination outright rather than putting a packet on the wire and waiting. That is what makes
+        // this deterministic where an ordinary unrouted address is not: a TEST-NET address like
+        // 192.0.2.1 goes to the default gateway and stays Pending indefinitely, whereas this resolves
+        // before Connect returns and is readable by the first Pump. Nothing about the environment's
+        // routing table participates.
+        using RawReactorHarness harness = new();
+        IPEndPoint unreachableEndPoint = new(IPAddress.Parse("240.0.0.1"), 1);
+
+        // Act
+        LinkId dialLink = harness.Reactor.Connect(unreachableEndPoint);
+        List<(RawEventKind Kind, LinkId Link, CloseReason Reason)> drained = harness.PumpAndDrainReasons(pumps: 1);
+
+        // Assert
+        drained.Should().ContainSingle(evt => evt.Kind == RawEventKind.Closed && evt.Link == dialLink)
+            .Which.Reason.Should().Be(CloseReason.Unreachable);
+    }
+
+    [Fact]
+    public void Connect_LimitedBroadcastAddress_DrainsClosedWithFailed()
+    {
+        // Arrange — the catch-all arm of the reason mapping, which exists precisely for platform errors
+        // the roster has no dedicated word for. Dialling the limited broadcast address is rejected by
+        // the stack as AddressNotAvailable — neither a refusal nor an unreachable network — so it lands
+        // in that arm, and like the reserved-address case above it resolves without a round trip.
+        using RawReactorHarness harness = new();
+        IPEndPoint broadcastEndPoint = new(IPAddress.Broadcast, 1);
+
+        // Act
+        LinkId dialLink = harness.Reactor.Connect(broadcastEndPoint);
+        List<(RawEventKind Kind, LinkId Link, CloseReason Reason)> drained = harness.PumpAndDrainReasons(pumps: 1);
+
+        // Assert
+        drained.Should().ContainSingle(evt => evt.Kind == RawEventKind.Closed && evt.Link == dialLink)
+            .Which.Reason.Should().Be(CloseReason.Failed);
+    }
+
+    [Fact]
+    public void Connect_ReturnsLinkWithNonZeroLocalPort()
+    {
+        // Arrange — TCP binds the local end implicitly on connect, before the handshake resolves.
+        using RawReactorHarness harness = new();
+        (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
+
+        // Act
+        LinkId dialLink = harness.Reactor.Connect(localEndPoint);
+
+        // Assert
+        harness.Reactor.LocalOf(dialLink).Port.Should().NotBe(0);
+    }
+
+    [Fact]
+    public void SendTo_DialledStreamLink_ReturnsFailedResult()
+    {
+        // Arrange
+        using RawReactorHarness harness = new();
+        (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
+        LinkId dialLink = harness.Reactor.Connect(localEndPoint);
+        Source destination = Source.FromIPEndPoint(new IPEndPoint(IPAddress.Loopback, 12345));
+
+        // Act
+        Result result = harness.Reactor.SendTo(dialLink, destination, [1, 2, 3]);
+
+        // Assert
+        result.IsSuccess.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Pump_SeveralDialsResolving_QueuesConnectedEventsInTheOrderTheDialsWereBegun()
+    {
+        // Arrange — three dials begun in a known order against the same listener. However many Pumps
+        // they take to resolve, their Connected events must come back in dial order: the consumer has
+        // nothing else to correlate them by, and a Reactor that polled its in-flight dials backwards
+        // would hand back an order that looks arbitrary from the outside.
+        using RawReactorHarness harness = new(capacity: 8);
+        (_, IPEndPoint serverEndPoint) = harness.ListenOnLoopback();
+        LinkId[] dialledInOrder =
+        [
+            harness.Reactor.Connect(serverEndPoint),
+            harness.Reactor.Connect(serverEndPoint),
+            harness.Reactor.Connect(serverEndPoint),
+        ];
+
+        // Act
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpAndDrainAll(5);
+
+        // Assert
+        drained.Where(evt => evt.Kind == RawEventKind.Connected).Select(evt => evt.Link)
+            .Should().Equal(dialledInOrder);
+    }
+}

@@ -38,6 +38,7 @@ public class AssemblySkeletonTests
             nameof(RawEventEnumerator),
             nameof(CloseReason),
             nameof(Result),
+            nameof(SendResult),
             nameof(LinkId),
             nameof(Source),
             nameof(SourceFamily),

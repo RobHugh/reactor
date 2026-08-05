@@ -10,8 +10,11 @@ namespace ReactorSockets;
 public enum DiagnosticId
 {
     /// <summary>
-    /// The configured admission cap was hit this Pump. No subject. <c>Value0</c> is the cap,
-    /// <c>Value1</c> is the number of admissions deferred.
+    /// The configured admission cap was hit this Pump while a connection was still waiting in the
+    /// OS backlog. No subject. <c>Value0</c> is the cap, <c>Value1</c> is the number of deferrals —
+    /// listening Links that still had a pending connection when the cap ran out, not the number of
+    /// connections left waiting. That depth is unknowable without accepting, which is exactly what
+    /// hitting the cap stops the Reactor from doing, so it is deliberately not claimed here.
     /// </summary>
     AdmissionCapReached = 1,
 
@@ -21,6 +24,15 @@ public enum DiagnosticId
     /// <c>Value1</c> is the arena's bytes free at the moment of the request.
     /// </summary>
     ArenaExhausted = 2,
+
+    /// <summary>
+    /// Every capacity slot was occupied this Pump while a connection was still waiting in the OS
+    /// backlog — a different exhaustion from <see cref="AdmissionCapReached"/>, reachable because the
+    /// admission cap can be configured above <see cref="ReactorOptions.Capacity"/>. No subject.
+    /// <c>Value0</c> is the capacity, <c>Value1</c> is the number of deferrals, counted the same way
+    /// and with the same limit as <see cref="AdmissionCapReached"/>'s.
+    /// </summary>
+    CapacityExhausted = 3,
 
     /// <summary>
     /// A registered Link failed and closed. Subject is the Link. <c>Value0</c> carries the
