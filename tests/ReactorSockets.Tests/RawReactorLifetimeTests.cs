@@ -112,17 +112,10 @@ public class RawReactorLifetimeTests
     }
 
     [Fact]
-    public void Pump_SinkThatLetsTheReentrancyThrowEscape_IsFaultedAndTheFrameStillCompletes()
+    public void Pump_SinkThatLetsTheReentrancyThrowEscape_DoesNotLetItReachTheConsumer()
     {
-        // Arrange — a Sink that lets the exception out has thrown, so it faults like any other
-        // misbehaving Sink rather than taking the Frame down with it.
-        ReentrantDiagnosticsSink sink = new()
-        {
-            ReentrantCall = reactor => reactor.Pump(),
-            LetTheThrowEscape = true,
-        };
-        using RawReactorHarness harness = new(scratchBufferSize: 16, sinkOverride: sink);
-        sink.Reactor = harness.Reactor;
+        // Arrange
+        using RawReactorHarness harness = EscapingReentrantSinkHarness(out _);
 
         // Act
         Action act = () =>
@@ -133,7 +126,51 @@ public class RawReactorLifetimeTests
 
         // Assert
         act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void Log_SinkThatLetsTheReentrancyThrowEscape_IsInvokedExactlyOnce()
+    {
+        // Arrange
+        using RawReactorHarness harness = EscapingReentrantSinkHarness(out ReentrantDiagnosticsSink sink);
+
+        // Act
+        harness.ProvokeTruncation();
+        harness.ProvokeTruncation();
+
+        // Assert
         sink.CallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public void Counters_SinkThatLetsTheReentrancyThrowEscape_ReportSinkFaultedExactlyOnce()
+    {
+        // Arrange
+        using RawReactorHarness harness = EscapingReentrantSinkHarness(out _);
+
+        // Act
+        harness.ProvokeTruncation();
+        harness.ProvokeTruncation();
+
+        // Assert
         harness.Reactor.Counters.SinkFaulted.Should().Be(1);
+    }
+
+    /// <summary>
+    /// A Reactor whose Sink re-enters it and lets the resulting exception escape. Such a Sink has
+    /// thrown, so it must fault and be disabled like any other misbehaving Sink rather than taking the
+    /// Frame down with it — which is three separate facts, one per test above.
+    /// </summary>
+    private static RawReactorHarness EscapingReentrantSinkHarness(out ReentrantDiagnosticsSink sink)
+    {
+        sink = new ReentrantDiagnosticsSink
+        {
+            ReentrantCall = reactor => reactor.Pump(),
+            LetTheThrowEscape = true,
+        };
+
+        RawReactorHarness harness = new(scratchBufferSize: 16, sinkOverride: sink);
+        sink.Reactor = harness.Reactor;
+        return harness;
     }
 }

@@ -16,6 +16,13 @@ internal enum ArenaReservationOutcome
     /// ADR 0014); refused before touching the arena so a loud share-holder cannot starve a quiet
     /// one in the same Frame.
     /// </summary>
+    /// <remarks>
+    /// No profile produces this yet, and the Raw profile cannot: it reads each ready Link once per
+    /// Pump, so a share-holder never reaches a second reservation in one Frame. This is retained
+    /// rather than deleted because it is the bound a profile that reads a Link in a loop must have,
+    /// and the arena is already sized on the assumption that it exists. Anything asserting it needs
+    /// such a profile first — treat it as unexercised until then.
+    /// </remarks>
     ShareExhausted,
 
     /// <summary>

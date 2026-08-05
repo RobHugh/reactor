@@ -45,6 +45,11 @@ public sealed class ReactorOptions
     /// <see cref="System.TimeProvider.System"/>; only <c>GetTimestamp</c>/<c>GetElapsedTime</c>
     /// are ever consulted, never <c>GetUtcNow</c>.
     /// </summary>
+    /// <remarks>
+    /// The Raw profile measures no durations, so nothing in this slice reads this. It lives on the
+    /// shared options value because it is the same knob every profile takes, and the Session
+    /// profiles' liveness deadlines, retransmit timers and re-dial schedules are its first readers.
+    /// </remarks>
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     /// <summary>

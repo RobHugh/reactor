@@ -64,6 +64,10 @@ internal sealed class UdpLink : IDisposable
             throw;
         }
 
+        // `!` works around a framework limitation: Socket.LocalEndPoint is typed EndPoint? for the
+        // whole lifetime of a Socket, but a Socket that has returned from Bind always has one, and
+        // nothing above can observe this instance before that. There is no overload or annotation
+        // that expresses "bound" in the type.
         return new UdpLink(socket, (IPEndPoint)socket.LocalEndPoint!);
     }
 

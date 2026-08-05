@@ -40,29 +40,105 @@ public class RawReactorPumpTests
     }
 
     [Fact]
-    public void Pump_CalledFromAnotherThread_ThrowsInvalidOperationException()
+    public void Pump_CalledFromAnotherThread_ThrowsNamingTheConstructingThreadRule()
     {
         // Arrange
         using RawReactorHarness harness = new();
 
         // Act
+        Exception? observed = CaptureFromAnotherThread(() => harness.Reactor.Pump());
+
+        // Assert — the message, not just the type: a foreign-thread Pump that got past the guard
+        // could throw InvalidOperationException from deeper in the scan anyway.
+        observed.Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Contain("may only be driven from the thread that constructed it");
+    }
+
+    [Fact]
+    public void SendTo_CalledFromAnotherThread_ThrowsNamingTheConstructingThreadRule()
+    {
+        // Arrange
+        using RawReactorHarness harness = new();
+        (LinkId link, IPEndPoint localEndPoint) = harness.BindLoopbackLink();
+        Source destination = Source.FromIPEndPoint(localEndPoint);
+
+        // Act
+        Exception? observed = CaptureFromAnotherThread(() => harness.Reactor.SendTo(link, destination, [1, 2, 3]));
+
+        // Assert
+        observed.Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Contain("may only be driven from the thread that constructed it");
+    }
+
+    [Fact]
+    public void Send_CalledFromAnotherThread_ThrowsNamingTheConstructingThreadRule()
+    {
+        // Arrange — Send fails for every Link this profile can hand out, but it is still a mutating
+        // member, so the affinity rule applies before the Result does.
+        using RawReactorHarness harness = new();
+        (LinkId link, _) = harness.BindLoopbackLink();
+
+        // Act
+        Exception? observed = CaptureFromAnotherThread(() => harness.Reactor.Send(link, [1, 2, 3]));
+
+        // Assert
+        observed.Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Contain("may only be driven from the thread that constructed it");
+    }
+
+    [Fact]
+    public void Shutdown_CalledFromAnotherThread_ThrowsNamingTheConstructingThreadRule()
+    {
+        // Arrange
+        using RawReactorHarness harness = new();
+        (LinkId link, _) = harness.BindLoopbackLink();
+
+        // Act
+        Exception? observed = CaptureFromAnotherThread(() => harness.Reactor.Shutdown(link));
+
+        // Assert
+        observed.Should().BeOfType<InvalidOperationException>()
+            .Which.Message.Should().Contain("may only be driven from the thread that constructed it");
+    }
+
+    [Fact]
+    public void CountersOf_CalledFromAnotherThread_DoesNotThrow()
+    {
+        // Arrange — the pure reads deliberately do not check the thread, so that a consumer may sample
+        // a counter from a monitoring thread. Pinning it stops the affinity rule being widened to the
+        // reads by accident.
+        using RawReactorHarness harness = new();
+        (LinkId link, _) = harness.BindLoopbackLink();
+
+        // Act
+        Exception? observed = CaptureFromAnotherThread(() => harness.Reactor.CountersOf(link));
+
+        // Assert
+        observed.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Runs <paramref name="act"/> to completion on a foreign thread and returns whatever it threw, or
+    /// <see langword="null"/> if it returned normally.
+    /// </summary>
+    private static Exception? CaptureFromAnotherThread(Action act)
+    {
         Exception? observed = null;
         Thread otherThread = new(() =>
         {
             try
             {
-                harness.Reactor.Pump();
+                act();
             }
             catch (Exception exception)
             {
                 observed = exception;
             }
         });
+
         otherThread.Start();
         otherThread.Join();
-
-        // Assert
-        observed.Should().BeOfType<InvalidOperationException>();
+        return observed;
     }
 
     [Fact]

@@ -36,15 +36,22 @@ internal sealed class ReentrantDiagnosticsSink : IReactorDiagnostics
     public void Log(in DiagnosticRecord record)
     {
         CallCount++;
+
+        // Not `Reactor!`: the Sink has to exist before the Reactor it calls back into, so this
+        // genuinely can be null if a test forgets to set it. Saying so beats a NullReferenceException
+        // surfacing as a faulted Sink, which is exactly what these tests are trying to distinguish.
+        RawReactor reactor = Reactor
+            ?? throw new InvalidOperationException($"{nameof(Reactor)} was never set on this Sink — assign it after constructing the Reactor.");
+
         if (LetTheThrowEscape)
         {
-            ReentrantCall(Reactor!);
+            ReentrantCall(reactor);
             return;
         }
 
         try
         {
-            ReentrantCall(Reactor!);
+            ReentrantCall(reactor);
         }
         catch (Exception exception)
         {

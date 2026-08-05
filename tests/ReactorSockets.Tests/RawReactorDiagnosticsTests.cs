@@ -70,7 +70,7 @@ public class RawReactorDiagnosticsTests
     }
 
     [Fact]
-    public void Log_ThrowingSink_IsInvokedExactlyOnceAndTheFrameStillCompletes()
+    public void Pump_ThrowingSink_DoesNotLetTheThrowReachTheConsumer()
     {
         // Arrange
         ThrowingDiagnosticsSink throwingSink = new();
@@ -86,6 +86,21 @@ public class RawReactorDiagnosticsTests
 
         // Assert
         act.Should().NotThrow("a faulting Sink is a deliberate exception to bugs-always-throw");
+    }
+
+    [Fact]
+    public void Log_ThrowingSink_IsInvokedExactlyOnce()
+    {
+        // Arrange
+        ThrowingDiagnosticsSink throwingSink = new();
+        using RawReactorHarness harness = new(scratchBufferSize: 16, sinkOverride: throwingSink);
+
+        // Act
+        harness.ProvokeTruncation();
+        harness.ProvokeTruncation();
+        harness.ProvokeTruncation();
+
+        // Assert
         throwingSink.CallCount.Should().Be(1, "the Sink is disabled for the life of the Reactor after it throws");
     }
 

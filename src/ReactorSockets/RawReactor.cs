@@ -11,6 +11,34 @@ namespace ReactorSockets;
 /// own loop. Nothing is delivered except in response to a call the consumer made, on the thread that
 /// constructed this Reactor. This slice implements the datagram half only — TCP joins in slice 2.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>How a bad <see cref="LinkId"/> is reported.</b> A member that already returns a
+/// <see cref="Result"/> reports it as a failed Result: the channel exists, and a Link closing under a
+/// caller is an ordinary race rather than a programmer error, so <see cref="SendTo"/>,
+/// <see cref="Send"/> and <see cref="Shutdown"/> never throw for one. A member that returns data has
+/// no such channel — <see cref="LocalOf"/> and <see cref="CountersOf"/> would have to invent a
+/// sentinel or widen every call site into an unwrap — so they throw
+/// <see cref="ArgumentException"/> instead. <see cref="Close"/> is neither: it is idempotent by
+/// design, so a stale <see cref="LinkId"/> is simply a no-op.
+/// </para>
+/// <para>
+/// <b>Which members check the calling thread.</b> Every member that mutates this Reactor or its
+/// sockets enforces the constructing-thread rule (ADR 0002): <see cref="Pump"/>, <see cref="Bind"/>,
+/// <see cref="SendTo"/>, <see cref="Send"/>, <see cref="Shutdown"/>, <see cref="Close"/> and
+/// <see cref="Dispose"/>. The pure reads — <see cref="LocalOf"/>, <see cref="CountersOf"/> and
+/// <see cref="Counters"/> — deliberately do not, because each only copies out a value that the
+/// Reactor never mutates in place.
+/// </para>
+/// <para>
+/// That is not a claim that they are safe to call concurrently with a Pump. The counters behind
+/// <see cref="Counters"/> and <see cref="CountersOf"/> are plain fields incremented without a barrier,
+/// so a reader on another thread has no guarantee of freshness and may observe a snapshot whose
+/// fields come from either side of a Pump. What it will not observe is a half-written value or a
+/// disposed socket. Treat a cross-thread counter read as a sample, not as a consistent cut; a
+/// consumer that needs one should read from its own Pump thread between Pumps.
+/// </para>
+/// </remarks>
 public sealed class RawReactor : IDisposable
 {
     /// <summary>
@@ -66,7 +94,7 @@ public sealed class RawReactor : IDisposable
             $"one maximum-sized read of {resolvedScratchBufferSize} bytes");
 
         _constructingThreadId = Environment.CurrentManagedThreadId;
-        _dispatcher = new ReadinessDispatcher(options.TimeProvider);
+        _dispatcher = new ReadinessDispatcher();
         _arena = new FrameArena(arenaSize, options.Capacity);
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Sink, options.MinimumLevel, _counters);
@@ -206,24 +234,41 @@ public sealed class RawReactor : IDisposable
     }
 
     /// <summary>
-    /// <c>Send</c> is stream-only and illegal on a datagram Link. Always returns a failed
-    /// <see cref="Result"/> naming the illegality rather than throwing (ADR 0008) — Raw has no stream
-    /// Links until slice 2, so every Link this Reactor can hand out is datagram-only.
+    /// <c>Send</c> is stream-only and illegal on a datagram Link. Fails without throwing (ADR 0008),
+    /// naming whichever applies: <paramref name="link"/> does not address an open Link, or it does and
+    /// that Link is datagram.
     /// </summary>
+    /// <remarks>
+    /// The open check comes first on purpose. Raw binds nothing but UDP, so the illegality is the only
+    /// outcome a caller can reach today — but answering "illegal on a datagram Link" to a stale or
+    /// garbage <see cref="LinkId"/> would be a lie about a Link that does not exist, and it is a lie
+    /// that survives: once slice 2 adds stream Links, a test that only ever asserted the illegality
+    /// message would keep passing while the answer became wrong for a stream Link.
+    /// </remarks>
     public Result Send(LinkId link, ReadOnlySpan<byte> payload)
     {
         EnsureUsable();
-        return Result.Failure("Send is illegal on a datagram Link — use SendTo.");
+        EnsureCallingThreadIsConstructingThread();
+
+        return ResolveSlot(link) is null
+            ? Result.Failure($"Link {link} is not open.")
+            : Result.Failure("Send is illegal on a datagram Link — use SendTo.");
     }
 
     /// <summary>
-    /// <c>Shutdown</c> is stream-only and illegal on a datagram Link. Always returns a failed
-    /// <see cref="Result"/> naming the illegality rather than throwing (ADR 0008).
+    /// <c>Shutdown</c> is stream-only and illegal on a datagram Link. Fails without throwing
+    /// (ADR 0008), naming whichever applies: <paramref name="link"/> does not address an open Link, or
+    /// it does and that Link is datagram. The open check comes first, for the reason on
+    /// <see cref="Send"/>.
     /// </summary>
     public Result Shutdown(LinkId link)
     {
         EnsureUsable();
-        return Result.Failure("Shutdown is illegal on a datagram Link.");
+        EnsureCallingThreadIsConstructingThread();
+
+        return ResolveSlot(link) is null
+            ? Result.Failure($"Link {link} is not open.")
+            : Result.Failure("Shutdown is illegal on a datagram Link.");
     }
 
     /// <summary>
@@ -282,6 +327,22 @@ public sealed class RawReactor : IDisposable
         };
     }
 
+    /// <summary>
+    /// Reads a ready Link exactly once, then returns to the scan. This single read — not the frame
+    /// arena's fair share — is what bounds how much of one Pump a single Link can consume, and it is
+    /// the deliberate choice for the Raw profile: it is the strongest possible fairness guarantee
+    /// (every ready Link is served before any Link is served twice) and it costs one syscall per Link
+    /// per Pump, which a consumer already controls by choosing how often to Pump.
+    /// </summary>
+    /// <remarks>
+    /// The consequence is that a Link cannot reach a second <c>Reserve</c> in one Frame, so
+    /// <see cref="ArenaReservationOutcome.ShareExhausted"/> is unreachable through this Reactor's
+    /// public surface. The arena's share is therefore a second, looser ceiling here: it only bites
+    /// through the one-whole-unit escape, when a single datagram exceeds a share. Both mechanisms are
+    /// kept because a later profile that reads a Link in a loop needs the share to be the bound —
+    /// changing this method to loop until <c>ShareExhausted</c> is what makes that switch, and the
+    /// arena is already sized for it.
+    /// </remarks>
     private void OnLinkReadable(int index)
     {
         LinkSlot? slot = _slots[index];

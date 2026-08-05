@@ -59,28 +59,49 @@ public class RawReactorFrameTests
     }
 
     [Fact]
-    public void Drain_ArenaWithNoRoomForASecondLinksDatagram_DeliversOneAndReportsArenaExhausted()
+    public void Drain_ArenaWithNoRoomForASecondLinksDatagram_DeliversOnlyTheFirst()
     {
-        // Arrange — ArenaSize is left unset, so it defaults to this profile's floor: one maximum-sized
-        // read, which for Raw is the scratch buffer. That gives an arena of 1 200 bytes shared by two
-        // Links, both ready in the same Frame; the first commits 1 000 and the second cannot fit in
-        // the 200 that remain.
-        using RawReactorHarness harness = new(capacity: 2, scratchBufferSize: 1200);
-        (_, IPEndPoint firstEndPoint) = harness.BindLoopbackLink();
-        (_, IPEndPoint secondEndPoint) = harness.BindLoopbackLink();
-        byte[] payload = new byte[1000];
-        harness.SendFromCounterparty(firstEndPoint, payload);
-        harness.SendFromCounterparty(secondEndPoint, payload);
+        // Arrange
+        using RawReactorHarness harness = ArenaTooSmallForBothLinks();
 
         // Act
         harness.Reactor.Pump();
 
         // Assert
         harness.DrainToList().Should().ContainSingle();
+    }
+
+    [Fact]
+    public void Pump_ArenaWithNoRoomForASecondLinksDatagram_ReportsArenaExhaustedWithTheArithmetic()
+    {
+        // Arrange
+        using RawReactorHarness harness = ArenaTooSmallForBothLinks();
+
+        // Act
+        harness.Reactor.Pump();
+
+        // Assert
         DiagnosticRecord record = harness.Sink.Received.Should()
             .ContainSingle(record => record.Id == DiagnosticId.ArenaExhausted).Subject;
         record.Value0.Should().Be(1000, "the refused request's size is reported");
         record.Value1.Should().Be(200, "so is the arena's free space at the moment it was refused");
+    }
+
+    /// <summary>
+    /// Two Links both ready in one Frame, sharing an arena that cannot hold both their datagrams.
+    /// ArenaSize is left unset, so it defaults to this profile's floor: one maximum-sized read, which
+    /// for Raw is the scratch buffer. That gives an arena of 1 200 bytes; the first Link commits
+    /// 1 000 and the second cannot fit in the 200 that remain.
+    /// </summary>
+    private static RawReactorHarness ArenaTooSmallForBothLinks()
+    {
+        RawReactorHarness harness = new(capacity: 2, scratchBufferSize: 1200);
+        (_, IPEndPoint firstEndPoint) = harness.BindLoopbackLink();
+        (_, IPEndPoint secondEndPoint) = harness.BindLoopbackLink();
+        byte[] payload = new byte[1000];
+        harness.SendFromCounterparty(firstEndPoint, payload);
+        harness.SendFromCounterparty(secondEndPoint, payload);
+        return harness;
     }
 
     [Fact]

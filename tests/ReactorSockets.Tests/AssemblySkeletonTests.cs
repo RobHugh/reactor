@@ -61,6 +61,9 @@ public class AssemblySkeletonTests
         Assembly assembly = ReactorSocketsAssembly;
 
         // Act
+        // `!` works around a framework limitation: Type.FullName is declared string? because it is
+        // null for generic parameters and a few other constructed forms, none of which GetExportedTypes
+        // can return.
         IEnumerable<string> leaked = assembly.GetExportedTypes()
             .Where(type => type.Namespace != "ReactorSockets")
             .Select(type => type.FullName!);
@@ -103,6 +106,9 @@ public class AssemblySkeletonTests
             from method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
             from parameter in method.GetParameters()
             where parameter.ParameterType == typeof(string)
+            // `!` works around a framework limitation: ParameterInfo.Name is declared string? for
+            // return parameters and metadata without names, neither of which GetParameters yields
+            // for a method compiled from C# source.
             where addressLikeNames.Any(name => parameter.Name!.Contains(name, StringComparison.OrdinalIgnoreCase))
             select $"{type.Name}.{method.Name}({parameter.Name})";
 
