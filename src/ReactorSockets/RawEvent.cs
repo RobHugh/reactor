@@ -6,8 +6,8 @@ namespace ReactorSockets;
 /// drained in (ADR 0008). <see cref="Kind"/> determines exactly which other fields are populated —
 /// this slice implements <see cref="RawEventKind.DatagramReceived"/>, <see cref="RawEventKind.Closed"/>,
 /// <see cref="RawEventKind.Accepted"/>, <see cref="RawEventKind.Connected"/>,
-/// <see cref="RawEventKind.SegmentReceived"/> and <see cref="RawEventKind.EndOfStream"/>; <c>Writable</c>
-/// joins this roster as the rest of slice 2 lands.
+/// <see cref="RawEventKind.SegmentReceived"/>, <see cref="RawEventKind.EndOfStream"/> and
+/// <see cref="RawEventKind.Writable"/> — the complete Raw profile roster.
 /// </summary>
 public readonly ref struct RawEvent
 {
@@ -94,4 +94,12 @@ public readonly ref struct RawEvent
     /// </summary>
     internal static RawEvent ForEndOfStream(LinkId link) =>
         new(RawEventKind.EndOfStream, link, default, default, default, default);
+
+    /// <summary>
+    /// Builds a <see cref="RawEventKind.Writable"/> event. Carries only <see cref="Link"/> — this is a
+    /// reply to a short <c>Send</c> the consumer already made on it, not new information about the
+    /// remote end.
+    /// </summary>
+    internal static RawEvent ForWritable(LinkId link) =>
+        new(RawEventKind.Writable, link, default, default, default, default);
 }

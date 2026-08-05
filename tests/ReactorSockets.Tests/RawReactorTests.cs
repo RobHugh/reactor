@@ -206,7 +206,7 @@ public class RawReactorTests
         LinkId link = harness.Reactor.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
         // Act
-        Result result = harness.Reactor.Send(link, [1, 2, 3]);
+        SendResult result = harness.Reactor.Send(link, [1, 2, 3]);
 
         // Assert — the message, not just the failure: a stale LinkId also fails here, and these two
         // tests only distinguish the datagram rule from the not-open rule if they read what it says.
@@ -222,7 +222,7 @@ public class RawReactorTests
         harness.Reactor.Close(link);
 
         // Act
-        Result result = harness.Reactor.Send(link, [1, 2, 3]);
+        SendResult result = harness.Reactor.Send(link, [1, 2, 3]);
 
         // Assert
         result.Error.Should().Contain("is not open");

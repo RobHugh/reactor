@@ -12,8 +12,9 @@ namespace ReactorSockets;
 /// constructed this Reactor. TCP joins the datagram surface here: a listening Link and the connections
 /// it accepts are registered and admitted the same way, and a stream Link's reads drain as
 /// <see cref="RawEventKind.SegmentReceived"/> and <see cref="RawEventKind.EndOfStream"/> exactly like a
-/// datagram Link's, though a stream Link's send and half-close still wait on a later sub-issue of this
-/// slice.
+/// datagram Link's. A stream Link's <see cref="Send"/> takes what the socket will take and reports the
+/// count, arming exactly one <see cref="RawEventKind.Writable"/> when it took fewer bytes than
+/// offered; <see cref="Shutdown"/> sends this Link's own FIN while it stays open for reading.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -322,19 +323,33 @@ public sealed class RawReactor : IDisposable
     }
 
     /// <summary>
-    /// <c>Send</c> is stream-only and illegal on a datagram or listening Link. Fails without throwing
-    /// (ADR 0008), naming whichever applies: <paramref name="link"/> does not address an open Link, or
-    /// it does and that Link cannot take a stream send.
+    /// <c>Send</c> is stream-only and illegal on a datagram or listening Link. Takes what the socket
+    /// will accept of <paramref name="payload"/> right now and reports the count — never blocks, never
+    /// copies and never queues (ADR 0008): whatever the socket did not take stays with the caller, who
+    /// decides whether and when to offer it again. Queuing was rejected on principle, not merely left
+    /// out: an unbounded queue is a memory leak with a network cause, and a bounded one needs a limit
+    /// this library would have to justify plus a way to learn when to retry — which reintroduces this
+    /// same event under another name. Either way the Reactor would be inventing a per-Link FIFO policy,
+    /// which is machinery a Session has and Raw was said not to lend.
     /// </summary>
     /// <remarks>
-    /// The open check comes first on purpose — answering an illegality to a stale or garbage
-    /// <see cref="LinkId"/> would be a lie about a Link that does not exist. A stream (accepted)
-    /// Link resolves but a functioning send is not yet wired up: this sub-issue registers the Link a
-    /// listener accepts, but the partial-send and <see cref="RawEventKind"/>-armed <c>Writable</c>
-    /// machinery it needs is a later sub-issue of this slice, so a stream Link fails here too for now
-    /// rather than silently doing nothing or throwing.
+    /// <para>
+    /// A send that takes fewer bytes than <paramref name="payload"/>.Length arms exactly one
+    /// <see cref="RawEventKind.Writable"/> for <paramref name="link"/>: the next <see cref="Pump"/>
+    /// that finds the socket writable queues it and clears the mark, so a consumer using this Link
+    /// only ever sees one <c>Writable</c> per short send, never one for every Pump a socket happens to
+    /// be writable (nearly always). A Link never over-sent on produces no <c>Writable</c> at all — the
+    /// event is a reply to something the consumer did, not a status this Reactor volunteers.
+    /// </para>
+    /// <para>
+    /// Fails without throwing (ADR 0008), naming whichever applies: <paramref name="link"/> does not
+    /// address an open Link, it does but cannot take a stream send, it was already shut down for
+    /// writing by <see cref="Shutdown"/>, or the socket itself failed. The open check comes first —
+    /// answering an illegality to a stale or garbage <see cref="LinkId"/> would be a lie about a Link
+    /// that does not exist.
+    /// </para>
     /// </remarks>
-    public Result Send(LinkId link, ReadOnlySpan<byte> payload)
+    public SendResult Send(LinkId link, ReadOnlySpan<byte> payload)
     {
         EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
@@ -342,28 +357,47 @@ public sealed class RawReactor : IDisposable
         LinkSlot? slot = ResolveSlot(link);
         if (slot is null)
         {
-            return Result.Failure($"Link {link} is not open.");
+            return SendResult.Failure($"Link {link} is not open.");
         }
 
         if (slot is DatagramLinkSlot)
         {
-            return Result.Failure("Send is illegal on a datagram Link — use SendTo.");
+            return SendResult.Failure("Send is illegal on a datagram Link — use SendTo.");
         }
 
-        if (slot is ListeningLinkSlot)
+        if (slot is not StreamLinkSlot stream)
         {
-            return Result.Failure("Send is illegal on a listening Link.");
+            return SendResult.Failure("Send is illegal on a listening Link.");
         }
 
-        return Result.Failure("Send on a stream Link is not implemented yet — a later sub-issue of this slice wires it up.");
+        if (stream.WriteShutdown)
+        {
+            return SendResult.Failure($"Link {link} was already shut down for writing — Shutdown is one-way.");
+        }
+
+        TcpLinkSendResult result = stream.Link.Send(payload);
+        if (!result.IsSuccess)
+        {
+            return SendResult.Failure($"Send failed: {result.Error}.");
+        }
+
+        stream.Counters.RecordBytesSent(result.BytesSent);
+        if (result.BytesSent < payload.Length)
+        {
+            _dispatcher.ArmWritable(stream.Link.Socket);
+        }
+
+        return SendResult.Success(result.BytesSent);
     }
 
     /// <summary>
-    /// <c>Shutdown</c> is stream-only and illegal on a datagram or listening Link. Fails without
-    /// throwing (ADR 0008), naming whichever applies: <paramref name="link"/> does not address an open
-    /// Link, or it does and that Link cannot be shut down. The open check comes first, for the reason
-    /// on <see cref="Send"/>; a stream Link's real half-close ships with a later sub-issue of this
-    /// slice, for the same reason <see cref="Send"/> does not yet function on one.
+    /// <c>Shutdown</c> is stream-only and illegal on a datagram or listening Link. Sends this Link's
+    /// own FIN, closing the send half while the Link stays open for reading — this is what lets a
+    /// consumer build a request-response protocol that signals end-of-request by closing the write
+    /// half, and it is a one-way door: a further <see cref="Send"/> on this Link fails afterwards.
+    /// Fails without throwing (ADR 0008), naming whichever applies: <paramref name="link"/> does not
+    /// address an open Link, or it does and that Link cannot be shut down. The open check comes first,
+    /// for the reason on <see cref="Send"/>.
     /// </summary>
     public Result Shutdown(LinkId link)
     {
@@ -381,12 +415,24 @@ public sealed class RawReactor : IDisposable
             return Result.Failure("Shutdown is illegal on a datagram Link.");
         }
 
-        if (slot is ListeningLinkSlot)
+        if (slot is not StreamLinkSlot stream)
         {
             return Result.Failure("Shutdown is illegal on a listening Link.");
         }
 
-        return Result.Failure("Shutdown on a stream Link is not implemented yet — a later sub-issue of this slice wires it up.");
+        if (stream.WriteShutdown)
+        {
+            return Result.Failure($"Link {link} was already shut down for writing.");
+        }
+
+        TcpLinkShutdownResult result = stream.Link.Shutdown();
+        if (!result.IsSuccess)
+        {
+            return Result.Failure($"Shutdown failed: {result.Error}.");
+        }
+
+        stream.WriteShutdown = true;
+        return Result.Success();
     }
 
     /// <summary>
@@ -446,6 +492,7 @@ public sealed class RawReactor : IDisposable
             RawEventKind.SegmentReceived => RawEvent.ForSegmentReceived(
                 pending.Link, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
             RawEventKind.EndOfStream => RawEvent.ForEndOfStream(pending.Link),
+            RawEventKind.Writable => RawEvent.ForWritable(pending.Link),
             _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised RawEventKind."),
         };
     }
@@ -479,6 +526,24 @@ public sealed class RawReactor : IDisposable
             case StreamLinkSlot streamSlot:
                 OnStreamLinkReadable(index, streamSlot);
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Queues exactly one <see cref="RawEventKind.Writable"/> for the stream Link at <paramref name="index"/>.
+    /// Called only by the dispatcher, and only for a socket it just found writable while armed
+    /// (<see cref="Core.ReadinessDispatcher.ArmWritable"/>) — the dispatcher itself disarms before
+    /// invoking this, so nothing here needs to re-check that the mark was still set.
+    /// </summary>
+    private void OnLinkWritable(int index)
+    {
+        if (_slots[index] is StreamLinkSlot)
+        {
+            _pendingEvents.Add(new PendingEvent
+            {
+                Kind = RawEventKind.Writable,
+                Link = new LinkId(index, _generations[index]),
+            });
         }
     }
 
@@ -668,7 +733,7 @@ public sealed class RawReactor : IDisposable
                     continue;
                 case TcpConnectPollOutcome.Connected:
                     _connectingLinks.RemoveAt(i);
-                    _dispatcher.Register(slot.Link.Socket, () => OnLinkReadable(link.Index));
+                    _dispatcher.Register(slot.Link.Socket, () => OnLinkReadable(link.Index), () => OnLinkWritable(link.Index));
                     _pendingEvents.Add(new PendingEvent { Kind = RawEventKind.Connected, Link = link });
                     break;
                 case TcpConnectPollOutcome.Failed:
@@ -771,7 +836,7 @@ public sealed class RawReactor : IDisposable
         TcpLink link = TcpLink.FromAccepted(acceptedSocket);
         _slots[newIndex.Value] = new StreamLinkSlot(link);
         int acceptedIndex = newIndex.Value;
-        _dispatcher.Register(link.Socket, () => OnLinkReadable(acceptedIndex));
+        _dispatcher.Register(link.Socket, () => OnLinkReadable(acceptedIndex), () => OnLinkWritable(acceptedIndex));
         _admissionsThisFrame++;
         _pendingEvents.Add(new PendingEvent
         {
@@ -947,6 +1012,16 @@ public sealed class RawReactor : IDisposable
         /// going to say (ADR 0008).
         /// </summary>
         public bool EndOfStreamDelivered { get; set; }
+
+        /// <summary>
+        /// Whether <see cref="RawReactor.Shutdown"/> has already sent this Link's own FIN. Checked by
+        /// <see cref="RawReactor.Send"/> so a further send after Shutdown fails deterministically —
+        /// rather than relying on whatever <see cref="System.Net.Sockets.SocketError"/> a platform
+        /// happens to raise for writing to an already-shutdown socket, which is exactly the kind of
+        /// platform-specific detail <see cref="CloseReason"/> and this Result-based surface exist to
+        /// paper over. <c>Shutdown</c> is one-way: nothing ever clears this back.
+        /// </summary>
+        public bool WriteShutdown { get; set; }
 
         public override void Dispose() => Link.Dispose();
     }

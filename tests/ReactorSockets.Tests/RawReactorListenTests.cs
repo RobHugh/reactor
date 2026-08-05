@@ -148,7 +148,7 @@ public class RawReactorListenTests
         LinkId listener = harness.Reactor.Listen(new IPEndPoint(IPAddress.Loopback, 0));
 
         // Act
-        Result result = harness.Reactor.Send(listener, [1, 2, 3]);
+        SendResult result = harness.Reactor.Send(listener, [1, 2, 3]);
 
         // Assert
         result.IsSuccess.Should().BeFalse();

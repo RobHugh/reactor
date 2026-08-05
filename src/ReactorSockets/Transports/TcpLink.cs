@@ -5,9 +5,9 @@ namespace ReactorSockets.Transports;
 
 /// <summary>
 /// L1: one connected (or connecting) TCP socket, produced either by a listening Link's accept or by
-/// dialling out. Carries only the socket and its bound local address for now — reads, sends and
-/// half-close join this type as the sub-issues that need them land, exactly as <see cref="UdpLink"/>
-/// was built out incrementally in its own slice.
+/// dialling out. Carries the socket and its bound local address, and — like <see cref="UdpLink"/> —
+/// is built out incrementally in its own slice: reads (<see cref="Receive"/>), sends
+/// (<see cref="Send"/>) and half-close (<see cref="Shutdown"/>) all land here.
 /// </summary>
 internal sealed class TcpLink : IDisposable
 {
@@ -26,10 +26,16 @@ internal sealed class TcpLink : IDisposable
     /// <summary>
     /// Wraps a socket a listening Link just pulled off its backlog. TCP binds the local end
     /// implicitly on accept, so <see cref="LocalEndPoint"/> is read back from the socket rather than
-    /// supplied by the caller.
+    /// supplied by the caller. Put into non-blocking mode here, for the same reason <see cref="Dial"/>
+    /// puts a dialled socket into non-blocking mode: <see cref="Send"/> must never stall the caller's
+    /// thread waiting for buffer room, and <see cref="Socket.Accept()"/> hands back a blocking socket
+    /// by default regardless of the listening socket's own mode.
     /// </summary>
-    public static TcpLink FromAccepted(Socket acceptedSocket) =>
-        new(acceptedSocket, (IPEndPoint)acceptedSocket.LocalEndPoint!);
+    public static TcpLink FromAccepted(Socket acceptedSocket)
+    {
+        acceptedSocket.Blocking = false;
+        return new(acceptedSocket, (IPEndPoint)acceptedSocket.LocalEndPoint!);
+    }
 
     /// <summary>
     /// Begins connecting a new TCP socket to <paramref name="endpoint"/> and returns immediately —
@@ -121,6 +127,52 @@ internal sealed class TcpLink : IDisposable
         catch (SocketException exception)
         {
             return TcpLinkReceiveResult.ForFailed(exception.SocketErrorCode);
+        }
+    }
+
+    /// <summary>
+    /// Takes what the socket will accept of <paramref name="payload"/> right now and reports the
+    /// count — never blocks, never copies, never queues (ADR 0008). A non-blocking socket's send
+    /// buffer can be full with nothing wrong: that surfaces as <see cref="SocketError.WouldBlock"/>
+    /// from the runtime, translated here into a successful send of zero bytes rather than a failure,
+    /// because nothing about the Link or the connection failed — the caller simply offered more than
+    /// there was room for at this instant. Any other <see cref="SocketException"/> is a real failure
+    /// and is reported as one.
+    /// </summary>
+    public TcpLinkSendResult Send(ReadOnlySpan<byte> payload)
+    {
+        try
+        {
+            int sent = Socket.Send(payload, SocketFlags.None);
+            return TcpLinkSendResult.ForSent(sent);
+        }
+        catch (SocketException exception) when (exception.SocketErrorCode == SocketError.WouldBlock)
+        {
+            return TcpLinkSendResult.ForSent(0);
+        }
+        catch (SocketException exception)
+        {
+            return TcpLinkSendResult.ForFailed(exception.SocketErrorCode);
+        }
+    }
+
+    /// <summary>
+    /// Sends this Link's own FIN, closing the send half while the Link stays open for reading — what
+    /// lets a consumer build a request-response protocol that signals end-of-request by closing the
+    /// write half, without losing the ability to read a reply. Half-close, not full close: nothing
+    /// about the read direction changes here, and closing the socket outright is <c>Close</c>'s job,
+    /// not this one's.
+    /// </summary>
+    public TcpLinkShutdownResult Shutdown()
+    {
+        try
+        {
+            Socket.Shutdown(SocketShutdown.Send);
+            return TcpLinkShutdownResult.ForSuccess();
+        }
+        catch (SocketException exception)
+        {
+            return TcpLinkShutdownResult.ForFailed(exception.SocketErrorCode);
         }
     }
 

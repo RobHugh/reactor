@@ -138,9 +138,9 @@ public class RawReactorStreamReadTests
     [Fact]
     public void Drain_CounterpartyShutsDownSendHalf_LinkStillAcceptsASendCallAfterwards()
     {
-        // Arrange — the half-open state is real: the Link must still resolve as an open stream Link,
-        // not one the Reactor silently dropped. Send itself is not wired up until a later sub-issue, so
-        // the observable proof is that it fails with "not implemented", not with "is not open".
+        // Arrange — the half-open state is real: EndOfStream is a statement about the read direction
+        // only, so this Link's own send half must be entirely unaffected by the counterparty shutting
+        // down theirs.
         using RawReactorHarness harness = new(capacity: 4);
         (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
         using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
@@ -151,12 +151,11 @@ public class RawReactorStreamReadTests
         harness.DrainToList();
 
         // Act
-        Result result = harness.Reactor.Send(acceptedLink, [1, 2, 3]);
+        SendResult result = harness.Reactor.Send(acceptedLink, [1, 2, 3]);
 
         // Assert
-        result.IsSuccess.Should().BeFalse();
-        result.Error.Should().Contain("not implemented",
-            "a half-open Link is still open — this must not be the same failure a closed Link produces");
+        result.IsSuccess.Should().BeTrue("a half-open Link's own send half is unaffected by the peer's half-close");
+        result.BytesSent.Should().Be(3);
     }
 
     [Fact]

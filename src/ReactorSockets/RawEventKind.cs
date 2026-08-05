@@ -4,7 +4,7 @@ namespace ReactorSockets;
 /// Which kind of <see cref="RawEvent"/> a drained event is. This slice adds the stream-relevant kinds
 /// to the datagram-only roster shipped earlier (ADR 0008); <see cref="Accepted"/> lands with the
 /// listening-Link work, <see cref="Connected"/> with dialling, <see cref="SegmentReceived"/> and
-/// <see cref="EndOfStream"/> with stream reads, and <c>Writable</c> joins as the rest of slice 2 does.
+/// <see cref="EndOfStream"/> with stream reads, and <see cref="Writable"/> with partial sends.
 /// </summary>
 public enum RawEventKind
 {
@@ -48,4 +48,13 @@ public enum RawEventKind
     /// reclaim it.
     /// </summary>
     EndOfStream,
+
+    /// <summary>
+    /// A stream Link that took fewer bytes than offered on a previous <c>Send</c> has become writable
+    /// again. <see cref="RawEvent.Link"/> is populated. Armed, not level-triggered: exactly one of
+    /// these follows a short send, and a Link never over-sent on produces none at all — a reply to
+    /// something the consumer did, not a status the Reactor volunteers every Pump a socket happens to
+    /// be writable (which is nearly always).
+    /// </summary>
+    Writable,
 }
