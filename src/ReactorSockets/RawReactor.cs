@@ -22,18 +22,21 @@ namespace ReactorSockets;
 /// <see cref="Result"/> reports it as a failed Result: the channel exists, and a Link closing under a
 /// caller is an ordinary race rather than a programmer error, so <see cref="SendTo"/>,
 /// <see cref="Send"/> and <see cref="Shutdown"/> never throw for one. A member that returns data has
-/// no such channel — <see cref="LocalOf"/> and <see cref="CountersOf"/> would have to invent a
-/// sentinel or widen every call site into an unwrap — so they throw
-/// <see cref="ArgumentException"/> instead. <see cref="Close"/> is neither: it is idempotent by
-/// design, so a stale <see cref="LinkId"/> is simply a no-op.
+/// no such channel — <see cref="LocalOf"/>, <see cref="RemoteOf"/> and <see cref="CountersOf"/> would
+/// have to invent a sentinel or widen every call site into an unwrap — so they throw
+/// <see cref="ArgumentException"/> instead, whether the <see cref="LinkId"/> does not address an open
+/// Link at all, or it does but the Link is the wrong kind to answer the question (<see cref="RemoteOf"/>
+/// on a datagram or listening Link — the same wrong-kind case <see cref="Send"/>, <see cref="SendTo"/>
+/// and <see cref="Shutdown"/> report as a failed Result instead, because they can). <see cref="Close"/>
+/// is neither: it is idempotent by design, so a stale <see cref="LinkId"/> is simply a no-op.
 /// </para>
 /// <para>
 /// <b>Which members check the calling thread.</b> Every member that mutates this Reactor or its
 /// sockets enforces the constructing-thread rule (ADR 0002): <see cref="Pump"/>, <see cref="Bind"/>,
 /// <see cref="SendTo"/>, <see cref="Send"/>, <see cref="Shutdown"/>, <see cref="Close"/> and
-/// <see cref="Dispose"/>. The pure reads — <see cref="LocalOf"/>, <see cref="CountersOf"/> and
-/// <see cref="Counters"/> — deliberately do not, because each only copies out a value that the
-/// Reactor never mutates in place.
+/// <see cref="Dispose"/>. The pure reads — <see cref="LocalOf"/>, <see cref="RemoteOf"/>,
+/// <see cref="CountersOf"/> and <see cref="Counters"/> — deliberately do not, because each only
+/// copies out a value that the Reactor never mutates in place.
 /// </para>
 /// <para>
 /// That is not a claim that they are safe to call concurrently with a Pump. The counters behind
@@ -447,6 +450,32 @@ public sealed class RawReactor : IDisposable
         LinkSlot? slot = ResolveSlot(link) ?? throw new ArgumentException($"Link {link} is not open.", nameof(link));
 
         return slot.LocalEndPoint;
+    }
+
+    /// <summary>
+    /// Returns the remote address of the stream Link <paramref name="link"/> — Link state, constant
+    /// for the Link's lifetime and therefore not event data, which is exactly why
+    /// <see cref="RawEventKind.Accepted"/> carries no address (ADR 0014). Illegal on a datagram or
+    /// listening Link, since neither has a single peer for its whole lifetime the way a stream
+    /// connection does — a bound UDP socket answers many senders, and a listening socket answers
+    /// none. Throws <see cref="ArgumentException"/> if <paramref name="link"/> does not address an
+    /// open Link, or does but is the wrong kind, for the reason given on this type's own remarks: a
+    /// member that returns data has no <see cref="Result"/> channel to report a wrong-kind call
+    /// through instead.
+    /// </summary>
+    public IPEndPoint RemoteOf(LinkId link)
+    {
+        EnsureUsable();
+
+        LinkSlot? slot = ResolveSlot(link) ?? throw new ArgumentException($"Link {link} is not open.", nameof(link));
+
+        if (slot is not StreamLinkSlot stream)
+        {
+            throw new ArgumentException(
+                $"Link {link} is not a stream Link — RemoteOf is illegal on a datagram or listening Link.", nameof(link));
+        }
+
+        return stream.Link.RemoteEndPoint;
     }
 
     /// <summary>

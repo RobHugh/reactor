@@ -65,8 +65,9 @@ public readonly ref struct RawEvent
 
     /// <summary>
     /// Builds a <see cref="RawEventKind.Accepted"/> event naming both the listener that fired and the
-    /// new connection it produced. Carries no address (ADR 0014): <c>RemoteOf</c>/<c>LocalOf</c> are
-    /// Link state, constant for the Link's lifetime, and answering that question here would make
+    /// new connection it produced. Carries no address (ADR 0014): <see cref="RawReactor.RemoteOf"/>
+    /// and <see cref="RawReactor.LocalOf"/> are Link state, constant for the Link's lifetime, and
+    /// answering that question here would make
     /// <see cref="Source"/> stop being exclusively the per-datagram claim.
     /// </summary>
     internal static RawEvent ForAccepted(LinkId listener, LinkId link) =>

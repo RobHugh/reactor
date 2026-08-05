@@ -11,14 +11,25 @@ namespace ReactorSockets.Transports;
 /// </summary>
 internal sealed class TcpLink : IDisposable
 {
-    private TcpLink(Socket socket, IPEndPoint localEndPoint)
+    private TcpLink(Socket socket, IPEndPoint localEndPoint, IPEndPoint remoteEndPoint)
     {
         Socket = socket;
         LocalEndPoint = localEndPoint;
+        RemoteEndPoint = remoteEndPoint;
     }
 
     /// <summary>The socket's own local address, constant for this Link's lifetime.</summary>
     public IPEndPoint LocalEndPoint { get; }
+
+    /// <summary>
+    /// The peer's address, constant for this Link's lifetime (ADR 0014) — set once, here, and never
+    /// re-read from the socket afterwards, because both the ways a <see cref="TcpLink"/> comes to
+    /// exist already know it without asking: an accepted socket reports it immediately since it is
+    /// already connected, and a dialled socket's remote is exactly the endpoint the caller asked
+    /// <see cref="Dial"/> to reach, true whether or not the handshake has resolved yet — the same
+    /// reasoning <see cref="LocalEndPoint"/> already relies on for a dial in flight.
+    /// </summary>
+    public IPEndPoint RemoteEndPoint { get; }
 
     /// <summary>The underlying socket, registered with the readiness dispatcher by the caller.</summary>
     public Socket Socket { get; }
@@ -26,15 +37,16 @@ internal sealed class TcpLink : IDisposable
     /// <summary>
     /// Wraps a socket a listening Link just pulled off its backlog. TCP binds the local end
     /// implicitly on accept, so <see cref="LocalEndPoint"/> is read back from the socket rather than
-    /// supplied by the caller. Put into non-blocking mode here, for the same reason <see cref="Dial"/>
-    /// puts a dialled socket into non-blocking mode: <see cref="Send"/> must never stall the caller's
-    /// thread waiting for buffer room, and <see cref="Socket.Accept()"/> hands back a blocking socket
-    /// by default regardless of the listening socket's own mode.
+    /// supplied by the caller — and so is <see cref="RemoteEndPoint"/>, since an accepted socket is
+    /// already connected and therefore already knows who to. Put into non-blocking mode here, for the
+    /// same reason <see cref="Dial"/> puts a dialled socket into non-blocking mode: <see cref="Send"/>
+    /// must never stall the caller's thread waiting for buffer room, and <see cref="Socket.Accept()"/>
+    /// hands back a blocking socket by default regardless of the listening socket's own mode.
     /// </summary>
     public static TcpLink FromAccepted(Socket acceptedSocket)
     {
         acceptedSocket.Blocking = false;
-        return new(acceptedSocket, (IPEndPoint)acceptedSocket.LocalEndPoint!);
+        return new(acceptedSocket, (IPEndPoint)acceptedSocket.LocalEndPoint!, (IPEndPoint)acceptedSocket.RemoteEndPoint!);
     }
 
     /// <summary>
@@ -72,7 +84,7 @@ internal sealed class TcpLink : IDisposable
         // `!` works around a framework limitation, as in FromAccepted above: Connect — blocking or not,
         // successful or not — always binds a local end first, but Socket.LocalEndPoint stays typed
         // EndPoint? for the socket's whole lifetime regardless.
-        return new TcpLink(socket, (IPEndPoint)socket.LocalEndPoint!);
+        return new TcpLink(socket, (IPEndPoint)socket.LocalEndPoint!, endpoint);
     }
 
     /// <summary>
