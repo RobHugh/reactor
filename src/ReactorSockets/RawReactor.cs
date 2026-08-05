@@ -67,7 +67,8 @@ public sealed class RawReactor : IDisposable
     private readonly int _constructingThreadId;
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
-    private int _admissionsDeferredThisFrame;
+    private int _capDeferralsThisFrame;
+    private int _capacityDeferralsThisFrame;
     private bool _inPump;
     private bool _disposed;
 
@@ -145,13 +146,11 @@ public sealed class RawReactor : IDisposable
             _pendingEvents.Clear();
             _arena.Reset();
             _admissionsThisFrame = 0;
-            _admissionsDeferredThisFrame = 0;
+            _capDeferralsThisFrame = 0;
+            _capacityDeferralsThisFrame = 0;
             _dispatcher.Pump();
             ProcessConnectingLinks();
-            if (_admissionsDeferredThisFrame > 0)
-            {
-                RecordAdmissionCapReached();
-            }
+            RecordAdmissionDeferrals();
         }
         finally
         {
@@ -820,7 +819,7 @@ public sealed class RawReactor : IDisposable
             {
                 if (listening.Link.HasPendingConnection)
                 {
-                    _admissionsDeferredThisFrame++;
+                    _capDeferralsThisFrame++;
                 }
 
                 return;
@@ -832,10 +831,17 @@ public sealed class RawReactor : IDisposable
             // backlog untouched: accepting it first would complete the handshake and then drop it,
             // showing the peer an established-then-closed connection where the slice spec requires
             // that a Reactor at capacity say nothing on the wire at all. No slot frees up later in
-            // this same Pump, so there is nothing to gain by looping further either way.
+            // this same Pump, so there is nothing to gain by looping further either way. It carries
+            // its own diagnostic rather than borrowing AdmissionCapReached, because the two are
+            // fixed by different knobs: one wants Capacity raised, the other the cap lowered.
             int? freeIndex = TryFindFreeSlot();
             if (freeIndex is null)
             {
+                if (listening.Link.HasPendingConnection)
+                {
+                    _capacityDeferralsThisFrame++;
+                }
+
                 return;
             }
 
@@ -875,17 +881,39 @@ public sealed class RawReactor : IDisposable
         });
     }
 
-    /// <summary>Logs the deferred admissions this Frame as a single <see cref="DiagnosticId.AdmissionCapReached"/> record.</summary>
-    private void RecordAdmissionCapReached()
+    /// <summary>
+    /// Logs this Frame's deferrals as at most one record per cause — a
+    /// <see cref="DiagnosticId.AdmissionCapReached"/> for the Links the admission cap turned away and
+    /// a <see cref="DiagnosticId.CapacityExhausted"/> for the Links that found no free slot. Both
+    /// feed the one <c>AdmissionDeferrals</c> counter, which does not distinguish them.
+    /// </summary>
+    private void RecordAdmissionDeferrals()
     {
-        for (int i = 0; i < _admissionsDeferredThisFrame; i++)
+        RecordAdmissionDeferrals(_capDeferralsThisFrame);
+        RecordAdmissionDeferrals(_capacityDeferralsThisFrame);
+
+        if (!_diagnostics.IsEnabled(DiagnosticLevel.Warn))
         {
-            _counters.RecordAdmissionDeferred();
+            return;
         }
 
-        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        if (_capDeferralsThisFrame > 0)
         {
-            _diagnostics.Log(DiagnosticRecord.ForAdmissionCapReached(_admissionCap, _admissionsDeferredThisFrame));
+            _diagnostics.Log(DiagnosticRecord.ForAdmissionCapReached(_admissionCap, _capDeferralsThisFrame));
+        }
+
+        if (_capacityDeferralsThisFrame > 0)
+        {
+            _diagnostics.Log(DiagnosticRecord.ForCapacityExhausted(_slots.Length, _capacityDeferralsThisFrame));
+        }
+    }
+
+    /// <summary>Adds <paramref name="deferrals"/> to the Reactor-scope deferral counter.</summary>
+    private void RecordAdmissionDeferrals(int deferrals)
+    {
+        for (int i = 0; i < deferrals; i++)
+        {
+            _counters.RecordAdmissionDeferral();
         }
     }
 

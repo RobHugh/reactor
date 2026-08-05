@@ -11,4 +11,4 @@ public readonly record struct ReactorCounters(
     ulong DatagramsSent,
     ulong DatagramsReceived,
     ulong ArenaHighWaterBytes,
-    ulong AdmissionsDeferred);
+    ulong AdmissionDeferrals);

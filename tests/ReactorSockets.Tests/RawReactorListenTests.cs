@@ -121,6 +121,77 @@ public class RawReactorListenTests
     }
 
     [Fact]
+    public void Pump_SeveralConnectionsDeferredPastTheCap_CountsOneDeferralForTheListenerNotOnePerConnection()
+    {
+        // Arrange — three connections are left in the backlog, but the Reactor never accepted them and
+        // so cannot know there are three. Value1 counts the listening Link that deferred (ADR 0013).
+        using RawReactorHarness harness = new(capacity: 8, admissionCap: 2);
+        (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
+        using Socket first = harness.ConnectCounterpartyTo(localEndPoint);
+        using Socket second = harness.ConnectCounterpartyTo(localEndPoint);
+        using Socket third = harness.ConnectCounterpartyTo(localEndPoint);
+        using Socket fourth = harness.ConnectCounterpartyTo(localEndPoint);
+        using Socket fifth = harness.ConnectCounterpartyTo(localEndPoint);
+
+        // Act
+        harness.Reactor.Pump();
+
+        // Assert
+        harness.Sink.Received.Should().ContainSingle(record => record.Id == DiagnosticId.AdmissionCapReached)
+            .Which.Value1.Should().Be(1);
+    }
+
+    [Fact]
+    public void Pump_MorePendingThanFreeSlots_LogsCapacityExhaustedRatherThanAdmissionCapReached()
+    {
+        // Arrange — capacity, not the cap, is what runs out, and the two have different fixes, so they
+        // are different roster entries (ADR 0013).
+        using RawReactorHarness harness = new(capacity: 2, admissionCap: 5);
+        (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
+        using Socket first = harness.ConnectCounterpartyTo(localEndPoint);
+        using Socket second = harness.ConnectCounterpartyTo(localEndPoint);
+
+        // Act
+        harness.Reactor.Pump();
+
+        // Assert
+        harness.Sink.Received.Should().ContainSingle(record => record.Id == DiagnosticId.CapacityExhausted)
+            .Which.Value0.Should().Be(2);
+    }
+
+    [Fact]
+    public void Pump_MorePendingThanFreeSlots_LogsNoAdmissionCapReached()
+    {
+        // Arrange
+        using RawReactorHarness harness = new(capacity: 2, admissionCap: 5);
+        (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
+        using Socket first = harness.ConnectCounterpartyTo(localEndPoint);
+        using Socket second = harness.ConnectCounterpartyTo(localEndPoint);
+
+        // Act
+        harness.Reactor.Pump();
+
+        // Assert
+        harness.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.AdmissionCapReached);
+    }
+
+    [Fact]
+    public void Pump_MorePendingThanFreeSlots_IncrementsTheAdmissionDeferralCounter()
+    {
+        // Arrange — both causes feed the one counter; only the diagnostics tell them apart.
+        using RawReactorHarness harness = new(capacity: 2, admissionCap: 5);
+        (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
+        using Socket first = harness.ConnectCounterpartyTo(localEndPoint);
+        using Socket second = harness.ConnectCounterpartyTo(localEndPoint);
+
+        // Act
+        harness.Reactor.Pump();
+
+        // Assert
+        harness.Reactor.Counters.AdmissionDeferrals.Should().Be(1);
+    }
+
+    [Fact]
     public void Pump_MoreConnectionsPendingThanTheAdmissionCap_RemainderArriveOnALaterPump()
     {
         // Arrange

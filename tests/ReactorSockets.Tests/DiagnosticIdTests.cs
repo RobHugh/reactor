@@ -8,6 +8,7 @@ public class DiagnosticIdTests
     [Theory]
     [InlineData(DiagnosticId.AdmissionCapReached, 1)]
     [InlineData(DiagnosticId.ArenaExhausted, 2)]
+    [InlineData(DiagnosticId.CapacityExhausted, 3)]
     [InlineData(DiagnosticId.LinkFailed, 100)]
     [InlineData(DiagnosticId.DestinationUnreachable, 101)]
     [InlineData(DiagnosticId.DatagramTruncated, 102)]

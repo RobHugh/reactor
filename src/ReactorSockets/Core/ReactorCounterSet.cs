@@ -12,7 +12,7 @@ internal sealed class ReactorCounterSet
     private ulong _datagramsSent;
     private ulong _datagramsReceived;
     private ulong _arenaHighWaterBytes;
-    private ulong _admissionsDeferred;
+    private ulong _admissionDeferrals;
 
     /// <summary>Records that the installed Sink threw and has been disabled for the life of the Reactor.</summary>
     public void RecordSinkFaulted() => _sinkFaulted++;
@@ -33,10 +33,17 @@ internal sealed class ReactorCounterSet
         }
     }
 
-    /// <summary>Records that one admission (accept or handshake) was deferred past the admission cap.</summary>
-    public void RecordAdmissionDeferred() => _admissionsDeferred++;
+    /// <summary>
+    /// Records one deferral: a Link that had somewhere to admit an inbound connection from and
+    /// declined to, because either the admission cap or capacity was spent. It counts deferring
+    /// Links per Frame, not connections left in the backlog — a Reactor cannot know that depth
+    /// without accepting, which is the thing a deferral consists of not doing. The two causes share
+    /// this counter and are told apart by <see cref="DiagnosticId.AdmissionCapReached"/> versus
+    /// <see cref="DiagnosticId.CapacityExhausted"/>.
+    /// </summary>
+    public void RecordAdmissionDeferral() => _admissionDeferrals++;
 
     /// <summary>Takes a point-in-time snapshot of every Reactor-scope counter.</summary>
     public ReactorCounters Snapshot() =>
-        new(_sinkFaulted, _datagramsSent, _datagramsReceived, _arenaHighWaterBytes, _admissionsDeferred);
+        new(_sinkFaulted, _datagramsSent, _datagramsReceived, _arenaHighWaterBytes, _admissionDeferrals);
 }

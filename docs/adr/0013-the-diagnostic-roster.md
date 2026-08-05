@@ -141,8 +141,22 @@ Value slot meanings belong in XML docs on each member, per ADR 0005; they are gi
 
 | # | Member | Level | Subject | `Value0` / `Value1` |
 | --- | --- | --- | --- | --- |
-| 1 | `AdmissionCapReached` | `Warn` | none | cap / admissions deferred |
+| 1 | `AdmissionCapReached` | `Warn` | none | cap / deferrals |
 | 2 | `ArenaExhausted` | `Warn` | Peer or Link | bytes requested / bytes free |
+| 3 | `CapacityExhausted` | `Warn` | none | capacity / deferrals |
+
+A **deferral** is one Link that had an inbound connection waiting and left it in the OS backlog, counted
+once per Frame per Link. It is not the number of connections left waiting: backlog depth is unknowable
+without accepting, and accepting is precisely what a Reactor at its cap or at capacity must not do — it
+would complete the handshake and then drop it, showing the peer an established-then-closed connection
+where the wire must stay silent. A count nobody can measure is worse than an honest smaller one, so the
+slot carries what is actually known.
+
+`AdmissionCapReached` and `CapacityExhausted` are separate ids rather than one id with a cause slot,
+because they are fixed by different knobs — the first wants the cap lowered or the Frame budget raised,
+the second wants `Capacity` raised — and an operator who has to read `Value1` to know which lever to pull
+is being asked to do the roster's job. They share the one `AdmissionDeferrals` counter; a consumer that
+needs them apart reads the diagnostics, which is what diagnostics are for.
 
 ### Raw
 
@@ -203,7 +217,7 @@ retention high-water and discards belong to a Peer. Very few appear in both.
 
 | Scope | Counters |
 | --- | --- |
-| Reactor | `SinkFaulted`, datagrams sent, datagrams received, datagrams discarded from an unknown Source, arena high-water in bytes, admissions deferred |
+| Reactor | `SinkFaulted`, datagrams sent, datagrams received, datagrams discarded from an unknown Source, arena high-water in bytes, admission deferrals |
 | Per subject | bytes sent, bytes received, packets retransmitted, duplicate packets, out-of-window packets, horizon deferrals, read-share exhaustions, retention high-water in bytes, resumes |
 
 **Counters are monotonic `ulong` and there is no reset.** A reset is a *write* to observation state, and

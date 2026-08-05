@@ -56,9 +56,21 @@ public readonly record struct DiagnosticRecord
     /// <summary>The second numeric slot; meaning documented on the <see cref="DiagnosticId"/> member.</summary>
     public long Value1 { get; }
 
-    /// <summary>Builds a <see cref="DiagnosticId.AdmissionCapReached"/> record. No subject.</summary>
-    public static DiagnosticRecord ForAdmissionCapReached(int cap, int admissionsDeferred) =>
-        new(DiagnosticId.AdmissionCapReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, cap, admissionsDeferred);
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.AdmissionCapReached"/> record. No subject.
+    /// <paramref name="deferrals"/> counts listening Links that deferred, not connections left in
+    /// the backlog — see the remarks on <see cref="DiagnosticId.AdmissionCapReached"/>.
+    /// </summary>
+    public static DiagnosticRecord ForAdmissionCapReached(int cap, int deferrals) =>
+        new(DiagnosticId.AdmissionCapReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, cap, deferrals);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.CapacityExhausted"/> record. No subject.
+    /// <paramref name="deferrals"/> is counted exactly as
+    /// <see cref="ForAdmissionCapReached"/>'s is.
+    /// </summary>
+    public static DiagnosticRecord ForCapacityExhausted(int capacity, int deferrals) =>
+        new(DiagnosticId.CapacityExhausted, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, capacity, deferrals);
 
     /// <summary>
     /// Builds an <see cref="DiagnosticId.ArenaExhausted"/> record for the Link that made the request.
