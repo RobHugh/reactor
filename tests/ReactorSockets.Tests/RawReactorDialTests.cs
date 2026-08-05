@@ -9,6 +9,15 @@ namespace ReactorSockets.Tests;
 /// is against the drained <see cref="RawEvent"/>s, a <see cref="Result"/> or a
 /// <see cref="DiagnosticRecord"/>; nothing here reaches into how or when a connect was detected.
 /// </summary>
+/// <remarks>
+/// The two unroutable-destination tests below are verified on Windows only, and are expected to be the
+/// first thing that fails when this suite is first run on Linux. A dial is begun on a non-blocking
+/// socket, so Windows reports essentially every dial outcome later, through the pending socket error
+/// <c>PollConnect</c> reads; Linux instead returns some of them — including the unreachable-network
+/// case — synchronously from <c>connect</c> itself, where the dial path currently discards them and the
+/// socket then polls writable with no error pending. Making that path portable is deliberately deferred
+/// until the suite can actually be run on Linux rather than guessed at from here.
+/// </remarks>
 public class RawReactorDialTests
 {
     [Fact]
@@ -77,6 +86,46 @@ public class RawReactorDialTests
         record.Level.Should().Be(DiagnosticLevel.Warn, "a reset or refusal is a stranger's prerogative (ADR 0013)");
         record.Link.Should().Be(dialLink);
         record.Value0.Should().NotBe(0, "Value0 carries the platform SocketError for a failed dial");
+    }
+
+    [Fact]
+    public void Connect_ReservedClassEAddress_DrainsClosedWithUnreachable()
+    {
+        // Arrange — 240.0.0.0/4 is reserved and no IP stack will route it, so the kernel rejects the
+        // destination outright rather than putting a packet on the wire and waiting. That is what makes
+        // this deterministic where an ordinary unrouted address is not: a TEST-NET address like
+        // 192.0.2.1 goes to the default gateway and stays Pending indefinitely, whereas this resolves
+        // before Connect returns and is readable by the first Pump. Nothing about the environment's
+        // routing table participates.
+        using RawReactorHarness harness = new();
+        IPEndPoint unreachableEndPoint = new(IPAddress.Parse("240.0.0.1"), 1);
+
+        // Act
+        LinkId dialLink = harness.Reactor.Connect(unreachableEndPoint);
+        List<(RawEventKind Kind, LinkId Link, CloseReason Reason)> drained = harness.PumpAndDrainReasons(pumps: 1);
+
+        // Assert
+        drained.Should().ContainSingle(evt => evt.Kind == RawEventKind.Closed && evt.Link == dialLink)
+            .Which.Reason.Should().Be(CloseReason.Unreachable);
+    }
+
+    [Fact]
+    public void Connect_LimitedBroadcastAddress_DrainsClosedWithFailed()
+    {
+        // Arrange — the catch-all arm of the reason mapping, which exists precisely for platform errors
+        // the roster has no dedicated word for. Dialling the limited broadcast address is rejected by
+        // the stack as AddressNotAvailable — neither a refusal nor an unreachable network — so it lands
+        // in that arm, and like the reserved-address case above it resolves without a round trip.
+        using RawReactorHarness harness = new();
+        IPEndPoint broadcastEndPoint = new(IPAddress.Broadcast, 1);
+
+        // Act
+        LinkId dialLink = harness.Reactor.Connect(broadcastEndPoint);
+        List<(RawEventKind Kind, LinkId Link, CloseReason Reason)> drained = harness.PumpAndDrainReasons(pumps: 1);
+
+        // Assert
+        drained.Should().ContainSingle(evt => evt.Kind == RawEventKind.Closed && evt.Link == dialLink)
+            .Which.Reason.Should().Be(CloseReason.Failed);
     }
 
     [Fact]
