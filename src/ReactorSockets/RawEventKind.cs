@@ -1,8 +1,10 @@
 namespace ReactorSockets;
 
 /// <summary>
-/// Which kind of <see cref="RawEvent"/> a drained event is. This slice implements the datagram-relevant
-/// kinds only; the stream-relevant kinds join this roster in slice 2 (ADR 0008).
+/// Which kind of <see cref="RawEvent"/> a drained event is. This slice adds the stream-relevant kinds
+/// to the datagram-only roster shipped earlier (ADR 0008); <see cref="Accepted"/> lands with the
+/// listening-Link work, and <c>Connected</c>, <c>SegmentReceived</c>, <c>Writable</c> and
+/// <c>EndOfStream</c> join as the rest of slice 2 does.
 /// </summary>
 public enum RawEventKind
 {
@@ -14,4 +16,11 @@ public enum RawEventKind
 
     /// <summary>A Link closed. <see cref="RawEvent.Link"/> and <see cref="RawEvent.Reason"/> are populated.</summary>
     Closed,
+
+    /// <summary>
+    /// A connection was accepted on a listening Link, inside the Pump that found it ready.
+    /// <see cref="RawEvent.Listener"/> names the listening Link that fired; <see cref="RawEvent.Link"/>
+    /// names the new connection, already registered and consuming a capacity slot of its own.
+    /// </summary>
+    Accepted,
 }

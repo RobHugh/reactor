@@ -24,6 +24,7 @@ internal sealed class RawReactorHarness : IDisposable
         int? scratchBufferSize = null,
         DiagnosticLevel minimumLevel = DiagnosticLevel.Trace,
         int? arenaSize = null,
+        int? admissionCap = null,
         IReactorDiagnostics? sinkOverride = null,
         bool withoutDiagnostics = false)
     {
@@ -32,6 +33,7 @@ internal sealed class RawReactorHarness : IDisposable
         {
             Capacity = capacity,
             ArenaSize = arenaSize,
+            AdmissionCap = admissionCap,
             TimeProvider = TimeProvider,
             Sink = installedSink,
             MinimumLevel = installedSink is null ? null : minimumLevel,
@@ -66,6 +68,29 @@ internal sealed class RawReactorHarness : IDisposable
         Socket counterparty = CreateCounterpartySocket();
         counterparty.Bind(new IPEndPoint(IPAddress.Loopback, 0));
         counterparty.SendTo(payload, destination);
+    }
+
+    /// <summary>
+    /// Binds a loopback listening Link and returns it together with the address a counterparty
+    /// connects to.
+    /// </summary>
+    public (LinkId Listener, IPEndPoint LocalEndPoint) ListenOnLoopback()
+    {
+        LinkId listener = Reactor.Listen(new IPEndPoint(IPAddress.Loopback, 0));
+        return (listener, Reactor.LocalOf(listener));
+    }
+
+    /// <summary>
+    /// Begins connecting a fresh BCL TCP counterparty socket to <paramref name="destination"/> and
+    /// returns it immediately — the connect itself runs asynchronously against the OS, exactly like a
+    /// consumer's own dial would, so the caller Pumps the Reactor afterwards for the accept to land.
+    /// </summary>
+    public Socket ConnectCounterpartyTo(IPEndPoint destination)
+    {
+        Socket counterparty = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        _counterpartySockets.Add(counterparty);
+        counterparty.Connect(destination);
+        return counterparty;
     }
 
     /// <summary>
