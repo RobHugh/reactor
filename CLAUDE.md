@@ -13,6 +13,7 @@ Read the relevant one before planning work that lands in either tree.
 - Package: `dotnet add package <Name>`
 
 ## Rules
+@CODEMAP-AGENT-GUIDE.md
 - `.editorconfig` is the sole authority on formatting, indentation, braces, spacing.
 - Run `dotnet format` after modifying files.
 - Never leave `// TODO` or placeholder implementations unless asked.
