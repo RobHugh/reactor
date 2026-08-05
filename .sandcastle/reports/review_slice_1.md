@@ -7,20 +7,26 @@ Written 2026-08-04. Everything here concerns branch `agent/slice-1` and **draft 
 
 All eight sub-issues of #1 (#2–#9) are implemented, gate-verified and pushed. The slice was built by
 the sandcastle orchestrator over three sessions (see `.sandcastle/RESUME.md` for that side of it),
-reviewed by an Opus agent that wrote `PR.md` and opened #65, and has since had four of the eleven
-review items fixed by hand.
+reviewed by an Opus agent that wrote `PR.md` and opened #65, and has since had **ten of the eleven
+review items closed** by hand.
+
+**Only item 5 remains open, and it cannot be closed from Windows** — it needs the suite run on
+Linux. Everything else is decided and implemented.
 
 | | |
 |---|---|
-| Branch | `agent/slice-1` @ `2fd1104` |
+| Branch | `agent/slice-1` @ `174ce5f` |
 | PR | #65, **draft**, base `dev` |
 | Gates | `dotnet format --verify-no-changes`, `dotnet build` (0 warnings), `dotnet test` — all exit 0 |
-| Tests | 80 passing |
+| Tests | 92 passing |
 | Platform verified | Windows 11 / .NET 8 only |
 
 Commit history on the branch:
 
 ```
+174ce5f  Close review items 4, 8, 9, 11 and the rest of 10
+aa35e27  Repair the mojibake the L0 move left in Core/ XML docs
+05e2401  Record slice 1's review state for the next session
 2fd1104  Guard Sink re-entrancy and make RawReactor IDisposable
 1aeffe6  Make L0 internal and re-express its tests at the observable layer
 8aaccf3  Slice 1 review: PR body with reviewer checklist
@@ -123,23 +129,97 @@ Three separate recording-Sink implementations across the test project are consol
 
 ---
 
+## Resolved in this session — the five open decisions
+
+The repo owner took all five decisions on 2026-08-05. Items 4, 8, 9, 11 and the rest of 10 are
+implemented in `174ce5f`; a separate `aa35e27` repairs an encoding defect found while doing it.
+
+### 4. One datagram per Pump does not come from the read cap — decided: keep the single read
+
+`RawReactor.OnLinkReadable` calls `slot.Link.Receive` exactly once per readiness callback, so a Link
+can never reach a second `Reserve` in one Frame and `ArenaReservationOutcome.ShareExhausted` is
+unreachable through the public surface. **This is the intended design for the Raw profile**, not an
+oversight: one read per callback is the strongest fairness guarantee available — every ready Link is
+served before any Link is served twice — and it costs one syscall per Link per Pump, which the
+consumer already controls by choosing how often to Pump.
+
+The reasoning now lives on `OnLinkReadable` rather than in this file, and the consequence is recorded
+on `ShareExhausted` itself: it is retained rather than deleted because it is the bound a profile that
+reads a Link in a loop will need, and the arena is already sized on the assumption that it exists.
+Changing `OnLinkReadable` to loop until `ShareExhausted` is what makes that switch.
+
+**What this closes and what it does not.** The design question is settled. `ShareExhausted` is still
+unexercised code, and stays that way until a profile exists that can reach it — that is now a stated
+property rather than an unnoticed gap.
+
+### 8 and 9. `Send`/`Shutdown` — decided: resolve the LinkId first, and guard the thread
+
+Both now resolve the `LinkId` and answer `"Link {id} is not open."` for a stale one, reaching the
+datagram-illegality message only for a Link that really is open. Both now call
+`EnsureCallingThreadIsConstructingThread`.
+
+The old tests asserted only that the `Result` failed, which is exactly the trap the reviewer
+described: they would have kept passing when slice 2 makes "illegal on a datagram Link" the wrong
+answer for a stream Link. The replacements assert the *message*, so the two rules are distinguishable
+— `Send_OnAnOpenDatagramLink_ReturnsFailedResultNamingTheIllegality` and
+`Send_OnALinkIdThatIsNotOpen_ReturnsFailedResultSayingSo`, and the same pair for `Shutdown`.
+
+Thread affinity now covers every mutating member and no pure read. `Send`, `Shutdown` and `SendTo`
+each have a foreign-thread test; `CountersOf_CalledFromAnotherThread_DoesNotThrow` pins the other
+side, so the rule cannot be widened to the reads by accident. The `Pump` foreign-thread test was
+strengthened from a type-only assertion to a message assertion, for the same reason the re-entrancy
+tests assert theirs.
+
+### 11. `ObservedPumpInterval` — decided: deleted
+
+It was RTO groundwork nothing consumed, and it lost its test when L0 went internal. Untested
+unconsumed code is the worst of the three options, so it is gone, taking `ReadinessDispatcher`'s
+`TimeProvider` parameter, `_lastPumpTimestamp` and `RecordObservedInterval` with it. **Slice 3
+re-adds it with a consumer and a test in the same commit.**
+
+`ReactorOptions.TimeProvider` stays — it is the shared options value every profile takes — and its
+XML doc now says outright that nothing in the Raw profile reads it and which slices will.
+
+`RawReactor.Shutdown`, the other half of this item, stays as it is: user story 9 asks for a failed
+`Result` from it, which outranks `Shutdown` appearing in #1's Out of Scope list.
+
+### 10 (rest). Standards items — all done
+
+- **NSubstitute dropped.** The test doubles are hand-written, which `tests/CLAUDE.md` permits for
+  non-boundary types, so the reference went rather than growing a use for it.
+- **The duplicated thread guard is gone from `ReadinessDispatcher`**, not extracted into a shared
+  helper. The dispatcher is internal and reachable only through the Reactor that owns it, which
+  guards every public member before delegating — so the second check could only ever duplicate the
+  first, and the exception a consumer sees should name the Reactor rather than a type they cannot
+  reference. The reasoning is in a `<remarks>` on `Pump`.
+- **The six `!` sites carry the documented-limitation comment** `src/CLAUDE.md` requires
+  (`Socket.LocalEndPoint`, `Type.FullName`, `ParameterInfo.Name`). One of them was not a framework
+  limitation at all — `ReentrantDiagnosticsSink.Reactor` genuinely can be null if a test forgets to
+  set it, so it now throws a named exception instead, which stops that mistake surfacing as a
+  `NullReferenceException` in a faulted Sink and being mistaken for the behaviour under test.
+- **The non-atomic tests are split**, each asserting one fact, with the shared arrange in a named
+  private helper rather than duplicated: the truncation pair, the closed-port pair, the throwing-Sink
+  pair, the arena-exhaustion pair, and the escaping-re-entrant-Sink trio.
+- **The error policy is documented rather than made uniform.** A member that already returns a
+  `Result` reports a bad `LinkId` as a failed Result; a member that returns data throws
+  `ArgumentException`, because it has no channel that could carry it and the alternative is a
+  sentinel or an unwrap at every call site. `Close` is neither — it is idempotent, so a stale
+  `LinkId` is a no-op. The rule is on `RawReactor` itself, where a consumer meets it.
+
+### Encoding repair — found while doing the above, not a review item
+
+`1aeffe6` (the L0 move) rewrote five `Core/` files through a CP1252 round trip, corrupting 24 em
+dashes into `â€”` and one division sign into `Ã·` — including the `arena ÷ capacity` formula in
+`FrameArena`'s summary. The originals at `84aef31` were clean. Repaired byte-wise in `aa35e27` with
+no wording changes. This matters more than it looks: XML doc comments are what a consumer sees in
+IntelliSense and what CodeMap indexes.
+
+A non-ASCII audit over `src`, `tests` and `docs` now shows only `—`, `−`, `÷` and the legitimate
+symbols in the design docs. **Worth re-running after any bulk file move on this repo.**
+
+---
+
 ## Unresolved
-
-Ordered by how much judgement they need, not by review-item number.
-
-### 4. One datagram per Pump does not come from the read cap — decision needed
-
-`RawReactor.OnLinkReadable` calls `slot.Link.Receive` exactly once per readiness callback
-(`src/ReactorSockets/RawReactor.cs:293`), so a Link can never reach a second `Reserve` in one Frame
-and `ArenaReservationOutcome.ShareExhausted` is unreachable through the public surface. One datagram
-per Link per Pump is a property of the single read, not of the escape. Stories 20/21's per-Pump bound
-is therefore currently enforced by the read loop's absence rather than by the arena.
-
-Both designs are defensible. The reviewer called this the single most consequential thing in the
-slice to get a second opinion on, and flagged that it read the same #1 the implementers read, so a
-shared misreading would have passed it too. #5's own report predicted the outcome and shipped the
-mechanism anyway per ADR 0014. **Nobody has decided whether this is the intended design.** The test
-comment in `RawReactorFrameTests` states the situation rather than leaving it to be rediscovered.
 
 ### 5. Truncation detection is verified on one platform
 
@@ -155,52 +235,9 @@ small queued datagrams are misreported as one truncation and the payload is sile
 story 13 asks for identical truncation behaviour on Windows and Unix; **this slice has only ever run
 on Windows.** Running the suite on Linux is the cheapest way to close or confirm this.
 
-### 8. Thread affinity is enforced unevenly, and story 3 has thin L2 coverage
-
-`EnsureCallingThreadIsConstructingThread` is called from `Pump`, `Bind`, `SendTo`, `Close` and
-`Dispose`, but not from `Send` (`RawReactor.cs:213`), `Shutdown` (`:223`), `LocalOf` (`:234`),
-`CountersOf` (`:264`) or `Counters`. The reads are arguably fine; `Send`/`Shutdown` are less
-obviously so. The re-entrancy work deliberately did **not** change this — `EnsureUsable` covers
-disposal and re-entrancy on every member, thread affinity was left exactly as it was, because
-widening it is this open decision.
-
-`Pump_CalledFromAnotherThread_ThrowsInvalidOperationException` now drives a foreign thread at a real
-`RawReactor` (it previously only existed against the dispatcher), so story 3 is pinned at L2 for
-`Pump` — but for no other member.
-
-### 9. `Send`/`Shutdown` ignore their arguments
-
-Both return a constant `Result.Failure` without resolving the `LinkId`
-(`src/ReactorSockets/RawReactor.cs:213` and `:223`). A stale or garbage `LinkId` gets "Send is illegal
-on a datagram Link" rather than "not open". Correct for this slice, where every Link is datagram; it
-becomes wrong the moment slice 2 adds stream Links, and `Send_OnDatagramLink_...` /
-`Shutdown_OnDatagramLink_...` would keep passing straight through that change.
-
-### 11. `ObservedPumpInterval` is unconsumed and now untested
-
-`src/ReactorSockets/Core/ReadinessDispatcher.cs:71`. It is RTO groundwork for slice 3+ that nothing
-in this slice consumes, and since L0 went internal it has no test either. **Three options: consume it
-in slice 3, expose it on `RawReactor`, or delete it.** Untested unconsumed code is the worst of the
-three, so this wants a decision rather than drift.
-
-`RawReactor.Shutdown` existing at all is the other half of this item — `Shutdown` appears by name in
-#1's Out of Scope list, though returning a failed `Result` for it is what user story 9 asks for.
-
-### 10 (rest). Standards items
-
-- `NSubstitute` 5.3.0 is referenced by `tests/ReactorSockets.Tests/ReactorSockets.Tests.csproj:21`
-  and never used. The test doubles are hand-written, which `tests/CLAUDE.md` permits for non-boundary
-  types — so either drop the package or start using it.
-- `EnsureCallingThreadIsConstructingThread` is duplicated verbatim between `RawReactor.cs:435` and
-  `Core/ReadinessDispatcher.cs:137`.
-- `!` is used without the documented-limitation comment `src/CLAUDE.md` requires —
-  `Transports/UdpLink.cs:67` (`socket.LocalEndPoint!`) and several test sites.
-- Several test names bundle two assertions with an "And", against `tests/CLAUDE.md`'s atomic-tests
-  rule: `Log_ThrowingSink_IsInvokedExactlyOnceAndTheFrameStillCompletes`,
-  `Drain_ArenaWithNoRoomForASecondLinksDatagram_DeliversOneAndReportsArenaExhausted`,
-  `Pump_SendToClosedPort_ProducesNoClosedEventAndOneDestinationUnreachableRecord`, and others.
-- Error policy is inconsistent: "Link is not open" is a `Result.Failure` in `SendTo` but an
-  `ArgumentException` in `LocalOf`/`CountersOf`.
+This is the **only** open item, and nothing in this session touched it — `UdpLink.Receive` is
+unchanged. It needs a Linux run, not a decision. Until then the slice's claim to user story 13 is
+unverified on half the platforms it names.
 
 ### Deferred by design (not defects)
 
@@ -225,7 +262,8 @@ Recorded so they are not rediscovered as bugs:
 
 ## Verification state — what has and has not been checked
 
-- All three gates pass, run from the worktree, outside any agent's session.
+- All three gates pass at `174ce5f`, run from the worktree, outside any agent's session: `dotnet
+  format --verify-no-changes` exit 0, `dotnet build` 0 warnings, `dotnet test` 92/92.
 - The suite has been run a handful of times on one machine. **Nothing here speaks to flakiness under
   load or on another platform.** `Pump_SteadyStateAfterWarmupWithNothingReady_AllocatesNothingOnTheManagedHeap`
   asserts an exact `0` from `GC.GetAllocatedBytesForCurrentThread()` over 1 000 Pumps and is the most
@@ -236,12 +274,29 @@ Recorded so they are not rediscovered as bugs:
 - The orchestrator's **repair path has never fired** — no gate failed across all eight sub-issues, so
   that branch of `.sandcastle/orchestrate.ts` is untested code.
 
+### Not covered by this session's work
+
+- **Item 5 is untouched.** No Linux run happened; `UdpLink.Receive` is unchanged.
+- **The new thread-affinity tests prove the guard fires, not that the Reactor is thread-safe.** They
+  call one member from one foreign thread and assert it is rejected. Nothing here exercises genuine
+  concurrent access, and the counter reads are explicitly documented as samples rather than
+  consistent cuts — the fields behind them are written without a barrier.
+- **`ShareExhausted` remains unexercised**, now by decision rather than by oversight. No test asserts
+  it, because no profile can reach it.
+- **The 12 new tests all came from splitting existing ones or from items 8/9.** Coverage of the arena
+  arithmetic lost when L0 went internal (recorded under resolved item 2) has not been recovered.
+
 ## Picking this up next session
 
-1. Read this file, then `.sandcastle/reports/PR.md` for the reviewer's own words on items 3–11.
+1. Read this file first. `.sandcastle/reports/PR.md` has the original reviewer's own words on items
+   3–11, but its "Review this carefully" section describes the slice as it stood when #65 was opened
+   — this file is the current state.
 2. The branch may need a worktree: `git worktree add .sandcastle/worktrees/agent-slice-1 agent/slice-1`
    (sandcastle's teardown removes it after a clean run).
-3. Open items 4, 5, 8, 9 and 11 need a decision before code. Items under 10 are mechanical and can be
-   done without one.
+3. **Item 5 is the only thing standing between this slice and a mergeable state**, and it needs a
+   Linux run of the suite, not a decision. Everything else is closed.
 4. #65 is a **draft** and nothing auto-merges. Merging it closes #2–#9 via the `Closes` lines, so the
    sub-issues stay open until a human marks it ready and merges.
+5. Slice 2 (#10–#15) is the next orchestrator run. Before launching it, re-read
+   `.sandcastle/RESUME.md` — in particular `git switch dev` in the host checkout first, and note that
+   `Socket.Available` must not be carried into the stream transport.

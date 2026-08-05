@@ -9,6 +9,29 @@ Closes #9
 
 Part of #1
 
+## Status — ten of the eleven review items are closed
+
+Updated 2026-08-05. The five items that needed a decision were decided by the repo owner and
+implemented in `174ce5f`; `aa35e27` repairs an encoding defect found while doing it.
+
+| Item | Was | Now |
+|---|---|---|
+| 1, 2 | L0 public at the root; the seam test recorded the leak | Fixed in `1aeffe6` |
+| 3 | Read-cap escape unpinned at the observable layer | Fixed in `1aeffe6`, read with item 4 |
+| 6, 7 | Not `IDisposable`; Sink re-entrancy unguarded | Fixed in `2fd1104` |
+| 4 | One-read-per-Pump undecided | **Decided: keep the single read.** Documented, with `ShareExhausted` marked unexercised until a profile loops |
+| 8, 9 | `Send`/`Shutdown` ignored their args and skipped the thread guard | **Fixed.** Both resolve the `LinkId` first and enforce affinity; the tests now assert the message, so slice 2 cannot pass through them |
+| 11 | `ObservedPumpInterval` unconsumed and untested | **Deleted.** Slice 3 re-adds it with a consumer and a test together |
+| 10 | Standards items | **All done** — NSubstitute dropped, `!` sites annotated, duplicate thread guard removed, non-atomic tests split, error policy documented as a rule |
+| **5** | **Truncation verified on Windows only** | **Still open — needs a Linux run, not a decision** |
+
+`dotnet format --verify-no-changes` clean, `dotnet build` 0 warnings, `dotnet test` **92/92** (was 80).
+
+**Item 5 is the only thing left.** `UdpLink.Receive` probes `Socket.Available` before reading, and
+that premise has never been checked on Unix; user story 13 asks for identical truncation behaviour on
+both. Everything else in the list below is history, kept so each finding can be read next to its fix.
+`.sandcastle/reports/review_slice_1.md` is the current state and supersedes this section.
+
 ## What landed
 
 The library exists. A consumer constructs `RawReactor(ReactorOptions, scratchBufferSize?)` on their
