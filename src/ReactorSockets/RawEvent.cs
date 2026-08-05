@@ -5,8 +5,9 @@ namespace ReactorSockets;
 /// <see cref="Payload"/> aliases the frame arena directly and must never outlive the Frame it was
 /// drained in (ADR 0008). <see cref="Kind"/> determines exactly which other fields are populated —
 /// this slice implements <see cref="RawEventKind.DatagramReceived"/>, <see cref="RawEventKind.Closed"/>,
-/// <see cref="RawEventKind.Accepted"/> and <see cref="RawEventKind.Connected"/>; the remaining stream
-/// kinds join this roster as the rest of slice 2 lands.
+/// <see cref="RawEventKind.Accepted"/>, <see cref="RawEventKind.Connected"/>,
+/// <see cref="RawEventKind.SegmentReceived"/> and <see cref="RawEventKind.EndOfStream"/>; <c>Writable</c>
+/// joins this roster as the rest of slice 2 lands.
 /// </summary>
 public readonly ref struct RawEvent
 {
@@ -43,8 +44,11 @@ public readonly ref struct RawEvent
     public Source Source { get; }
 
     /// <summary>
-    /// The datagram's bytes, valid only until the next <see cref="RawReactor.Pump"/>. Populated only
-    /// when <see cref="Kind"/> is <see cref="RawEventKind.DatagramReceived"/>.
+    /// The received bytes, valid only until the next <see cref="RawReactor.Pump"/>. Populated when
+    /// <see cref="Kind"/> is <see cref="RawEventKind.DatagramReceived"/> or
+    /// <see cref="RawEventKind.SegmentReceived"/>. For a Segment this is exactly the run of bytes that
+    /// arrived on this Link in this Frame — no claim of being a whole anything, and nothing is held
+    /// across a Pump to make one (ADR 0008).
     /// </summary>
     public ReadOnlySpan<byte> Payload { get; }
 
@@ -75,4 +79,19 @@ public readonly ref struct RawEvent
     /// </summary>
     internal static RawEvent ForConnected(LinkId link) =>
         new(RawEventKind.Connected, link, default, default, default, default);
+
+    /// <summary>
+    /// Builds a <see cref="RawEventKind.SegmentReceived"/> event carrying exactly the run of bytes
+    /// that arrived on <paramref name="link"/> this Frame.
+    /// </summary>
+    internal static RawEvent ForSegmentReceived(LinkId link, ReadOnlySpan<byte> payload) =>
+        new(RawEventKind.SegmentReceived, link, default, default, payload, default);
+
+    /// <summary>
+    /// Builds a <see cref="RawEventKind.EndOfStream"/> event. Carries only <see cref="Link"/> — there
+    /// is nothing else to say: the remote will send nothing further while this Link stays open for
+    /// sending, and this is deliberately not a <see cref="RawEventKind.Closed"/>.
+    /// </summary>
+    internal static RawEvent ForEndOfStream(LinkId link) =>
+        new(RawEventKind.EndOfStream, link, default, default, default, default);
 }

@@ -81,6 +81,21 @@ internal sealed class RawReactorHarness : IDisposable
     }
 
     /// <summary>
+    /// Binds and listens on a fresh BCL TCP socket, standing in for a counterparty that plays the
+    /// server role while this harness's Reactor dials out to it — the mirror image of
+    /// <see cref="ListenOnLoopback"/>, needed only for tests that exercise the dial side of a stream
+    /// Link's reads rather than the accept side.
+    /// </summary>
+    public (Socket Listener, IPEndPoint LocalEndPoint) CreateCounterpartyListener()
+    {
+        Socket listener = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        _counterpartySockets.Add(listener);
+        listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        listener.Listen();
+        return (listener, (IPEndPoint)listener.LocalEndPoint!);
+    }
+
+    /// <summary>
     /// Begins connecting a fresh BCL TCP counterparty socket to <paramref name="destination"/> and
     /// returns it immediately — the connect itself runs asynchronously against the OS, exactly like a
     /// consumer's own dial would, so the caller Pumps the Reactor afterwards for the accept to land.
@@ -91,6 +106,18 @@ internal sealed class RawReactorHarness : IDisposable
         _counterpartySockets.Add(counterparty);
         counterparty.Connect(destination);
         return counterparty;
+    }
+
+    /// <summary>
+    /// Forces <paramref name="socket"/>'s close to send an immediate RST instead of a graceful FIN —
+    /// the reliable way to provoke <see cref="CloseReason.ResetByPeer"/> from a counterparty, including
+    /// one that already shut down its send half and would otherwise close without putting anything
+    /// further on the wire.
+    /// </summary>
+    public static void CloseCounterpartyAbruptly(Socket socket)
+    {
+        socket.LingerState = new LingerOption(true, 0);
+        socket.Close();
     }
 
     /// <summary>

@@ -92,5 +92,37 @@ internal sealed class TcpLink : IDisposable
             : TcpConnectPollResult.ForFailed((SocketError)errorCode);
     }
 
+    /// <summary>
+    /// Reads whatever bytes are on the socket right now into <paramref name="scratch"/>, without
+    /// blocking — called only after the readiness dispatcher has already found this Link's socket
+    /// readable, so the read itself never stalls. TCP is a stream: this returns exactly the run of
+    /// bytes the OS handed back and makes no claim it is a whole anything (ADR 0008); reassembly is
+    /// not this type's job and not this library's.
+    /// </summary>
+    /// <remarks>
+    /// A read of zero bytes is TCP's own signal that the remote shut down its send half — a FIN,
+    /// whether sent as an explicit half-close or as the first half of a full close — and is reported
+    /// as <see cref="TcpLinkReceiveOutcome.EndOfStream"/> rather than folded into
+    /// <see cref="TcpLinkReceiveOutcome.Failed"/>: it says nothing about this Link's own ability to
+    /// still send. A reset arrives here as an ordinary <see cref="SocketException"/> and is reported
+    /// as <see cref="TcpLinkReceiveOutcome.Failed"/>, carrying whatever <see cref="SocketError"/> the
+    /// platform gave — it is L2's job, not this type's, to translate a reset into
+    /// <see cref="ReactorSockets.CloseReason.ResetByPeer"/>.
+    /// </remarks>
+    public TcpLinkReceiveResult Receive(Span<byte> scratch)
+    {
+        try
+        {
+            int received = Socket.Receive(scratch, SocketFlags.None);
+            return received == 0
+                ? TcpLinkReceiveResult.ForEndOfStream()
+                : TcpLinkReceiveResult.ForDelivered(scratch[..received]);
+        }
+        catch (SocketException exception)
+        {
+            return TcpLinkReceiveResult.ForFailed(exception.SocketErrorCode);
+        }
+    }
+
     public void Dispose() => Socket.Dispose();
 }

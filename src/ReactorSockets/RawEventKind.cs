@@ -3,8 +3,8 @@ namespace ReactorSockets;
 /// <summary>
 /// Which kind of <see cref="RawEvent"/> a drained event is. This slice adds the stream-relevant kinds
 /// to the datagram-only roster shipped earlier (ADR 0008); <see cref="Accepted"/> lands with the
-/// listening-Link work, <see cref="Connected"/> with dialling, and <c>SegmentReceived</c>,
-/// <c>Writable</c> and <c>EndOfStream</c> join as the rest of slice 2 does.
+/// listening-Link work, <see cref="Connected"/> with dialling, <see cref="SegmentReceived"/> and
+/// <see cref="EndOfStream"/> with stream reads, and <c>Writable</c> joins as the rest of slice 2 does.
 /// </summary>
 public enum RawEventKind
 {
@@ -30,4 +30,22 @@ public enum RawEventKind
     /// <see cref="Closed"/> with <see cref="CloseReason.Refused"/> or <see cref="CloseReason.Unreachable"/>.
     /// </summary>
     Connected,
+
+    /// <summary>
+    /// A run of bytes arrived on a stream Link. <see cref="RawEvent.Link"/> and
+    /// <see cref="RawEvent.Payload"/> are populated. Carries no claim of being a whole anything — a
+    /// counterparty's single write may be drained as one or several of these, and framing is the
+    /// consumer's decision, not this library's.
+    /// </summary>
+    SegmentReceived,
+
+    /// <summary>
+    /// The remote end of a stream Link will send nothing further while this Link remains open for
+    /// sending — TCP's own half-close, kept separate from <see cref="Closed"/> because collapsing them
+    /// would decide on the consumer's behalf that their protocol cannot use half-close.
+    /// <see cref="RawEvent.Link"/> is populated. A consumer that never calls <c>Close</c> after this
+    /// holds the Link and its slot until the Reactor is disposed — there is no Linger in Raw to
+    /// reclaim it.
+    /// </summary>
+    EndOfStream,
 }

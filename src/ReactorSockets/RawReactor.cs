@@ -10,8 +10,10 @@ namespace ReactorSockets;
 /// back for each, and advances everything with a single synchronous <see cref="Pump"/> call from their
 /// own loop. Nothing is delivered except in response to a call the consumer made, on the thread that
 /// constructed this Reactor. TCP joins the datagram surface here: a listening Link and the connections
-/// it accepts are registered and admitted the same way, though a stream Link's send and half-close
-/// wait on later sub-issues of this slice.
+/// it accepts are registered and admitted the same way, and a stream Link's reads drain as
+/// <see cref="RawEventKind.SegmentReceived"/> and <see cref="RawEventKind.EndOfStream"/> exactly like a
+/// datagram Link's, though a stream Link's send and half-close still wait on a later sub-issue of this
+/// slice.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -441,6 +443,9 @@ public sealed class RawReactor : IDisposable
             RawEventKind.Closed => RawEvent.ForClosed(pending.Link, pending.Reason),
             RawEventKind.Accepted => RawEvent.ForAccepted(pending.Listener, pending.Link),
             RawEventKind.Connected => RawEvent.ForConnected(pending.Link),
+            RawEventKind.SegmentReceived => RawEvent.ForSegmentReceived(
+                pending.Link, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
+            RawEventKind.EndOfStream => RawEvent.ForEndOfStream(pending.Link),
             _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised RawEventKind."),
         };
     }
@@ -450,24 +455,35 @@ public sealed class RawReactor : IDisposable
     /// arena's fair share — is what bounds how much of one Pump a single Link can consume, and it is
     /// the deliberate choice for the Raw profile: it is the strongest possible fairness guarantee
     /// (every ready Link is served before any Link is served twice) and it costs one syscall per Link
-    /// per Pump, which a consumer already controls by choosing how often to Pump.
+    /// per Pump, which a consumer already controls by choosing how often to Pump. A stream Link
+    /// delivering a run longer than one read is simply read again on a later Pump, once the dispatcher
+    /// finds it ready a second time — the same bound, applied to a transport with no message
+    /// boundaries of its own.
     /// </summary>
     /// <remarks>
     /// The consequence is that a Link cannot reach a second <c>Reserve</c> in one Frame, so
     /// <see cref="ArenaReservationOutcome.ShareExhausted"/> is unreachable through this Reactor's
     /// public surface. The arena's share is therefore a second, looser ceiling here: it only bites
-    /// through the one-whole-unit escape, when a single datagram exceeds a share. Both mechanisms are
-    /// kept because a later profile that reads a Link in a loop needs the share to be the bound —
-    /// changing this method to loop until <c>ShareExhausted</c> is what makes that switch, and the
-    /// arena is already sized for it.
+    /// through the one-whole-unit escape, when a single datagram or Segment exceeds a share. Both
+    /// mechanisms are kept because a later profile that reads a Link in a loop needs the share to be
+    /// the bound — changing this method to loop until <c>ShareExhausted</c> is what makes that switch,
+    /// and the arena is already sized for it.
     /// </remarks>
     private void OnLinkReadable(int index)
     {
-        if (_slots[index] is not DatagramLinkSlot slot)
+        switch (_slots[index])
         {
-            return;
+            case DatagramLinkSlot datagramSlot:
+                OnDatagramLinkReadable(index, datagramSlot);
+                break;
+            case StreamLinkSlot streamSlot:
+                OnStreamLinkReadable(index, streamSlot);
+                break;
         }
+    }
 
+    private void OnDatagramLinkReadable(int index, DatagramLinkSlot slot)
+    {
         UdpLinkReceiveResult result = slot.Link.Receive(_scratchBuffer);
         switch (result.Outcome)
         {
@@ -481,6 +497,39 @@ public sealed class RawReactor : IDisposable
                 RecordDestinationUnreachable(new LinkId(index, _generations[index]), result.Error);
                 break;
             case UdpLinkReceiveOutcome.Failed:
+                FailLink(index, slot, result.Error);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Reads a ready stream Link exactly once, the same fairness rule <see cref="OnLinkReadable"/>
+    /// applies to a datagram Link. A Link that has already delivered <c>EndOfStream</c> is still read
+    /// once more: the FIN that produced it leaves the socket permanently readable, so the alternative
+    /// is to stop reading and never learn of a subsequent reset — but a second <c>EndOfStream</c> is
+    /// never queued, since the remote already said everything it is going to say.
+    /// </summary>
+    private void OnStreamLinkReadable(int index, StreamLinkSlot slot)
+    {
+        TcpLinkReceiveResult result = slot.Link.Receive(_scratchBuffer);
+        switch (result.Outcome)
+        {
+            case TcpLinkReceiveOutcome.Delivered:
+                DeliverSegment(index, slot, result.Payload);
+                break;
+            case TcpLinkReceiveOutcome.EndOfStream:
+                if (!slot.EndOfStreamDelivered)
+                {
+                    slot.EndOfStreamDelivered = true;
+                    _pendingEvents.Add(new PendingEvent
+                    {
+                        Kind = RawEventKind.EndOfStream,
+                        Link = new LinkId(index, _generations[index]),
+                    });
+                }
+
+                break;
+            case TcpLinkReceiveOutcome.Failed:
                 FailLink(index, slot, result.Error);
                 break;
         }
@@ -519,6 +568,46 @@ public sealed class RawReactor : IDisposable
         }
     }
 
+    /// <summary>
+    /// Commits a Segment's bytes into the frame arena and queues the <see cref="RawEventKind.SegmentReceived"/>
+    /// event, or records the refusal — <see cref="ArenaReservationOutcome.ShareExhausted"/> as a per-Link
+    /// counter (ADR 0013: the condition can recur every Pump under sustained load, so it fails the
+    /// record test) and <see cref="ArenaReservationOutcome.ArenaExhausted"/> as a <c>Warn</c> Diagnostic.
+    /// The reservation logic is identical to <see cref="DeliverDatagram"/>'s; only the event shape and
+    /// the absence of a claimed Source differ, because a stream Link has one peer for its whole
+    /// lifetime and nothing per-Segment to claim.
+    /// </summary>
+    private void DeliverSegment(int index, LinkSlot slot, ReadOnlySpan<byte> data)
+    {
+        int offsetBeforeReserve = _arena.BytesUsed;
+        ArenaReservation reservation = _arena.Reserve(index, data);
+        switch (reservation.Outcome)
+        {
+            case ArenaReservationOutcome.Committed:
+                _pendingEvents.Add(new PendingEvent
+                {
+                    Kind = RawEventKind.SegmentReceived,
+                    Link = new LinkId(index, _generations[index]),
+                    PayloadOffset = offsetBeforeReserve,
+                    PayloadLength = data.Length,
+                });
+                slot.Counters.RecordBytesReceived(data.Length);
+                _counters.ObserveArenaUsage(_arena.BytesUsed);
+                break;
+            case ArenaReservationOutcome.ShareExhausted:
+                slot.Counters.RecordReadShareExhaustion();
+                break;
+            case ArenaReservationOutcome.ArenaExhausted:
+                if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                {
+                    _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(
+                        new LinkId(index, _generations[index]), reservation.BytesRequested, reservation.BytesFree));
+                }
+
+                break;
+        }
+    }
+
     private void RecordDatagramTruncated(Source source)
     {
         if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
@@ -535,6 +624,14 @@ public sealed class RawReactor : IDisposable
         }
     }
 
+    /// <summary>
+    /// Closes a Link whose read failed outright, logging the platform <see cref="SocketError"/> first.
+    /// A reset is reported as <see cref="CloseReason.ResetByPeer"/> rather than the generic
+    /// <see cref="CloseReason.Failed"/> — a stranger resetting the connection is a condition a
+    /// consumer's retry logic wants to distinguish from every other read failure, and the one this
+    /// library already names for it (user story: a reset is a stranger's prerogative, reported
+    /// <c>Warn</c> rather than <c>Error</c>).
+    /// </summary>
     private void FailLink(int index, LinkSlot slot, SocketError error)
     {
         if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
@@ -542,7 +639,8 @@ public sealed class RawReactor : IDisposable
             _diagnostics.Log(DiagnosticRecord.ForLinkFailed(new LinkId(index, _generations[index]), error));
         }
 
-        CloseSlot(index, slot, CloseReason.Failed);
+        CloseReason reason = error == SocketError.ConnectionReset ? CloseReason.ResetByPeer : CloseReason.Failed;
+        CloseSlot(index, slot, reason);
     }
 
     /// <summary>
@@ -570,6 +668,7 @@ public sealed class RawReactor : IDisposable
                     continue;
                 case TcpConnectPollOutcome.Connected:
                     _connectingLinks.RemoveAt(i);
+                    _dispatcher.Register(slot.Link.Socket, () => OnLinkReadable(link.Index));
                     _pendingEvents.Add(new PendingEvent { Kind = RawEventKind.Connected, Link = link });
                     break;
                 case TcpConnectPollOutcome.Failed:
@@ -671,6 +770,8 @@ public sealed class RawReactor : IDisposable
 
         TcpLink link = TcpLink.FromAccepted(acceptedSocket);
         _slots[newIndex.Value] = new StreamLinkSlot(link);
+        int acceptedIndex = newIndex.Value;
+        _dispatcher.Register(link.Socket, () => OnLinkReadable(acceptedIndex));
         _admissionsThisFrame++;
         _pendingEvents.Add(new PendingEvent
         {
@@ -838,6 +939,14 @@ public sealed class RawReactor : IDisposable
     private sealed class StreamLinkSlot(TcpLink link) : LinkSlot(link.Socket, link.LocalEndPoint)
     {
         public TcpLink Link { get; } = link;
+
+        /// <summary>
+        /// Whether <see cref="RawEventKind.EndOfStream"/> has already been queued for this Link. The
+        /// FIN that produces it leaves the socket permanently readable, so this is what stops every
+        /// later Pump from queuing the same event again — the remote already said everything it is
+        /// going to say (ADR 0008).
+        /// </summary>
+        public bool EndOfStreamDelivered { get; set; }
 
         public override void Dispose() => Link.Dispose();
     }
