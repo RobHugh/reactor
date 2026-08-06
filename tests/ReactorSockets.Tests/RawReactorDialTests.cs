@@ -97,23 +97,36 @@ public class RawReactorDialTests
     }
 
     [Fact]
-    public void Connect_LinkLocalMulticastAddress_DrainsClosedWithUnreachable()
+    public void Connect_UnreachableDestination_DrainsClosedWithUnreachable()
     {
-        // Arrange — a multicast group is not a destination a TCP connection can be opened to, so both
-        // stacks reject it out of hand rather than putting a packet on the wire and waiting. That is
-        // what makes this deterministic where an ordinary unrouted address is not: a TEST-NET address
-        // like 192.0.2.1 goes to the default gateway and stays Pending indefinitely, whereas this
-        // resolves in time to be read by the first Pump. The platforms word the refusal differently —
-        // HostUnreachable on Windows, NetworkUnreachable on Linux — and the mapping deliberately gives
-        // both the same CloseReason, so the assertion below holds identically on each.
+        // Arrange — a destination the stack knows it has no way to reach, so it says so immediately
+        // rather than putting a packet on the wire and waiting. That is what makes this deterministic
+        // where an ordinary unrouted address is not: a TEST-NET address like 192.0.2.1 goes to the
+        // default gateway and stays Pending indefinitely, whereas both of these resolve in time to be
+        // read by the first Pump.
         //
-        // This dialled the reserved 240.0.0.0/4 range until Linux showed that claim to be wrong: a
-        // class E address is not rejected outright there, and inside a container it is answered by the
-        // NAT gateway, so the environment's routing table participates after all. A multicast address
-        // is rejected for what it is rather than for where it does or does not route, which is the
-        // property this test needed all along.
+        // As with the catch-all test above, the address is chosen per platform and the assertion is
+        // not. Measured on two hosts each — a developer machine and a CI runner:
+        //
+        //                     | Windows              | Linux
+        //   240.0.0.1         | NetworkUnreachable   | still pending
+        //   224.0.0.1         | AddressNotAvailable  | NetworkUnreachable
+        //
+        // Neither row is uniform, and that is the finding: this test dialled 240.0.0.1 on the strength
+        // of "no IP stack will route it, so nothing about the environment's routing table participates",
+        // which is false twice over. Linux does not reject it out of hand, and inside a container the
+        // NAT gateway answers for it. 224.0.0.1 fails on Windows for the opposite reason — a multicast
+        // group is not an address Windows will even source a connection to, which is not the same thing
+        // as being unreachable.
+        //
+        // 100::1, the RFC 6666 discard prefix, was the one destination measured Unreachable on all four
+        // hosts, and is still not used: it reports that way only where there is no IPv6 default route,
+        // so a developer with native IPv6 would watch it stay Pending instead. Each platform gets the
+        // address its own stack rejects structurally, and no test here depends on IPv6 being routable.
         using RawReactorHarness harness = new();
-        IPEndPoint unreachableEndPoint = new(IPAddress.Parse("224.0.0.1"), 1);
+        IPEndPoint unreachableEndPoint = OperatingSystem.IsWindows()
+            ? new IPEndPoint(IPAddress.Parse("240.0.0.1"), 1)
+            : new IPEndPoint(IPAddress.Parse("224.0.0.1"), 1);
 
         // Act
         LinkId dialLink = harness.Reactor.Connect(unreachableEndPoint);
