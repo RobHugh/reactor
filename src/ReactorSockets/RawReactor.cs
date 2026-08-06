@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Net.Sockets;
 using ReactorSockets.Core;
@@ -288,20 +289,9 @@ public sealed class RawReactor : IDisposable
         EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
 
-        LinkSlot? slot = ResolveSlot(link);
-        if (slot is null)
+        if (!TryResolveFor(link, RawOperation.SendTo, out DatagramLinkSlot? datagram, out string? refusal))
         {
-            return Result.Failure($"Link {link} is not open.");
-        }
-
-        if (slot is ListeningLinkSlot)
-        {
-            return Result.Failure("SendTo is illegal on a listening Link.");
-        }
-
-        if (slot is not DatagramLinkSlot datagram)
-        {
-            return Result.Failure("SendTo is illegal on a stream Link — use Send.");
+            return Result.Failure(refusal);
         }
 
         UdpLinkSendResult result = datagram.Link.SendTo(destination, payload);
@@ -349,20 +339,9 @@ public sealed class RawReactor : IDisposable
         EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
 
-        LinkSlot? slot = ResolveSlot(link);
-        if (slot is null)
+        if (!TryResolveFor(link, RawOperation.Send, out StreamLinkSlot? stream, out string? refusal))
         {
-            return SendResult.Failure($"Link {link} is not open.");
-        }
-
-        if (slot is DatagramLinkSlot)
-        {
-            return SendResult.Failure("Send is illegal on a datagram Link — use SendTo.");
-        }
-
-        if (slot is not StreamLinkSlot stream)
-        {
-            return SendResult.Failure("Send is illegal on a listening Link.");
+            return SendResult.Failure(refusal);
         }
 
         if (stream.WriteShutdown)
@@ -399,20 +378,9 @@ public sealed class RawReactor : IDisposable
         EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
 
-        LinkSlot? slot = ResolveSlot(link);
-        if (slot is null)
+        if (!TryResolveFor(link, RawOperation.Shutdown, out StreamLinkSlot? stream, out string? refusal))
         {
-            return Result.Failure($"Link {link} is not open.");
-        }
-
-        if (slot is DatagramLinkSlot)
-        {
-            return Result.Failure("Shutdown is illegal on a datagram Link.");
-        }
-
-        if (slot is not StreamLinkSlot stream)
-        {
-            return Result.Failure("Shutdown is illegal on a listening Link.");
+            return Result.Failure(refusal);
         }
 
         if (stream.WriteShutdown)
@@ -459,12 +427,9 @@ public sealed class RawReactor : IDisposable
     {
         EnsureUsable();
 
-        LinkSlot? slot = ResolveSlot(link) ?? throw new ArgumentException($"Link {link} is not open.", nameof(link));
-
-        if (slot is not StreamLinkSlot stream)
+        if (!TryResolveFor(link, RawOperation.RemoteOf, out StreamLinkSlot? stream, out string? refusal))
         {
-            throw new ArgumentException(
-                $"Link {link} is not a stream Link — RemoteOf is illegal on a datagram or listening Link.", nameof(link));
+            throw new ArgumentException(refusal, nameof(link));
         }
 
         return stream.Link.RemoteEndPoint;
@@ -977,6 +942,57 @@ public sealed class RawReactor : IDisposable
 
     private LinkSlot? ResolveSlot(LinkId link) => _links.TryResolve(ToHandle(link));
 
+    /// <summary>
+    /// Resolves <paramref name="link"/> to the kind of slot <paramref name="operation"/> requires, or
+    /// answers <see langword="false"/> with the prose explaining why it could not. This is every way a
+    /// kind-sensitive member can be refused, in the order they must be asked: the Link is not open, or
+    /// it is open but of a kind this operation is illegal on.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The open check comes first deliberately (ADR 0008): answering an illegality to a stale or
+    /// garbage <see cref="LinkId"/> would be a lie about a Link that does not exist.
+    /// </para>
+    /// <para>
+    /// The final cast cannot fail while <see cref="RawLinkLegality"/> and <c>LinkSlot.Kind</c> agree —
+    /// but it is expressed as a pattern rather than a cast so that a disagreement between them refuses
+    /// the call like any other illegality, instead of throwing <see cref="InvalidCastException"/> out
+    /// of a member that documents itself as failing without throwing.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TSlot">The slot kind <paramref name="operation"/> operates on.</typeparam>
+    private bool TryResolveFor<TSlot>(
+        LinkId link,
+        RawOperation operation,
+        [NotNullWhen(true)] out TSlot? slot,
+        [NotNullWhen(false)] out string? refusal)
+        where TSlot : LinkSlot
+    {
+        slot = null;
+
+        if (ResolveSlot(link) is not LinkSlot resolved)
+        {
+            refusal = $"Link {link} is not open.";
+            return false;
+        }
+
+        if (RawLinkLegality.RefusalFor(operation, resolved.Kind) is string illegal)
+        {
+            refusal = illegal;
+            return false;
+        }
+
+        if (resolved is not TSlot typed)
+        {
+            refusal = $"{operation} is illegal on this Link.";
+            return false;
+        }
+
+        slot = typed;
+        refusal = null;
+        return true;
+    }
+
     /// <summary>Converts L0's internal Slot identity into the public one Raw hands consumers (ADR 0003).</summary>
     private static LinkId ToLinkId(SlotHandle handle) => new(handle.Index, handle.Generation);
 
@@ -1035,6 +1051,14 @@ public sealed class RawReactor : IDisposable
 
         public LinkCounterSet Counters { get; } = new();
 
+        /// <summary>
+        /// Which transport this Link wraps, and so which operations it admits. Abstract rather than
+        /// derived from the subclass by a type test, because that makes it the one thing a new kind of
+        /// Link cannot be written without answering — and answering it sends the author to
+        /// <see cref="RawLinkLegality"/> to write that kind's row of the matrix.
+        /// </summary>
+        public abstract LinkKind Kind { get; }
+
         public abstract void Dispose();
     }
 
@@ -1042,6 +1066,8 @@ public sealed class RawReactor : IDisposable
     private sealed class DatagramLinkSlot(UdpLink link) : LinkSlot(link.Socket, link.LocalEndPoint)
     {
         public UdpLink Link { get; } = link;
+
+        public override LinkKind Kind => LinkKind.Datagram;
 
         public override void Dispose() => Link.Dispose();
     }
@@ -1053,6 +1079,8 @@ public sealed class RawReactor : IDisposable
     private sealed class ListeningLinkSlot(TcpListenLink link) : LinkSlot(link.Socket, link.LocalEndPoint)
     {
         public TcpListenLink Link { get; } = link;
+
+        public override LinkKind Kind => LinkKind.Listening;
 
         public override void Dispose() => Link.Dispose();
     }
@@ -1066,6 +1094,8 @@ public sealed class RawReactor : IDisposable
     private sealed class StreamLinkSlot(TcpLink link) : LinkSlot(link.Socket, link.LocalEndPoint)
     {
         public TcpLink Link { get; } = link;
+
+        public override LinkKind Kind => LinkKind.Stream;
 
         /// <summary>
         /// Whether <see cref="RawEventKind.EndOfStream"/> has already been queued for this Link. The
