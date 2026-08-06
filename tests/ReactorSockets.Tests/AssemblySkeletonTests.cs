@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Xunit;
 
@@ -71,6 +72,25 @@ public class AssemblySkeletonTests
 
         // Assert
         leaked.Should().BeEmpty("only the root namespace is the consumer's surface — ReactorSockets.Core and ReactorSockets.Transports are implementation");
+    }
+
+    [Fact]
+    public void ReactorSocketsAssembly_Attributes_GrantNoTestAssemblyAccessToInternals()
+    {
+        // Arrange — L0 and L1 are internal and untested-through: the single seam is the public L2
+        // surface (ADR 0015). The namespace guard above cannot catch a breach of that, because
+        // InternalsVisibleTo exports nothing and leaves every other test in this file green. This is
+        // the guard on the policy itself, and it is the reason the policy is a fact rather than a
+        // memory — ADR 0003 claimed the opposite for two slices before anyone noticed.
+        Assembly assembly = ReactorSocketsAssembly;
+
+        // Act
+        IEnumerable<string> grants = assembly
+            .GetCustomAttributes<InternalsVisibleToAttribute>()
+            .Select(attribute => attribute.AssemblyName);
+
+        // Assert
+        grants.Should().BeEmpty("tests observe only what a consumer can observe — an invariant that cannot be reached through the seam is designed away, not reached past (ADR 0015)");
     }
 
     [Fact]
