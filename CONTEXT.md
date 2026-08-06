@@ -216,10 +216,29 @@ _Avoid_: Client, connection, remote, endpoint, socket
 **Link**:
 One registered transport in a Raw Reactor — a listening socket, a TCP connection and a bound UDP
 socket alike. Unlike a Peer, a Link is the transport: it has no identity beyond the thing carrying it,
-and when it closes there is nothing left to resume. Listening is a role a Link plays, not a kind of
-thing, which is why there is no such term as Listener — the Accepted Event names the listening Link
-that fired, and "listening" is only ever an adjective on a Link.
+and when it closes there is nothing left to resume. Listening is a role a Link plays, not a separate
+species of thing, which is why there is no such term as Listener — the Accepted Event names the
+listening Link that fired, and "listening" is only ever an adjective on a Link.
 _Avoid_: Connection, socket, stream, channel, session, listener
+
+**Link kind**:
+Which transport a Link wraps, named as an adjective on the Link: datagram, stream, or listening. Fixed
+when the Link is bound and never changing after, which is what lets it decide legality once rather than
+per call. A kind is not a rank or a species — the three are peers, and a listening Link consumes a Slot
+and can be Closed exactly like the other two. Never surfaced to a consumer: a consumer knows what it
+bound because it chose the member that bound it, so asking a Link what it is made of is not something
+the public surface offers.
+_Avoid_: Type, class, flavour, mode, role
+
+**Legality**:
+Whether an operation may be asked of a Link of a given kind — `Send` on a datagram Link is illegal,
+`SendTo` on a stream Link is illegal, and so on. Legality is decided by the kind alone, never by the
+Link's current state: a Link already shut down for writing still finds `Shutdown` legal and refuses it
+for a different reason. An illegal call is the caller's mistake, and the refusal always names the kind
+it found and, where one exists, the member to use instead. How it is reported follows the member, not
+the offence: a member with a Result answers through it rather than throwing, while one that returns
+data has no such channel and throws instead.
+_Avoid_: Validation, permission, support, capability, allowed
 
 **Source**:
 The address a datagram claims to have come from. Unauthenticated by construction — a hint about
