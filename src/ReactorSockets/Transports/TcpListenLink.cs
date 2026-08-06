@@ -90,7 +90,7 @@ internal sealed class TcpListenLink : IDisposable
     /// </summary>
     /// <remarks>
     /// A failed accept (for example <see cref="SocketError.ConnectionReset"/> when a client aborted
-    /// the handshake before this call ran) never closes the listening socket. Closing a listener over
+    /// the handshake before this call ran) never closes the listening socket. Closing it over
     /// one bad connection out of many would stop admitting every future connection over something a
     /// stranger triggered, which is exactly the kind of decision Raw does not make for a consumer —
     /// the caller is told and free to keep pumping.

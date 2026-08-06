@@ -12,7 +12,7 @@ namespace ReactorSockets;
 /// no such derivation and is therefore required, with no default. Construction throws
 /// <see cref="ArgumentOutOfRangeException"/> for a single bad value and <see cref="ArgumentException"/>
 /// for a combination that cannot work, because every check here is deterministic and entirely the
-/// caller's — unlike <c>Send</c>, whose failures belong to the peer or the network and are reported
+/// caller's — unlike <c>Send</c>, whose failures belong to the remote end or the network and are reported
 /// through a <c>Result</c> instead.
 /// </remarks>
 public sealed class ReactorOptions

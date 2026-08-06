@@ -32,7 +32,7 @@ internal readonly ref struct TcpLinkReceiveResult
     public static TcpLinkReceiveResult ForDelivered(ReadOnlySpan<byte> payload) =>
         new(TcpLinkReceiveOutcome.Delivered, payload, default);
 
-    /// <summary>The peer half-closed: a clean zero-length read, which is a usable state rather than a failure (ADR 0008).</summary>
+    /// <summary>The remote end half-closed: a clean zero-length read, which is a usable state rather than a failure (ADR 0008).</summary>
     public static TcpLinkReceiveResult ForEndOfStream() =>
         new(TcpLinkReceiveOutcome.EndOfStream, default, default);
 

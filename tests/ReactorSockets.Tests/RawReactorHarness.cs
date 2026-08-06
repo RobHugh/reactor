@@ -117,7 +117,7 @@ internal sealed class RawReactorHarness : IDisposable
 
     /// <summary>
     /// Forces <paramref name="socket"/>'s close to send an immediate RST instead of a graceful FIN —
-    /// the reliable way to provoke <see cref="CloseReason.ResetByPeer"/> from a counterparty, including
+    /// the reliable way to provoke <see cref="CloseReason.ResetByRemote"/> from a counterparty, including
     /// one that already shut down its send half and would otherwise close without putting anything
     /// further on the wire.
     /// </summary>

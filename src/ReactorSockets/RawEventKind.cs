@@ -19,7 +19,7 @@ public enum RawEventKind
 
     /// <summary>
     /// A connection was accepted on a listening Link, inside the Pump that found it ready.
-    /// <see cref="RawEvent.Listener"/> names the listening Link that fired; <see cref="RawEvent.Link"/>
+    /// <see cref="RawEvent.ListeningLink"/> names the listening Link that fired; <see cref="RawEvent.Link"/>
     /// names the new connection, already registered and consuming a capacity slot of its own.
     /// </summary>
     Accepted,

@@ -12,10 +12,14 @@ public enum CloseReason
     /// <summary>The consumer called <c>Close</c> on this Link.</summary>
     LocalClose,
 
-    /// <summary>The peer reset the connection.</summary>
-    ResetByPeer,
+    /// <summary>
+    /// The remote end reset the connection. Named for the remote rather than a "peer" deliberately:
+    /// Peer is a Session word, and Raw leaves it free for whatever a consumer's own protocol layer
+    /// calls its remote party. This is the same "remote" <see cref="RawReactor.RemoteOf"/> answers for.
+    /// </summary>
+    ResetByRemote,
 
-    /// <summary>The peer refused the connection.</summary>
+    /// <summary>The remote end refused the connection.</summary>
     Refused,
 
     /// <summary>The destination was reported unreachable.</summary>
