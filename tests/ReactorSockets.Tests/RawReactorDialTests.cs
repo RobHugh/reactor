@@ -10,13 +10,21 @@ namespace ReactorSockets.Tests;
 /// <see cref="DiagnosticRecord"/>; nothing here reaches into how or when a connect was detected.
 /// </summary>
 /// <remarks>
-/// The two unroutable-destination tests below are verified on Windows only, and are expected to be the
-/// first thing that fails when this suite is first run on Linux. A dial is begun on a non-blocking
-/// socket, so Windows reports essentially every dial outcome later, through the pending socket error
-/// <c>PollConnect</c> reads; Linux instead returns some of them — including the unreachable-network
-/// case — synchronously from <c>connect</c> itself, where the dial path currently discards them and the
-/// socket then polls writable with no error pending. Making that path portable is deliberately deferred
-/// until the suite can actually be run on Linux rather than guessed at from here.
+/// <para>
+/// The rejected-destination tests below now run on Linux as well as Windows, which corrected two things
+/// this file used to assume. A dial is begun on a non-blocking socket, and Windows reports essentially
+/// every outcome later through the pending socket error <c>PollConnect</c> reads; Linux answers some of
+/// them — the unreachable-network case among them — synchronously from <c>connect</c> itself, and
+/// destroys others before <c>PollConnect</c> can look. <c>TcpLink.Dial</c> captures both, and its
+/// remarks carry the ordering rule that makes the second possible.
+/// </para>
+/// <para>
+/// The other correction is to the addresses. Choosing a destination that fails the same way on both
+/// platforms is harder than it looks: an address rejected outright by one stack is often routed,
+/// answered or simply accepted by the other, and inside a container a NAT gateway will answer for
+/// addresses no real network would. Each test below records what was measured rather than what seemed
+/// obvious, because what seemed obvious is what was wrong.
+/// </para>
 /// </remarks>
 public class RawReactorDialTests
 {
@@ -89,16 +97,23 @@ public class RawReactorDialTests
     }
 
     [Fact]
-    public void Connect_ReservedClassEAddress_DrainsClosedWithUnreachable()
+    public void Connect_LinkLocalMulticastAddress_DrainsClosedWithUnreachable()
     {
-        // Arrange — 240.0.0.0/4 is reserved and no IP stack will route it, so the kernel rejects the
-        // destination outright rather than putting a packet on the wire and waiting. That is what makes
-        // this deterministic where an ordinary unrouted address is not: a TEST-NET address like
-        // 192.0.2.1 goes to the default gateway and stays Pending indefinitely, whereas this resolves
-        // before Connect returns and is readable by the first Pump. Nothing about the environment's
-        // routing table participates.
+        // Arrange — a multicast group is not a destination a TCP connection can be opened to, so both
+        // stacks reject it out of hand rather than putting a packet on the wire and waiting. That is
+        // what makes this deterministic where an ordinary unrouted address is not: a TEST-NET address
+        // like 192.0.2.1 goes to the default gateway and stays Pending indefinitely, whereas this
+        // resolves in time to be read by the first Pump. The platforms word the refusal differently —
+        // HostUnreachable on Windows, NetworkUnreachable on Linux — and the mapping deliberately gives
+        // both the same CloseReason, so the assertion below holds identically on each.
+        //
+        // This dialled the reserved 240.0.0.0/4 range until Linux showed that claim to be wrong: a
+        // class E address is not rejected outright there, and inside a container it is answered by the
+        // NAT gateway, so the environment's routing table participates after all. A multicast address
+        // is rejected for what it is rather than for where it does or does not route, which is the
+        // property this test needed all along.
         using RawReactorHarness harness = new();
-        IPEndPoint unreachableEndPoint = new(IPAddress.Parse("240.0.0.1"), 1);
+        IPEndPoint unreachableEndPoint = new(IPAddress.Parse("224.0.0.1"), 1);
 
         // Act
         LinkId dialLink = harness.Reactor.Connect(unreachableEndPoint);
@@ -110,17 +125,31 @@ public class RawReactorDialTests
     }
 
     [Fact]
-    public void Connect_LimitedBroadcastAddress_DrainsClosedWithFailed()
+    public void Connect_AddressTheStackRejectsWithNoDedicatedReason_DrainsClosedWithFailed()
     {
         // Arrange — the catch-all arm of the reason mapping, which exists precisely for platform errors
-        // the roster has no dedicated word for. Dialling the limited broadcast address is rejected by
-        // the stack as AddressNotAvailable — neither a refusal nor an unreachable network — so it lands
-        // in that arm, and like the reserved-address case above it resolves without a round trip.
+        // the roster has no dedicated word for. Reaching it needs a destination the stack rejects
+        // outright with something that is neither a refusal nor an unreachable network, and no single
+        // address does that on both platforms: the two stacks partition the error space differently, so
+        // every address that lands in this arm on one lands in Refused or Unreachable on the other.
+        // Sixteen candidates were measured to establish that, including the limited broadcast address
+        // this test used to dial — Windows answers it AddressNotAvailable, Linux NetworkUnreachable.
+        //
+        // So the stimulus is chosen per platform and the assertion is not: both addresses below are
+        // rejected before the connect goes anywhere, both resolve by the first Pump, and both must
+        // produce exactly CloseReason.Failed. Neither consults a routing table, which is what keeps
+        // this deterministic where an ordinary unrouted address is not.
+        //   Windows — the limited broadcast address, rejected as AddressNotAvailable.
+        //   Linux   — a link-local address with no scope id, which names no interface and so cannot
+        //             identify a destination at all: rejected as InvalidArgument. Windows instead
+        //             accepts it and leaves the dial in flight, which is why it cannot serve for both.
         using RawReactorHarness harness = new();
-        IPEndPoint broadcastEndPoint = new(IPAddress.Broadcast, 1);
+        IPEndPoint rejectedEndPoint = OperatingSystem.IsWindows()
+            ? new IPEndPoint(IPAddress.Broadcast, 1)
+            : new IPEndPoint(IPAddress.Parse("fe80::1"), 1);
 
         // Act
-        LinkId dialLink = harness.Reactor.Connect(broadcastEndPoint);
+        LinkId dialLink = harness.Reactor.Connect(rejectedEndPoint);
         List<(RawEventKind Kind, LinkId Link, CloseReason Reason)> drained = harness.PumpAndDrainReasons(pumps: 1);
 
         // Assert
