@@ -35,6 +35,12 @@ snapshots. Never add `InternalsVisibleTo`, never read a private field, never ass
 method was called. A test that would fail if the dispatcher were rewritten but its behaviour
 preserved is testing the wrong thing.
 
+An L0 invariant you cannot reach through that seam is a design signal, not a testing problem: change
+the code until the invariant is trivially true rather than reaching past the seam to observe it. The
+reasoning, and the only conditions that would reopen any of this, are in
+[ADR 0015](../docs/adr/0015-l0-is-untested-through-and-an-unreachable-invariant-is-designed-away.md).
+Raise it in your report if you think you have hit one — do not decide it yourself.
+
 ## Verification cycle — repeat until all three pass
 
 1. `dotnet format`

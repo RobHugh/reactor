@@ -23,7 +23,11 @@ namespace ReactorSockets.Core;
 /// <b>Generations begin at 1.</b> A Slot's generation increments on every removal, so a handle
 /// outliving its occupant compares unequal to the Slot's current generation. Starting at 1 rather
 /// than 0 is what makes <see langword="default"/> unresolvable: a defaulted handle carries generation
-/// 0, which no live Slot ever holds. Nothing has to check for it.
+/// 0, which no live Slot ever holds. Nothing has to check for it — and the counter is
+/// <see langword="ulong"/> precisely so that nothing ever has to: 2^64 removals on one Slot is
+/// unreachable by any process, so the generation cannot count back round through 0 and turn the
+/// sentinel into an alias. An <see langword="int"/> would have wrapped in days under connection
+/// churn. ADR 0015 records why the width was widened rather than the wrap guarded against.
 /// </para>
 /// <para>
 /// <b>Not thread-safe, deliberately.</b> A Reactor is owned by one thread (ADR 0002) and enforces
@@ -37,7 +41,7 @@ internal sealed class ShareHolderTable<T>
     where T : class
 {
     private readonly T?[] _slots;
-    private readonly int[] _generations;
+    private readonly ulong[] _generations;
 
     /// <summary>
     /// Constructs a table of <paramref name="capacity"/> Slots, every generation starting at 1.
@@ -57,8 +61,8 @@ internal sealed class ShareHolderTable<T>
         }
 
         _slots = new T?[capacity];
-        _generations = new int[capacity];
-        Array.Fill(_generations, 1);
+        _generations = new ulong[capacity];
+        Array.Fill(_generations, 1UL);
     }
 
     /// <summary>The number of Slots this table holds, occupied or not.</summary>

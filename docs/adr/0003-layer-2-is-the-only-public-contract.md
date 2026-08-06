@@ -11,6 +11,14 @@ single assembly rather than separate projects — a three-assembly layout would 
 one assembly gives for free, and would publish the layering in metadata we want freedom to change.
 Tests reach in via a single `InternalsVisibleTo`.
 
+> **Superseded by ADR 0015.** There is no `InternalsVisibleTo`, and there has never been one. Issue #1
+> decided during slice 1 that the single seam is the public L2 surface — L0 and L1 stay internal and
+> untested-through — and commit `1aeffe6` applied it, deleting five direct L0 unit-test files. The
+> sentence above was left standing for two slices, so anyone reading the ADR log to learn the rule
+> got the opposite of the enforced one. It is kept here rather than removed because what this project
+> once intended, and why it changed its mind under contact with the code, is the record's job. ADR
+> 0015 states the policy, what would reopen it, and the test that now enforces it.
+
 ## Consequences
 
 - **No extension seam.** A consumer wanting a transport we did not ship cannot add one; they must
