@@ -10,11 +10,13 @@ namespace ReactorSockets;
 public enum DiagnosticId
 {
     /// <summary>
-    /// The configured admission cap was hit this Pump while a connection was still waiting in the
-    /// OS backlog. No subject. <c>Value0</c> is the cap, <c>Value1</c> is the number of deferrals —
-    /// listening Links that still had a pending connection when the cap ran out, not the number of
-    /// connections left waiting. That depth is unknowable without accepting, which is exactly what
-    /// hitting the cap stops the Reactor from doing, so it is deliberately not claimed here.
+    /// The configured admission cap was hit this Pump with work still waiting to be admitted. No
+    /// subject. <c>Value0</c> is the cap, <c>Value1</c> is the count of Admissions declined,
+    /// counted as the Reactor's counters count them: once per declining where the work waits out of
+    /// reach — a listening Link or bound endpoint with a pending connection it left in the OS
+    /// backlog, never the number of connections left there, a depth unknowable without accepting —
+    /// and once per piece of work where the Reactor was holding it, whether it then waits or is
+    /// Discarded.
     /// </summary>
     AdmissionCapReached = 1,
 
@@ -26,11 +28,11 @@ public enum DiagnosticId
     ArenaExhausted = 2,
 
     /// <summary>
-    /// Every capacity slot was occupied this Pump while a connection was still waiting in the OS
-    /// backlog — a different exhaustion from <see cref="AdmissionCapReached"/>, reachable because the
-    /// admission cap can be configured above <see cref="ReactorOptions.Capacity"/>. No subject.
-    /// <c>Value0</c> is the capacity, <c>Value1</c> is the number of deferrals, counted the same way
-    /// and with the same limit as <see cref="AdmissionCapReached"/>'s.
+    /// Every capacity slot was occupied this Pump with work still waiting to be admitted — a
+    /// different exhaustion from <see cref="AdmissionCapReached"/>, reachable because the admission
+    /// cap can be configured above <see cref="ReactorOptions.Capacity"/>. No subject.
+    /// <c>Value0</c> is the capacity, <c>Value1</c> is the count of Admissions declined, counted the
+    /// same way and with the same limit as <see cref="AdmissionCapReached"/>'s.
     /// </summary>
     CapacityExhausted = 3,
 

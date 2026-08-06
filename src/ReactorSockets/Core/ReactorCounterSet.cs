@@ -13,6 +13,7 @@ internal sealed class ReactorCounterSet
     private ulong _datagramsReceived;
     private ulong _arenaHighWaterBytes;
     private ulong _admissionDeferrals;
+    private ulong _admissionDiscards;
 
     /// <summary>Records that the installed Sink threw and has been disabled for the life of the Reactor.</summary>
     public void RecordSinkFaulted() => _sinkFaulted++;
@@ -34,16 +35,33 @@ internal sealed class ReactorCounterSet
     }
 
     /// <summary>
-    /// Records one deferral: a Link that had somewhere to admit an inbound connection from and
-    /// declined to, because either the admission cap or capacity was spent. It counts deferring
-    /// Links per Frame, not connections left in the backlog — a Reactor cannot know that depth
-    /// without accepting, which is the thing a deferral consists of not doing. The two causes share
-    /// this counter and are told apart by <see cref="DiagnosticId.AdmissionCapReached"/> versus
-    /// <see cref="DiagnosticId.CapacityExhausted"/>.
+    /// Records one deferral: an Admission declined because the admission cap or capacity was spent,
+    /// where the work stays put for a later Pump. One call is one declining, not one piece of work
+    /// turned away — a listening Link or bound endpoint declines its whole backlog with one call,
+    /// because that depth is unknowable without accepting, which is the thing a deferral consists of
+    /// not doing. Where the Reactor already holds the work the two coincide and the figure is exact.
+    /// Work the Reactor cannot leave waiting is a Discard, not a deferral: see
+    /// <see cref="RecordAdmissionDiscard"/>. The two causes share this counter and are told apart by
+    /// <see cref="DiagnosticId.AdmissionCapReached"/> versus <see cref="DiagnosticId.CapacityExhausted"/>.
     /// </summary>
     public void RecordAdmissionDeferral() => _admissionDeferrals++;
 
+    /// <summary>
+    /// Records one Discard: one piece of work the Reactor was holding and let go, because the
+    /// admission cap or capacity was spent and the transport gives it nowhere to wait. Always exact,
+    /// unlike <see cref="RecordAdmissionDeferral"/> — a Reactor can only Discard what it had in
+    /// hand. Called only where declined work does not survive to a later Pump, which today means a
+    /// datagram Session dropping a Hello.
+    /// </summary>
+    public void RecordAdmissionDiscard() => _admissionDiscards++;
+
     /// <summary>Takes a point-in-time snapshot of every Reactor-scope counter.</summary>
     public ReactorCounters Snapshot() =>
-        new(_sinkFaulted, _datagramsSent, _datagramsReceived, _arenaHighWaterBytes, _admissionDeferrals);
+        new(
+            _sinkFaulted,
+            _datagramsSent,
+            _datagramsReceived,
+            _arenaHighWaterBytes,
+            _admissionDeferrals,
+            _admissionDiscards);
 }

@@ -7,11 +7,11 @@ namespace ReactorSockets.Tests;
 public class DiagnosticRecordTests
 {
     [Fact]
-    public void ForAdmissionCapReached_CapAndDeferrals_CarriesNoSubjectAndWarnLevel()
+    public void ForAdmissionCapReached_CapAndDeclined_CarriesNoSubjectAndWarnLevel()
     {
         // Arrange
         // Act
-        DiagnosticRecord record = DiagnosticRecord.ForAdmissionCapReached(cap: 64, deferrals: 3);
+        DiagnosticRecord record = DiagnosticRecord.ForAdmissionCapReached(cap: 64, declined: 3);
 
         // Assert
         record.Id.Should().Be(DiagnosticId.AdmissionCapReached);
@@ -22,11 +22,11 @@ public class DiagnosticRecordTests
     }
 
     [Fact]
-    public void ForCapacityExhausted_CapacityAndDeferrals_CarriesNoSubjectAndWarnLevel()
+    public void ForCapacityExhausted_CapacityAndDeclined_CarriesNoSubjectAndWarnLevel()
     {
         // Arrange
         // Act
-        DiagnosticRecord record = DiagnosticRecord.ForCapacityExhausted(capacity: 8, deferrals: 1);
+        DiagnosticRecord record = DiagnosticRecord.ForCapacityExhausted(capacity: 8, declined: 1);
 
         // Assert
         record.Id.Should().Be(DiagnosticId.CapacityExhausted);
