@@ -156,6 +156,20 @@ public class RawReactorDialTests
         //   Linux   — a link-local address with no scope id, which names no interface and so cannot
         //             identify a destination at all: rejected as InvalidArgument. Windows instead
         //             accepts it and leaves the dial in flight, which is why it cannot serve for both.
+        //
+        // Using an IPv6 address here does not make this test depend on IPv6 working, which is the
+        // obvious objection to it. fe80::1 with no scope id is rejected by connect() as a malformed
+        // argument, before any address or route lookup, so its answer does not move with the host's
+        // IPv6 configuration — measured identically with IPv6 up, with net.ipv6.conf.all.disable_ipv6
+        // set, and with no network interfaces at all:
+        //
+        //                     | IPv6 up            | IPv6 disabled       | no network
+        //   fe80::1           | InvalidArgument    | InvalidArgument     | InvalidArgument
+        //   fe80::1%1         | NetworkUnreachable | AddressNotAvailable | NetworkUnreachable
+        //   100::1            | NetworkUnreachable | AddressNotAvailable | NetworkUnreachable
+        //   ::1               | Refused            | AddressNotAvailable | Refused
+        //
+        // Every other row moves; that is the whole reason this one was chosen over the others.
         using RawReactorHarness harness = new();
         IPEndPoint rejectedEndPoint = OperatingSystem.IsWindows()
             ? new IPEndPoint(IPAddress.Broadcast, 1)
