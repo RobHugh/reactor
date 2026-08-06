@@ -580,28 +580,46 @@ public sealed class RawReactor : IDisposable
         }
     }
 
-    private void DeliverDatagram(SlotHandle handle, LinkSlot slot, Source source, ReadOnlySpan<byte> data)
+    /// <summary>
+    /// Copies a Payload into the frame arena on the Link's behalf, answering <see langword="true"/> with
+    /// the offset it landed at, or <see langword="false"/> having already accounted for the refusal.
+    /// Every byte this Reactor delivers passes through here, whatever kind of Event it becomes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>What the two refusals cost.</b> <see cref="ArenaReservationOutcome.ShareExhausted"/> is a
+    /// per-Link counter rather than a Diagnostic (ADR 0013: the condition can recur every Pump under
+    /// sustained load, so it fails the record test); <see cref="ArenaReservationOutcome.ArenaExhausted"/>
+    /// is a <c>Warn</c> Diagnostic carrying the arithmetic that explains it. Neither says anything on
+    /// the wire — the Raw profile owns no protocol, so a Payload it cannot hold is simply not delivered.
+    /// A Session profile must answer differently, which is why this policy is Raw's and not
+    /// <see cref="Core.FrameArena"/>'s (ADR 0007).
+    /// </para>
+    /// <para>
+    /// <b>The two counters on the success path belong here</b> because they are facts about bytes
+    /// entering the arena and are true of any admitted Payload. What kind of Event those bytes become —
+    /// and whether a Source is claimed alongside them — is the caller's to say.
+    /// </para>
+    /// <para>
+    /// <b>The fall-through refuses.</b> An outcome with no arm above returns <see langword="false"/>
+    /// rather than reaching the caller with an uninitialised offset, so a future
+    /// <see cref="ArenaReservationOutcome"/> member fails closed until someone writes its arm — the same
+    /// rule <see cref="RawLinkLegality"/> follows for a kind with no row.
+    /// </para>
+    /// </remarks>
+    private bool TryReserve(SlotHandle handle, LinkSlot slot, ReadOnlySpan<byte> data, out int payloadOffset)
     {
-        int offsetBeforeReserve = _arena.BytesUsed;
+        payloadOffset = _arena.BytesUsed;
         ArenaReservation reservation = _arena.Reserve(handle.Index, data);
         switch (reservation.Outcome)
         {
             case ArenaReservationOutcome.Committed:
-                _pendingEvents.Add(new PendingEvent
-                {
-                    Kind = RawEventKind.DatagramReceived,
-                    Link = ToLinkId(handle),
-                    Source = source,
-                    PayloadOffset = offsetBeforeReserve,
-                    PayloadLength = data.Length,
-                });
                 slot.Counters.RecordBytesReceived(data.Length);
-                _counters.RecordDatagramReceived();
                 _counters.ObserveArenaUsage(_arena.BytesUsed);
-                break;
+                return true;
             case ArenaReservationOutcome.ShareExhausted:
                 slot.Counters.RecordReadShareExhaustion();
-                break;
+                return false;
             case ArenaReservationOutcome.ArenaExhausted:
                 if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
                 {
@@ -609,48 +627,56 @@ public sealed class RawReactor : IDisposable
                         ToLinkId(handle), reservation.BytesRequested, reservation.BytesFree));
                 }
 
-                break;
+                return false;
         }
+
+        return false;
     }
 
     /// <summary>
-    /// Commits a Segment's bytes into the frame arena and queues the <see cref="RawEventKind.SegmentReceived"/>
-    /// event, or records the refusal — <see cref="ArenaReservationOutcome.ShareExhausted"/> as a per-Link
-    /// counter (ADR 0013: the condition can recur every Pump under sustained load, so it fails the
-    /// record test) and <see cref="ArenaReservationOutcome.ArenaExhausted"/> as a <c>Warn</c> Diagnostic.
-    /// The reservation logic is identical to <see cref="DeliverDatagram"/>'s; only the event shape and
-    /// the absence of a claimed Source differ, because a stream Link has one remote for its whole
-    /// lifetime and nothing per-Segment to claim.
+    /// Queues the <see cref="RawEventKind.DatagramReceived"/> event for a Payload the arena accepted,
+    /// with the <paramref name="source"/> the transport claims sent it. The Datagram counter is
+    /// incremented here rather than in <see cref="TryReserve"/> because it counts whole Datagrams
+    /// delivered, which is a fact about this event kind and not about the bytes.
+    /// </summary>
+    private void DeliverDatagram(SlotHandle handle, LinkSlot slot, Source source, ReadOnlySpan<byte> data)
+    {
+        if (!TryReserve(handle, slot, data, out int payloadOffset))
+        {
+            return;
+        }
+
+        _pendingEvents.Add(new PendingEvent
+        {
+            Kind = RawEventKind.DatagramReceived,
+            Link = ToLinkId(handle),
+            Source = source,
+            PayloadOffset = payloadOffset,
+            PayloadLength = data.Length,
+        });
+        _counters.RecordDatagramReceived();
+    }
+
+    /// <summary>
+    /// Queues the <see cref="RawEventKind.SegmentReceived"/> event for a Payload the arena accepted.
+    /// No Source is claimed, because a stream Link has one remote for its whole lifetime and nothing
+    /// per-Segment to claim; and no Segment counter is kept, because a Segment is an artefact of how
+    /// much happened to be readable rather than anything the remote sent as a unit.
     /// </summary>
     private void DeliverSegment(SlotHandle handle, LinkSlot slot, ReadOnlySpan<byte> data)
     {
-        int offsetBeforeReserve = _arena.BytesUsed;
-        ArenaReservation reservation = _arena.Reserve(handle.Index, data);
-        switch (reservation.Outcome)
+        if (!TryReserve(handle, slot, data, out int payloadOffset))
         {
-            case ArenaReservationOutcome.Committed:
-                _pendingEvents.Add(new PendingEvent
-                {
-                    Kind = RawEventKind.SegmentReceived,
-                    Link = ToLinkId(handle),
-                    PayloadOffset = offsetBeforeReserve,
-                    PayloadLength = data.Length,
-                });
-                slot.Counters.RecordBytesReceived(data.Length);
-                _counters.ObserveArenaUsage(_arena.BytesUsed);
-                break;
-            case ArenaReservationOutcome.ShareExhausted:
-                slot.Counters.RecordReadShareExhaustion();
-                break;
-            case ArenaReservationOutcome.ArenaExhausted:
-                if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
-                {
-                    _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(
-                        ToLinkId(handle), reservation.BytesRequested, reservation.BytesFree));
-                }
-
-                break;
+            return;
         }
+
+        _pendingEvents.Add(new PendingEvent
+        {
+            Kind = RawEventKind.SegmentReceived,
+            Link = ToLinkId(handle),
+            PayloadOffset = payloadOffset,
+            PayloadLength = data.Length,
+        });
     }
 
     private void RecordDatagramTruncated(Source source)
