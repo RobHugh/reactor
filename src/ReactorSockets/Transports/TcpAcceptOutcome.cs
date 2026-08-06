@@ -4,7 +4,7 @@ namespace ReactorSockets.Transports;
 /// The outcome of a single <see cref="TcpListenLink.TryAccept"/> call: nothing was waiting, a
 /// connection was pulled off the backlog, or the accept itself failed. The listening socket keeps
 /// running for all three — see <see cref="TcpListenLink.TryAccept"/> for why an accept failure never
-/// closes the listener.
+/// closes the listening socket.
 /// </summary>
 internal enum TcpAcceptOutcome
 {

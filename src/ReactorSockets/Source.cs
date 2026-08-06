@@ -7,7 +7,7 @@ namespace ReactorSockets;
 /// <summary>
 /// Who a datagram claims to be from — an unauthenticated hint about origin, never an identity
 /// (ADR 0014). Carried on the record path as a value type: <c>{ family, 16 address bytes, scope id,
-/// port }</c>, roughly 56 bytes, so a Diagnostic or an Event never allocates to name a peer.
+/// port }</c>, roughly 56 bytes, so a Diagnostic or an Event never allocates to name a Source.
 /// </summary>
 /// <remarks>
 /// Equality is total and exact over every field, including <see cref="ScopeId"/>: an IPv6

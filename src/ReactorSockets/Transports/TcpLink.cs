@@ -22,7 +22,7 @@ internal sealed class TcpLink : IDisposable
     public IPEndPoint LocalEndPoint { get; }
 
     /// <summary>
-    /// The peer's address, constant for this Link's lifetime (ADR 0014) — set once, here, and never
+    /// The remote end's address, constant for this Link's lifetime (ADR 0014) — set once, here, and never
     /// re-read from the socket afterwards, because both the ways a <see cref="TcpLink"/> comes to
     /// exist already know it without asking: an accepted socket reports it immediately since it is
     /// already connected, and a dialled socket's remote is exactly the endpoint the caller asked
@@ -132,7 +132,7 @@ internal sealed class TcpLink : IDisposable
     /// still send. A reset arrives here as an ordinary <see cref="SocketException"/> and is reported
     /// as <see cref="TcpLinkReceiveOutcome.Failed"/>, carrying whatever <see cref="SocketError"/> the
     /// platform gave — it is L2's job, not this type's, to translate a reset into
-    /// <see cref="ReactorSockets.CloseReason.ResetByPeer"/>.
+    /// <see cref="ReactorSockets.CloseReason.ResetByRemote"/>.
     /// </remarks>
     public TcpLinkReceiveResult Receive(Span<byte> scratch)
     {

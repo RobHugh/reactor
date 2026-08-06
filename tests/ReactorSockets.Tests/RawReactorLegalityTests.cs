@@ -18,6 +18,38 @@ namespace ReactorSockets.Tests;
 public class RawReactorLegalityTests
 {
     [Fact]
+    public void SendTo_DefaultLinkId_FailsEvenWhenTheFirstBoundLinkOccupiesSlotZero()
+    {
+        // Arrange — the first Link bound occupies slot 0, so a default LinkId (0, 0) would address it
+        // if generations began at 0. They begin at 1, which is what makes default unaddressable: no
+        // live slot ever carries generation 0, so nothing has to check for it.
+        using RawReactorHarness harness = new();
+        (LinkId first, _) = harness.BindLoopbackLink();
+
+        // Act
+        Result result = harness.Reactor.SendTo(default, Source.FromIPEndPoint(harness.Reactor.LocalOf(first)), [1, 2, 3]);
+
+        // Assert
+        result.IsSuccess.Should().BeFalse();
+        first.Should().NotBe(default(LinkId));
+    }
+
+    [Fact]
+    public void LocalOf_DefaultLinkId_ThrowsRatherThanAnsweringForSlotZero()
+    {
+        // Arrange — the returning-data counterpart to the Result-returning case above: a default
+        // LinkId must be rejected identically whichever channel the member reports through.
+        using RawReactorHarness harness = new();
+        harness.BindLoopbackLink();
+
+        // Act
+        Action localOfDefault = () => harness.Reactor.LocalOf(default);
+
+        // Assert
+        localOfDefault.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
     public void Close_ListeningLink_DrainsExactlyOneClosedEventWithLocalClose()
     {
         // Arrange — the one Close cell no other file exercises: a listening Link is a Link like any

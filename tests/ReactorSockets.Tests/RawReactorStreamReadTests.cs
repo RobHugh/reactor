@@ -62,11 +62,11 @@ public class RawReactorStreamReadTests
                 continue;
             }
 
-            if (evt.Listener == loudListener)
+            if (evt.ListeningLink == loudListener)
             {
                 loudLink = evt.Link;
             }
-            else if (evt.Listener == quietListener)
+            else if (evt.ListeningLink == quietListener)
             {
                 quietLink = evt.Link;
             }
@@ -210,7 +210,7 @@ public class RawReactorStreamReadTests
     }
 
     [Fact]
-    public void Drain_CounterpartyClosesAbruptlyWithoutPriorShutdown_DrainsClosedWithResetByPeerAndNoEndOfStream()
+    public void Drain_CounterpartyClosesAbruptlyWithoutPriorShutdown_DrainsClosedWithResetByRemoteAndNoEndOfStream()
     {
         // Arrange
         using RawReactorHarness harness = new(capacity: 4);
@@ -226,7 +226,7 @@ public class RawReactorStreamReadTests
         // Assert
         drained.Should().NotContain(evt => evt.Kind == RawEventKind.EndOfStream);
         drained.Should().ContainSingle(evt => evt.Kind == RawEventKind.Closed && evt.Link == acceptedLink)
-            .Which.Reason.Should().Be(CloseReason.ResetByPeer);
+            .Which.Reason.Should().Be(CloseReason.ResetByRemote);
     }
 
     [Fact]

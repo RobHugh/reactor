@@ -11,11 +11,11 @@ namespace ReactorSockets;
 /// </summary>
 public readonly ref struct RawEvent
 {
-    private RawEvent(RawEventKind kind, LinkId link, LinkId listener, Source source, ReadOnlySpan<byte> payload, CloseReason reason)
+    private RawEvent(RawEventKind kind, LinkId link, LinkId listeningLink, Source source, ReadOnlySpan<byte> payload, CloseReason reason)
     {
         Kind = kind;
         Link = link;
-        Listener = listener;
+        ListeningLink = listeningLink;
         Source = source;
         Payload = payload;
         Reason = reason;
@@ -26,16 +26,18 @@ public readonly ref struct RawEvent
 
     /// <summary>
     /// The Link this event concerns. Always populated — for <see cref="RawEventKind.Accepted"/> this
-    /// is the new connection's identity, not the listener's (see <see cref="Listener"/> for that).
+    /// is the new connection's identity, not the listening Link's (see <see cref="ListeningLink"/>
+    /// for that).
     /// </summary>
     public LinkId Link { get; }
 
     /// <summary>
     /// The listening Link that produced this accepted connection. Populated only when
-    /// <see cref="Kind"/> is <see cref="RawEventKind.Accepted"/>; a consumer running several listeners
-    /// needs this to know which one just fired.
+    /// <see cref="Kind"/> is <see cref="RawEventKind.Accepted"/>; a consumer listening on several
+    /// Links needs this to know which one just fired. Named for the Link rather than a "Listener"
+    /// deliberately: listening is a role a Link plays, not a kind of thing this library names.
     /// </summary>
-    public LinkId Listener { get; }
+    public LinkId ListeningLink { get; }
 
     /// <summary>
     /// Who claims to have sent this datagram — an unauthenticated hint, never an identity. Populated
@@ -64,14 +66,14 @@ public readonly ref struct RawEvent
         new(RawEventKind.Closed, link, default, default, default, reason);
 
     /// <summary>
-    /// Builds a <see cref="RawEventKind.Accepted"/> event naming both the listener that fired and the
-    /// new connection it produced. Carries no address (ADR 0014): <see cref="RawReactor.RemoteOf"/>
+    /// Builds a <see cref="RawEventKind.Accepted"/> event naming both the listening Link that fired
+    /// and the new connection it produced. Carries no address (ADR 0014): <see cref="RawReactor.RemoteOf"/>
     /// and <see cref="RawReactor.LocalOf"/> are Link state, constant for the Link's lifetime, and
     /// answering that question here would make
     /// <see cref="Source"/> stop being exclusively the per-datagram claim.
     /// </summary>
-    internal static RawEvent ForAccepted(LinkId listener, LinkId link) =>
-        new(RawEventKind.Accepted, link, listener, default, default, default);
+    internal static RawEvent ForAccepted(LinkId listeningLink, LinkId link) =>
+        new(RawEventKind.Accepted, link, listeningLink, default, default, default);
 
     /// <summary>
     /// Builds a <see cref="RawEventKind.Connected"/> event for a dial that completed successfully.

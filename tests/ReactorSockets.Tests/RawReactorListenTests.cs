@@ -42,7 +42,7 @@ public class RawReactorListenTests
     }
 
     [Fact]
-    public void Pump_CounterpartyConnects_AcceptedLinkIsNewAndDistinctFromListener()
+    public void Pump_CounterpartyConnects_AcceptedLinkIsNewAndDistinctFromListeningLink()
     {
         // Arrange
         using RawReactorHarness harness = new();
@@ -54,12 +54,12 @@ public class RawReactorListenTests
         RawEvent evt = FirstAccepted(harness);
 
         // Assert
-        evt.Listener.Should().Be(listener);
+        evt.ListeningLink.Should().Be(listener);
         evt.Link.Should().NotBe(listener);
     }
 
     [Fact]
-    public void Pump_TwoListenersOnDifferentPorts_AcceptedEventsAreDistinguishableByListener()
+    public void Pump_TwoListenersOnDifferentPorts_AcceptedEventsAreDistinguishableByListeningLink()
     {
         // Arrange
         using RawReactorHarness harness = new(capacity: 6);
@@ -75,7 +75,7 @@ public class RawReactorListenTests
         {
             if (evt.Kind == RawEventKind.Accepted)
             {
-                listenersSeen.Add(evt.Listener);
+                listenersSeen.Add(evt.ListeningLink);
             }
         }
 
