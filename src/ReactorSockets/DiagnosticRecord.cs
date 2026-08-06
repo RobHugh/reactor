@@ -99,4 +99,25 @@ public readonly record struct DiagnosticRecord
     /// </summary>
     public static DiagnosticRecord ForDatagramTruncated(Source source, int bufferSize) =>
         new(DiagnosticId.DatagramTruncated, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, bufferSize, 0);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.DatagramMalformed"/> record for the claimed Source, carrying
+    /// the number of bytes that arrived.
+    /// </summary>
+    public static DiagnosticRecord ForDatagramMalformed(Source source, int bytesReceived) =>
+        new(DiagnosticId.DatagramMalformed, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, bytesReceived, 0);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.CookieRejected"/> record for the claimed Source, carrying the
+    /// epoch the cookie offered and the epoch current when it was checked.
+    /// </summary>
+    public static DiagnosticRecord ForCookieRejected(Source source, long epochOffered, long epochCurrent) =>
+        new(DiagnosticId.CookieRejected, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, epochOffered, epochCurrent);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.VersionRefused"/> record for the claimed Source, carrying the
+    /// version offered and the version this Reactor requires.
+    /// </summary>
+    public static DiagnosticRecord ForVersionRefused(Source source, long versionOffered, long versionRequired) =>
+        new(DiagnosticId.VersionRefused, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, versionOffered, versionRequired);
 }

@@ -55,4 +55,44 @@ public enum DiagnosticId
     /// Source. <c>Value0</c> is the scratch buffer size in bytes; <c>Value1</c> is unused.
     /// </summary>
     DatagramTruncated = 102,
+
+    /// <summary>
+    /// A datagram could not be parsed and was discarded: wrong length, an unknown control type, a
+    /// body the declared type cannot fill, padding that was not zero, or a session id naming no
+    /// Session. Subject is the claimed Source. <c>Value0</c> is the bytes received; <c>Value1</c> is
+    /// unused.
+    /// </summary>
+    /// <remarks>
+    /// A remote can produce this at will by sending rubbish, which is exactly why it is a Diagnostic
+    /// and never an Event: the event stream is the consumer's protocol, and an unauthenticated
+    /// stranger must not be able to write to it. <see cref="DiagnosticLevel.Warn"/> rather than
+    /// <see cref="DiagnosticLevel.Error"/> for the same reason — nothing is wrong with this Reactor.
+    /// </remarks>
+    DatagramMalformed = 200,
+
+    /// <summary>
+    /// A Hello carried a cookie this Reactor did not mint, or minted too long ago: a forged or
+    /// corrupted authenticator, a cookie replayed from a different source address, or one from an
+    /// epoch older than the previous. Subject is the claimed Source. <c>Value0</c> is the epoch the
+    /// cookie offered; <c>Value1</c> is the epoch current at the moment it was checked.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>, never <see cref="DiagnosticLevel.Error"/>: a cookie
+    /// arriving one epoch after it was minted is the mechanism working, and a Reactor visible to the
+    /// internet will see forged ones continuously. Raising this to Error would train a consumer to
+    /// ignore Error.
+    /// </remarks>
+    CookieRejected = 201,
+
+    /// <summary>
+    /// A cookie-validated Hello offered a protocol version this Reactor does not speak, and was
+    /// refused. Subject is the claimed Source. <c>Value0</c> is the version offered; <c>Value1</c> is
+    /// the version this Reactor requires.
+    /// </summary>
+    /// <remarks>
+    /// Emitted only for a Hello that passed the cookie check, because that is the only Hello a
+    /// Reactor answers at all — a bare Hello is answered with a Cookie and nothing else, whatever
+    /// version it claimed.
+    /// </remarks>
+    VersionRefused = 202,
 }

@@ -34,10 +34,19 @@ namespace ReactorSockets;
 /// one way a consumer would act on: deferred work arrives on a later Pump, Discarded work never
 /// does.
 /// </param>
+/// <param name="UnknownSourceDiscards">
+/// Datagrams taken from the transport and thrown away because nothing could be attributed to a Peer:
+/// a malformed control datagram, or a session id naming no Session. Reactor-scope rather than
+/// per-Peer precisely because there is no Peer to charge them to — the whole point of the member is
+/// the traffic that failed to name one. Moves only on the datagram Session profile. A rising figure
+/// on a Reactor that is otherwise healthy is a scan or a flood, not a fault, which is why the
+/// matching Diagnostics are <see cref="DiagnosticLevel.Warn"/>.
+/// </param>
 public readonly record struct ReactorCounters(
     ulong SinkFaulted,
     ulong DatagramsSent,
     ulong DatagramsReceived,
     ulong ArenaHighWaterBytes,
     ulong AdmissionDeferrals,
-    ulong AdmissionDiscards);
+    ulong AdmissionDiscards,
+    ulong UnknownSourceDiscards);

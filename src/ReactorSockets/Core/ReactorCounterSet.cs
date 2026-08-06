@@ -14,6 +14,7 @@ internal sealed class ReactorCounterSet
     private ulong _arenaHighWaterBytes;
     private ulong _admissionDeferrals;
     private ulong _admissionDiscards;
+    private ulong _unknownSourceDiscards;
 
     /// <summary>Records that the installed Sink threw and has been disabled for the life of the Reactor.</summary>
     public void RecordSinkFaulted() => _sinkFaulted++;
@@ -55,6 +56,14 @@ internal sealed class ReactorCounterSet
     /// </summary>
     public void RecordAdmissionDiscard() => _admissionDiscards++;
 
+    /// <summary>
+    /// Records one datagram taken from the transport and thrown away because nothing in it could be
+    /// attributed to a Peer — a malformed control datagram, or a session id naming no Session. Kept
+    /// apart from <see cref="RecordAdmissionDiscard"/> because this is not a declined Admission: no
+    /// budget was spent and no work was turned away, the bytes simply meant nothing.
+    /// </summary>
+    public void RecordUnknownSourceDiscard() => _unknownSourceDiscards++;
+
     /// <summary>Takes a point-in-time snapshot of every Reactor-scope counter.</summary>
     public ReactorCounters Snapshot() =>
         new(
@@ -63,5 +72,6 @@ internal sealed class ReactorCounterSet
             _datagramsReceived,
             _arenaHighWaterBytes,
             _admissionDeferrals,
-            _admissionDiscards);
+            _admissionDiscards,
+            _unknownSourceDiscards);
 }
