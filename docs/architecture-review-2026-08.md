@@ -85,16 +85,53 @@ Two safety properties, of different kinds:
 and correctness under growth, not brevity. Recorded here because the survey's original framing
 oversold it as a net deletion.
 
+### 3 — State the arena's reservation policy once
+
+**Strength at survey:** Worth exploring · **Shipped:** `62e6441`, PR #71
+
+`DeliverDatagram` and `DeliverSegment` ran the same reserve/refuse sequence over the frame arena,
+differing only in the event shape queued on success — a duplication the source itself already admitted
+to:
+
+> "The reservation logic is identical to `DeliverDatagram`'s; only the event shape and the absence of
+> a claimed Source differ." — `RawReactor.cs`
+
+`TryReserve` now holds everything that is a fact about **bytes entering the arena**: the reservation,
+both refusals with their accounting, and the two counters true of any admitted Payload. What kind of
+Event those bytes become — and whether a Source is claimed — stays at the call site, which is why
+`RecordDatagramReceived` sits outside: it counts whole Datagrams, not bytes. Each `Deliver` fell from
+about 31 lines to 10, for a net **−7 lines of code**. Modest, and not the point; the point is that the
+refusal policy is now stated once.
+
+Its fall-through returns `false` rather than handing back an uninitialised offset — the same
+fail-closed rule the legality matrix follows for a kind with no row.
+
+**It stayed in `RawReactor` rather than moving to `Core/`,** which the survey had floated so the
+Session profiles could reuse it. They cannot, on two ADRs:
+
+- **ADR 0010** puts the Session reservation at a different point in the pipeline — *"the counter
+  increments when a Message is handed to the frame arena, **not when bytes are read**"* — and calls
+  getting that backwards the exact failure the mechanism exists to prevent. Slice 3 accumulates until
+  a u32-prefixed Message completes; slice 5 branches on a control header first; slice 7 reassembles.
+- **ADR 0007** requires the refusal policy itself to diverge: *"At capacity the two profiles diverge,
+  because one of them owns a protocol and the other does not."* Raw drops what it cannot hold and says
+  nothing on the wire; a Session answers with `RetentionExhausted` backpressure.
+
+`FrameArena` is the module both profiles genuinely share, and it was already in `Core/`. A general
+lesson for the next review: **shared-looking code is not the same as a shared seam.** Check where in
+the pipeline the other caller sits before lifting anything for its benefit.
+
+**Two claims corrected.** The survey said "three of the four switch arms are byte-identical" — there
+are three arms and two are identical. It also proposed the name `TryAdmit`, which collides with
+`CONTEXT.md`'s **Admission** (taking on a new Share-holder). No glossary change was made: this is
+internal mechanics, and `CONTEXT.md` is a domain glossary.
+
 ---
 
 ## Rejected on re-derivation
 
-The three remaining candidates were re-examined against the bar the first two set. Two do not clear
-it, and one is not an architecture change at all.
-
-### 3 — One module for admitting bytes into the Frame
-
-**Verdict: still stands, downgraded to small.** See "Open" below.
+The two remaining candidates were re-examined against the bar the first two set. Neither clears it,
+and one is not an architecture change at all.
 
 ### 4 — Collapse the shallow L1 result types
 
@@ -168,29 +205,24 @@ settled either way.
 
 ## Open
 
-**3 — One module for admitting bytes into the Frame.** The only surviving candidate, and smaller than
-the survey claimed. `DeliverDatagram` and `DeliverSegment` run the same reserve/commit/refuse
-sequence over the arena, differing only in the `PendingEvent` shape queued on success — a duplication
-the source itself already admits to:
-
-> "The reservation logic is identical to `DeliverDatagram`'s; only the event shape and the absence of
-> a claimed Source differ." — `RawReactor.cs`
-
-Three of the four switch arms are byte-identical, including the `ShareExhausted` counter and the
-`ArenaExhausted` guarded Diagnostic. A `TryAdmit` helper in the same shape as `TryResolveFor` would
-remove about twenty lines and put the arena's admission policy in one place — which matters more than
-the line count, because that policy is exactly what a Session profile will need to repeat.
-
-Worth doing. Not urgent.
+**Nothing from this survey.** All five candidates are settled: three shipped, two rejected with
+reasons recorded above.
 
 ---
 
 ## Standing conclusion
 
-After two implemented rounds, **the well is close to dry**. One candidate survives re-derivation, and
-it is small. The remaining friction in this codebase is not shallow modules — it is the test-seam
-policy question in #68, which no refactor can settle.
+After three implemented rounds, **the well is dry**. Every candidate this survey raised has been built
+or turned down, and the third was small enough that finding a fourth of its size would mean lowering
+the bar rather than finding friction.
 
-A future review should treat that as the finding rather than manufacture a fifth card. The bar these
-two rounds set: a deepening earns its place by fixing a real defect or concentrating a policy that
-will genuinely be repeated — not by reducing line count, and not by satisfying a shape.
+The remaining friction in this codebase is not shallow modules — it is the test-seam policy question
+in **#68**, which no refactor can settle. A future review should treat that as the finding rather than
+manufacture a sixth card.
+
+The bar these rounds set: a deepening earns its place by fixing a real defect or concentrating a
+policy that will genuinely be repeated — not by reducing line count, and not by satisfying a shape.
+Two of the three that shipped did not reduce line count at all.
+
+And the lesson candidate 3 added: **check where the other caller sits in the pipeline before lifting
+anything for its benefit.** Code that looks shared is not the same as a seam that is.
