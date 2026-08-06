@@ -5,8 +5,9 @@ namespace ReactorSockets.Core;
 /// <summary>
 /// The readiness dispatch loop L0 runs inside every Pump (ADR 0001, ADR 0002): one
 /// <see cref="Socket.Select(System.Collections.IList?, System.Collections.IList?, System.Collections.IList?, int)"/>
-/// scan of every registered Handle's readability, plus whichever Handles are currently armed for
-/// writability, followed by a non-preemptive, synchronous callback for each Handle found ready. This
+/// scan of every registered Handle's readability and error state, plus whichever Handles are currently
+/// armed for writability, followed by a non-preemptive, synchronous callback for each Handle found
+/// ready — at most one callback per Handle per Pump, whichever of those found it. This
 /// is Schmidt's Reactor pattern with ownership inverted — there is no <c>handle_events()</c> loop
 /// that owns the process and no <c>Initiation_Dispatcher::instance()</c> singleton; a consumer's own
 /// loop calls <see cref="Pump"/> exactly when it decides to, and every dispatcher instance is
@@ -51,6 +52,8 @@ internal sealed class ReadinessDispatcher
     private readonly HashSet<Socket> _armedForWritable = [];
     private readonly List<Socket> _scanBuffer = [];
     private readonly List<Socket> _writeScanBuffer = [];
+    private readonly List<Socket> _errorScanBuffer = [];
+    private readonly HashSet<Socket> _alreadyDispatched = [];
     private int _rotationOffset;
 
     /// <summary>
@@ -148,11 +151,35 @@ internal sealed class ReadinessDispatcher
             writeScan = _writeScanBuffer;
         }
 
-        Socket.Select(_scanBuffer, writeScan, null, 0);
+        // The error-set is the same Handles as the read-set, and unlike the write-set it is scanned
+        // unconditionally. That is not a contradiction of the arming rule above: a socket is writable
+        // nearly always, so scanning for writability reports non-events, whereas a socket is in error
+        // almost never, so scanning for it reports nothing until something genuinely went wrong. It has
+        // to be scanned because some errors arrive ONLY this way — Linux signals a datagram socket's
+        // queued ICMP error with POLLERR and no POLLIN, so a Handle carrying one is never in the
+        // read-set and, without this, would sit unread for the life of the Link.
+        _errorScanBuffer.Clear();
+        _errorScanBuffer.AddRange(_scanBuffer);
 
+        Socket.Select(_scanBuffer, writeScan, _errorScanBuffer, 0);
+
+        _alreadyDispatched.Clear();
         foreach (Socket socket in _scanBuffer)
         {
             if (_onReadable.TryGetValue(socket, out Action? onReadable))
+            {
+                _alreadyDispatched.Add(socket);
+                onReadable();
+            }
+        }
+
+        // A Handle in error is dispatched to the same callback as a readable one, because reading is
+        // how a pending socket error is collected and reported: the read returns the error instead of
+        // bytes, and the Link's owner turns that into whatever the Link's kind calls it. Handles that
+        // were in both sets have already run — one Handle, one callback, per Pump.
+        foreach (Socket socket in _errorScanBuffer)
+        {
+            if (!_alreadyDispatched.Contains(socket) && _onReadable.TryGetValue(socket, out Action? onReadable))
             {
                 onReadable();
             }

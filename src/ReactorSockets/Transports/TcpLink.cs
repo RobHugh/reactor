@@ -11,12 +11,25 @@ namespace ReactorSockets.Transports;
 /// </summary>
 internal sealed class TcpLink : IDisposable
 {
-    private TcpLink(Socket socket, IPEndPoint localEndPoint, IPEndPoint remoteEndPoint)
+    private TcpLink(
+        Socket socket,
+        IPEndPoint localEndPoint,
+        IPEndPoint remoteEndPoint,
+        SocketError dialError = SocketError.Success)
     {
         Socket = socket;
         LocalEndPoint = localEndPoint;
         RemoteEndPoint = remoteEndPoint;
+        _dialError = dialError;
     }
+
+    /// <summary>
+    /// The outcome of a dial that had already failed by the time <see cref="Dial"/> returned, captured
+    /// there because it cannot be re-read afterwards, and preferred over the socket's own pending error
+    /// by <see cref="PollConnect"/>. <see cref="SocketError.Success"/> for an accepted Link and for a
+    /// dial still in flight, which is every dial that has not failed yet.
+    /// </summary>
+    private readonly SocketError _dialError;
 
     /// <summary>The socket's own local address, constant for this Link's lifetime.</summary>
     public IPEndPoint LocalEndPoint { get; }
@@ -61,13 +74,29 @@ internal sealed class TcpLink : IDisposable
     /// (<c>Connected</c> or a <c>Closed</c> with a reason), never an exception a registration call raises.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The socket is put into non-blocking mode before <see cref="Socket.Connect(System.Net.EndPoint)"/>
-    /// is called, so the call almost always throws <see cref="SocketError.WouldBlock"/> immediately —
-    /// the expected shape of "connecting, ask again later" for a non-blocking BSD-style socket. A
-    /// synchronous failure (for example an immediate loopback refusal, which some platforms can resolve
-    /// without a round trip) lands in the same catch and is not re-thrown either, for the same reason:
-    /// this method registers a dial, it does not complete one. <see cref="PollConnect"/> reports
-    /// whichever already happened exactly as it would report one still in flight.
+    /// is called, so the call throws <see cref="SocketError.WouldBlock"/> for a dial that is genuinely
+    /// in flight — the expected shape of "connecting, ask again later" for a non-blocking BSD-style
+    /// socket. That is not the only shape, and the two others are both platform-dependent, which is
+    /// why a dial's outcome is captured here rather than left entirely to <see cref="PollConnect"/>.
+    /// </para>
+    /// <para>
+    /// A dial can fail <i>synchronously</i>, throwing something other than <see cref="SocketError.WouldBlock"/>
+    /// — Linux answers an unreachable network this way, where Windows defers nearly everything to the
+    /// pending error. That code is kept rather than swallowed: the socket has no error pending for
+    /// <see cref="PollConnect"/> to find precisely because it was returned directly, so a discarded one
+    /// leaves a failed dial polling writable and clean, indistinguishable from a connected socket.
+    /// </para>
+    /// <para>
+    /// A dial can also fail <i>between</i> the call and this method returning, which loopback does
+    /// routinely: the refusal lands within microseconds. Its error must be read off the socket before
+    /// <see cref="Socket.LocalEndPoint"/> is touched, because on Unix that getter completes the
+    /// framework's own non-blocking-connect bookkeeping by reading <c>SO_ERROR</c> — and <c>SO_ERROR</c>
+    /// is read-and-clear, so the first reader consumes it. Reading it here, in this order, is what keeps
+    /// an ordinary refused connection reportable at all on Linux; with the reads the other way round the
+    /// refusal is destroyed inside this method and the dial goes on to report Connected.
+    /// </para>
     /// </remarks>
     public static TcpLink Dial(IPEndPoint endpoint)
     {
@@ -75,20 +104,34 @@ internal sealed class TcpLink : IDisposable
         {
             Blocking = false
         };
+
+        SocketError dialError = SocketError.Success;
         try
         {
             socket.Connect(endpoint);
         }
-        catch (SocketException)
+        catch (SocketException exception) when (exception.SocketErrorCode is SocketError.WouldBlock)
         {
-            // Expected: see the remarks above. Whatever happened — in-flight or already resolved —
-            // PollConnect is what reports it, on the Pump that follows.
+            // In flight, and the overwhelmingly common case: PollConnect reports it on a later Pump.
+        }
+        catch (SocketException exception)
+        {
+            dialError = exception.SocketErrorCode;
+        }
+
+        if (dialError is SocketError.Success)
+        {
+            // `!` works around a framework limitation, as in PollConnect below: GetSocketOption's
+            // object-returning overload is typed object? because the generic signature covers options
+            // yielding a byte[] or nothing, but SocketOptionName.Error always yields a boxed int.
+            int pendingError = (int)socket.GetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Error)!;
+            dialError = (SocketError)pendingError;
         }
 
         // `!` works around a framework limitation, as in FromAccepted above: Connect — blocking or not,
         // successful or not — always binds a local end first, but Socket.LocalEndPoint stays typed
-        // EndPoint? for the socket's whole lifetime regardless.
-        return new TcpLink(socket, (IPEndPoint)socket.LocalEndPoint!, endpoint);
+        // EndPoint? for the socket's whole lifetime regardless. Read last, for the reason in the remarks.
+        return new TcpLink(socket, (IPEndPoint)socket.LocalEndPoint!, endpoint, dialError);
     }
 
     /// <summary>
@@ -99,8 +142,21 @@ internal sealed class TcpLink : IDisposable
     /// <see cref="SelectMode"/> is not documented to distinguish the two cases identically on every
     /// platform this library targets.
     /// </summary>
+    /// <remarks>
+    /// An error <see cref="Dial"/> already captured wins over anything read here, and is not a
+    /// duplicate of it: a dial that failed before <see cref="Dial"/> returned leaves nothing behind for
+    /// this method to find — either because the error was returned synchronously and never made pending
+    /// at all, or because reading it there consumed it — while a socket in that state still polls
+    /// writable with a clean <c>SO_ERROR</c>. Checking the socket first would therefore report Connected
+    /// for exactly the dials that failed earliest.
+    /// </remarks>
     public TcpConnectPollResult PollConnect()
     {
+        if (_dialError is not SocketError.Success)
+        {
+            return TcpConnectPollResult.ForFailed(_dialError);
+        }
+
         bool writable = Socket.Poll(0, SelectMode.SelectWrite);
         bool errored = Socket.Poll(0, SelectMode.SelectError);
         if (!writable && !errored)

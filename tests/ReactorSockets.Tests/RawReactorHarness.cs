@@ -93,10 +93,26 @@ internal sealed class RawReactorHarness : IDisposable
     /// <see cref="ListenOnLoopback"/>, needed only for tests that exercise the dial side of a stream
     /// Link's reads rather than the accept side.
     /// </summary>
-    public (Socket Listener, IPEndPoint LocalEndPoint) CreateCounterpartyListener()
+    /// <param name="receiveBufferSize">
+    /// Applied to the listener before it listens, so every socket accepted from it inherits the size
+    /// and negotiates its receive window from it during the handshake. A small size makes the socket
+    /// buffers between the two ends fill sooner, which is how the short-send tests provoke a partial
+    /// send without pinning a magic payload size. Set it here rather than on the accepted socket: on
+    /// Linux, shrinking <c>SO_RCVBUF</c> on an already-established connection clamps the advertised
+    /// window and turns off receive autotuning for the rest of that connection's life, throttling a
+    /// later drain to a few kilobytes per round trip — enough to make a socket that is filling
+    /// normally take minutes to become writable again. Windows tolerates the late shrink, which is
+    /// why doing it the other way looks fine there. Omit for the OS defaults.
+    /// </param>
+    public (Socket Listener, IPEndPoint LocalEndPoint) CreateCounterpartyListener(int? receiveBufferSize = null)
     {
         Socket listener = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         _counterpartySockets.Add(listener);
+        if (receiveBufferSize is int size)
+        {
+            listener.ReceiveBufferSize = size;
+        }
+
         listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
         listener.Listen();
         return (listener, (IPEndPoint)listener.LocalEndPoint!);

@@ -327,6 +327,15 @@ public sealed class RawReactor : IDisposable
     /// event is a reply to something the consumer did, not a status this Reactor volunteers.
     /// </para>
     /// <para>
+    /// <i>When</i> that one event arrives is the platform's call, not this Reactor's, and the platforms
+    /// differ by more than a rounding error: Windows offers writability again as soon as the send buffer
+    /// has any room, while Linux waits until roughly half of it is free. A Link whose counterparty reads
+    /// slowly can therefore stay unwritable on Linux long after it would have been writable on Windows,
+    /// with a large auto-tuned send buffer widening the gap. This is reported, not smoothed over —
+    /// synthesising an earlier <c>Writable</c> would mean promising room the socket has not got, and the
+    /// next send would simply come back short again.
+    /// </para>
+    /// <para>
     /// Fails without throwing (ADR 0008), naming whichever applies: <paramref name="link"/> does not
     /// address an open Link, it does but cannot take a stream send, it was already shut down for
     /// writing by <see cref="Shutdown"/>, or the socket itself failed. The open check comes first —
@@ -760,6 +769,17 @@ public sealed class RawReactor : IDisposable
     /// small, stable <see cref="CloseReason"/> roster a consumer's retry logic switches on — the exact
     /// error still travels in the <see cref="DiagnosticId.LinkFailed"/> record this logs alongside.
     /// </summary>
+    /// <remarks>
+    /// Which arm a given destination lands in is the platform's judgement, not this method's, and the
+    /// stacks do not always agree: dialling the limited broadcast address is
+    /// <see cref="SocketError.AddressNotAvailable"/> on Windows and
+    /// <see cref="SocketError.NetworkUnreachable"/> on Linux, so the same dial closes
+    /// <see cref="CloseReason.Failed"/> there and <see cref="CloseReason.Unreachable"/> here. Each
+    /// mapping is faithful to what its own stack said, which is why neither is bent to match the other:
+    /// a consumer switching on <see cref="CloseReason"/> should treat the distinction between
+    /// <see cref="CloseReason.Unreachable"/> and <see cref="CloseReason.Failed"/> as advice about a
+    /// dial worth retrying, not as a portable classification of an address.
+    /// </remarks>
     private void FailDial(SlotHandle handle, LinkSlot slot, SocketError error)
     {
         if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))

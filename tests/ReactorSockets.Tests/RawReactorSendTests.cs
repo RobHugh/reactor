@@ -44,11 +44,10 @@ public class RawReactorSendTests
         // reads, with a shrunk receive buffer to make the buffers fill sooner, and stops the moment a
         // call reports fewer bytes taken than offered. No test may pin how many chunks that takes.
         using RawReactorHarness harness = new(capacity: 4);
-        (Socket counterpartyListener, IPEndPoint serverEndPoint) = harness.CreateCounterpartyListener();
+        (Socket counterpartyListener, IPEndPoint serverEndPoint) = harness.CreateCounterpartyListener(receiveBufferSize: 1024);
         LinkId link = harness.Reactor.Connect(serverEndPoint);
         harness.PumpAndDrainAll(pumps: 3);
         using Socket counterpartyAccepted = counterpartyListener.Accept();
-        counterpartyAccepted.ReceiveBufferSize = 1024;
 
         byte[] chunk = new byte[65_536];
         Random.Shared.NextBytes(chunk);
@@ -81,13 +80,16 @@ public class RawReactorSendTests
         // background thread so the socket's own send buffer drains and becomes writable again. Whether
         // a real drain is observed is genuine OS-driven asynchrony, not a loopback-local decision, so
         // this bounds wall-clock attempts rather than Pump count alone — the same shape already used by
-        // RawReactorHarness.PumpAndDrainReasonsUntilClosed for the same reason.
+        // RawReactorHarness.PumpAndDrainReasonsUntilClosed for the same reason. How long the drain
+        // takes to register is a platform matter too: Linux calls a TCP socket writable only once
+        // roughly half its send buffer is free, so the counterparty has to get real bytes off the wire
+        // before this can pass, not merely start reading. CreateCounterpartyListener's receive-buffer
+        // parameter documents why that shrink has to happen before the handshake for it to.
         using RawReactorHarness harness = new(capacity: 4);
-        (Socket counterpartyListener, IPEndPoint serverEndPoint) = harness.CreateCounterpartyListener();
+        (Socket counterpartyListener, IPEndPoint serverEndPoint) = harness.CreateCounterpartyListener(receiveBufferSize: 1024);
         LinkId link = harness.Reactor.Connect(serverEndPoint);
         harness.PumpAndDrainAll(pumps: 3);
         using Socket counterpartyAccepted = counterpartyListener.Accept();
-        counterpartyAccepted.ReceiveBufferSize = 1024;
 
         byte[] chunk = new byte[65_536];
         Random.Shared.NextBytes(chunk);
@@ -96,6 +98,11 @@ public class RawReactorSendTests
         for (int attempt = 0; attempt < 200 && !sawShortSend; attempt++)
         {
             SendResult result = harness.Reactor.Send(link, chunk);
+
+            // A failed send reports zero bytes and so satisfies the short-send test below without
+            // arming anything; only a successful one that took less than it was offered arms Writable,
+            // and it is that arming this test goes on to make its assertions about.
+            result.IsSuccess.Should().BeTrue("nothing about this Link has failed — the counterparty simply is not reading");
             sawShortSend = result.BytesSent < chunk.Length;
         }
 
