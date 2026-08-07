@@ -35,6 +35,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly List<SlotHandle> _connectingPeers = [];
     private readonly List<PendingEvent> _pendingEvents = [];
     private readonly List<RefusalSlot> _refusals = [];
+    private readonly HashSet<SlotHandle> _peersWithBufferedMessages = [];
     private readonly int _constructingThreadId;
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
@@ -136,6 +137,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             _arena.Reset();
             _admissionsThisFrame = 0;
             _capDeferralsThisFrame = 0;
+            RetryPeersWithBufferedMessages();
             _dispatcher.Pump();
             ProcessConnectingPeers();
             ReportDeclinedAdmissions();
@@ -244,6 +246,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _refusals.Clear();
         _connectingPeers.Clear();
         _pendingEvents.Clear();
+        _peersWithBufferedMessages.Clear();
         _disposed = true;
         DisposeLinks();
     }
@@ -700,8 +703,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                     if (!TryReserveMessage(handle, message, out int payloadOffset))
                     {
                         // Arena or per-Peer share exhausted for this Frame. The Message stays
-                        // buffered, whole, at the front of ReceiveBuffer — nothing is consumed — and
-                        // is retried the next time this Peer's transport is read.
+                        // buffered, whole, at the front of ReceiveBuffer — nothing is consumed. Reads
+                        // are level-triggered on new socket activity, so if the far end sends nothing
+                        // further this Peer would otherwise never be revisited; recording the handle
+                        // here is what lets RetryPeersWithBufferedMessages give it a fresh share on
+                        // the next Pump regardless (#81).
+                        _peersWithBufferedMessages.Add(handle);
                         return;
                     }
 
@@ -737,6 +744,39 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
                     ClosePeer(handle, DisconnectReason.ProtocolViolation);
                     return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gives every Peer whose receive buffer still holds a whole, undelivered Message — one that lost
+    /// the per-Peer read-share or arena race on an earlier Pump (see <see cref="DeliverCompleteMessages"/>)
+    /// — a fresh chance now that this Frame's arena and shares have just been reset. Runs once, at the
+    /// start of every Pump, before the readiness dispatcher: without it, a Peer whose only remaining
+    /// data already sits in this Reactor's own buffer — nothing left ready on the socket — would never
+    /// be read again, since the dispatcher only re-fires when the far end sends more, and a Peer that
+    /// never does would hold that Message forever. A Peer redelivered here that also has fresh bytes
+    /// waiting on the wire is not double-serviced: <see cref="DeliverCompleteMessages"/> simply
+    /// continues from wherever this call leaves its buffer.
+    /// </summary>
+    private void RetryPeersWithBufferedMessages()
+    {
+        if (_peersWithBufferedMessages.Count == 0)
+        {
+            return;
+        }
+
+        // Snapshot and clear first: DeliverCompleteMessages repopulates this set for any Peer that
+        // stalls again, and iterating the field directly while it may be mutated underneath this loop
+        // would be unsound.
+        SlotHandle[] pending = [.. _peersWithBufferedMessages];
+        _peersWithBufferedMessages.Clear();
+
+        foreach (SlotHandle handle in pending)
+        {
+            if (_peers.TryResolve(handle) is PeerSlot slot)
+            {
+                DeliverCompleteMessages(handle, slot);
             }
         }
     }
@@ -913,6 +953,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         _dispatcher.Unregister(slot.Link.Socket);
         slot.Link.Dispose();
+        _peersWithBufferedMessages.Remove(handle);
         _pendingEvents.Add(new PendingEvent
         {
             Kind = SessionEventKind.PeerClosed,
