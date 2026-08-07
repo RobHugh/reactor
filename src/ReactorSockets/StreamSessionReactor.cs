@@ -18,9 +18,22 @@ namespace ReactorSockets;
 /// write batching and the Goodbye exchange are not yet built and land in the sub-issues that follow.
 /// </summary>
 /// <remarks>
+/// <para>
 /// There is no cookie, no ack, no sequence space, no fragment and no RTO in this profile: TCP already
 /// provides what those were built for. The datagram Session protocol is deliberately not carried over
 /// TCP, because that would put retransmission on top of retransmission.
+/// </para>
+/// <para>
+/// <b>Send timing (ADR 0011).</b> Nagle (<c>TCP_NODELAY</c>) is off, unconditionally, on every stream
+/// Session socket — it is not a knob on <see cref="StreamSessionOptions"/> and cannot be turned back
+/// on. In its place, every <see cref="Send"/> queued since the last <see cref="Pump"/> is written to
+/// the wire together, once, by that <see cref="Pump"/> call: batching we do ourselves, on our own
+/// schedule, rather than the connection's delayed acknowledgements deciding when a small Message may
+/// leave. That is a better version of what Nagle exists for, without Nagle's cost — a small Message
+/// waiting up to a round trip behind outstanding data — so a consumer measuring latency needs to know
+/// which of the two is doing the batching: theirs, by calling <see cref="Pump"/> less often, or ours,
+/// always.
+/// </para>
 /// </remarks>
 public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 {
