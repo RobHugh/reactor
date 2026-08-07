@@ -30,4 +30,12 @@ public enum DisconnectReason
     /// learns the difference between "full" and "gone".
     /// </summary>
     RemoteAtCapacity,
+
+    /// <summary>
+    /// The underlying transport failed or ended before or during the handshake: a reset, a dial that
+    /// could not connect, or a stream that closed before a full handshake record arrived. Distinct
+    /// from every other member here because nothing about the protocol was at fault — the byte stream
+    /// itself did not survive to carry it.
+    /// </summary>
+    TransportFailed,
 }

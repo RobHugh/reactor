@@ -1,23 +1,50 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using ReactorSockets.Core;
+using ReactorSockets.Session;
+using ReactorSockets.Transports;
+
 namespace ReactorSockets;
 
 /// <summary>
 /// The stream Session profile (ADR 0010): Sessions established over TCP, addressed as Peers,
-/// delivering <c>u32</c> length-prefixed Messages rather than the byte runs the transport gives.
-/// This slice (3.1) validates <see cref="StreamSessionOptions"/> and its allocation bill at
-/// construction; binding (3.2), the handshake (3.3), framing, retention and the Goodbye exchange are
-/// not yet built and land in the sub-issues that follow.
+/// delivering <c>u32</c> length-prefixed Messages rather than the byte runs the transport gives. This
+/// slice (3.1-3.3) validates <see cref="StreamSessionOptions"/> and its allocation bill at
+/// construction, binds the declared endpoint set, and carries a Peer through the handshake to an
+/// established Session. Framing, retention, write batching and the Goodbye exchange are not yet built
+/// and land in the sub-issues that follow — this Reactor establishes and refuses Sessions but carries
+/// no application data.
 /// </summary>
 /// <remarks>
 /// There is no cookie, no ack, no sequence space, no fragment and no RTO in this profile: TCP already
 /// provides what those were built for. The datagram Session protocol is deliberately not carried over
 /// TCP, because that would put retransmission on top of retransmission.
 /// </remarks>
-public sealed class StreamSessionReactor
+public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 {
+    private readonly StreamSessionOptions _options;
+    private readonly ReadinessDispatcher _dispatcher;
+    private readonly DiagnosticGateway _diagnostics;
+    private readonly ReactorCounterSet _counters;
+    private readonly ShareHolderTable<PeerSlot> _peers;
+    private readonly RandomNumberGenerator _entropy;
+    private readonly List<TcpListenLink> _listenLinks = [];
+    private readonly List<SlotHandle> _connectingPeers = [];
+    private readonly List<PendingEvent> _pendingEvents = [];
+    private readonly int _constructingThreadId;
+    private readonly int _admissionCap;
+    private int _admissionsThisFrame;
+    private int _capDeferralsThisFrame;
+    private int _capacityDeferralsThisFrame;
+    private bool _inPump;
+    private bool _disposed;
+
     /// <summary>
     /// Validates <paramref name="options"/> — every knob and cross-check, then the frame arena's
-    /// floor — before anything is allocated or bound. A combination that cannot work throws here and
-    /// nowhere else, so there is no half-built Reactor to hand back.
+    /// floor — before anything is allocated or bound, then binds every declared endpoint in the order
+    /// supplied. A bind that fails throws here, naming the endpoint: binding is part of what this
+    /// Reactor is, so there is no half-built Reactor to hand back.
     /// </summary>
     /// <param name="options">
     /// Composed rather than inherited (ADR 0011): the shared L0 budget plus this profile's own
@@ -28,5 +55,609 @@ public sealed class StreamSessionReactor
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
         options.ResolveArenaSize();
+
+        _options = options;
+        _constructingThreadId = Environment.CurrentManagedThreadId;
+        _dispatcher = new ReadinessDispatcher();
+        _counters = new ReactorCounterSet();
+        _diagnostics = new DiagnosticGateway(options.Reactor.Sink, options.Reactor.MinimumLevel, _counters);
+        _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity);
+        _entropy = options.Entropy;
+        _admissionCap = options.Reactor.ResolvedAdmissionCap;
+
+        try
+        {
+            foreach (IPEndPoint endpoint in options.Endpoints)
+            {
+                BindAndRegister(endpoint);
+            }
+        }
+        catch
+        {
+            DisposeLinks();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// The endpoints this Reactor is bound to right now, in the order they were declared. A snapshot:
+    /// it answers what is bound, and there is no member that binds another — there is no rebinding
+    /// (ADR 0014), and unlike the datagram profile a stream dial never binds a wildcard socket of its
+    /// own, since TCP's own connect already binds an ephemeral local port implicitly.
+    /// </summary>
+    public IReadOnlyList<IPEndPoint> BoundEndpoints
+    {
+        get
+        {
+            EnsureUsable();
+
+            IPEndPoint[] snapshot = new IPEndPoint[_listenLinks.Count];
+            for (int index = 0; index < _listenLinks.Count; index++)
+            {
+                snapshot[index] = _listenLinks[index].LocalEndPoint;
+            }
+
+            return snapshot;
+        }
+    }
+
+    /// <summary>A point-in-time snapshot of this Reactor's own counters (ADR 0013). No reset.</summary>
+    public ReactorCounters Counters
+    {
+        get
+        {
+            EnsureUsable();
+            return _counters.Snapshot();
+        }
+    }
+
+    /// <inheritdoc cref="ISessionEventSource.PendingEventCount"/>
+    int ISessionEventSource.PendingEventCount => _pendingEvents.Count;
+
+    /// <summary>
+    /// One synchronous advance: wipes the previous Frame's events, then admits ready connections,
+    /// advances every in-flight dial and reads whatever bound socket is ready right now, running the
+    /// handshake for everything that arrived. Throws <see cref="InvalidOperationException"/> if called
+    /// from any thread other than the one that constructed this Reactor, or from inside a Pump already
+    /// in progress.
+    /// </summary>
+    public void Pump()
+    {
+        EnsureUsable();
+        EnsureCallingThreadIsConstructingThread();
+
+        _inPump = true;
+        try
+        {
+            _pendingEvents.Clear();
+            _admissionsThisFrame = 0;
+            _capDeferralsThisFrame = 0;
+            _capacityDeferralsThisFrame = 0;
+            _dispatcher.Pump();
+            ProcessConnectingPeers();
+            ReportDeclinedAdmissions();
+        }
+        finally
+        {
+            _inPump = false;
+        }
+    }
+
+    /// <summary>
+    /// Drains every event produced this Frame — since the last <see cref="Pump"/> — in the order it was
+    /// produced.
+    /// </summary>
+    public SessionEventEnumerator Drain()
+    {
+        EnsureUsable();
+        return new(this);
+    }
+
+    /// <summary>
+    /// Begins a Session with <paramref name="destination"/>, returning the <see cref="PeerId"/> that
+    /// will address it. The Peer occupies a capacity Slot from this moment, exactly as a dialling Link
+    /// does in <see cref="RawReactor"/>: the handshake is work this Reactor is holding, and pretending
+    /// otherwise would let a consumer dial past capacity and discover it only on the far side of a
+    /// round trip. <see cref="SessionEventKind.PeerConnected"/> or <see cref="SessionEventKind.PeerClosed"/>
+    /// resolves it on a later Pump.
+    /// </summary>
+    public PeerId Connect(IPEndPoint destination)
+    {
+        EnsureUsable();
+        EnsureCallingThreadIsConstructingThread();
+        ArgumentNullException.ThrowIfNull(destination);
+
+        TcpLink link = TcpLink.Dial(destination);
+        PeerSlot slot = new()
+        {
+            Link = link,
+            LocalResumeSecret = NextResumeSecret(),
+            State = HandshakeState.Connecting,
+        };
+
+        SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
+            $"This Reactor's capacity of {_options.Reactor.Capacity} Peers is fully occupied — close a Peer before dialling another.");
+
+        slot.Handle = handle;
+        _connectingPeers.Add(handle);
+
+        return ToPeerId(handle);
+    }
+
+    /// <summary>
+    /// Ends the Session with <paramref name="peer"/> and queues a
+    /// <see cref="SessionEventKind.PeerClosed"/> carrying <see cref="DisconnectReason.LocalClose"/>.
+    /// Idempotent: a stale <see cref="PeerId"/> is a no-op, because a Peer closing under a caller is an
+    /// ordinary race rather than a programmer error.
+    /// </summary>
+    /// <remarks>
+    /// This slice closes locally and says nothing to the remote. The Goodbye exchange, and the Linger
+    /// that lets it be retransmitted, belong to the slice that implements them; until then a closed
+    /// Peer is discovered on the far side by the socket's own FIN.
+    /// </remarks>
+    public void Close(PeerId peer)
+    {
+        EnsureUsable();
+        EnsureCallingThreadIsConstructingThread();
+
+        ClosePeer(ToHandle(peer), DisconnectReason.LocalClose);
+    }
+
+    /// <summary>
+    /// Releases every socket this Reactor bound or accepted. A Reactor owns every socket it bound, so
+    /// a consumer that drops one without disposing it leaks those sockets until each
+    /// <see cref="Socket"/>'s finalizer runs. No <see cref="SessionEventKind.PeerClosed"/> events are
+    /// queued: nothing can drain a disposed Reactor. Idempotent; every other member throws
+    /// <see cref="ObjectDisposedException"/> afterwards.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="StreamSessionOptions.Entropy"/> is deliberately not disposed. It may be a source the
+    /// consumer holds and uses elsewhere, and a Reactor disposing a value it was merely handed would be
+    /// reaching outside what it owns.
+    /// </remarks>
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        EnsureCallingThreadIsConstructingThread();
+        EnsureNotInsideAPump();
+
+        foreach (PeerSlot slot in _peers.DrainAll())
+        {
+            _dispatcher.Unregister(slot.Link.Socket);
+            slot.Link.Dispose();
+        }
+
+        _connectingPeers.Clear();
+        _pendingEvents.Clear();
+        _disposed = true;
+        DisposeLinks();
+    }
+
+    /// <inheritdoc cref="ISessionEventSource.GetPendingEvent"/>
+    SessionEvent ISessionEventSource.GetPendingEvent(int index)
+    {
+        PendingEvent pending = _pendingEvents[index];
+        return pending.Kind switch
+        {
+            SessionEventKind.PeerConnected => SessionEvent.ForPeerConnected(pending.Peer),
+            SessionEventKind.PeerClosed => SessionEvent.ForPeerClosed(pending.Peer, pending.Reason),
+            _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind."),
+        };
+    }
+
+    /// <summary>
+    /// Binds one listening socket and registers it for readiness dispatch and accept. The binding
+    /// rules are unchanged from the Raw profile's (ADR 0014): exclusive, no dual-mode, no hostname, no
+    /// configure callback.
+    /// </summary>
+    private void BindAndRegister(IPEndPoint endpoint)
+    {
+        TcpListenLink link = TcpListenLink.Listen(endpoint);
+        _listenLinks.Add(link);
+        _dispatcher.Register(link.Socket, () => OnListeningLinkReadable(link));
+    }
+
+    /// <summary>
+    /// Accepts as many pending connections as the shared admission cap and this Reactor's capacity
+    /// still allow this Frame, stopping the moment either is spent or the backlog runs dry — whichever
+    /// comes first. Unlike the Raw profile, a connection this Reactor has no room for is refused
+    /// in-protocol rather than left silently in the OS backlog (subtask 3.3); this slice leaves it in
+    /// the backlog for a later Pump exactly as Raw does, since the refusal wire format is the next
+    /// subtask's.
+    /// </summary>
+    private void OnListeningLinkReadable(TcpListenLink link)
+    {
+        while (true)
+        {
+            if (_admissionsThisFrame >= _admissionCap)
+            {
+                if (link.HasPendingConnection)
+                {
+                    _capDeferralsThisFrame++;
+                }
+
+                return;
+            }
+
+            if (!_peers.HasFreeSlot)
+            {
+                if (link.HasPendingConnection)
+                {
+                    _capacityDeferralsThisFrame++;
+                }
+
+                return;
+            }
+
+            TcpAcceptResult result = link.TryAccept();
+            switch (result.Outcome)
+            {
+                case TcpAcceptOutcome.NoPendingConnection:
+                    return;
+                case TcpAcceptOutcome.Failed:
+                    // No Diagnostic is logged here: there is no Peer to attribute it to, and
+                    // DiagnosticSubjectKind has no member for one yet (subtask 3.3). The listening
+                    // socket itself is unaffected — see TcpListenLink.TryAccept's own remarks — so the
+                    // next Pump simply tries again.
+                    return;
+                case TcpAcceptOutcome.Accepted:
+                    AdmitAccepted(result.Socket!);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Registers a socket a listening Link just accepted as a new Peer's transport and immediately
+    /// sends this end's handshake record. The caller checks <see cref="ShareHolderTable{T}.HasFreeSlot"/>
+    /// before accepting rather than letting this method look a Slot up, so a Reactor with nowhere to
+    /// put a connection never takes it off the backlog in the first place.
+    /// </summary>
+    private void AdmitAccepted(Socket acceptedSocket)
+    {
+        TcpLink link = TcpLink.FromAccepted(acceptedSocket);
+        PeerSlot slot = new()
+        {
+            Link = link,
+            LocalResumeSecret = NextResumeSecret(),
+            State = HandshakeState.AwaitingPeerHandshake,
+        };
+
+        if (_peers.TryAdd(slot) is not SlotHandle handle)
+        {
+            link.Dispose();
+            return;
+        }
+
+        slot.Handle = handle;
+        _admissionsThisFrame++;
+        RegisterPeerTransport(handle, slot);
+        SendHandshakeRecord(handle, slot);
+    }
+
+    /// <summary>
+    /// Polls every Peer still dialling for a resolved TCP connect, in the order each was begun. A
+    /// resolved dial is removed from the tracking list whether it succeeded or failed; one still in
+    /// flight is left for the next Pump to check again. Each entry's generation is re-checked against
+    /// the Slot before polling, so a Peer the consumer closed mid-dial is dropped rather than polling
+    /// whatever now occupies that Slot.
+    /// </summary>
+    private void ProcessConnectingPeers()
+    {
+        int surviving = 0;
+        for (int i = 0; i < _connectingPeers.Count; i++)
+        {
+            SlotHandle handle = _connectingPeers[i];
+            if (_peers.TryResolve(handle) is not PeerSlot slot)
+            {
+                continue;
+            }
+
+            TcpConnectPollResult result = slot.Link.PollConnect();
+            switch (result.Outcome)
+            {
+                case TcpConnectPollOutcome.Pending:
+                    _connectingPeers[surviving++] = handle;
+                    break;
+                case TcpConnectPollOutcome.Connected:
+                    slot.State = HandshakeState.AwaitingPeerHandshake;
+                    RegisterPeerTransport(handle, slot);
+                    SendHandshakeRecord(handle, slot);
+                    break;
+                case TcpConnectPollOutcome.Failed:
+                    ClosePeer(handle, DisconnectReason.TransportFailed);
+                    break;
+            }
+        }
+
+        _connectingPeers.RemoveRange(surviving, _connectingPeers.Count - surviving);
+    }
+
+    private void RegisterPeerTransport(SlotHandle handle, PeerSlot slot) =>
+        _dispatcher.Register(slot.Link.Socket, () => OnPeerReadable(handle), () => OnPeerWritable(handle));
+
+    /// <summary>
+    /// Writes this end's handshake record and sends as much of it as the socket will take right now.
+    /// A short send arms this Peer's socket for <see cref="OnPeerWritable"/>, which flushes whatever
+    /// remains — the record is 40 bytes, so a short send is not expected in practice, but nothing here
+    /// assumes the whole record lands in one syscall.
+    /// </summary>
+    private void SendHandshakeRecord(SlotHandle handle, PeerSlot slot)
+    {
+        byte[] record = new byte[StreamHandshakeCodec.RecordSize];
+        StreamHandshakeCodec.Write(
+            record,
+            StreamSessionProtocol.Version,
+            (uint)_options.MaxMessageSize,
+            (ulong)_options.SendIdleInterval.TotalMilliseconds,
+            (ulong)_options.Linger.TotalMilliseconds,
+            slot.LocalResumeSecret);
+
+        TcpLinkSendResult result = slot.Link.Send(record);
+        if (!result.IsSuccess)
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        if (result.BytesSent < record.Length)
+        {
+            slot.PendingHandshakeBytesToSend = record.AsMemory(result.BytesSent);
+            _dispatcher.ArmWritable(slot.Link.Socket);
+        }
+    }
+
+    /// <summary>Flushes whatever remains of a handshake record a short send left behind.</summary>
+    private void OnPeerWritable(SlotHandle handle)
+    {
+        if (_peers.TryResolve(handle) is not PeerSlot slot || slot.PendingHandshakeBytesToSend is not { Length: > 0 } pending)
+        {
+            return;
+        }
+
+        TcpLinkSendResult result = slot.Link.Send(pending.Span);
+        if (!result.IsSuccess)
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        slot.PendingHandshakeBytesToSend = result.BytesSent < pending.Length ? pending[result.BytesSent..] : null;
+        if (slot.PendingHandshakeBytesToSend is not null)
+        {
+            _dispatcher.ArmWritable(slot.Link.Socket);
+        }
+    }
+
+    /// <summary>
+    /// Reads whatever is ready on a Peer's transport. Before <see cref="HandshakeState.Established"/>
+    /// this accumulates into the Peer's own handshake buffer until a full
+    /// <see cref="StreamHandshakeCodec.RecordSize"/> has arrived; once Established this slice leaves
+    /// bytes unread — there is no data plane yet, and reading them now would only discard them before
+    /// the framing subtask exists to deliver them.
+    /// </summary>
+    private void OnPeerReadable(SlotHandle handle)
+    {
+        if (_peers.TryResolve(handle) is not PeerSlot slot || slot.State == HandshakeState.Established)
+        {
+            return;
+        }
+
+        TcpLinkReceiveResult result = slot.Link.Receive(slot.HandshakeBuffer.AsSpan(slot.HandshakeBytesFilled));
+        switch (result.Outcome)
+        {
+            case TcpLinkReceiveOutcome.Delivered:
+                slot.HandshakeBytesFilled += result.Payload.Length;
+                if (slot.HandshakeBytesFilled == StreamHandshakeCodec.RecordSize)
+                {
+                    CompleteHandshake(handle, slot);
+                }
+
+                break;
+            case TcpLinkReceiveOutcome.EndOfStream:
+            case TcpLinkReceiveOutcome.Failed:
+                ClosePeer(handle, DisconnectReason.TransportFailed);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Parses a Peer's complete handshake record and establishes the Session. Version and capacity
+    /// guarding — refusing rather than establishing on a mismatch — is subtask 3.3's; this slice
+    /// establishes on any well-formed record, which is sufficient for a well-behaved counterparty.
+    /// </summary>
+    private void CompleteHandshake(SlotHandle handle, PeerSlot slot)
+    {
+        Span<byte> remoteResumeSecret = stackalloc byte[StreamSessionProtocol.ResumeSecretLength];
+        if (!StreamHandshakeCodec.TryRead(
+                slot.HandshakeBuffer,
+                out uint version,
+                out uint remoteMaxMessageSize,
+                out ulong remoteSendIdleIntervalMilliseconds,
+                out ulong remoteLingerMilliseconds,
+                remoteResumeSecret))
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        slot.RemoteVersion = version;
+        slot.RemoteMaxMessageSize = remoteMaxMessageSize;
+        slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
+        slot.RemoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
+        slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
+        slot.State = HandshakeState.Established;
+
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(handle) });
+    }
+
+    /// <summary>
+    /// Reports the Frame's declined Admissions once each, at its end, rather than once per declining.
+    /// </summary>
+    private void ReportDeclinedAdmissions()
+    {
+        RecordAdmissionDeferrals(_capDeferralsThisFrame);
+        RecordAdmissionDeferrals(_capacityDeferralsThisFrame);
+
+        if (!_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            return;
+        }
+
+        if (_capDeferralsThisFrame > 0)
+        {
+            _diagnostics.Log(DiagnosticRecord.ForAdmissionCapReached(_admissionCap, _capDeferralsThisFrame));
+        }
+
+        if (_capacityDeferralsThisFrame > 0)
+        {
+            _diagnostics.Log(DiagnosticRecord.ForCapacityExhausted(_peers.Capacity, _capacityDeferralsThisFrame));
+        }
+    }
+
+    private void RecordAdmissionDeferrals(int deferrals)
+    {
+        for (int i = 0; i < deferrals; i++)
+        {
+            _counters.RecordAdmissionDeferral();
+        }
+    }
+
+    private void ClosePeer(SlotHandle handle, DisconnectReason reason)
+    {
+        if (_peers.Remove(handle) is not PeerSlot slot)
+        {
+            return;
+        }
+
+        _dispatcher.Unregister(slot.Link.Socket);
+        slot.Link.Dispose();
+        _pendingEvents.Add(new PendingEvent
+        {
+            Kind = SessionEventKind.PeerClosed,
+            Peer = ToPeerId(handle),
+            Reason = reason,
+        });
+    }
+
+    /// <summary>A fresh secret for a later Resume. Established during the handshake and stored, never sent again once the handshake is over.</summary>
+    private byte[] NextResumeSecret()
+    {
+        byte[] secret = new byte[StreamSessionProtocol.ResumeSecretLength];
+        _entropy.GetBytes(secret);
+        return secret;
+    }
+
+    private static PeerId ToPeerId(SlotHandle handle) => new(handle.Origin, handle.Index, handle.Generation);
+
+    private static SlotHandle ToHandle(PeerId peer) => new(peer.Origin, peer.Index, peer.Generation);
+
+    private void DisposeLinks()
+    {
+        foreach (TcpListenLink link in _listenLinks)
+        {
+            _dispatcher.Unregister(link.Socket);
+            link.Dispose();
+        }
+
+        _listenLinks.Clear();
+    }
+
+    private void EnsureUsable()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        EnsureNotInsideAPump();
+    }
+
+    /// <summary>
+    /// Rejects re-entry (ADR 0005). The only caller this library hands control to mid-Pump is a
+    /// Diagnostic Sink, so this is what stops a Sink acting on the Reactor it is reporting on.
+    /// </summary>
+    private void EnsureNotInsideAPump()
+    {
+        if (_inPump)
+        {
+            throw new InvalidOperationException(
+                "This Reactor is already inside Pump — a Diagnostic Sink may not call back into the Reactor it is reporting on. Copy what the record carries and act on it after Pump returns.");
+        }
+    }
+
+    private void EnsureCallingThreadIsConstructingThread()
+    {
+        int callingThreadId = Environment.CurrentManagedThreadId;
+        if (callingThreadId != _constructingThreadId)
+        {
+            throw new InvalidOperationException(
+                $"Called from thread {callingThreadId}, but this Reactor was constructed on thread {_constructingThreadId} — a Reactor may only be driven from the thread that constructed it.");
+        }
+    }
+
+    /// <summary>How far through the handshake one Peer has got.</summary>
+    private enum HandshakeState
+    {
+        /// <summary>A dial is waiting for its TCP connect to resolve.</summary>
+        Connecting,
+
+        /// <summary>The transport exists and this end has sent its own record; waiting for the other end's.</summary>
+        AwaitingPeerHandshake,
+
+        /// <summary>Both ends' handshake records have been exchanged and the Session exists.</summary>
+        Established,
+    }
+
+    /// <summary>The state one occupied capacity Slot holds.</summary>
+    private sealed class PeerSlot
+    {
+        /// <summary>The connected (or connecting) transport this Peer runs over.</summary>
+        public required TcpLink Link { get; init; }
+
+        /// <summary>The secret this Reactor will require to be presented before it resumes this Session.</summary>
+        public required byte[] LocalResumeSecret { get; init; }
+
+        /// <summary>How far through the handshake this Peer has got.</summary>
+        public required HandshakeState State { get; set; }
+
+        /// <summary>The Slot this Peer occupies, filled in once the table has admitted it.</summary>
+        public SlotHandle Handle { get; set; }
+
+        /// <summary>
+        /// Whatever remains of this end's own handshake record after a short send, or
+        /// <see langword="null"/> once it has all been sent.
+        /// </summary>
+        public ReadOnlyMemory<byte>? PendingHandshakeBytesToSend { get; set; }
+
+        /// <summary>The bytes of the remote's handshake record received so far, accumulated across Pumps.</summary>
+        public byte[] HandshakeBuffer { get; } = new byte[StreamHandshakeCodec.RecordSize];
+
+        /// <summary>How many bytes of <see cref="HandshakeBuffer"/> are filled so far.</summary>
+        public int HandshakeBytesFilled { get; set; }
+
+        /// <summary>The protocol version the remote's handshake record offered.</summary>
+        public uint RemoteVersion { get; set; }
+
+        /// <summary>The largest Message the remote said it will accept.</summary>
+        public uint RemoteMaxMessageSize { get; set; }
+
+        /// <summary>The send-idle interval the remote announced.</summary>
+        public TimeSpan RemoteSendIdleInterval { get; set; }
+
+        /// <summary>The Linger the remote announced. The minimum of the two ends' Lingers governs (ADR 0011).</summary>
+        public TimeSpan RemoteLinger { get; set; }
+
+        /// <summary>The secret the remote will require before it resumes this Session. Stored, unused until Resume lands.</summary>
+        public byte[] RemoteResumeSecret { get; set; } = [];
+    }
+
+    private readonly record struct PendingEvent
+    {
+        public SessionEventKind Kind { get; init; }
+
+        public PeerId Peer { get; init; }
+
+        public DisconnectReason Reason { get; init; }
     }
 }

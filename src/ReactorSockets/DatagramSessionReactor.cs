@@ -51,7 +51,7 @@ namespace ReactorSockets;
 /// confidentiality or integrity must layer it themselves.
 /// </para>
 /// </remarks>
-public sealed class DatagramSessionReactor : IDisposable
+public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 {
     /// <summary>
     /// The largest a UDP datagram can be, and this Reactor's scratch buffer size — at which
@@ -166,7 +166,8 @@ public sealed class DatagramSessionReactor : IDisposable
         }
     }
 
-    internal int PendingEventCount => _pendingEvents.Count;
+    /// <inheritdoc cref="ISessionEventSource.PendingEventCount"/>
+    int ISessionEventSource.PendingEventCount => _pendingEvents.Count;
 
     /// <summary>
     /// One synchronous advance: wipes the previous Frame's events and arena, then reads whatever bound
@@ -299,7 +300,8 @@ public sealed class DatagramSessionReactor : IDisposable
         DisposeLinks();
     }
 
-    internal SessionEvent GetPendingEvent(int index)
+    /// <inheritdoc cref="ISessionEventSource.GetPendingEvent"/>
+    SessionEvent ISessionEventSource.GetPendingEvent(int index)
     {
         PendingEvent pending = _pendingEvents[index];
         return pending.Kind switch

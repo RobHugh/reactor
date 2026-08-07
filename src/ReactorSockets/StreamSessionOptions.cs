@@ -1,3 +1,6 @@
+using System.Net;
+using System.Security.Cryptography;
+
 namespace ReactorSockets;
 
 /// <summary>
@@ -91,6 +94,30 @@ public sealed class StreamSessionOptions
     /// teardown against a clean one.
     /// </summary>
     public required TimeSpan Linger { get; init; }
+
+    /// <summary>
+    /// The endpoints to bind at construction, in the order supplied; possibly empty. Declared once
+    /// and never rebound (ADR 0014) — a Session's addresses are part of what it is, not something it
+    /// acquires later. A consumer addresses Peers, never the sockets this profile binds, so binding
+    /// returns no identity: an empty set means dial-only, a meaningful configuration rather than a
+    /// hole, and there is no rebind — a Reactor that must listen elsewhere is a new Reactor.
+    /// </summary>
+    public IReadOnlyList<IPEndPoint> Endpoints { get; init; } = [];
+
+    /// <summary>
+    /// The entropy the resume secret is drawn from. A construction knob in ADR 0011's sense — the
+    /// consumer's own resource, and a consumer with a hardware source or a policy about which
+    /// generator may be used is entitled to supply it. It carries a default only because that default
+    /// is derived rather than guessed: the platform's own CSPRNG is the citable provenance.
+    /// </summary>
+    /// <remarks>
+    /// Nothing disposes this, and nothing should. A supplied generator belongs to the consumer, who
+    /// may hand the same one to several Reactors; a Reactor that disposed it would be disposing a
+    /// resource it does not own. The default instance is not a leak either — on .NET the generator
+    /// <see cref="RandomNumberGenerator.Create()"/> returns holds no handle, drawing from the OS on
+    /// each call, so its <c>Dispose</c> has nothing to release.
+    /// </remarks>
+    public RandomNumberGenerator Entropy { get; init; } = RandomNumberGenerator.Create();
 
     /// <summary>
     /// The bytes held per Peer for an incoming, not-yet-complete Message. Defaults to
@@ -187,6 +214,7 @@ public sealed class StreamSessionOptions
                 $"a Linger of {Linger} closes a Session before it can retransmit its Goodbye — it must be greater than zero.");
         }
 
+        ValidateEndpoints();
         ValidateMemoryBill();
     }
 
@@ -196,6 +224,32 @@ public sealed class StreamSessionOptions
     /// </summary>
     internal int ResolveArenaSize() =>
         Reactor.ResolveArenaSize(MaxMessageSize, $"one maximum Message of {MaxMessageSize} bytes");
+
+    /// <summary>
+    /// Rejects a null or duplicated endpoint. Duplicates are refused rather than de-duplicated because
+    /// binding is exclusive: the second bind of the same endpoint would fail anyway, and failing here
+    /// names the endpoint while the caller can still see which line of their own configuration
+    /// produced it.
+    /// </summary>
+    private void ValidateEndpoints()
+    {
+        for (int index = 0; index < Endpoints.Count; index++)
+        {
+            IPEndPoint endpoint = Endpoints[index] ?? throw new ArgumentException(
+                    $"endpoint at index {index} is null — every declared endpoint must name an address and a port.",
+                    nameof(Endpoints));
+
+            for (int earlier = 0; earlier < index; earlier++)
+            {
+                if (Endpoints[earlier].Equals(endpoint))
+                {
+                    throw new ArgumentException(
+                        $"endpoint {endpoint} is declared twice, at index {earlier} and index {index} — binds are exclusive, so the second could never succeed.",
+                        nameof(Endpoints));
+                }
+            }
+        }
+    }
 
     /// <summary>
     /// Rejects a combination whose preallocation could not be made, naming both lines of the memory
