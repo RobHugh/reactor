@@ -58,9 +58,12 @@ internal sealed class ReactorCounterSet
 
     /// <summary>
     /// Records one datagram taken from the transport and thrown away because nothing in it could be
-    /// attributed to a Peer — a malformed control datagram, or a session id naming no Session. Kept
-    /// apart from <see cref="RecordAdmissionDiscard"/> because this is not a declined Admission: no
-    /// budget was spent and no work was turned away, the bytes simply meant nothing.
+    /// attributed to a Peer — a malformed control datagram, a session id naming no Session, or a
+    /// well-formed control reply matching no live dial. Kept apart from
+    /// <see cref="RecordAdmissionDiscard"/> because this is not a declined Admission: nothing was
+    /// turned away, the bytes simply meant nothing. Budget may still have been spent getting here —
+    /// a Hello-with-cookie is charged an Admission before its cookie is verified, precisely so that
+    /// the verifying work is bounded — but that unit bought an answer to a question, not a refusal.
     /// </summary>
     public void RecordUnknownSourceDiscard() => _unknownSourceDiscards++;
 

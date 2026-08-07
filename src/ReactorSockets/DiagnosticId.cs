@@ -57,10 +57,12 @@ public enum DiagnosticId
     DatagramTruncated = 102,
 
     /// <summary>
-    /// A datagram could not be parsed and was discarded: wrong length, an unknown control type, a
-    /// body the declared type cannot fill, padding that was not zero, or a session id naming no
-    /// Session. Subject is the claimed Source. <c>Value0</c> is the bytes received; <c>Value1</c> is
-    /// unused.
+    /// A datagram was discarded because nothing in it could be attributed to a Peer: wrong length,
+    /// an unknown control type, a body the declared type cannot fill, padding that was not zero, a
+    /// session id naming no Session, or a well-formed control reply — a Cookie, an Accept, a
+    /// Refusal — matching no dial this Reactor is waiting on. That last case is not a parse failure,
+    /// but it is the same thing to a consumer: bytes arrived, named nobody, and went nowhere.
+    /// Subject is the claimed Source. <c>Value0</c> is the bytes received; <c>Value1</c> is unused.
     /// </summary>
     /// <remarks>
     /// A remote can produce this at will by sending rubbish, which is exactly why it is a Diagnostic

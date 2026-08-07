@@ -156,6 +156,13 @@ public sealed class DatagramSessionOptions
     /// only because that default is derived rather than guessed: the platform's own CSPRNG is the
     /// citable provenance.
     /// </summary>
+    /// <remarks>
+    /// Nothing disposes this, and nothing should. A supplied generator belongs to the consumer, who
+    /// may hand the same one to several Reactors; a Reactor that disposed it would be disposing a
+    /// resource it does not own. The default instance is not a leak either — on .NET the generator
+    /// <see cref="RandomNumberGenerator.Create"/> returns holds no handle, drawing from the OS on
+    /// each call, so its <c>Dispose</c> has nothing to release.
+    /// </remarks>
     public RandomNumberGenerator Entropy { get; init; } = RandomNumberGenerator.Create();
 
     /// <summary>The resolved fragment size: <see cref="FragmentSize"/> if set, otherwise 1200.</summary>
