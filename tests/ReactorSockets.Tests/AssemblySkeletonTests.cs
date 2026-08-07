@@ -50,7 +50,14 @@ public class AssemblySkeletonTests
             nameof(DiagnosticId),
             nameof(DiagnosticSubjectKind),
             nameof(ReactorCounters),
-            nameof(LinkCounters));
+            nameof(LinkCounters),
+            nameof(DatagramSessionReactor),
+            nameof(DatagramSessionOptions),
+            nameof(SessionEvent),
+            nameof(SessionEventKind),
+            nameof(SessionEventEnumerator),
+            nameof(PeerId),
+            nameof(DisconnectReason));
     }
 
     [Fact]

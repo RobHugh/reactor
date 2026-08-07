@@ -10,11 +10,13 @@ namespace ReactorSockets;
 public enum DiagnosticId
 {
     /// <summary>
-    /// The configured admission cap was hit this Pump while a connection was still waiting in the
-    /// OS backlog. No subject. <c>Value0</c> is the cap, <c>Value1</c> is the number of deferrals —
-    /// listening Links that still had a pending connection when the cap ran out, not the number of
-    /// connections left waiting. That depth is unknowable without accepting, which is exactly what
-    /// hitting the cap stops the Reactor from doing, so it is deliberately not claimed here.
+    /// The configured admission cap was hit this Pump with work still waiting to be admitted. No
+    /// subject. <c>Value0</c> is the cap, <c>Value1</c> is the count of Admissions declined,
+    /// counted as the Reactor's counters count them: once per declining where the work waits out of
+    /// reach — a listening Link or bound endpoint with a pending connection it left in the OS
+    /// backlog, never the number of connections left there, a depth unknowable without accepting —
+    /// and once per piece of work where the Reactor was holding it, whether it then waits or is
+    /// Discarded.
     /// </summary>
     AdmissionCapReached = 1,
 
@@ -26,11 +28,11 @@ public enum DiagnosticId
     ArenaExhausted = 2,
 
     /// <summary>
-    /// Every capacity slot was occupied this Pump while a connection was still waiting in the OS
-    /// backlog — a different exhaustion from <see cref="AdmissionCapReached"/>, reachable because the
-    /// admission cap can be configured above <see cref="ReactorOptions.Capacity"/>. No subject.
-    /// <c>Value0</c> is the capacity, <c>Value1</c> is the number of deferrals, counted the same way
-    /// and with the same limit as <see cref="AdmissionCapReached"/>'s.
+    /// Every capacity slot was occupied this Pump with work still waiting to be admitted — a
+    /// different exhaustion from <see cref="AdmissionCapReached"/>, reachable because the admission
+    /// cap can be configured above <see cref="ReactorOptions.Capacity"/>. No subject.
+    /// <c>Value0</c> is the capacity, <c>Value1</c> is the count of Admissions declined, counted the
+    /// same way and with the same limit as <see cref="AdmissionCapReached"/>'s.
     /// </summary>
     CapacityExhausted = 3,
 
@@ -53,4 +55,46 @@ public enum DiagnosticId
     /// Source. <c>Value0</c> is the scratch buffer size in bytes; <c>Value1</c> is unused.
     /// </summary>
     DatagramTruncated = 102,
+
+    /// <summary>
+    /// A datagram was discarded because nothing in it could be attributed to a Peer: wrong length,
+    /// an unknown control type, a body the declared type cannot fill, padding that was not zero, a
+    /// session id naming no Session, or a well-formed control reply — a Cookie, an Accept, a
+    /// Refusal — matching no dial this Reactor is waiting on. That last case is not a parse failure,
+    /// but it is the same thing to a consumer: bytes arrived, named nobody, and went nowhere.
+    /// Subject is the claimed Source. <c>Value0</c> is the bytes received; <c>Value1</c> is unused.
+    /// </summary>
+    /// <remarks>
+    /// A remote can produce this at will by sending rubbish, which is exactly why it is a Diagnostic
+    /// and never an Event: the event stream is the consumer's protocol, and an unauthenticated
+    /// stranger must not be able to write to it. <see cref="DiagnosticLevel.Warn"/> rather than
+    /// <see cref="DiagnosticLevel.Error"/> for the same reason — nothing is wrong with this Reactor.
+    /// </remarks>
+    DatagramMalformed = 200,
+
+    /// <summary>
+    /// A Hello carried a cookie this Reactor did not mint, or minted too long ago: a forged or
+    /// corrupted authenticator, a cookie replayed from a different source address, or one from an
+    /// epoch older than the previous. Subject is the claimed Source. <c>Value0</c> is the epoch the
+    /// cookie offered; <c>Value1</c> is the epoch current at the moment it was checked.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>, never <see cref="DiagnosticLevel.Error"/>: a cookie
+    /// arriving one epoch after it was minted is the mechanism working, and a Reactor visible to the
+    /// internet will see forged ones continuously. Raising this to Error would train a consumer to
+    /// ignore Error.
+    /// </remarks>
+    CookieRejected = 201,
+
+    /// <summary>
+    /// A cookie-validated Hello offered a protocol version this Reactor does not speak, and was
+    /// refused. Subject is the claimed Source. <c>Value0</c> is the version offered; <c>Value1</c> is
+    /// the version this Reactor requires.
+    /// </summary>
+    /// <remarks>
+    /// Emitted only for a Hello that passed the cookie check, because that is the only Hello a
+    /// Reactor answers at all — a bare Hello is answered with a Cookie and nothing else, whatever
+    /// version it claimed.
+    /// </remarks>
+    VersionRefused = 202,
 }

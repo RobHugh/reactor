@@ -550,6 +550,12 @@ public sealed class RawReactor : IDisposable
             case UdpLinkReceiveOutcome.Unreachable:
                 RecordDestinationUnreachable(ToLinkId(handle), result.Error);
                 break;
+            // A readable dispatch that found nothing queued: on Linux, a socket carrying an ICMP error
+            // is dispatched on POLLERR with no POLLIN behind it. Nothing happened to this Link, so it is
+            // neither reported nor charged against it — failing it here would tear down a healthy Link
+            // over a wakeup the platform, not the peer, decided to send.
+            case UdpLinkReceiveOutcome.WouldBlock:
+                break;
             case UdpLinkReceiveOutcome.Failed:
                 FailLink(handle, slot, result.Error);
                 break;
@@ -1040,10 +1046,10 @@ public sealed class RawReactor : IDisposable
     }
 
     /// <summary>Converts L0's internal Slot identity into the public one Raw hands consumers (ADR 0003).</summary>
-    private static LinkId ToLinkId(SlotHandle handle) => new(handle.Index, handle.Generation);
+    private static LinkId ToLinkId(SlotHandle handle) => new(handle.Origin, handle.Index, handle.Generation);
 
     /// <summary>The inverse of <see cref="ToLinkId"/>, applied to every <see cref="LinkId"/> arriving from a consumer.</summary>
-    private static SlotHandle ToHandle(LinkId link) => new(link.Index, link.Generation);
+    private static SlotHandle ToHandle(LinkId link) => new(link.Origin, link.Index, link.Generation);
 
     /// <summary>
     /// The two checks every public member starts with: this Reactor still owns its sockets, and the

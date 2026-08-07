@@ -40,6 +40,8 @@ namespace ReactorSockets.Core;
 internal sealed class ShareHolderTable<T>
     where T : class
 {
+    private static ulong _lastOrigin;
+
     private readonly T?[] _slots;
     private readonly ulong[] _generations;
 
@@ -64,6 +66,23 @@ internal sealed class ShareHolderTable<T>
         _generations = new ulong[capacity];
         Array.Fill(_generations, 1UL);
     }
+
+    /// <summary>
+    /// What distinguishes this table's handles from every other table's in this process. Assigned
+    /// from a counter shared by all tables, so no two ever hold the same value and none holds 0 —
+    /// which is what keeps a <see langword="default"/> handle unresolvable here as well as by its
+    /// generation. Never leaves the process and never appears on the wire; it is compared for
+    /// equality and nothing else, so its actual value carries no meaning.
+    /// </summary>
+    /// <remarks>
+    /// Counted rather than drawn from entropy: this guards against a consumer handing one Reactor's
+    /// id to another, which is a mistake and not an attack, and a counter answers that exactly where
+    /// random values would only answer it with high probability. It is
+    /// <see cref="Interlocked.Increment(ref ulong)"/> because tables on different threads may be
+    /// constructed at once — a Reactor is single-threaded (ADR 0002), but nothing says two Reactors
+    /// share a thread.
+    /// </remarks>
+    public ulong Origin { get; } = Interlocked.Increment(ref _lastOrigin);
 
     /// <summary>The number of Slots this table holds, occupied or not.</summary>
     public int Capacity => _slots.Length;
@@ -92,7 +111,7 @@ internal sealed class ShareHolderTable<T>
             {
                 _slots[index] = value;
                 Count++;
-                return new SlotHandle(index, _generations[index]);
+                return new SlotHandle(Origin, index, _generations[index]);
             }
         }
 
@@ -101,12 +120,13 @@ internal sealed class ShareHolderTable<T>
 
     /// <summary>
     /// The occupant <paramref name="handle"/> addresses, or <see langword="null"/> if it addresses
-    /// nothing: out of range, an empty Slot, or a Slot whose generation has moved on since. A
-    /// <see langword="default"/> handle always answers <see langword="null"/>, because its zero
-    /// generation matches no live Slot.
+    /// nothing: another table's handle, out of range, an empty Slot, or a Slot whose generation has
+    /// moved on since. A <see langword="default"/> handle always answers <see langword="null"/>,
+    /// because its zero generation matches no live Slot.
     /// </summary>
     public T? TryResolve(SlotHandle handle) =>
-        handle.Index >= 0
+        handle.Origin == Origin
+        && handle.Index >= 0
         && handle.Index < _slots.Length
         && _generations[handle.Index] == handle.Generation
             ? _slots[handle.Index]

@@ -145,10 +145,24 @@ _Avoid_: Accept, onboarding, intake
 
 **Deferral**:
 Declining an Admission this Frame and leaving the work exactly where it was, for a later Pump to
-take. Deliberately not a refusal: nothing is said on the wire and nothing is dropped by the library.
-Counted as *the Links that deferred*, never as the connections still waiting — that depth is
-unknowable without accepting, which is the thing a Deferral consists of not doing.
+take. Deliberately not a refusal: nothing is said on the wire, and the work survives to be admitted
+later. Counted once per Frame per *declining*, which is a coarser number than it looks where the
+work is out of reach: a listening Link or a bound endpoint declines its whole backlog with one
+declining, because backlog depth is unknowable without accepting and accepting is the thing a
+Deferral consists of not doing. Where the Reactor already holds the work — a stream Session
+handshake it accepted but did not complete — one declining is one piece of work, and the number is
+exact.
 _Avoid_: Reject, drop, throttle, backoff
+
+**Discard**:
+Letting go of work the Reactor was holding, because a cap or capacity was spent and the transport
+gives it nowhere to wait. Unrecoverable in a way a Deferral is not: no later Pump can take it,
+because it is gone. Always counted exactly — a Reactor can only Discard what it had in hand, so
+there is no unknowable depth behind the number. A `DatagramSessionReactor` over its cap Discards the
+Hellos it cannot admit, which is ordinary for UDP and costs the transport nothing; the stream
+transports never Discard, because a connection the Reactor has not accepted waits in the OS backlog
+instead.
+_Avoid_: Reject, deferral, refusal, throttle
 
 ### How a Peer is spoken to
 

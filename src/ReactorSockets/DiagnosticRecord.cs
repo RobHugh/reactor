@@ -58,19 +58,20 @@ public readonly record struct DiagnosticRecord
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.AdmissionCapReached"/> record. No subject.
-    /// <paramref name="deferrals"/> counts listening Links that deferred, not connections left in
-    /// the backlog — see the remarks on <see cref="DiagnosticId.AdmissionCapReached"/>.
+    /// <paramref name="declined"/> counts declinings where the work waits out of reach and pieces of
+    /// work where the Reactor held it — see the remarks on
+    /// <see cref="DiagnosticId.AdmissionCapReached"/>.
     /// </summary>
-    public static DiagnosticRecord ForAdmissionCapReached(int cap, int deferrals) =>
-        new(DiagnosticId.AdmissionCapReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, cap, deferrals);
+    public static DiagnosticRecord ForAdmissionCapReached(int cap, int declined) =>
+        new(DiagnosticId.AdmissionCapReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, cap, declined);
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.CapacityExhausted"/> record. No subject.
-    /// <paramref name="deferrals"/> is counted exactly as
+    /// <paramref name="declined"/> is counted exactly as
     /// <see cref="ForAdmissionCapReached"/>'s is.
     /// </summary>
-    public static DiagnosticRecord ForCapacityExhausted(int capacity, int deferrals) =>
-        new(DiagnosticId.CapacityExhausted, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, capacity, deferrals);
+    public static DiagnosticRecord ForCapacityExhausted(int capacity, int declined) =>
+        new(DiagnosticId.CapacityExhausted, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, capacity, declined);
 
     /// <summary>
     /// Builds an <see cref="DiagnosticId.ArenaExhausted"/> record for the Link that made the request.
@@ -98,4 +99,25 @@ public readonly record struct DiagnosticRecord
     /// </summary>
     public static DiagnosticRecord ForDatagramTruncated(Source source, int bufferSize) =>
         new(DiagnosticId.DatagramTruncated, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, bufferSize, 0);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.DatagramMalformed"/> record for the claimed Source, carrying
+    /// the number of bytes that arrived.
+    /// </summary>
+    public static DiagnosticRecord ForDatagramMalformed(Source source, int bytesReceived) =>
+        new(DiagnosticId.DatagramMalformed, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, bytesReceived, 0);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.CookieRejected"/> record for the claimed Source, carrying the
+    /// epoch the cookie offered and the epoch current when it was checked.
+    /// </summary>
+    public static DiagnosticRecord ForCookieRejected(Source source, long epochOffered, long epochCurrent) =>
+        new(DiagnosticId.CookieRejected, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, epochOffered, epochCurrent);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.VersionRefused"/> record for the claimed Source, carrying the
+    /// version offered and the version this Reactor requires.
+    /// </summary>
+    public static DiagnosticRecord ForVersionRefused(Source source, long versionOffered, long versionRequired) =>
+        new(DiagnosticId.VersionRefused, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, versionOffered, versionRequired);
 }

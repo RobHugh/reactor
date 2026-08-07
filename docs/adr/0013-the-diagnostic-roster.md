@@ -145,18 +145,29 @@ Value slot meanings belong in XML docs on each member, per ADR 0005; they are gi
 | 2 | `ArenaExhausted` | `Warn` | Peer or Link | bytes requested / bytes free |
 | 3 | `CapacityExhausted` | `Warn` | none | capacity / deferrals |
 
-A **deferral** is one Link that had an inbound connection waiting and left it in the OS backlog, counted
-once per Frame per Link. It is not the number of connections left waiting: backlog depth is unknowable
-without accepting, and accepting is precisely what a Reactor at its cap or at capacity must not do — it
-would complete the handshake and then drop it, showing the peer an established-then-closed connection
-where the wire must stay silent. A count nobody can measure is worse than an honest smaller one, so the
-slot carries what is actually known.
+A **deferral** is one declining of an Admission that leaves the work where it was. Where the work waits
+out of reach it is counted once per Frame per Link or bound endpoint, not once per connection waiting:
+backlog depth is unknowable without accepting, and accepting is precisely what a Reactor at its cap or
+at capacity must not do — it would complete the handshake and then drop it, showing the peer an
+established-then-closed connection where the wire must stay silent. A count nobody can measure is worse
+than an honest smaller one, so the slot carries what is actually known. Where the Reactor is already
+holding the work — a stream Session handshake accepted but not completed — one declining is one piece of
+work and the figure is exact.
+
+Work the Reactor holds and cannot leave waiting is a **Discard**, not a deferral, and is counted
+separately on `AdmissionDiscards`. The distinction is by fate rather than by profile: deferred work
+arrives on a later Pump and Discarded work never does, which is the one difference a consumer acts on.
+A datagram Session over its cap Discards the Hellos it cannot admit — there is no backlog for them to
+wait in — so the same `Value1` slot on these two ids carries an exact count there and a coarse one on
+the stream transports. Both ids stay honest under that split because each says only "this many
+Admissions declined", leaving what became of the work to the counter that names it.
 
 `AdmissionCapReached` and `CapacityExhausted` are separate ids rather than one id with a cause slot,
 because they are fixed by different knobs — the first wants the cap lowered or the Frame budget raised,
 the second wants `Capacity` raised — and an operator who has to read `Value1` to know which lever to pull
-is being asked to do the roster's job. They share the one `AdmissionDeferrals` counter; a consumer that
-needs them apart reads the diagnostics, which is what diagnostics are for.
+is being asked to do the roster's job. They share one counter — `AdmissionDeferrals` or
+`AdmissionDiscards`, whichever matches the fate of the work; a consumer that needs the two *causes*
+apart reads the diagnostics, which is what diagnostics are for.
 
 ### Raw
 

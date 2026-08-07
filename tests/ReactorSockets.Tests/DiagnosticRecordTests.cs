@@ -7,11 +7,11 @@ namespace ReactorSockets.Tests;
 public class DiagnosticRecordTests
 {
     [Fact]
-    public void ForAdmissionCapReached_CapAndDeferrals_CarriesNoSubjectAndWarnLevel()
+    public void ForAdmissionCapReached_CapAndDeclined_CarriesNoSubjectAndWarnLevel()
     {
         // Arrange
         // Act
-        DiagnosticRecord record = DiagnosticRecord.ForAdmissionCapReached(cap: 64, deferrals: 3);
+        DiagnosticRecord record = DiagnosticRecord.ForAdmissionCapReached(cap: 64, declined: 3);
 
         // Assert
         record.Id.Should().Be(DiagnosticId.AdmissionCapReached);
@@ -22,11 +22,11 @@ public class DiagnosticRecordTests
     }
 
     [Fact]
-    public void ForCapacityExhausted_CapacityAndDeferrals_CarriesNoSubjectAndWarnLevel()
+    public void ForCapacityExhausted_CapacityAndDeclined_CarriesNoSubjectAndWarnLevel()
     {
         // Arrange
         // Act
-        DiagnosticRecord record = DiagnosticRecord.ForCapacityExhausted(capacity: 8, deferrals: 1);
+        DiagnosticRecord record = DiagnosticRecord.ForCapacityExhausted(capacity: 8, declined: 1);
 
         // Assert
         record.Id.Should().Be(DiagnosticId.CapacityExhausted);
@@ -40,7 +40,7 @@ public class DiagnosticRecordTests
     public void ForArenaExhausted_LinkBytesRequestedAndFree_CarriesLinkSubject()
     {
         // Arrange
-        LinkId link = new(Index: 2, Generation: 1);
+        LinkId link = new(Origin: 1, Index: 2, Generation: 1);
 
         // Act
         DiagnosticRecord record = DiagnosticRecord.ForArenaExhausted(link, bytesRequested: 20_000, bytesFree: 100);
@@ -57,7 +57,7 @@ public class DiagnosticRecordTests
     public void ForLinkFailed_SocketError_CarriesErrorInValue0()
     {
         // Arrange
-        LinkId link = new(Index: 0, Generation: 5);
+        LinkId link = new(Origin: 1, Index: 0, Generation: 5);
 
         // Act
         DiagnosticRecord record = DiagnosticRecord.ForLinkFailed(link, SocketError.ConnectionReset);
@@ -73,7 +73,7 @@ public class DiagnosticRecordTests
     public void ForDestinationUnreachable_SocketError_CarriesErrorInValue0()
     {
         // Arrange
-        LinkId link = new(Index: 1, Generation: 0);
+        LinkId link = new(Origin: 1, Index: 1, Generation: 0);
 
         // Act
         DiagnosticRecord record = DiagnosticRecord.ForDestinationUnreachable(link, SocketError.ConnectionReset);
