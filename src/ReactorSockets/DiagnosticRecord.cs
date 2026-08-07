@@ -160,4 +160,12 @@ public readonly record struct DiagnosticRecord
     /// </summary>
     public static DiagnosticRecord ForLingerNegotiated(PeerId peer, long oursMilliseconds, long effectiveMilliseconds) =>
         new(DiagnosticId.LingerNegotiated, DiagnosticLevel.Info, DiagnosticSubjectKind.Peer, default, default, peer, oursMilliseconds, effectiveMilliseconds);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.MalformedFraming"/> record for the Peer whose framing broke
+    /// this profile's rules. <c>Value0</c> is the offending length prefix — 0 for a truncation, where
+    /// no full prefix was ever read; <c>Value1</c> is this Reactor's own <c>MaxMessageSize</c>.
+    /// </summary>
+    public static DiagnosticRecord ForMalformedFraming(PeerId peer, long announcedLength, long maxMessageSize) =>
+        new(DiagnosticId.MalformedFraming, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, announcedLength, maxMessageSize);
 }

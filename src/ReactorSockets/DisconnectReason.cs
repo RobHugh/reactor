@@ -38,4 +38,13 @@ public enum DisconnectReason
     /// itself did not survive to carry it.
     /// </summary>
     TransportFailed,
+
+    /// <summary>
+    /// An established Peer's Message framing broke this profile's rules: a length prefix exceeding
+    /// the announced <c>MaxMessageSize</c>, a length prefix of zero, or a stream that ended before a
+    /// length prefix or the Message body it named had fully arrived. Distinct from
+    /// <see cref="TransportFailed"/>: the byte stream itself survived long enough to carry the
+    /// violation, and what is wrong is the bytes it carried rather than the transport underneath it.
+    /// </summary>
+    ProtocolViolation,
 }

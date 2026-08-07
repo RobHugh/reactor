@@ -630,10 +630,22 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// buffer — never the frame arena directly, since a partial Message's tail must survive the arena
     /// being wiped every Pump (Scope 3.4.1) — then delivers every whole Message the buffer now holds
     /// (<see cref="DeliverCompleteMessages"/>). The read is skipped, not failed, when the buffer is
-    /// already full of an incomplete Message: turning an oversized prefix into a protocol-violation
-    /// disconnect is the malformed-framing table's job (a later sub-issue), not this one's — this slice
-    /// only refuses to read out of bounds.
+    /// already full of a Message body still legally in flight: the escape that lets a Peer always
+    /// deliver one whole Message is #81's job, not this one's — this slice only refuses to read out of
+    /// bounds. An oversized or zero-length prefix never reaches this state: <see cref="DeliverCompleteMessages"/>
+    /// closes the Session the moment the four-byte prefix that names it has arrived, long before the
+    /// buffer could fill.
     /// </summary>
+    /// <remarks>
+    /// <see cref="TcpLinkReceiveOutcome.EndOfStream"/> and <see cref="TcpLinkReceiveOutcome.Failed"/>
+    /// are deliberately not folded into one branch here, unlike the handshake path above: a pending
+    /// socket error (<c>Failed</c>) is always <see cref="DisconnectReason.TransportFailed"/>, the
+    /// malformed-framing table's transport-failure row, arriving through this same read path exactly
+    /// as PR #73's readiness dispatcher promises and needing nothing extra to detect. A graceful end of
+    /// stream (<c>EndOfStream</c>) is classified by <see cref="ClassifyEndOfStream"/> instead, because
+    /// whether it is ordinary or a truncation depends on what this Peer's receive buffer was still
+    /// holding.
+    /// </remarks>
     private void OnEstablishedPeerReadable(SlotHandle handle, PeerSlot slot)
     {
         int room = slot.ReceiveBuffer.Length - slot.ReceiveBytesFilled;
@@ -650,6 +662,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 DeliverCompleteMessages(handle, slot);
                 break;
             case TcpLinkReceiveOutcome.EndOfStream:
+                ClosePeer(handle, ClassifyEndOfStream(slot));
+                break;
             case TcpLinkReceiveOutcome.Failed:
                 ClosePeer(handle, DisconnectReason.TransportFailed);
                 break;
@@ -657,64 +671,88 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Repeatedly parses the front of a Peer's receive buffer for a complete <c>u32</c>-prefixed
-    /// Message, copies each one into the shared frame arena and queues a
-    /// <see cref="SessionEventKind.MessageReceived"/> event for it, shifting the remainder of the
-    /// buffer down to offset zero each time. Stops — leaving whatever is left in place for a later
-    /// Pump — the moment the front of the buffer holds less than a whole Message, or an arena
-    /// reservation cannot be made this Frame.
+    /// Repeatedly classifies the front of a Peer's receive buffer against the malformed-framing table
+    /// (<see cref="MessageFramingLegality"/>). A complete, legal Message is copied into the shared
+    /// frame arena and queued as a <see cref="SessionEventKind.MessageReceived"/> event, shifting the
+    /// remainder of the buffer down to offset zero. An oversized or zero-length prefix ends the
+    /// Session immediately with <see cref="DisconnectReason.ProtocolViolation"/> — the whole reason
+    /// <c>MaxMessageSize</c> is announced as a receive limit is so this never becomes an allocation.
+    /// Stops — leaving whatever is left in place for a later Pump — the moment the front of the buffer
+    /// holds less than a whole Message, or an arena reservation cannot be made this Frame.
     /// </summary>
     private void DeliverCompleteMessages(SlotHandle handle, PeerSlot slot)
     {
         while (true)
         {
             ReadOnlySpan<byte> filled = slot.ReceiveBuffer.AsSpan(0, slot.ReceiveBytesFilled);
-            if (!MessageFramingCodec.TryReadLengthPrefix(filled, out uint length))
+            MessageFramingOutcome outcome = MessageFramingLegality.Classify(
+                filled, _options.MaxMessageSize, out uint length, out int messageEnd);
+
+            switch (outcome)
             {
-                return;
+                case MessageFramingOutcome.AwaitingPrefix:
+                case MessageFramingOutcome.AwaitingMessage:
+                    return;
+
+                case MessageFramingOutcome.Ready:
+                {
+                    ReadOnlySpan<byte> message = slot.ReceiveBuffer.AsSpan(MessageFramingCodec.LengthPrefixSize, (int)length);
+                    if (!TryReserveMessage(handle, message, out int payloadOffset))
+                    {
+                        // Arena or per-Peer share exhausted for this Frame. The Message stays
+                        // buffered, whole, at the front of ReceiveBuffer — nothing is consumed — and
+                        // is retried the next time this Peer's transport is read.
+                        return;
+                    }
+
+                    _pendingEvents.Add(new PendingEvent
+                    {
+                        Kind = SessionEventKind.MessageReceived,
+                        Peer = ToPeerId(handle),
+                        PayloadOffset = payloadOffset,
+                        PayloadLength = (int)length,
+                    });
+
+                    int remaining = slot.ReceiveBytesFilled - messageEnd;
+                    if (remaining > 0)
+                    {
+                        slot.ReceiveBuffer.AsSpan(messageEnd, remaining).CopyTo(slot.ReceiveBuffer.AsSpan(0, remaining));
+                    }
+
+                    slot.ReceiveBytesFilled = remaining;
+                    continue;
+                }
+
+                // The discard arm refuses rather than permits (the RawLinkLegality/TryReserve house
+                // rule): OversizedPrefix and ZeroLengthPrefix are named explicitly, and any outcome
+                // this switch does not otherwise recognise falls into the same arm rather than being
+                // silently read as legal.
+                case MessageFramingOutcome.OversizedPrefix:
+                case MessageFramingOutcome.ZeroLengthPrefix:
+                default:
+                    if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                    {
+                        _diagnostics.Log(DiagnosticRecord.ForMalformedFraming(ToPeerId(handle), length, _options.MaxMessageSize));
+                    }
+
+                    ClosePeer(handle, DisconnectReason.ProtocolViolation);
+                    return;
             }
-
-            long messageEnd = (long)MessageFramingCodec.LengthPrefixSize + length;
-            if (messageEnd > slot.ReceiveBuffer.Length)
-            {
-                // A prefix this Peer's receive buffer could never hold, however many more bytes
-                // arrive. Rejecting it outright — a protocol-violation disconnect — belongs to the
-                // malformed-framing table; this slice merely stops rather than reads out of bounds.
-                return;
-            }
-
-            if (slot.ReceiveBytesFilled < messageEnd)
-            {
-                return;
-            }
-
-            int consumed = (int)messageEnd;
-            ReadOnlySpan<byte> message = slot.ReceiveBuffer.AsSpan(MessageFramingCodec.LengthPrefixSize, (int)length);
-            if (!TryReserveMessage(handle, message, out int payloadOffset))
-            {
-                // Arena or per-Peer share exhausted for this Frame. The Message stays buffered,
-                // whole, at the front of ReceiveBuffer — nothing is consumed — and is retried the
-                // next time this Peer's transport is read.
-                return;
-            }
-
-            _pendingEvents.Add(new PendingEvent
-            {
-                Kind = SessionEventKind.MessageReceived,
-                Peer = ToPeerId(handle),
-                PayloadOffset = payloadOffset,
-                PayloadLength = (int)length,
-            });
-
-            int remaining = slot.ReceiveBytesFilled - consumed;
-            if (remaining > 0)
-            {
-                slot.ReceiveBuffer.AsSpan(consumed, remaining).CopyTo(slot.ReceiveBuffer.AsSpan(0, remaining));
-            }
-
-            slot.ReceiveBytesFilled = remaining;
         }
     }
+
+    /// <summary>
+    /// The <see cref="DisconnectReason"/> for an established Peer's transport reporting a graceful end
+    /// of stream. Nothing buffered means no Message was in flight when it ended — an ordinary
+    /// transport ending, <see cref="DisconnectReason.TransportFailed"/>. Anything buffered can only be
+    /// an incomplete length prefix or an incomplete Message body: <see cref="DeliverCompleteMessages"/>
+    /// already drains every whole, legal Message and closes on an oversized or zero-length prefix the
+    /// instant its four bytes arrive, so nonzero leftover bytes here are always a mid-prefix or
+    /// mid-Message truncation — <see cref="DisconnectReason.ProtocolViolation"/>, the malformed-framing
+    /// table's other two rows.
+    /// </summary>
+    private static DisconnectReason ClassifyEndOfStream(PeerSlot slot) =>
+        slot.ReceiveBytesFilled == 0 ? DisconnectReason.TransportFailed : DisconnectReason.ProtocolViolation;
 
     /// <summary>
     /// Reserves <paramref name="message"/> in the shared frame arena under this Peer's own

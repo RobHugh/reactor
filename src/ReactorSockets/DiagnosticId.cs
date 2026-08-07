@@ -118,4 +118,18 @@ public enum DiagnosticId
     /// Linger in milliseconds; <c>Value1</c> is the effective (minimum) Linger in milliseconds.
     /// </summary>
     LingerNegotiated = 301,
+
+    /// <summary>
+    /// An established Peer's Message framing broke this profile's rules and the Session was closed
+    /// with <see cref="DisconnectReason.ProtocolViolation"/>: an oversized or zero-length prefix, or a
+    /// stream that ended before a prefix or the Message body it named had fully arrived. Subject is
+    /// the Peer. <c>Value0</c> is the offending length prefix — 0 for a truncation, where no full
+    /// prefix was ever read; <c>Value1</c> is this Reactor's own <c>MaxMessageSize</c>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>: a remote can produce this at will by sending malformed
+    /// bytes, which is exactly why the Session ends rather than throws, and why this is a Diagnostic
+    /// rather than an Event on the consumer's own stream.
+    /// </remarks>
+    MalformedFraming = 302,
 }
