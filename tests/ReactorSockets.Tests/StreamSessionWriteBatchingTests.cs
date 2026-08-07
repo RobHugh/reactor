@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Net;
+using System.Net.Sockets;
 using FluentAssertions;
 using Xunit;
 
@@ -98,6 +99,30 @@ public class StreamSessionWriteBatchingTests
         throw new InvalidOperationException("The Session never established within the Pump budget.");
     }
 
+    /// <summary>
+    /// Pumps <paramref name="accepter"/> until <paramref name="peer"/>'s Session establishes, mirroring
+    /// <c>StreamSessionRetentionFlushTests.EstablishSession</c> for the same reason: this file's
+    /// backpressure test needs the Reactor as the accepting side, not the dialling side.
+    /// </summary>
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, SlowReaderPeer peer, int maxPumps = 20)
+    {
+        peer.Send(BuildHello());
+        for (int i = 0; i < maxPumps; i++)
+        {
+            accepter.Reactor.Pump();
+            foreach ((SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload) evt in accepter.DrainToListWithPayload())
+            {
+                if (evt.Kind == SessionEventKind.PeerConnected)
+                {
+                    peer.Receive(RecordSize);
+                    return evt.Peer;
+                }
+            }
+        }
+
+        throw new InvalidOperationException("The Session never established within the Pump budget.");
+    }
+
     [Fact]
     public void Send_MultipleSendsBeforeASinglePump_ProducesExactlyOneSegmentOnTheWire()
     {
@@ -185,5 +210,88 @@ public class StreamSessionWriteBatchingTests
 
         // Assert
         observer.ReceivedSegments.Should().HaveCount(baseline, "a Send with no following Pump call must put nothing on the wire");
+    }
+
+    [Fact]
+    public void Send_QueuedBurstAgainstASlowReader_DeliversEveryMessageWholeAndInOrderAcrossTheShortWriteRearmCycle()
+    {
+        // Arrange — the counterparty's receive window is shrunk before it connects (never after, per
+        // commit 8426ff3 and StreamSessionRetentionFlushTests' FlushPeer), and retention is bounded to
+        // hold every queued Message at once. Three maximum Messages queued back-to-back before a single
+        // Pump exceed what one write can offer a 1024-byte-window peer that has not read anything yet,
+        // so FlushRetention's first attempt inside that Pump's FlushPendingRetentionWrites step is a
+        // short write: the pending-write marker this ticket introduces must survive that short write
+        // (re-armed from OnPeerWritable, per StreamSessionReactor's own remarks) and get flushed again on
+        // a later Pump once the peer starts reading, rather than losing or duplicating any bytes.
+        const int maxMessageSize = 8192;
+        const int messageCount = 3;
+        using StreamSessionReactorHarness accepter = new(
+            maxMessageSize: maxMessageSize, retentionBytes: messageCount * (maxMessageSize + 4));
+        using SlowReaderPeer peer = new(accepter.Endpoint, receiveBufferSize: 1024);
+        PeerId id = EstablishSession(accepter, peer);
+
+        byte[] first = PayloadOf(maxMessageSize, 31);
+        byte[] second = PayloadOf(maxMessageSize, 32);
+        byte[] third = PayloadOf(maxMessageSize, 33);
+
+        // Act — queue all three before any flush, then keep pumping (nothing read yet, forcing at least
+        // one short write) before the peer finally drains everything off the wire.
+        accepter.Reactor.Send(id, first).Should().Be(SendOutcome.Sent);
+        accepter.Reactor.Send(id, second).Should().Be(SendOutcome.Sent);
+        accepter.Reactor.Send(id, third).Should().Be(SendOutcome.Sent);
+
+        for (int i = 0; i < 20; i++)
+        {
+            accepter.Reactor.Pump();
+        }
+
+        byte[] onWire = peer.Receive(BuildFrame(first).Length + BuildFrame(second).Length + BuildFrame(third).Length);
+
+        // Assert — every byte offered across the burst arrives exactly once, whole and in order, whether
+        // or not any individual Pump's flush was a short write.
+        onWire.Should().Equal([.. BuildFrame(first), .. BuildFrame(second), .. BuildFrame(third)]);
+    }
+
+    /// <summary>
+    /// A plain BCL TCP socket dialling into a Reactor's bound endpoint with a deliberately small receive
+    /// window, so the accepter's own flush can hit a short write — mirrors
+    /// <c>StreamSessionRetentionFlushTests.FlushPeer</c>, the house pattern for a real-socket backpressure
+    /// stimulus (commit 8426ff3: shrink before <c>Connect</c>, never after).
+    /// </summary>
+    private sealed class SlowReaderPeer : IDisposable
+    {
+        private readonly Socket _socket;
+
+        public SlowReaderPeer(IPEndPoint destination, int receiveBufferSize)
+        {
+            _socket = new Socket(destination.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+            {
+                ReceiveTimeout = 5000,
+                ReceiveBufferSize = receiveBufferSize,
+            };
+            _socket.Connect(destination);
+        }
+
+        public void Send(byte[] bytes) => _socket.Send(bytes);
+
+        public byte[] Receive(int count)
+        {
+            byte[] buffer = new byte[count];
+            int totalRead = 0;
+            while (totalRead < count)
+            {
+                int read = _socket.Receive(buffer.AsSpan(totalRead));
+                if (read == 0)
+                {
+                    throw new InvalidOperationException("The Reactor closed the connection before sending everything expected.");
+                }
+
+                totalRead += read;
+            }
+
+            return buffer;
+        }
+
+        public void Dispose() => _socket.Dispose();
     }
 }
