@@ -210,6 +210,20 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// A point-in-time snapshot of one Peer's counters (ADR 0013). Throws if the Peer is not open.
+    /// Mirrors <see cref="RawReactor.CountersOf(LinkId)"/>'s shape for the Raw profile.
+    /// </summary>
+    public PeerCounters CountersOf(PeerId peer)
+    {
+        EnsureUsable();
+
+        PeerSlot slot = _peers.TryResolve(ToHandle(peer))
+            ?? throw new ArgumentException($"Peer {peer} is not open.", nameof(peer));
+
+        return slot.Counters.Snapshot();
+    }
+
+    /// <summary>
     /// Releases every socket this Reactor bound or accepted. A Reactor owns every socket it bound, so
     /// a consumer that drops one without disposing it leaks those sockets until each
     /// <see cref="Socket"/>'s finalizer runs. No <see cref="SessionEventKind.PeerClosed"/> events are
@@ -719,6 +733,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                         PayloadOffset = payloadOffset,
                         PayloadLength = (int)length,
                     });
+                    slot.Counters.RecordMessageReceived();
 
                     int remaining = slot.ReceiveBytesFilled - messageEnd;
                     if (remaining > 0)
@@ -1041,6 +1056,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>The Slot this Peer occupies, filled in once the table has admitted it.</summary>
         public SlotHandle Handle { get; set; }
+
+        /// <summary>This Peer's own counters (ADR 0013), living as long as its Slot does.</summary>
+        public PeerCounterSet Counters { get; } = new();
 
         /// <summary>
         /// Whatever remains of this end's own handshake record after a short send, or

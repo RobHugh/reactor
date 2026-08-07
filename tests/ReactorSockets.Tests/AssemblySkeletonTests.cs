@@ -59,6 +59,7 @@ public class AssemblySkeletonTests
             nameof(SessionEventKind),
             nameof(SessionEventEnumerator),
             nameof(PeerId),
+            nameof(PeerCounters),
             nameof(DisconnectReason));
     }
 
