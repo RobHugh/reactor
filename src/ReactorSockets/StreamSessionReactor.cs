@@ -29,6 +29,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly DiagnosticGateway _diagnostics;
     private readonly ReactorCounterSet _counters;
     private readonly FrameArena _arena;
+    private readonly RetentionArena _retention;
     private readonly ShareHolderTable<PeerSlot> _peers;
     private readonly RandomNumberGenerator _entropy;
     private readonly List<TcpListenLink> _listenLinks = [];
@@ -65,6 +66,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Reactor.Sink, options.Reactor.MinimumLevel, _counters);
         _arena = new FrameArena(arenaSize, options.Reactor.Capacity);
+        _retention = new RetentionArena(options.RetentionBytes, options.Reactor.Capacity);
         _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity);
         _entropy = options.Entropy;
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
@@ -969,6 +971,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _dispatcher.Unregister(slot.Link.Socket);
         slot.Link.Dispose();
         _peersWithBufferedMessages.Remove(handle);
+        _retention.ResetShareHolder(handle.Index);
         _pendingEvents.Add(new PendingEvent
         {
             Kind = SessionEventKind.PeerClosed,
