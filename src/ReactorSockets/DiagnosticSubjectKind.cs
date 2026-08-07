@@ -18,4 +18,12 @@ public enum DiagnosticSubjectKind
     /// <see cref="DiagnosticRecord.Source"/>.
     /// </summary>
     Source,
+
+    /// <summary>
+    /// The record concerns an established Peer, carried in <see cref="DiagnosticRecord.Peer"/>.
+    /// Distinct from <see cref="Source"/>: a Peer exists only once a handshake has completed, while a
+    /// Source is merely a claimed origin — a refusal made before a Peer exists tags <see cref="Source"/>,
+    /// never this.
+    /// </summary>
+    Peer,
 }

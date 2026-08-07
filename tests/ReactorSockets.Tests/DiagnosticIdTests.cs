@@ -12,6 +12,11 @@ public class DiagnosticIdTests
     [InlineData(DiagnosticId.LinkFailed, 100)]
     [InlineData(DiagnosticId.DestinationUnreachable, 101)]
     [InlineData(DiagnosticId.DatagramTruncated, 102)]
+    [InlineData(DiagnosticId.DatagramMalformed, 200)]
+    [InlineData(DiagnosticId.CookieRejected, 201)]
+    [InlineData(DiagnosticId.VersionRefused, 202)]
+    [InlineData(DiagnosticId.PeerRefused, 300)]
+    [InlineData(DiagnosticId.LingerNegotiated, 301)]
     public void Values_EveryMember_MatchesItsReservedBlockNumber(DiagnosticId id, int expected)
     {
         // Arrange

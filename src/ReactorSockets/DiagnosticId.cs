@@ -97,4 +97,25 @@ public enum DiagnosticId
     /// version it claimed.
     /// </remarks>
     VersionRefused = 202,
+
+    /// <summary>
+    /// A dialler was refused in-protocol during the stream handshake, either because it announced a
+    /// different protocol version or because every capacity Slot was occupied. Subject is the claimed
+    /// Source: at refusal time there is no Peer, only a claimed origin. For a capacity refusal,
+    /// <c>Value0</c> is this Reactor's capacity and <c>Value1</c> is unused. For a version refusal,
+    /// <c>Value0</c> is the version offered and <c>Value1</c> is the version this Reactor requires.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Info"/>, not <see cref="DiagnosticLevel.Warn"/>: a version mismatch
+    /// on an upgrade and an ordinary burst at capacity are both routine, expected outcomes of running
+    /// this profile, not conditions a consumer needs to act on.
+    /// </remarks>
+    PeerRefused = 300,
+
+    /// <summary>
+    /// A stream handshake completed and the two ends' announced Linger values were negotiated to their
+    /// minimum (ADR 0011). Subject is the newly established Peer. <c>Value0</c> is this end's own
+    /// Linger in milliseconds; <c>Value1</c> is the effective (minimum) Linger in milliseconds.
+    /// </summary>
+    LingerNegotiated = 301,
 }

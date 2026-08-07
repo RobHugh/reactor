@@ -32,11 +32,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly List<TcpListenLink> _listenLinks = [];
     private readonly List<SlotHandle> _connectingPeers = [];
     private readonly List<PendingEvent> _pendingEvents = [];
+    private readonly List<RefusalSlot> _refusals = [];
     private readonly int _constructingThreadId;
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
     private int _capDeferralsThisFrame;
-    private int _capacityDeferralsThisFrame;
     private bool _inPump;
     private bool _disposed;
 
@@ -132,7 +132,6 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             _pendingEvents.Clear();
             _admissionsThisFrame = 0;
             _capDeferralsThisFrame = 0;
-            _capacityDeferralsThisFrame = 0;
             _dispatcher.Pump();
             ProcessConnectingPeers();
             ReportDeclinedAdmissions();
@@ -231,6 +230,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             slot.Link.Dispose();
         }
 
+        foreach (RefusalSlot refusal in _refusals)
+        {
+            _dispatcher.Unregister(refusal.Link.Socket);
+            refusal.Link.Dispose();
+        }
+
+        _refusals.Clear();
         _connectingPeers.Clear();
         _pendingEvents.Clear();
         _disposed = true;
@@ -262,12 +268,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Accepts as many pending connections as the shared admission cap and this Reactor's capacity
-    /// still allow this Frame, stopping the moment either is spent or the backlog runs dry — whichever
-    /// comes first. Unlike the Raw profile, a connection this Reactor has no room for is refused
-    /// in-protocol rather than left silently in the OS backlog (subtask 3.3); this slice leaves it in
-    /// the backlog for a later Pump exactly as Raw does, since the refusal wire format is the next
-    /// subtask's.
+    /// Accepts as many pending connections as the shared admission cap still allows this Frame,
+    /// stopping the moment it is spent or the backlog runs dry — whichever comes first. Every accepted
+    /// connection is admitted as a Peer or, if this Reactor has no capacity Slot free, refused
+    /// in-protocol and closed (subtask 3.3): a burst of connections beyond capacity is an
+    /// accept-refuse-close cycle inside the admission budget, never a silent drop and never left
+    /// waiting in the backlog the way a cap-exhausted Frame's remainder is.
     /// </summary>
     private void OnListeningLinkReadable(TcpListenLink link)
     {
@@ -283,29 +289,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 return;
             }
 
-            if (!_peers.HasFreeSlot)
-            {
-                if (link.HasPendingConnection)
-                {
-                    _capacityDeferralsThisFrame++;
-                }
-
-                return;
-            }
-
             TcpAcceptResult result = link.TryAccept();
             switch (result.Outcome)
             {
                 case TcpAcceptOutcome.NoPendingConnection:
                     return;
                 case TcpAcceptOutcome.Failed:
-                    // No Diagnostic is logged here: there is no Peer to attribute it to, and
-                    // DiagnosticSubjectKind has no member for one yet (subtask 3.3). The listening
+                    // No Diagnostic is logged here: there is no Peer to attribute it to. The listening
                     // socket itself is unaffected — see TcpListenLink.TryAccept's own remarks — so the
                     // next Pump simply tries again.
                     return;
                 case TcpAcceptOutcome.Accepted:
-                    AdmitAccepted(result.Socket!);
+                    _admissionsThisFrame++;
+                    AdmitOrRefuse(result.Socket!);
                     break;
             }
         }
@@ -313,13 +309,20 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Registers a socket a listening Link just accepted as a new Peer's transport and immediately
-    /// sends this end's handshake record. The caller checks <see cref="ShareHolderTable{T}.HasFreeSlot"/>
-    /// before accepting rather than letting this method look a Slot up, so a Reactor with nowhere to
-    /// put a connection never takes it off the backlog in the first place.
+    /// sends this end's handshake record — or, if every capacity Slot is occupied, refuses it
+    /// in-protocol instead of ever creating one. Checked here rather than before accepting: the
+    /// admission cap alone bounds how many of these accept-then-decide cycles one Frame performs
+    /// (Scope: "a burst of a thousand inbound connections is a thousand accept-refuse-close cycles").
     /// </summary>
-    private void AdmitAccepted(Socket acceptedSocket)
+    private void AdmitOrRefuse(Socket acceptedSocket)
     {
         TcpLink link = TcpLink.FromAccepted(acceptedSocket);
+        if (!_peers.HasFreeSlot)
+        {
+            RefuseForCapacity(link);
+            return;
+        }
+
         PeerSlot slot = new()
         {
             Link = link,
@@ -327,6 +330,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             State = HandshakeState.AwaitingPeerHandshake,
         };
 
+        // `HasFreeSlot` was just checked and this Reactor is single-threaded (ADR 0002), so `TryAdd`
+        // cannot fail here — the guard is defensive rather than a case this branch expects to take.
         if (_peers.TryAdd(slot) is not SlotHandle handle)
         {
             link.Dispose();
@@ -334,9 +339,108 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
 
         slot.Handle = handle;
-        _admissionsThisFrame++;
         RegisterPeerTransport(handle, slot);
         SendHandshakeRecord(handle, slot);
+    }
+
+    /// <summary>
+    /// Refuses a just-accepted connection because every capacity Slot is occupied, without ever giving
+    /// it one: a Refusal record naming this Reactor's capacity is sent and the connection is then
+    /// closed. Never counted as an Admission Deferral or Discard — a refusal says something on the wire
+    /// and ends the connection, which is a different outcome from silently leaving declined work for a
+    /// later Pump.
+    /// </summary>
+    private void RefuseForCapacity(TcpLink link)
+    {
+        Source remote = Source.FromIPEndPoint(link.RemoteEndPoint);
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForPeerRefusedCapacity(remote, _peers.Capacity));
+        }
+
+        RefusalSlot refusal = new() { Link = link };
+        _refusals.Add(refusal);
+        _dispatcher.Register(link.Socket, () => DrainRefusal(refusal), () => OnRefusalWritable(refusal));
+
+        // The dialler's own Hello may already be sitting in the receive buffer by the time this
+        // connection is accepted — draining it now, before the Refusal is sent, is what keeps the
+        // close below clean rather than a reset (unread inbound data at close time is what forces one).
+        DrainRefusal(refusal);
+
+        byte[] record = new byte[StreamHandshakeCodec.RecordSize];
+        StreamHandshakeCodec.WriteRefusal(record, RefusalReason.Capacity, (uint)_peers.Capacity, 0);
+        SendRefusalRecord(refusal, record);
+    }
+
+    /// <summary>Sends a Refusal record, arming for a short send exactly as a Hello record does.</summary>
+    private void SendRefusalRecord(RefusalSlot refusal, byte[] record)
+    {
+        TcpLinkSendResult result = refusal.Link.Send(record);
+        if (!result.IsSuccess)
+        {
+            CloseRefusal(refusal);
+            return;
+        }
+
+        if (result.BytesSent < record.Length)
+        {
+            refusal.PendingBytesToSend = record.AsMemory(result.BytesSent);
+            _dispatcher.ArmWritable(refusal.Link.Socket);
+            return;
+        }
+
+        CloseRefusal(refusal);
+    }
+
+    /// <summary>Flushes whatever remains of a Refusal record a short send left behind, then closes.</summary>
+    private void OnRefusalWritable(RefusalSlot refusal)
+    {
+        if (refusal.PendingBytesToSend is not { Length: > 0 } pending)
+        {
+            return;
+        }
+
+        TcpLinkSendResult result = refusal.Link.Send(pending.Span);
+        if (!result.IsSuccess)
+        {
+            CloseRefusal(refusal);
+            return;
+        }
+
+        refusal.PendingBytesToSend = result.BytesSent < pending.Length ? pending[result.BytesSent..] : null;
+        if (refusal.PendingBytesToSend is null)
+        {
+            CloseRefusal(refusal);
+        }
+        else
+        {
+            _dispatcher.ArmWritable(refusal.Link.Socket);
+        }
+    }
+
+    /// <summary>
+    /// Reads and discards whatever a connection being refused sends — nothing it contains is ever
+    /// examined, since a capacity refusal needs nothing from the far end and this exists solely to keep
+    /// the eventual close from racing an unread Hello into a reset.
+    /// </summary>
+    private void DrainRefusal(RefusalSlot refusal)
+    {
+        Span<byte> scratch = stackalloc byte[64];
+        while (true)
+        {
+            TcpLinkReceiveResult result = refusal.Link.Receive(scratch);
+            if (result.Outcome != TcpLinkReceiveOutcome.Delivered || result.Payload.Length < scratch.Length)
+            {
+                return;
+            }
+        }
+    }
+
+    private void CloseRefusal(RefusalSlot refusal)
+    {
+        _dispatcher.Unregister(refusal.Link.Socket);
+        refusal.Link.Dispose();
+        _refusals.Remove(refusal);
     }
 
     /// <summary>
@@ -381,9 +485,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _dispatcher.Register(slot.Link.Socket, () => OnPeerReadable(handle), () => OnPeerWritable(handle));
 
     /// <summary>
-    /// Writes this end's handshake record and sends as much of it as the socket will take right now.
+    /// Writes this end's Hello record and sends as much of it as the socket will take right now.
     /// A short send arms this Peer's socket for <see cref="OnPeerWritable"/>, which flushes whatever
-    /// remains — the record is 40 bytes, so a short send is not expected in practice, but nothing here
+    /// remains — the record is 41 bytes, so a short send is not expected in practice, but nothing here
     /// assumes the whole record lands in one syscall.
     /// </summary>
     private void SendHandshakeRecord(SlotHandle handle, PeerSlot slot)
@@ -397,21 +501,58 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             (ulong)_options.Linger.TotalMilliseconds,
             slot.LocalResumeSecret);
 
+        SendRecordOrArm(handle, slot, record, closeReasonAfterSend: null);
+    }
+
+    /// <summary>
+    /// Refuses a Peer whose Hello record announced a version this Reactor does not speak: sends a
+    /// Refusal naming both versions, then closes with <see cref="DisconnectReason.VersionMismatch"/>
+    /// once it is fully on the wire. The full Hello that revealed the mismatch has already been read in
+    /// its entirety by the time this runs, so there is nothing unread left to force a reset on close.
+    /// </summary>
+    private void RefuseVersionAndClose(SlotHandle handle, PeerSlot slot, uint remoteVersion)
+    {
+        Source remote = Source.FromIPEndPoint(slot.Link.RemoteEndPoint);
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForPeerRefusedVersion(remote, remoteVersion, StreamSessionProtocol.Version));
+        }
+
+        byte[] record = new byte[StreamHandshakeCodec.RecordSize];
+        StreamHandshakeCodec.WriteRefusal(record, RefusalReason.Version, remoteVersion, StreamSessionProtocol.Version);
+        SendRecordOrArm(handle, slot, record, closeReasonAfterSend: DisconnectReason.VersionMismatch);
+    }
+
+    /// <summary>
+    /// Sends a handshake or Refusal record for <paramref name="slot"/>, arming for a short send exactly
+    /// as before. When <paramref name="closeReasonAfterSend"/> is supplied, the Peer is closed with it
+    /// the moment the record is fully on the wire — immediately if the send completes now, or from
+    /// <see cref="OnPeerWritable"/> once a short send's remainder finishes flushing.
+    /// </summary>
+    private void SendRecordOrArm(SlotHandle handle, PeerSlot slot, byte[] record, DisconnectReason? closeReasonAfterSend)
+    {
         TcpLinkSendResult result = slot.Link.Send(record);
         if (!result.IsSuccess)
         {
-            ClosePeer(handle, DisconnectReason.TransportFailed);
+            ClosePeer(handle, closeReasonAfterSend ?? DisconnectReason.TransportFailed);
             return;
         }
 
         if (result.BytesSent < record.Length)
         {
             slot.PendingHandshakeBytesToSend = record.AsMemory(result.BytesSent);
+            slot.PendingCloseReason = closeReasonAfterSend;
             _dispatcher.ArmWritable(slot.Link.Socket);
+            return;
+        }
+
+        if (closeReasonAfterSend is DisconnectReason reason)
+        {
+            ClosePeer(handle, reason);
         }
     }
 
-    /// <summary>Flushes whatever remains of a handshake record a short send left behind.</summary>
+    /// <summary>Flushes whatever remains of a handshake record a short send left behind, then closes if a reason is pending.</summary>
     private void OnPeerWritable(SlotHandle handle)
     {
         if (_peers.TryResolve(handle) is not PeerSlot slot || slot.PendingHandshakeBytesToSend is not { Length: > 0 } pending)
@@ -422,7 +563,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         TcpLinkSendResult result = slot.Link.Send(pending.Span);
         if (!result.IsSuccess)
         {
-            ClosePeer(handle, DisconnectReason.TransportFailed);
+            ClosePeer(handle, slot.PendingCloseReason ?? DisconnectReason.TransportFailed);
             return;
         }
 
@@ -430,6 +571,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         if (slot.PendingHandshakeBytesToSend is not null)
         {
             _dispatcher.ArmWritable(slot.Link.Socket);
+            return;
+        }
+
+        if (slot.PendingCloseReason is DisconnectReason reason)
+        {
+            ClosePeer(handle, reason);
         }
     }
 
@@ -454,7 +601,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 slot.HandshakeBytesFilled += result.Payload.Length;
                 if (slot.HandshakeBytesFilled == StreamHandshakeCodec.RecordSize)
                 {
-                    CompleteHandshake(handle, slot);
+                    OnHandshakeRecordFilled(handle, slot);
                 }
 
                 break;
@@ -466,11 +613,40 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Parses a Peer's complete handshake record and establishes the Session. Version and capacity
-    /// guarding — refusing rather than establishing on a mismatch — is subtask 3.3's; this slice
-    /// establishes on any well-formed record, which is sufficient for a well-behaved counterparty.
+    /// Dispatches a Peer's now-complete handshake record by its message type: a Hello, the ordinary
+    /// case, or a Refusal — the shape the far end's reply takes when it declines instead of
+    /// establishing (subtask 3.3). A record naming neither is malformed and closes the Peer, per the
+    /// house rule that a discard arm refuses rather than guesses.
     /// </summary>
-    private void CompleteHandshake(SlotHandle handle, PeerSlot slot)
+    private void OnHandshakeRecordFilled(SlotHandle handle, PeerSlot slot)
+    {
+        if (!StreamHandshakeCodec.TryReadMessageType(slot.HandshakeBuffer, out StreamHandshakeMessageType type))
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        switch (type)
+        {
+            case StreamHandshakeMessageType.Hello:
+                OnHelloRecordReceived(handle, slot);
+                break;
+            case StreamHandshakeMessageType.Refusal:
+                OnRefusalRecordReceived(handle, slot);
+                break;
+            default:
+                ClosePeer(handle, DisconnectReason.TransportFailed);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Parses a Peer's Hello record. A version this Reactor does not speak refuses the Peer in-protocol
+    /// rather than establishing it (Scope: exact match, no negotiation). Otherwise the Session
+    /// establishes, Linger is negotiated to the minimum of the two ends' announced values (ADR 0011),
+    /// and <see cref="SessionEventKind.PeerConnected"/> is queued.
+    /// </summary>
+    private void OnHelloRecordReceived(SlotHandle handle, PeerSlot slot)
     {
         Span<byte> remoteResumeSecret = stackalloc byte[StreamSessionProtocol.ResumeSecretLength];
         if (!StreamHandshakeCodec.TryRead(
@@ -485,45 +661,77 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
+        if (version != StreamSessionProtocol.Version)
+        {
+            RefuseVersionAndClose(handle, slot, version);
+            return;
+        }
+
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
+        TimeSpan effectiveLinger = _options.Linger < remoteLinger ? _options.Linger : remoteLinger;
+
         slot.RemoteVersion = version;
         slot.RemoteMaxMessageSize = remoteMaxMessageSize;
         slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
-        slot.RemoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
+        slot.RemoteLinger = remoteLinger;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
+        slot.EffectiveLinger = effectiveLinger;
         slot.State = HandshakeState.Established;
 
-        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(handle) });
+        PeerId peer = ToPeerId(handle);
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = peer });
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForLingerNegotiated(
+                peer, (long)_options.Linger.TotalMilliseconds, (long)effectiveLinger.TotalMilliseconds));
+        }
     }
 
     /// <summary>
-    /// Reports the Frame's declined Admissions once each, at its end, rather than once per declining.
+    /// Ends a Peer the far end refused instead of establishing, translating the wire
+    /// <see cref="RefusalReason"/> to a <see cref="DisconnectReason"/>. A reason this profile does not
+    /// recognise is treated as malformed rather than mapped to some default disconnection — the house
+    /// rule that a discard arm refuses.
+    /// </summary>
+    private void OnRefusalRecordReceived(SlotHandle handle, PeerSlot slot)
+    {
+        if (!StreamHandshakeCodec.TryReadRefusal(slot.HandshakeBuffer, out RefusalReason reason, out _, out _))
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        if (RefusalReasonMap.DisconnectReasonFor(reason) is not DisconnectReason disconnectReason)
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        ClosePeer(handle, disconnectReason);
+    }
+
+    /// <summary>
+    /// Reports the Frame's declined Admissions once, at its end, rather than once per declining. A
+    /// capacity refusal is not reported here: it is an in-protocol Refusal that ends the connection,
+    /// never a Deferral left for a later Pump, and the two counters this method feeds must stay
+    /// untouched by it (see <see cref="RefuseForCapacity"/>).
     /// </summary>
     private void ReportDeclinedAdmissions()
     {
-        RecordAdmissionDeferrals(_capDeferralsThisFrame);
-        RecordAdmissionDeferrals(_capacityDeferralsThisFrame);
-
-        if (!_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        if (_capDeferralsThisFrame == 0)
         {
             return;
         }
 
-        if (_capDeferralsThisFrame > 0)
-        {
-            _diagnostics.Log(DiagnosticRecord.ForAdmissionCapReached(_admissionCap, _capDeferralsThisFrame));
-        }
-
-        if (_capacityDeferralsThisFrame > 0)
-        {
-            _diagnostics.Log(DiagnosticRecord.ForCapacityExhausted(_peers.Capacity, _capacityDeferralsThisFrame));
-        }
-    }
-
-    private void RecordAdmissionDeferrals(int deferrals)
-    {
-        for (int i = 0; i < deferrals; i++)
+        for (int i = 0; i < _capDeferralsThisFrame; i++)
         {
             _counters.RecordAdmissionDeferral();
+        }
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForAdmissionCapReached(_admissionCap, _capDeferralsThisFrame));
         }
     }
 
@@ -648,8 +856,39 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// <summary>The Linger the remote announced. The minimum of the two ends' Lingers governs (ADR 0011).</summary>
         public TimeSpan RemoteLinger { get; set; }
 
+        /// <summary>
+        /// The negotiated Linger — the minimum of this end's own <see cref="StreamSessionOptions.Linger"/>
+        /// and <see cref="RemoteLinger"/> — set once the Session establishes. Immutable for the
+        /// Session's lifetime from that point on, exactly as every other negotiated parameter is.
+        /// </summary>
+        public TimeSpan EffectiveLinger { get; set; }
+
         /// <summary>The secret the remote will require before it resumes this Session. Stored, unused until Resume lands.</summary>
         public byte[] RemoteResumeSecret { get; set; } = [];
+
+        /// <summary>
+        /// Set when this Peer is being closed once its pending send finishes flushing — a Refusal
+        /// record — rather than kept open. <see langword="null"/> for an ordinary Hello send, which
+        /// closes nothing on completion.
+        /// </summary>
+        public DisconnectReason? PendingCloseReason { get; set; }
+    }
+
+    /// <summary>
+    /// A just-accepted connection being refused for capacity, tracked outside <see cref="_peers"/>
+    /// entirely: refusing it is precisely what happens because this Reactor has no capacity Slot to
+    /// give it.
+    /// </summary>
+    private sealed class RefusalSlot
+    {
+        /// <summary>The accepted transport this refusal is being sent over, then closed.</summary>
+        public required TcpLink Link { get; init; }
+
+        /// <summary>
+        /// Whatever remains of the Refusal record after a short send, or <see langword="null"/> once it
+        /// has all been sent.
+        /// </summary>
+        public ReadOnlyMemory<byte>? PendingBytesToSend { get; set; }
     }
 
     private readonly record struct PendingEvent
