@@ -54,11 +54,16 @@ internal sealed class TcpLink : IDisposable
     /// already connected and therefore already knows who to. Put into non-blocking mode here, for the
     /// same reason <see cref="Dial"/> puts a dialled socket into non-blocking mode: <see cref="Send"/>
     /// must never stall the caller's thread waiting for buffer room, and <see cref="Socket.Accept()"/>
-    /// hands back a blocking socket by default regardless of the listening socket's own mode.
+    /// hands back a blocking socket by default regardless of the listening socket's own mode. Nagle is
+    /// disabled here too, unconditionally: <see cref="TcpLink"/> is shared by both profiles (ADR 0007),
+    /// and <see cref="Send"/> never batches or queues (ADR 0008) for either one, so a Session's
+    /// documented Nagle-off profile property (ADR 0011) is simply the honest setting for a socket whose
+    /// writes are already unbatched everywhere this type is used.
     /// </summary>
     public static TcpLink FromAccepted(Socket acceptedSocket)
     {
         acceptedSocket.Blocking = false;
+        acceptedSocket.NoDelay = true;
 
         // `!` works around a framework limitation: Socket.LocalEndPoint and RemoteEndPoint stay typed
         // EndPoint? for a socket's whole lifetime, but a socket handed back by Accept is connected
@@ -102,7 +107,8 @@ internal sealed class TcpLink : IDisposable
     {
         Socket socket = new(endpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
         {
-            Blocking = false
+            Blocking = false,
+            NoDelay = true
         };
 
         SocketError dialError = SocketError.Success;
