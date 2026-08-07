@@ -226,6 +226,48 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// Frames <paramref name="message"/> as a <c>u32</c> big-endian length prefix followed by its
+    /// bytes (<see cref="MessageFramingCodec"/>, ADR 0010) and appends the framed bytes to
+    /// <paramref name="peer"/>'s retention region. No bytes reach the socket from this call — flushing
+    /// retained bytes to the wire is a later slice (#86); this is purely accepting into the ring and
+    /// reporting whether it fit.
+    /// </summary>
+    /// <param name="peer">The Peer to send to. Throws if not open, matching <see cref="CountersOf"/>.</param>
+    /// <param name="message">
+    /// The Message payload, unframed. Throws if longer than <see cref="StreamSessionOptions.MaxMessageSize"/> —
+    /// the same floor the receive side enforces, so this can never frame a Message the far end's
+    /// announced limit would reject.
+    /// </param>
+    public SendOutcome Send(PeerId peer, ReadOnlySpan<byte> message)
+    {
+        EnsureUsable();
+        EnsureCallingThreadIsConstructingThread();
+
+        if (message.Length > _options.MaxMessageSize)
+        {
+            throw new ArgumentException(
+                $"message of {message.Length} bytes exceeds MaxMessageSize of {_options.MaxMessageSize}.",
+                nameof(message));
+        }
+
+        SlotHandle handle = ToHandle(peer);
+        _ = _peers.TryResolve(handle) ?? throw new ArgumentException($"Peer {peer} is not open.", nameof(peer));
+
+        Span<byte> framed = new byte[MessageFramingCodec.LengthPrefixSize + message.Length];
+        MessageFramingCodec.WriteLengthPrefix(framed, (uint)message.Length);
+        message.CopyTo(framed[MessageFramingCodec.LengthPrefixSize..]);
+
+        RetentionOutcome outcome = _retention.TryAppend(handle.Index, framed);
+
+        return outcome switch
+        {
+            RetentionOutcome.Committed => SendOutcome.Sent,
+            RetentionOutcome.Exhausted => SendOutcome.RetentionExhausted,
+            _ => throw new InvalidOperationException($"Unrecognised {nameof(RetentionOutcome)}: {outcome}."),
+        };
+    }
+
+    /// <summary>
     /// Releases every socket this Reactor bound or accepted. A Reactor owns every socket it bound, so
     /// a consumer that drops one without disposing it leaks those sockets until each
     /// <see cref="Socket"/>'s finalizer runs. No <see cref="SessionEventKind.PeerClosed"/> events are
