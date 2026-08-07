@@ -550,6 +550,12 @@ public sealed class RawReactor : IDisposable
             case UdpLinkReceiveOutcome.Unreachable:
                 RecordDestinationUnreachable(ToLinkId(handle), result.Error);
                 break;
+            // A readable dispatch that found nothing queued: on Linux, a socket carrying an ICMP error
+            // is dispatched on POLLERR with no POLLIN behind it. Nothing happened to this Link, so it is
+            // neither reported nor charged against it — failing it here would tear down a healthy Link
+            // over a wakeup the platform, not the peer, decided to send.
+            case UdpLinkReceiveOutcome.WouldBlock:
+                break;
             case UdpLinkReceiveOutcome.Failed:
                 FailLink(handle, slot, result.Error);
                 break;

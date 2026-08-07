@@ -16,7 +16,7 @@ internal readonly ref struct UdpLinkReceiveResult
         Error = error;
     }
 
-    /// <summary>Which of the four outcomes this receive resolved to.</summary>
+    /// <summary>Which outcome this receive resolved to.</summary>
     public UdpLinkReceiveOutcome Outcome { get; }
 
     /// <summary>
@@ -45,6 +45,9 @@ internal readonly ref struct UdpLinkReceiveResult
 
     public static UdpLinkReceiveResult ForUnreachable(SocketError error) =>
         new(UdpLinkReceiveOutcome.Unreachable, default, default, error);
+
+    public static UdpLinkReceiveResult ForWouldBlock() =>
+        new(UdpLinkReceiveOutcome.WouldBlock, default, default, SocketError.WouldBlock);
 
     public static UdpLinkReceiveResult ForFailed(SocketError error) =>
         new(UdpLinkReceiveOutcome.Failed, default, default, error);

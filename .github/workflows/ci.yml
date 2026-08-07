@@ -10,6 +10,10 @@ jobs:
   test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    # The suite is a two-minute job. A run that passes this is hung, not slow, and a hang left to the
+    # runner's own limit reports as "the hosted runner lost communication with the server" — with the
+    # logs lost alongside it, because the runner dies before it uploads them.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

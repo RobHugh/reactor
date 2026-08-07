@@ -56,6 +56,12 @@ internal sealed class UdpLink : IDisposable
                 socket.ExclusiveAddressUse = true;
             }
 
+            // Non-blocking for the same reason TcpLink is: every read this Link performs is driven by a
+            // readiness dispatch, and a dispatch is not a promise that anything is queued. Linux asserts
+            // POLLERR with no POLLIN for a queued ICMP error, so a readable callback routinely arrives
+            // with an empty receive queue — and a blocking ReceiveFrom there parks the whole Pump, and
+            // with it the single thread the Reactor is driven from, for as long as the process lives.
+            socket.Blocking = false;
             EnableIcmpErrorReporting(socket, endpoint.AddressFamily);
             socket.Bind(endpoint);
         }
@@ -122,7 +128,9 @@ internal sealed class UdpLink : IDisposable
     /// <see cref="UdpLinkReceiveOutcome.Unreachable"/> without affecting the Link — it arrives here as
     /// <c>WSAECONNRESET</c> on Windows and, thanks to the <c>IP_RECVERR</c> set at Bind, as
     /// <c>ECONNREFUSED</c> on Linux. Two spellings of one event, so both are read as the same outcome;
-    /// the platform code itself is still carried on the result for a Sink that wants it.
+    /// the platform code itself is still carried on the result for a Sink that wants it. A read that
+    /// finds nothing queued is <see cref="UdpLinkReceiveOutcome.WouldBlock"/>, not a failure — the
+    /// socket is non-blocking, so this returns rather than waiting.
     /// </summary>
     /// <remarks>
     /// Truncation is detected two ways, because no single platform-neutral signal covers both: on
@@ -157,6 +165,10 @@ internal sealed class UdpLink : IDisposable
             exception.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionRefused)
         {
             return UdpLinkReceiveResult.ForUnreachable(exception.SocketErrorCode);
+        }
+        catch (SocketException exception) when (exception.SocketErrorCode == SocketError.WouldBlock)
+        {
+            return UdpLinkReceiveResult.ForWouldBlock();
         }
         catch (SocketException exception)
         {

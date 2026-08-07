@@ -351,9 +351,16 @@ public sealed class DatagramSessionReactor : IDisposable
     /// be counted as a Discard. Leaving it in the OS buffer would make it a deferral, and a deferral
     /// is a promise that a later Pump will find the work still there — a promise UDP cannot keep.
     /// </summary>
+    /// <remarks>
+    /// The loop ends on the socket's own answer that nothing is left —
+    /// <see cref="UdpLinkReceiveOutcome.WouldBlock"/> — rather than on <c>Socket.Available</c>, which
+    /// counts queued datagrams and so reports zero while queued ICMP errors still stand in front of
+    /// them. Terminating on it would abandon the read at the first error and starve every live Peer
+    /// behind it, which is the thing the Unreachable arm below exists to prevent.
+    /// </remarks>
     private void OnLinkReadable(UdpLink link)
     {
-        do
+        while (true)
         {
             UdpLinkReceiveResult result = link.Receive(_scratchBuffer);
             switch (result.Outcome)
@@ -380,11 +387,12 @@ public sealed class DatagramSessionReactor : IDisposable
                 case UdpLinkReceiveOutcome.Unreachable:
                     continue;
 
+                // WouldBlock — the queue is drained, errors and all — or a Failed read there is no
+                // point continuing past. Either way this Link is done for the Frame.
                 default:
                     return;
             }
         }
-        while (link.Socket.Available > 0);
     }
 
     /// <summary>
