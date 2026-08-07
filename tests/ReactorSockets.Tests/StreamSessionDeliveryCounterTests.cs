@@ -79,11 +79,22 @@ public class StreamSessionDeliveryCounterTests
         PeerId id = EstablishSession(accepter, peer);
 
         // Act — three whole Messages, each given its own Pump so each is delivered before the next
-        // is sent.
+        // is sent. A run of small sends on one connection can trip Nagle's algorithm, which withholds
+        // a segment until an earlier one is acknowledged — on Linux that ack can take longer than
+        // PumpUntil's sleepless retries allow for, so a failed attempt gets real wall-clock time before
+        // retrying (mirrors RawReactorSendTests' sleep-on-no-progress idiom).
         for (byte i = 0; i < 3; i++)
         {
             peer.Send(BuildFrame(PayloadOf(10, i)));
-            accepter.PumpUntil(() => accepter.Reactor.CountersOf(id).MessagesReceived == (ulong)(i + 1));
+            for (int attempt = 0; attempt < 5 && accepter.Reactor.CountersOf(id).MessagesReceived != (ulong)(i + 1); attempt++)
+            {
+                if (attempt > 0)
+                {
+                    Thread.Sleep(20);
+                }
+
+                accepter.PumpUntil(() => accepter.Reactor.CountersOf(id).MessagesReceived == (ulong)(i + 1));
+            }
         }
 
         // Assert

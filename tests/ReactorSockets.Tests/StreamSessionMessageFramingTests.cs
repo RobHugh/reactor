@@ -102,13 +102,20 @@ public class StreamSessionMessageFramingTests
             accepter.DrainToListWithPayload().Should().BeEmpty("the Message is still incomplete");
         }
 
-        // Act — the final byte completes the frame.
+        // Act — the final byte completes the frame. A run of single-byte writes on the same connection
+        // can trip Nagle's algorithm, which withholds a small segment until an earlier one is
+        // acknowledged — on Linux that ack can take longer than a tight, sleepless Pump loop allows for,
+        // so the retry gives real wall-clock time between attempts (mirrors RawReactorSendTests).
         peer.SendByte(frame[^1]);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> drained = [];
         for (int i = 0; i < 20 && drained.Count == 0; i++)
         {
             accepter.Reactor.Pump();
             drained.AddRange(accepter.DrainToListWithPayload());
+            if (drained.Count == 0)
+            {
+                Thread.Sleep(20);
+            }
         }
 
         // Assert
@@ -180,12 +187,18 @@ public class StreamSessionMessageFramingTests
             accepter.DrainToListWithPayload().Should().BeEmpty();
         }
 
+        // The first half's write may still be unacknowledged when this one lands, which can trip
+        // Nagle's algorithm on Linux; give the retry real wall-clock time (mirrors RawReactorSendTests).
         peer.Send(secondHalf);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> secondDrain = [];
         for (int i = 0; i < 20 && secondDrain.Count == 0; i++)
         {
             accepter.Reactor.Pump();
             secondDrain.AddRange(accepter.DrainToListWithPayload());
+            if (secondDrain.Count == 0)
+            {
+                Thread.Sleep(20);
+            }
         }
 
         // Assert
