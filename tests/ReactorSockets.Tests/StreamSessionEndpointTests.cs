@@ -306,6 +306,7 @@ public class StreamSessionEndpointTests
         PeerId staleId = accepter.DrainToList().Should().ContainSingle().Which.Peer;
         accepter.Reactor.Pump(); // Ends the Frame the PeerConnected belongs to, so the drain below sees only the close.
         accepter.Reactor.Close(staleId);
+        accepter.Reactor.Pump(); // Close only appends a Goodbye to retention; this Pump flushes and drains it (issue #23).
         accepter.DrainToList().Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerClosed);
         accepter.Reactor.Pump(); // Ends the Frame the close belongs to, so the second wait below sees only the new Peer.
 
@@ -334,6 +335,7 @@ public class StreamSessionEndpointTests
 
         // Act
         accepter.Reactor.Close(established);
+        accepter.Reactor.Pump(); // Close only appends a Goodbye to retention; this Pump flushes and drains it (issue #23).
 
         // Assert
         accepter.DrainToList().Should().ContainSingle()

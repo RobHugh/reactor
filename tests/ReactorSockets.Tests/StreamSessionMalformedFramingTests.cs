@@ -211,21 +211,26 @@ public class StreamSessionMalformedFramingTests
     }
 
     [Fact]
-    public void OnEstablishedPeerReadable_StreamEndsWithNothingBuffered_ClosesWithTransportFailedNotProtocolViolation()
+    public void OnEstablishedPeerReadable_StreamEndsWithNothingBufferedAndNoGoodbye_DoesNotCloseThePeer()
     {
-        // Arrange — a clean end between Messages, with no partial frame in flight, is an ordinary
-        // transport ending rather than a framing violation.
+        // Arrange — a FIN with nothing buffered and no Goodbye ever received is not an ending this
+        // library reports (issue #23): "a FIN is not a Goodbye" holds even for an otherwise-ordinary,
+        // clean end between Messages.
         using StreamSessionReactorHarness accepter = new();
         using MalformedPeer peer = new(accepter.Endpoint);
         EstablishSession(accepter, peer);
 
         // Act
         peer.CloseGracefully();
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> drained = PumpUntilClosed(accepter);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> drained = [];
+        for (int i = 0; i < 20; i++)
+        {
+            accepter.Reactor.Pump();
+            drained.AddRange(accepter.DrainToListWithPayload());
+        }
 
-        // Assert
-        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
-            .Which.Reason.Should().Be(DisconnectReason.TransportFailed);
+        // Assert — never closed.
+        drained.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
     }
 
     // =========================================================================================

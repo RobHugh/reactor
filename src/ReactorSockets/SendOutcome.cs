@@ -21,4 +21,12 @@ public enum SendOutcome
     /// about the Session changed — the caller may retry once bytes have been released, or otherwise.
     /// </summary>
     RetentionExhausted,
+
+    /// <summary>
+    /// This end already sent its own Goodbye for this Peer (<c>Close</c>, issue #23). Nothing was
+    /// copied: a Message queued after the Goodbye that announces no more are coming would either have
+    /// to jump the Goodbye in retention or follow it, and neither is a Message the far end has any
+    /// business receiving.
+    /// </summary>
+    Closed,
 }

@@ -53,4 +53,12 @@ public readonly ref struct SessionEvent
     /// </summary>
     internal static SessionEvent ForMessageReceived(PeerId peer, ReadOnlySpan<byte> payload) =>
         new(SessionEventKind.MessageReceived, peer, default, payload);
+
+    /// <summary>
+    /// Builds a <see cref="SessionEventKind.PeerClosing"/> event. Carries only <see cref="Peer"/> — the
+    /// reason a Closing Peer will eventually be gone is always the Goodbye that put it there, so there
+    /// is nothing for <see cref="Reason"/> to add.
+    /// </summary>
+    internal static SessionEvent ForPeerClosing(PeerId peer) =>
+        new(SessionEventKind.PeerClosing, peer, default, default);
 }

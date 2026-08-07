@@ -22,6 +22,12 @@ internal enum MessageFramingOutcome
     Ready,
 
     /// <summary>
+    /// The prefix is <see cref="MessageFramingCodec.GoodbyeSentinel"/>: a whole Goodbye control
+    /// record, carrying no body, is buffered at the front (ADR 0010, issue #23).
+    /// </summary>
+    GoodbyeReceived,
+
+    /// <summary>
     /// The prefix announces more bytes than this Reactor's announced <c>MaxMessageSize</c> allows.
     /// <c>MaxMessageSize</c> is a receive limit precisely so this case can be refused before any
     /// allocation sized by the claim — the whole reason it is announced.
@@ -64,6 +70,12 @@ internal static class MessageFramingLegality
         {
             messageEnd = 0;
             return MessageFramingOutcome.AwaitingPrefix;
+        }
+
+        if (announcedLength == MessageFramingCodec.GoodbyeSentinel)
+        {
+            messageEnd = MessageFramingCodec.LengthPrefixSize;
+            return MessageFramingOutcome.GoodbyeReceived;
         }
 
         if (announcedLength == 0)
