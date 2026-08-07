@@ -19,3 +19,7 @@ Read the relevant one before planning work that lands in either tree.
 - Never leave `// TODO` or placeholder implementations unless asked.
 - Verification gate: `dotnet build` and `dotnet test` must pass before reporting a task complete.
 - Prefer code changes plus brief explanation over long prose.
+- When an ADR lands in `docs/adr/`, capture a one-paragraph summary to Open Brain with
+  `capture_thought` (skip if that MCP server is not connected): the decision, why, and its main
+  cost, opening with "In ReactorSockets" so the thought stands alone when retrieved. Note any
+  ADR it supersedes. The file stays the source of truth — Open Brain holds only the summary.
