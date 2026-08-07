@@ -228,9 +228,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Frames <paramref name="message"/> as a <c>u32</c> big-endian length prefix followed by its
     /// bytes (<see cref="MessageFramingCodec"/>, ADR 0010) and appends the framed bytes to
-    /// <paramref name="peer"/>'s retention region. No bytes reach the socket from this call — flushing
-    /// retained bytes to the wire is a later slice (#86); this is purely accepting into the ring and
-    /// reporting whether it fit.
+    /// <paramref name="peer"/>'s retention region. Nothing is written to the socket synchronously here
+    /// — a successful append arms this Peer's socket for <see cref="OnPeerWritable"/>, which flushes
+    /// retained bytes (including whatever was already sitting there) on the next <see cref="Pump"/>,
+    /// exactly as a short handshake send is resumed.
     /// </summary>
     /// <param name="peer">The Peer to send to. Throws if not open, matching <see cref="CountersOf"/>.</param>
     /// <param name="message">
@@ -251,13 +252,17 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
 
         SlotHandle handle = ToHandle(peer);
-        _ = _peers.TryResolve(handle) ?? throw new ArgumentException($"Peer {peer} is not open.", nameof(peer));
+        PeerSlot slot = _peers.TryResolve(handle) ?? throw new ArgumentException($"Peer {peer} is not open.", nameof(peer));
 
         Span<byte> framed = new byte[MessageFramingCodec.LengthPrefixSize + message.Length];
         MessageFramingCodec.WriteLengthPrefix(framed, (uint)message.Length);
         message.CopyTo(framed[MessageFramingCodec.LengthPrefixSize..]);
 
         RetentionOutcome outcome = _retention.TryAppend(handle.Index, framed);
+        if (outcome == RetentionOutcome.Committed)
+        {
+            _dispatcher.ArmWritable(slot.Link.Socket);
+        }
 
         return outcome switch
         {
@@ -621,31 +626,106 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
     }
 
-    /// <summary>Flushes whatever remains of a handshake record a short send left behind, then closes if a reason is pending.</summary>
+    /// <summary>
+    /// Flushes whatever remains of a handshake record a short send left behind, closes if a reason is
+    /// pending on it, then — with the handshake bytes clear — flushes this Peer's retained bytes
+    /// (<see cref="FlushRetention"/>) so a Peer that armed for <see cref="Send"/> alone still gets
+    /// serviced.
+    /// </summary>
     private void OnPeerWritable(SlotHandle handle)
     {
-        if (_peers.TryResolve(handle) is not PeerSlot slot || slot.PendingHandshakeBytesToSend is not { Length: > 0 } pending)
+        if (_peers.TryResolve(handle) is not PeerSlot slot)
         {
             return;
         }
 
-        TcpLinkSendResult result = slot.Link.Send(pending.Span);
-        if (!result.IsSuccess)
+        if (slot.PendingHandshakeBytesToSend is { Length: > 0 } pending)
         {
-            ClosePeer(handle, slot.PendingCloseReason ?? DisconnectReason.TransportFailed);
+            TcpLinkSendResult result = slot.Link.Send(pending.Span);
+            if (!result.IsSuccess)
+            {
+                ClosePeer(handle, slot.PendingCloseReason ?? DisconnectReason.TransportFailed);
+                return;
+            }
+
+            slot.PendingHandshakeBytesToSend = result.BytesSent < pending.Length ? pending[result.BytesSent..] : null;
+            if (slot.PendingHandshakeBytesToSend is not null)
+            {
+                _dispatcher.ArmWritable(slot.Link.Socket);
+                return;
+            }
+
+            if (slot.PendingCloseReason is DisconnectReason reason)
+            {
+                ClosePeer(handle, reason);
+                return;
+            }
+        }
+
+        FlushRetention(handle, slot);
+    }
+
+    /// <summary>
+    /// Writes as much of <paramref name="handle"/>'s unread retained bytes
+    /// (<see cref="RetentionArena.GetReadable"/>) to the socket as it will currently take, releasing
+    /// each portion (<see cref="RetentionArena.Release"/>) the instant it is handed off. This is a
+    /// local flush only (#86's scope boundary, ADR 0011/#21/#82): bytes are released once the OS
+    /// socket buffer has accepted them, not once the peer has acknowledged them — the peer-ack
+    /// mechanism that will eventually move the release trigger is #25's job, not this one's.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RetentionArena.GetReadable"/> can return two wrap segments. A short write partway
+    /// through <paramref name="first"/> stops here and re-arms without touching <c>second</c> at all —
+    /// releasing only what was actually accepted keeps the ring's released total honest with what the
+    /// socket has truly taken. Only once <c>first</c> is entirely on the wire is <c>second</c>
+    /// attempted, with the same short-write re-arm applied to it in turn.
+    /// </remarks>
+    private void FlushRetention(SlotHandle handle, PeerSlot slot)
+    {
+        (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) = _retention.GetReadable(handle.Index);
+        if (first.Length == 0)
+        {
             return;
         }
 
-        slot.PendingHandshakeBytesToSend = result.BytesSent < pending.Length ? pending[result.BytesSent..] : null;
-        if (slot.PendingHandshakeBytesToSend is not null)
+        TcpLinkSendResult firstResult = slot.Link.Send(first.Span);
+        if (!firstResult.IsSuccess)
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        if (firstResult.BytesSent > 0)
+        {
+            _retention.Release(handle.Index, firstResult.BytesSent);
+        }
+
+        if (firstResult.BytesSent < first.Length)
         {
             _dispatcher.ArmWritable(slot.Link.Socket);
             return;
         }
 
-        if (slot.PendingCloseReason is DisconnectReason reason)
+        if (second.Length == 0)
         {
-            ClosePeer(handle, reason);
+            return;
+        }
+
+        TcpLinkSendResult secondResult = slot.Link.Send(second.Span);
+        if (!secondResult.IsSuccess)
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        if (secondResult.BytesSent > 0)
+        {
+            _retention.Release(handle.Index, secondResult.BytesSent);
+        }
+
+        if (secondResult.BytesSent < second.Length)
+        {
+            _dispatcher.ArmWritable(slot.Link.Socket);
         }
     }
 
