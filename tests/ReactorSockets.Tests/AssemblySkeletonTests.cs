@@ -53,6 +53,8 @@ public class AssemblySkeletonTests
             nameof(LinkCounters),
             nameof(DatagramSessionReactor),
             nameof(DatagramSessionOptions),
+            nameof(StreamSessionReactor),
+            nameof(StreamSessionOptions),
             nameof(SessionEvent),
             nameof(SessionEventKind),
             nameof(SessionEventEnumerator),
