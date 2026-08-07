@@ -13,4 +13,10 @@ namespace ReactorSockets;
 /// which bytes plainly arrived but this figure did not move is a Message still buffered, not one
 /// dropped.
 /// </param>
-public readonly record struct PeerCounters(ulong MessagesReceived);
+/// <param name="RetentionHighWaterBytes">
+/// The most bytes this Peer's retention ring has ever held at once (written minus released) since
+/// the Peer was established — <see cref="Core.RetentionArena.HighWaterBytes(int)"/> read fresh at
+/// snapshot time, never pushed. Monotonic for the Peer's lifetime: draining the ring after a burst
+/// lowers what is currently retained but never lowers this figure (subtask 3.5.5, issue #87).
+/// </param>
+public readonly record struct PeerCounters(ulong MessagesReceived, ulong RetentionHighWaterBytes);

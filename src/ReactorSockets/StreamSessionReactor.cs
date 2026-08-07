@@ -219,10 +219,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     {
         EnsureUsable();
 
-        PeerSlot slot = _peers.TryResolve(ToHandle(peer))
+        SlotHandle handle = ToHandle(peer);
+        PeerSlot slot = _peers.TryResolve(handle)
             ?? throw new ArgumentException($"Peer {peer} is not open.", nameof(peer));
 
-        return slot.Counters.Snapshot();
+        return slot.Counters.Snapshot(_retention.HighWaterBytes(handle.Index));
     }
 
     /// <summary>

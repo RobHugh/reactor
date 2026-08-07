@@ -18,6 +18,11 @@ internal sealed class PeerCounterSet
     /// </summary>
     public void RecordMessageReceived() => _messagesReceived++;
 
-    /// <summary>Takes a point-in-time snapshot of every counter belonging to this Peer.</summary>
-    public PeerCounters Snapshot() => new(_messagesReceived);
+    /// <summary>
+    /// Takes a point-in-time snapshot of every counter belonging to this Peer.
+    /// <paramref name="retentionHighWaterBytes"/> is pulled fresh from <see cref="RetentionArena"/> by
+    /// the caller (ADR 0005 — Counters are pulled, not pushed) rather than held here, since this set
+    /// holds only what a Peer increments on its own hot path.
+    /// </summary>
+    public PeerCounters Snapshot(ulong retentionHighWaterBytes) => new(_messagesReceived, retentionHighWaterBytes);
 }

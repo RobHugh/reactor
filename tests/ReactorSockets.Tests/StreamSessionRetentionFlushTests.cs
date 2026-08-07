@@ -13,6 +13,11 @@ namespace ReactorSockets.Tests;
 /// to the OS socket buffer, not once the peer has acknowledged them via the delivery-counter
 /// mechanism #25 builds — so every assertion here is about what a raw counterparty socket actually
 /// receives, and about a Peer regaining room after its bytes are flushed, never about a peer-ack.
+/// Also carries slice 3.5.5 (issue #87), which reuses this file's real-socket <see cref="FlushPeer"/>
+/// for two acceptance criteria #21 left untested: that
+/// <see cref="PeerCounters.RetentionHighWaterBytes"/> reads the true peak after a burst and never
+/// decreases as the ring drains, and that <see cref="SendOutcome.RetentionExhausted"/> is reachable
+/// over a real stalled connection, not only by direct ring-capacity calls.
 /// </summary>
 public class StreamSessionRetentionFlushTests
 {
@@ -190,6 +195,75 @@ public class StreamSessionRetentionFlushTests
         onWireSecond.Should().Equal(BuildFrame(secondMessage));
     }
 
+    [Fact]
+    public void CountersOf_AfterABurstThatFillsRetentionThenDrains_RetentionHighWaterBytesReflectsThePeakAndDoesNotDecrease()
+    {
+        // Arrange — three 16-byte max Messages each frame to 20 bytes (4-byte prefix + payload); a
+        // 60-byte bound holds exactly all three at once, so queuing them back-to-back before any Pump
+        // pushes retention to that peak with nothing left over.
+        const int maxMessageSize = 16;
+        const int messageCount = 3;
+        const int retentionBytes = messageCount * (maxMessageSize + 4);
+        using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: retentionBytes);
+        using FlushPeer peer = new(accepter.Endpoint);
+        PeerId id = EstablishSession(accepter, peer);
+
+        byte[] first = PayloadOf(maxMessageSize, 21);
+        byte[] second = PayloadOf(maxMessageSize, 22);
+        byte[] third = PayloadOf(maxMessageSize, 23);
+
+        // Act — queue all three before any flush, filling the ring exactly to its bound.
+        accepter.Reactor.Send(id, first).Should().Be(SendOutcome.Sent);
+        accepter.Reactor.Send(id, second).Should().Be(SendOutcome.Sent);
+        accepter.Reactor.Send(id, third).Should().Be(SendOutcome.Sent);
+
+        ulong peakHighWater = accepter.Reactor.CountersOf(id).RetentionHighWaterBytes;
+
+        // Drain — flush to the socket and have the peer read every byte off the wire, releasing all
+        // of the retention the burst above claimed.
+        accepter.Reactor.Pump();
+        peer.Receive(BuildFrame(first).Length + BuildFrame(second).Length + BuildFrame(third).Length);
+
+        ulong afterDrainHighWater = accepter.Reactor.CountersOf(id).RetentionHighWaterBytes;
+
+        // Assert
+        peakHighWater.Should().Be((ulong)retentionBytes, "three whole framed Messages exactly fill the ring before anything flushes");
+        afterDrainHighWater.Should().Be(peakHighWater, "high-water is the true peak ever observed and must not decrease as the ring drains");
+    }
+
+    [Fact]
+    public void Send_AgainstACounterpartyThatNeverReadsAfterTheHandshake_EventuallyReturnsRetentionExhausted()
+    {
+        // Arrange — the real-socket counterpart to StreamSessionSendRetentionTests' pure ring-capacity
+        // exhaustion test. The counterparty's receive buffer is shrunk before it connects — never on
+        // an already-established socket, per CreateCounterpartyListener's doc and commit 8426ff3 —
+        // and it never reads again once the handshake completes, so the accepter's own kernel send
+        // buffer eventually saturates for real. Retention bounded to exactly one maximum Message means
+        // the ring can only ever hold what one flush has not yet gotten onto the wire, so the first
+        // Send that lands after the accepter can no longer write anything has nowhere to go.
+        const int maxMessageSize = 8192;
+        using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: maxMessageSize + 4);
+        using FlushPeer peer = new(accepter.Endpoint, receiveBufferSize: 1024);
+        PeerId id = EstablishSession(accepter, peer);
+
+        byte[] message = PayloadOf(maxMessageSize, 99);
+
+        // Act — keep sending and pumping; nothing ever reads the wire again after the handshake, so
+        // eventually a flush makes no progress and a Send finds the ring still full of what the last
+        // one couldn't get out. No test may pin how many attempts that takes — it depends on the
+        // platform's own socket buffer sizing — so this bounds attempts generously and keeps a single
+        // assertion regardless of how many it took.
+        SendOutcome outcome = SendOutcome.Sent;
+        for (int attempt = 0; attempt < 500 && outcome == SendOutcome.Sent; attempt++)
+        {
+            outcome = accepter.Reactor.Send(id, message);
+            accepter.Reactor.Pump();
+        }
+
+        // Assert
+        outcome.Should().Be(SendOutcome.RetentionExhausted);
+    }
+
     /// <summary>
     /// A plain BCL TCP socket connected to a Reactor's bound endpoint, standing in for a counterparty
     /// that both drives the handshake and reads raw bytes the Reactor sends back — mirroring
@@ -200,12 +274,25 @@ public class StreamSessionRetentionFlushTests
     {
         private readonly Socket _socket;
 
-        public FlushPeer(IPEndPoint destination)
+        /// <param name="destination">The Reactor's bound endpoint to connect to.</param>
+        /// <param name="receiveBufferSize">
+        /// Applied before <c>Connect</c>, so the negotiated receive window is small from the handshake
+        /// onward — never applied after connecting, which on Linux clamps the advertised window and
+        /// disables receive autotuning for the rest of the connection's life (mirrors
+        /// <c>RawReactorHarness.CreateCounterpartyListener</c>'s doc and commit 8426ff3). Omit for the
+        /// OS default.
+        /// </param>
+        public FlushPeer(IPEndPoint destination, int? receiveBufferSize = null)
         {
             _socket = new Socket(destination.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
             {
                 ReceiveTimeout = 5000,
             };
+            if (receiveBufferSize is int size)
+            {
+                _socket.ReceiveBufferSize = size;
+            }
+
             _socket.Connect(destination);
         }
 
