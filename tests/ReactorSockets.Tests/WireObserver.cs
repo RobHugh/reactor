@@ -37,6 +37,15 @@ internal sealed class WireObserver : IDisposable
     /// <summary>Every stream Link this observer's listener has accepted so far, in acceptance order.</summary>
     public IReadOnlyList<LinkId> AcceptedLinks => _acceptedLinks;
 
+    /// <summary>
+    /// Sends raw bytes back over a Link this observer has accepted, standing in for the counterparty's
+    /// own protocol traffic — e.g. the handshake record a Session Reactor's dial needs back before it
+    /// will establish. This observer records only what it receives; it never interprets or frames what
+    /// it sends, so the caller is responsible for handing it bytes already shaped the way the Session
+    /// protocol under test expects.
+    /// </summary>
+    public void SendOnAcceptedLink(LinkId link, byte[] bytes) => _reactor.Send(link, bytes);
+
     /// <summary>Binds a UDP Link to observe datagrams sent to it, returning the address a Session Reactor should be told to send to.</summary>
     public IPEndPoint BindUdp(IPEndPoint endpoint)
     {

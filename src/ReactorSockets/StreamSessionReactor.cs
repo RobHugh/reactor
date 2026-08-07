@@ -37,6 +37,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly List<PendingEvent> _pendingEvents = [];
     private readonly List<RefusalSlot> _refusals = [];
     private readonly HashSet<SlotHandle> _peersWithBufferedMessages = [];
+    private readonly HashSet<SlotHandle> _peersWithPendingRetentionWrites = [];
     private readonly int _constructingThreadId;
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
@@ -123,7 +124,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// One synchronous advance: wipes the previous Frame's events, then admits ready connections,
     /// advances every in-flight dial and reads whatever bound socket is ready right now, running the
-    /// handshake for everything that arrived. Throws <see cref="InvalidOperationException"/> if called
+    /// handshake for everything that arrived, then flushes every Peer's queued retention bytes exactly
+    /// once (<see cref="FlushPendingRetentionWrites"/>, #90/3.6.2) regardless of how many
+    /// <see cref="Send"/> calls queued them. Throws <see cref="InvalidOperationException"/> if called
     /// from any thread other than the one that constructed this Reactor, or from inside a Pump already
     /// in progress.
     /// </summary>
@@ -141,6 +144,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             _capDeferralsThisFrame = 0;
             RetryPeersWithBufferedMessages();
             _dispatcher.Pump();
+            FlushPendingRetentionWrites();
             ProcessConnectingPeers();
             ReportDeclinedAdmissions();
         }
@@ -229,10 +233,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Frames <paramref name="message"/> as a <c>u32</c> big-endian length prefix followed by its
     /// bytes (<see cref="MessageFramingCodec"/>, ADR 0010) and appends the framed bytes to
-    /// <paramref name="peer"/>'s retention region. Nothing is written to the socket synchronously here
-    /// — a successful append arms this Peer's socket for <see cref="OnPeerWritable"/>, which flushes
-    /// retained bytes (including whatever was already sitting there) on the next <see cref="Pump"/>,
-    /// exactly as a short handshake send is resumed.
+    /// <paramref name="peer"/>'s retention region. Nothing is written to the socket here, ever (#90,
+    /// 3.6.2 write batching) — a successful append only sets this Peer's pending-write marker
+    /// (<see cref="PeerSlot.HasPendingRetentionWrite"/>), which the next <see cref="Pump"/>'s explicit
+    /// flush step (<see cref="FlushPendingRetentionWrites"/>) drains in a single write carrying
+    /// everything queued, including whatever was already sitting there. A Send with no following Pump
+    /// call puts nothing on the wire.
     /// </summary>
     /// <param name="peer">The Peer to send to. Throws if not open, matching <see cref="CountersOf"/>.</param>
     /// <param name="message">
@@ -262,7 +268,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         RetentionOutcome outcome = _retention.TryAppend(handle.Index, framed);
         if (outcome == RetentionOutcome.Committed)
         {
-            _dispatcher.ArmWritable(slot.Link.Socket);
+            slot.HasPendingRetentionWrite = true;
+            _peersWithPendingRetentionWrites.Add(handle);
         }
 
         return outcome switch
@@ -311,6 +318,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _connectingPeers.Clear();
         _pendingEvents.Clear();
         _peersWithBufferedMessages.Clear();
+        _peersWithPendingRetentionWrites.Clear();
         _disposed = true;
         DisposeLinks();
     }
@@ -629,9 +637,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Flushes whatever remains of a handshake record a short send left behind, closes if a reason is
-    /// pending on it, then — with the handshake bytes clear — flushes this Peer's retained bytes
-    /// (<see cref="FlushRetention"/>) so a Peer that armed for <see cref="Send"/> alone still gets
-    /// serviced.
+    /// pending on it, then — with the handshake bytes clear — marks this Peer's retention pending
+    /// again, so a short retention write's own re-arm (<see cref="FlushRetention"/>) is picked up by
+    /// this Frame's explicit flush step (<see cref="FlushPendingRetentionWrites"/>) rather than writing
+    /// to the socket directly here. This is what keeps every retention write routed through exactly one
+    /// call site: a socket that is both freshly re-armed from a short write and independently marked
+    /// pending by a same-Frame <see cref="Send"/> still gets flushed exactly once.
     /// </summary>
     private void OnPeerWritable(SlotHandle handle)
     {
@@ -663,7 +674,49 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             }
         }
 
-        FlushRetention(handle, slot);
+        slot.HasPendingRetentionWrite = true;
+        _peersWithPendingRetentionWrites.Add(handle);
+    }
+
+    /// <summary>
+    /// Visits every Peer whose pending-write marker (<see cref="PeerSlot.HasPendingRetentionWrite"/>)
+    /// is set — from a <see cref="Send"/> this Frame or an earlier one, or from a short write's own
+    /// re-arm landing via <see cref="OnPeerWritable"/> above — and flushes it exactly once
+    /// (<see cref="FlushRetention"/>), clearing the marker first so a Peer <see cref="FlushRetention"/>
+    /// re-arms for a further short write starts this Frame with a clean marker rather than one already
+    /// (spuriously) set. Runs once per <see cref="Pump"/>, after the readiness dispatcher, which is what
+    /// makes "at most one write per Peer per Pump" an enforced property of this method rather than an
+    /// incidental one of how readiness happened to fire (#90, 3.6.2 write batching): a Peer that
+    /// received any number of <see cref="Send"/> calls since the last Pump is serviced here in a single
+    /// pass over everything <see cref="RetentionArena.GetReadable"/> currently reports, and a Peer with
+    /// no marker set — because nothing was ever sent to it, or a Send with no following Pump — is never
+    /// visited at all.
+    /// </summary>
+    private void FlushPendingRetentionWrites()
+    {
+        if (_peersWithPendingRetentionWrites.Count == 0)
+        {
+            return;
+        }
+
+        // Snapshot and clear first, mirroring RetryPeersWithBufferedMessages: FlushRetention's own
+        // short-write re-arm flows back through OnPeerWritable on a later Pump, not synchronously
+        // within this loop, so there is no risk of this set being repopulated while it is enumerated —
+        // but taking the same defensive shape keeps this method's invariant obvious without relying on
+        // that timing.
+        SlotHandle[] pending = [.. _peersWithPendingRetentionWrites];
+        _peersWithPendingRetentionWrites.Clear();
+
+        foreach (SlotHandle handle in pending)
+        {
+            if (_peers.TryResolve(handle) is not PeerSlot slot)
+            {
+                continue;
+            }
+
+            slot.HasPendingRetentionWrite = false;
+            FlushRetention(handle, slot);
+        }
     }
 
     /// <summary>
@@ -1094,6 +1147,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _dispatcher.Unregister(slot.Link.Socket);
         slot.Link.Dispose();
         _peersWithBufferedMessages.Remove(handle);
+        _peersWithPendingRetentionWrites.Remove(handle);
         _retention.ResetShareHolder(handle.Index);
         _pendingEvents.Add(new PendingEvent
         {
@@ -1237,6 +1291,15 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// closes nothing on completion.
         /// </summary>
         public DisconnectReason? PendingCloseReason { get; set; }
+
+        /// <summary>
+        /// Set by <see cref="Send"/> when it appends to this Peer's retention ring, and again by
+        /// <see cref="OnPeerWritable"/> when a short retention write's own re-arm lands — cleared by
+        /// <see cref="FlushPendingRetentionWrites"/> the moment it visits this Peer. This is the single
+        /// signal that routes every retention write through that one call site (#90, 3.6.2): a
+        /// <see cref="Send"/> never writes to the socket itself, it only sets this.
+        /// </summary>
+        public bool HasPendingRetentionWrite { get; set; }
     }
 
     /// <summary>
