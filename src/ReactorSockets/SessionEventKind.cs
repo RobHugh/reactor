@@ -5,9 +5,8 @@ namespace ReactorSockets;
 /// meaning. Shared by both Session profiles (ADR 0010).
 /// </summary>
 /// <remarks>
-/// This slice establishes and refuses Sessions; it carries no data. The roster is therefore the two
-/// events a handshake can produce, and grows with the data plane, the Goodbye exchange and Resume in
-/// later slices. Members are appended, never inserted.
+/// The roster grows with the data plane, the Goodbye exchange and Resume across later slices.
+/// Members are appended, never inserted.
 /// </remarks>
 public enum SessionEventKind
 {
@@ -22,4 +21,10 @@ public enum SessionEventKind
     /// the <see cref="PeerId"/> is dead from this event onwards.
     /// </summary>
     PeerClosed = 2,
+
+    /// <summary>
+    /// A whole Message was reassembled from the Peer's stream and copied into the frame arena.
+    /// <see cref="SessionEvent.Payload"/> carries it, valid only until the next Pump (ADR 0008).
+    /// </summary>
+    MessageReceived = 3,
 }

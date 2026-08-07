@@ -78,6 +78,23 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         return drained;
     }
 
+    /// <summary>
+    /// Drains the current Frame into a list of plain values that outlive the drain, copying each
+    /// event's payload out as a <see cref="byte"/> array — empty for anything but
+    /// <see cref="SessionEventKind.MessageReceived"/> — since <see cref="SessionEvent.Payload"/>
+    /// aliases the frame arena and is invalid past the next Pump (ADR 0008).
+    /// </summary>
+    public List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> DrainToListWithPayload()
+    {
+        List<(SessionEventKind, PeerId, DisconnectReason, byte[])> drained = [];
+        foreach (SessionEvent evt in Reactor.Drain())
+        {
+            drained.Add((evt.Kind, evt.Peer, evt.Reason, evt.Payload.ToArray()));
+        }
+
+        return drained;
+    }
+
     /// <summary>Pumps exactly <paramref name="pumps"/> times, accumulating everything drained.</summary>
     public List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> PumpAndDrainAll(int pumps)
     {

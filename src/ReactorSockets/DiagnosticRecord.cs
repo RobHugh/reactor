@@ -88,6 +88,14 @@ public readonly record struct DiagnosticRecord
         new(DiagnosticId.ArenaExhausted, DiagnosticLevel.Warn, DiagnosticSubjectKind.Link, link, default, default, bytesRequested, bytesFree);
 
     /// <summary>
+    /// Builds an <see cref="DiagnosticId.ArenaExhausted"/> record for the Peer whose Message could not
+    /// be reserved — the Session profile's counterpart to the Link-subject overload above (ADR 0014:
+    /// share-holder identity is per-Peer in a Session, not per-socket).
+    /// </summary>
+    public static DiagnosticRecord ForArenaExhausted(PeerId peer, int bytesRequested, int bytesFree) =>
+        new(DiagnosticId.ArenaExhausted, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, bytesRequested, bytesFree);
+
+    /// <summary>
     /// Builds a <see cref="DiagnosticId.LinkFailed"/> record carrying the platform
     /// <see cref="SocketError"/> that caused the failure.
     /// </summary>

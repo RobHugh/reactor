@@ -9,12 +9,13 @@ namespace ReactorSockets;
 
 /// <summary>
 /// The stream Session profile (ADR 0010): Sessions established over TCP, addressed as Peers,
-/// delivering <c>u32</c> length-prefixed Messages rather than the byte runs the transport gives. This
-/// slice (3.1-3.3) validates <see cref="StreamSessionOptions"/> and its allocation bill at
-/// construction, binds the declared endpoint set, and carries a Peer through the handshake to an
-/// established Session. Framing, retention, write batching and the Goodbye exchange are not yet built
-/// and land in the sub-issues that follow — this Reactor establishes and refuses Sessions but carries
-/// no application data.
+/// delivering <c>u32</c> length-prefixed Messages rather than the byte runs the transport gives.
+/// Slices 3.1-3.3 validate <see cref="StreamSessionOptions"/> and its allocation bill at
+/// construction, bind the declared endpoint set, and carry a Peer through the handshake to an
+/// established Session. Slice 3.4 adds the data plane: each established Peer reassembles Messages in
+/// its own persistent receive buffer and delivers each whole one as a
+/// <see cref="SessionEventKind.MessageReceived"/> event copied into the shared frame arena. Retention,
+/// write batching and the Goodbye exchange are not yet built and land in the sub-issues that follow.
 /// </summary>
 /// <remarks>
 /// There is no cookie, no ack, no sequence space, no fragment and no RTO in this profile: TCP already
@@ -27,6 +28,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly ReadinessDispatcher _dispatcher;
     private readonly DiagnosticGateway _diagnostics;
     private readonly ReactorCounterSet _counters;
+    private readonly FrameArena _arena;
     private readonly ShareHolderTable<PeerSlot> _peers;
     private readonly RandomNumberGenerator _entropy;
     private readonly List<TcpListenLink> _listenLinks = [];
@@ -54,13 +56,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     {
         ArgumentNullException.ThrowIfNull(options);
         options.Validate();
-        options.ResolveArenaSize();
+        int arenaSize = options.ResolveArenaSize();
 
         _options = options;
         _constructingThreadId = Environment.CurrentManagedThreadId;
         _dispatcher = new ReadinessDispatcher();
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Reactor.Sink, options.Reactor.MinimumLevel, _counters);
+        _arena = new FrameArena(arenaSize, options.Reactor.Capacity);
         _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity);
         _entropy = options.Entropy;
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
@@ -130,6 +133,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         try
         {
             _pendingEvents.Clear();
+            _arena.Reset();
             _admissionsThisFrame = 0;
             _capDeferralsThisFrame = 0;
             _dispatcher.Pump();
@@ -172,6 +176,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             Link = link,
             LocalResumeSecret = NextResumeSecret(),
             State = HandshakeState.Connecting,
+            ReceiveBuffer = new byte[_options.ResolvedReceiveBufferSize],
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
@@ -251,6 +256,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         {
             SessionEventKind.PeerConnected => SessionEvent.ForPeerConnected(pending.Peer),
             SessionEventKind.PeerClosed => SessionEvent.ForPeerClosed(pending.Peer, pending.Reason),
+            SessionEventKind.MessageReceived => SessionEvent.ForMessageReceived(
+                pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
             _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind."),
         };
     }
@@ -328,6 +335,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             Link = link,
             LocalResumeSecret = NextResumeSecret(),
             State = HandshakeState.AwaitingPeerHandshake,
+            ReceiveBuffer = new byte[_options.ResolvedReceiveBufferSize],
         };
 
         // `HasFreeSlot` was just checked and this Reactor is single-threaded (ADR 0002), so `TryAdd`
@@ -583,14 +591,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Reads whatever is ready on a Peer's transport. Before <see cref="HandshakeState.Established"/>
     /// this accumulates into the Peer's own handshake buffer until a full
-    /// <see cref="StreamHandshakeCodec.RecordSize"/> has arrived; once Established this slice leaves
-    /// bytes unread — there is no data plane yet, and reading them now would only discard them before
-    /// the framing subtask exists to deliver them.
+    /// <see cref="StreamHandshakeCodec.RecordSize"/> has arrived; once Established, reads instead feed
+    /// the Peer's persistent receive buffer and Message reassembly (<see cref="OnEstablishedPeerReadable"/>).
     /// </summary>
     private void OnPeerReadable(SlotHandle handle)
     {
-        if (_peers.TryResolve(handle) is not PeerSlot slot || slot.State == HandshakeState.Established)
+        if (_peers.TryResolve(handle) is not PeerSlot slot)
         {
+            return;
+        }
+
+        if (slot.State == HandshakeState.Established)
+        {
+            OnEstablishedPeerReadable(handle, slot);
             return;
         }
 
@@ -610,6 +623,124 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 ClosePeer(handle, DisconnectReason.TransportFailed);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Reads whatever is ready on an established Peer's transport into its persistent per-Peer receive
+    /// buffer — never the frame arena directly, since a partial Message's tail must survive the arena
+    /// being wiped every Pump (Scope 3.4.1) — then delivers every whole Message the buffer now holds
+    /// (<see cref="DeliverCompleteMessages"/>). The read is skipped, not failed, when the buffer is
+    /// already full of an incomplete Message: turning an oversized prefix into a protocol-violation
+    /// disconnect is the malformed-framing table's job (a later sub-issue), not this one's — this slice
+    /// only refuses to read out of bounds.
+    /// </summary>
+    private void OnEstablishedPeerReadable(SlotHandle handle, PeerSlot slot)
+    {
+        int room = slot.ReceiveBuffer.Length - slot.ReceiveBytesFilled;
+        if (room == 0)
+        {
+            return;
+        }
+
+        TcpLinkReceiveResult result = slot.Link.Receive(slot.ReceiveBuffer.AsSpan(slot.ReceiveBytesFilled, room));
+        switch (result.Outcome)
+        {
+            case TcpLinkReceiveOutcome.Delivered:
+                slot.ReceiveBytesFilled += result.Payload.Length;
+                DeliverCompleteMessages(handle, slot);
+                break;
+            case TcpLinkReceiveOutcome.EndOfStream:
+            case TcpLinkReceiveOutcome.Failed:
+                ClosePeer(handle, DisconnectReason.TransportFailed);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Repeatedly parses the front of a Peer's receive buffer for a complete <c>u32</c>-prefixed
+    /// Message, copies each one into the shared frame arena and queues a
+    /// <see cref="SessionEventKind.MessageReceived"/> event for it, shifting the remainder of the
+    /// buffer down to offset zero each time. Stops — leaving whatever is left in place for a later
+    /// Pump — the moment the front of the buffer holds less than a whole Message, or an arena
+    /// reservation cannot be made this Frame.
+    /// </summary>
+    private void DeliverCompleteMessages(SlotHandle handle, PeerSlot slot)
+    {
+        while (true)
+        {
+            ReadOnlySpan<byte> filled = slot.ReceiveBuffer.AsSpan(0, slot.ReceiveBytesFilled);
+            if (!MessageFramingCodec.TryReadLengthPrefix(filled, out uint length))
+            {
+                return;
+            }
+
+            long messageEnd = (long)MessageFramingCodec.LengthPrefixSize + length;
+            if (messageEnd > slot.ReceiveBuffer.Length)
+            {
+                // A prefix this Peer's receive buffer could never hold, however many more bytes
+                // arrive. Rejecting it outright — a protocol-violation disconnect — belongs to the
+                // malformed-framing table; this slice merely stops rather than reads out of bounds.
+                return;
+            }
+
+            if (slot.ReceiveBytesFilled < messageEnd)
+            {
+                return;
+            }
+
+            int consumed = (int)messageEnd;
+            ReadOnlySpan<byte> message = slot.ReceiveBuffer.AsSpan(MessageFramingCodec.LengthPrefixSize, (int)length);
+            if (!TryReserveMessage(handle, message, out int payloadOffset))
+            {
+                // Arena or per-Peer share exhausted for this Frame. The Message stays buffered,
+                // whole, at the front of ReceiveBuffer — nothing is consumed — and is retried the
+                // next time this Peer's transport is read.
+                return;
+            }
+
+            _pendingEvents.Add(new PendingEvent
+            {
+                Kind = SessionEventKind.MessageReceived,
+                Peer = ToPeerId(handle),
+                PayloadOffset = payloadOffset,
+                PayloadLength = (int)length,
+            });
+
+            int remaining = slot.ReceiveBytesFilled - consumed;
+            if (remaining > 0)
+            {
+                slot.ReceiveBuffer.AsSpan(consumed, remaining).CopyTo(slot.ReceiveBuffer.AsSpan(0, remaining));
+            }
+
+            slot.ReceiveBytesFilled = remaining;
+        }
+    }
+
+    /// <summary>
+    /// Reserves <paramref name="message"/> in the shared frame arena under this Peer's own
+    /// share-holder identity (<see cref="SlotHandle.Index"/>, per ADR 0014), logging
+    /// <see cref="DiagnosticId.ArenaExhausted"/> only for the outcome that names an actual shortfall.
+    /// </summary>
+    private bool TryReserveMessage(SlotHandle handle, ReadOnlySpan<byte> message, out int payloadOffset)
+    {
+        payloadOffset = _arena.BytesUsed;
+        ArenaReservation reservation = _arena.Reserve(handle.Index, message);
+        switch (reservation.Outcome)
+        {
+            case ArenaReservationOutcome.Committed:
+                return true;
+            case ArenaReservationOutcome.ShareExhausted:
+                return false;
+            case ArenaReservationOutcome.ArenaExhausted:
+                if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                {
+                    _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(ToPeerId(handle), reservation.BytesRequested, reservation.BytesFree));
+                }
+
+                return false;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -844,6 +975,17 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// <summary>How many bytes of <see cref="HandshakeBuffer"/> are filled so far.</summary>
         public int HandshakeBytesFilled { get; set; }
 
+        /// <summary>
+        /// The persistent per-Peer receive buffer a partial Message's tail survives in across Pumps —
+        /// never the frame arena, which is wiped every Pump. Sized at construction from
+        /// <see cref="StreamSessionOptions.ResolvedReceiveBufferSize"/>: at least one incomplete
+        /// maximum Message plus its length prefix.
+        /// </summary>
+        public required byte[] ReceiveBuffer { get; init; }
+
+        /// <summary>How many bytes of <see cref="ReceiveBuffer"/> are filled so far, from the front.</summary>
+        public int ReceiveBytesFilled { get; set; }
+
         /// <summary>The protocol version the remote's handshake record offered.</summary>
         public uint RemoteVersion { get; set; }
 
@@ -898,5 +1040,17 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         public PeerId Peer { get; init; }
 
         public DisconnectReason Reason { get; init; }
+
+        /// <summary>
+        /// The committed Message's offset into the frame arena. Populated only when <see cref="Kind"/>
+        /// is <see cref="SessionEventKind.MessageReceived"/>.
+        /// </summary>
+        public int PayloadOffset { get; init; }
+
+        /// <summary>
+        /// The committed Message's length. Populated only when <see cref="Kind"/> is
+        /// <see cref="SessionEventKind.MessageReceived"/>.
+        /// </summary>
+        public int PayloadLength { get; init; }
     }
 }
