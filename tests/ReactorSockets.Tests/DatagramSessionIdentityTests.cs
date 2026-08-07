@@ -213,6 +213,49 @@ public class DatagramSessionIdentityTests
     }
 
     [Fact]
+    public void Connect_OnTwoReactors_GivesTheirFirstPeersDifferentPeerIds()
+    {
+        // Arrange — the first Peer of any Reactor sits in Slot 0 on generation 1, so a PeerId that
+        // carried only those two would be the same value on both of these.
+        using DatagramSessionReactorHarness first = new();
+        using DatagramSessionReactorHarness second = new();
+        using RawPeer firstPeer = new();
+        using RawPeer secondPeer = new();
+
+        // Act
+        (_, PeerId firstEstablished, _) = CompleteHandshake(first, firstPeer, clientNonce: 31);
+        (_, PeerId secondEstablished, _) = CompleteHandshake(second, secondPeer, clientNonce: 31);
+
+        // Assert
+        firstEstablished.Should().NotBe(secondEstablished);
+    }
+
+    [Fact]
+    public void Close_APeerIdIssuedByAnotherReactor_LeavesThisReactorsPeerOpen()
+    {
+        // Arrange
+        using DatagramSessionReactorHarness first = new();
+        using DatagramSessionReactorHarness second = new();
+        using RawPeer firstPeer = new();
+        using RawPeer secondPeer = new();
+        (_, PeerId issuedByFirst, _) = CompleteHandshake(first, firstPeer, clientNonce: 37);
+        (uint assignedBySecond, _, _) = CompleteHandshake(second, secondPeer, clientNonce: 37);
+        second.Reactor.Pump();
+
+        // Act — a consumer running two Reactors hands the wrong one's PeerId over.
+        second.Reactor.Close(issuedByFirst);
+
+        // Assert — it addressed nothing here, so nothing closed.
+        second.DrainToList().Should().BeEmpty();
+
+        // And the Peer that PeerId would have collided with is still established.
+        secondPeer.Send(second.Endpoint, BuildDataDatagram(assignedBySecond));
+        second.Reactor.Pump();
+        second.DrainToList().Should().BeEmpty();
+        second.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+    }
+
+    [Fact]
     public void OnHelloWithCookie_WhileEstablishingASession_PutsNoPartOfThePeerIdOnTheWire()
     {
         // Arrange — necessary rather than sufficient: it proves the Index and Generation pair appears
@@ -324,7 +367,7 @@ public class DatagramSessionIdentityTests
         using DatagramSessionReactorHarness accepter = new();
 
         // Act
-        Action close = () => accepter.Reactor.Close(new PeerId(0, 999));
+        Action close = () => accepter.Reactor.Close(new PeerId(Origin: 0, Index: 0, Generation: 999));
 
         // Assert
         close.Should().NotThrow();

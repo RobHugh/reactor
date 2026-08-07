@@ -778,7 +778,7 @@ public sealed class DatagramSessionReactor : IDisposable
         _pendingEvents.Add(new PendingEvent
         {
             Kind = SessionEventKind.PeerClosed,
-            Peer = new PeerId(handle.Index, handle.Generation),
+            Peer = ToPeerId(handle),
             Reason = reason,
         });
     }
@@ -824,9 +824,9 @@ public sealed class DatagramSessionReactor : IDisposable
         return secret;
     }
 
-    private static PeerId ToPeerId(SlotHandle handle) => new(handle.Index, handle.Generation);
+    private static PeerId ToPeerId(SlotHandle handle) => new(handle.Origin, handle.Index, handle.Generation);
 
-    private static SlotHandle ToHandle(PeerId peer) => new(peer.Index, peer.Generation);
+    private static SlotHandle ToHandle(PeerId peer) => new(peer.Origin, peer.Index, peer.Generation);
 
     private void DisposeLinks()
     {

@@ -1040,10 +1040,10 @@ public sealed class RawReactor : IDisposable
     }
 
     /// <summary>Converts L0's internal Slot identity into the public one Raw hands consumers (ADR 0003).</summary>
-    private static LinkId ToLinkId(SlotHandle handle) => new(handle.Index, handle.Generation);
+    private static LinkId ToLinkId(SlotHandle handle) => new(handle.Origin, handle.Index, handle.Generation);
 
     /// <summary>The inverse of <see cref="ToLinkId"/>, applied to every <see cref="LinkId"/> arriving from a consumer.</summary>
-    private static SlotHandle ToHandle(LinkId link) => new(link.Index, link.Generation);
+    private static SlotHandle ToHandle(LinkId link) => new(link.Origin, link.Index, link.Generation);
 
     /// <summary>
     /// The two checks every public member starts with: this Reactor still owns its sockets, and the

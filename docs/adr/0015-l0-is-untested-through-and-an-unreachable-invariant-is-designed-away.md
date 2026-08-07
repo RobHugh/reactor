@@ -88,7 +88,9 @@ argument that reopened this, and criterion 3 is the answer to it.
   anyone working in `tests/` to that file and not to `docs/adr/`, so a rule recorded only here is a
   rule the next author never reads. It states the seam and links here rather than restating the
   argument, so the two cannot drift the way this ADR and issue #1 did.
-- **`LinkId` is `(int Index, ulong Generation)`**, and that is a permanent public commitment on
+- **`LinkId` is `(int Index, ulong Generation)`** — *amended by ADR 0016, which adds an Origin
+  naming the issuing Reactor; two fields were unique only within one table* — and that is a
+  permanent public commitment on
   ADR 0003's terms. It costs eight bytes on a value that rides in a `ref struct` and is never
   allocated, and it costs nothing on the wire: ADR 0009 already rejected slot-index-plus-generation
   as a wire identity for being guessable, so this identity is in-process only.
