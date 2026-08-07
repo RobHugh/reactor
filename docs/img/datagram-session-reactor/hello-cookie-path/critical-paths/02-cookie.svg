@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="909" viewBox="0 0 1700 909" font-family="Arial, Helvetica, sans-serif">
+  <title>ReactorSockets :: Datagram Session :: Critical Path 2 of 4 :: Cookie</title>
+  <defs>
+    <marker id="arrow-edge" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L8,4 L0,8 z" fill="#33383f"/>
+    </marker>
+    <marker id="arrow-edgeNo" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L8,4 L0,8 z" fill="#b3402a"/>
+    </marker>
+    <marker id="arrow-edgeRp" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L8,4 L0,8 z" fill="#2b6cb0"/>
+    </marker>
+    <marker id="arrow-wire" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L8,4 L0,8 z" fill="#2b6cb0"/>
+    </marker>
+  </defs>
+  <style>
+    .page   { fill: #ffffff; }
+    .frame  { fill: none; stroke: #9c9c9c; stroke-width: 1; }
+    .tab    { fill: #f2f2f2; stroke: #9c9c9c; stroke-width: 1; }
+    .ttl    { font-size: 13px; font-weight: bold; fill: #2b2f36; }
+    .subttl { font-size: 10.5px; fill: #5a6270; font-style: italic; }
+    .lanehdr{ fill: #eef1f5; stroke: #9c9c9c; stroke-width: 1; }
+    .lanettl{ font-size: 13px; font-weight: bold; fill: #2b2f36; }
+    .lanesub{ font-size: 10px; fill: #5a6270; }
+    .start  { fill: #e6f4ea; stroke: #2f8f56; stroke-width: 1.3; }
+    .startm { fill: #f4f7f5; stroke: #8fae9c; stroke-width: 1; stroke-dasharray: 4 3; }
+    .proc   { fill: #eef2f7; stroke: #4d6a8a; stroke-width: 1.1; }
+    .dec    { fill: #fff7e0; stroke: #b6902a; stroke-width: 1.1; }
+    .endok  { fill: #dff5e4; stroke: #237a46; stroke-width: 1.6; }
+    .endfin { fill: #cdeed8; stroke: #1c6b3c; stroke-width: 2.2; }
+    .discard{ fill: #f2f2f2; stroke: #8a8a8a; stroke-width: 1; stroke-dasharray: 3 2; }
+    .except { fill: #fdece6; stroke: #b3402a; stroke-width: 1.2; }
+    .replay { fill: #eaf1fb; stroke: #2b6cb0; stroke-width: 1.1; }
+    .nt     { font-size: 11.5px; font-weight: bold; fill: #14171c; }
+    .nb     { font-size: 10px; fill: #33383f; }
+    .nr     { font-size: 9px; font-family: Consolas, 'Courier New', monospace; fill: #6b7280; }
+    .ex-t   { font-size: 10.5px; font-weight: bold; fill: #14171c; }
+    .ex-b   { font-size: 9.3px; fill: #3f4650; }
+    .ex-r   { font-size: 8.6px; font-family: Consolas, 'Courier New', monospace; fill: #6b7280; }
+    .edge   { fill: none; stroke: #33383f; stroke-width: 1.4; }
+    .edgeNo { fill: none; stroke: #b3402a; stroke-width: 1.2; stroke-dasharray: 5 3; }
+    .edgeRp { fill: none; stroke: #2b6cb0; stroke-width: 1.2; stroke-dasharray: 5 3; }
+    .wire   { fill: none; stroke: #2b6cb0; stroke-width: 2.6; }
+    .lbl    { font-size: 10px; fill: #33383f; }
+    .lblNo  { font-size: 9.3px; fill: #b3402a; }
+    .lblRp  { font-size: 9.3px; fill: #2b6cb0; }
+    .wlbl   { font-size: 11px; font-weight: bold; fill: #1c4a75; }
+    .wlblbg { fill: #ffffff; opacity: 0.92; }
+    .legend-r{ font-size: 9.5px; fill: #33383f; }
+
+  </style>
+  <rect class="page" x="0" y="0" width="1700" height="909"/>
+  <rect class="frame" x="14" y="14" width="1672" height="881"/>
+  <path class="tab" d="M14,14 h640 l-14,24 h-626 z"/>
+  <text class="ttl" x="26" y="32">ReactorSockets :: Datagram Session :: Critical Path 2 of 4 :: Cookie</text>
+  <text class="subttl" x="26" y="58">Stateless answer to Hello, echoed back by the dialler. Nothing was allocated to produce it (see critical path 1).</text>
+  
+    <rect class="lanehdr" x="330" y="78" width="380" height="44" rx="4"/>
+    <text class="lanettl" x="520" y="97" text-anchor="middle">Dialler</text>
+    <text class="lanesub" x="520" y="112" text-anchor="middle">the peer that called Connect()</text>
+  
+    <rect class="lanehdr" x="990" y="78" width="380" height="44" rx="4"/>
+    <text class="lanettl" x="1180" y="97" text-anchor="middle">Acceptor</text>
+    <text class="lanesub" x="1180" y="112" text-anchor="middle">the peer already listening</text>
+  <rect class="startm" x="360" y="130" width="320" height="56" rx="28"/>
+    <text class="nt" x="520" y="148" text-anchor="middle">ProcessDatagram → DatagramControlType.Cookie</text>
+    <text class="nr" x="520" y="164" text-anchor="middle">cs:434-436</text>
+    <rect class="proc" x="360" y="206" width="320" height="56" rx="7"/>
+    <text class="nt" x="520" y="224" text-anchor="middle">OnCookie(link, source, datagram)</text>
+    <text class="nr" x="520" y="240" text-anchor="middle">cs:582-608</text>
+    <polygon class="dec" points="520,282 690,329.5 520,377 350,329.5"/>
+    <text class="nt" x="520" y="314.5" text-anchor="middle">TryReadCookie(datagram)</text>
+    <text class="nb" x="520" y="329.5" text-anchor="middle">well-formed?</text>
+    <text class="nr" x="520" y="344.5" text-anchor="middle">cs:585</text>
+    <polygon class="dec" points="520,397 690,451 520,505 350,451"/>
+    <text class="nt" x="520" y="428.5" text-anchor="middle">ResolveDial(...)</text>
+    <text class="nb" x="520" y="443.5" text-anchor="middle">source, clientNonce, AwaitingCookie)</text>
+    <text class="nb" x="520" y="458.5" text-anchor="middle">matches a live dial?</text>
+    <text class="nr" x="520" y="473.5" text-anchor="middle">cs:591, 679-690</text>
+    <rect class="proc" x="360" y="525" width="320" height="56" rx="7"/>
+    <text class="nt" x="520" y="543" text-anchor="middle">slot.State = AwaitingAccept</text>
+    <text class="nr" x="520" y="559" text-anchor="middle">cs:597</text>
+    <rect class="proc" x="360" y="601" width="320" height="82" rx="7"/>
+    <text class="nt" x="520" y="619" text-anchor="middle">WriteHelloWithCookie</text>
+    <text class="nb" x="520" y="633" text-anchor="middle">echoes cookie + LocalSessionId +</text>
+    <text class="nb" x="520" y="645.5" text-anchor="middle">MaxMessageSize + LocalResumeSecret</text>
+    <text class="nr" x="520" y="660" text-anchor="middle">cs:598-606</text>
+    <rect class="proc" x="360" y="703" width="320" height="56" rx="7"/>
+    <text class="nt" x="520" y="721" text-anchor="middle">SendControl</text>
+    <text class="nr" x="520" y="737" text-anchor="middle">cs:607</text>
+    <rect class="endok" x="360" y="779" width="320" height="70" rx="35"/>
+    <text class="nt" x="520" y="797" text-anchor="middle">HelloWithCookie sent to wire</text>
+    <text class="nb" x="520" y="811" text-anchor="middle">no event queued yet</text>
+    <text class="nb" x="520" y="823.5" text-anchor="middle">continues in critical path 3: HelloWithCookie</text>
+    <rect class="startm" x="1020" y="130" width="320" height="82" rx="41"/>
+    <text class="nt" x="1180" y="148" text-anchor="middle">Cookie sent</text>
+    <text class="nb" x="1180" y="162" text-anchor="middle">continued from critical path 1: Hello</text>
+    <text class="nb" x="1180" y="174.5" text-anchor="middle">WriteCookie + SendControl</text>
+    <text class="nr" x="1180" y="189" text-anchor="middle">cs:497-498</text>
+    <rect class="discard" x="80" y="309.5" width="230" height="45" rx="6"/>
+    <text class="ex-t" x="195" y="325.5" text-anchor="middle">DiscardMalformed</text>
+    <text class="ex-r" x="195" y="339" text-anchor="middle">cs:587-588</text>
+    <rect class="discard" x="80" y="431" width="230" height="69" rx="6"/>
+    <text class="ex-t" x="195" y="447" text-anchor="middle">DiscardMalformed</text>
+    <text class="ex-b" x="195" y="459.5" text-anchor="middle">nonce / state / remote mismatch</text>
+    <text class="ex-b" x="195" y="471" text-anchor="middle">(guards against nonce-guessing)</text>
+    <text class="ex-r" x="195" y="483.5" text-anchor="middle">cs:593-594</text>
+  
+    <line class="edge" x1="520" y1="186" x2="520" y2="206" marker-end="url(#arrow-edge)"/>
+    <line class="edge" x1="520" y1="262" x2="520" y2="282" marker-end="url(#arrow-edge)"/>
+    <line class="edge" x1="520" y1="377" x2="520" y2="397" marker-end="url(#arrow-edge)"/>
+    <text class="lbl" x="528" y="387">yes</text>
+    <polyline class="edgeNo" points="350,329.5 310,332" marker-end="url(#arrow-edgeNo)"/>
+    <text class="lblNo" x="330" y="323.5" text-anchor="middle">no</text>
+    <line class="edge" x1="520" y1="505" x2="520" y2="525" marker-end="url(#arrow-edge)"/>
+    <text class="lbl" x="528" y="515">yes</text>
+    <polyline class="edgeNo" points="350,451 310,465.5" marker-end="url(#arrow-edgeNo)"/>
+    <text class="lblNo" x="330" y="445" text-anchor="middle">no</text>
+    <line class="edge" x1="520" y1="581" x2="520" y2="601" marker-end="url(#arrow-edge)"/>
+    <line class="edge" x1="520" y1="683" x2="520" y2="703" marker-end="url(#arrow-edge)"/>
+    <line class="edge" x1="520" y1="759" x2="520" y2="779" marker-end="url(#arrow-edge)"/>
+    <polyline class="wire" points="1020,171 850,171 850,158 680,158" marker-end="url(#arrow-wire)"/>
+    <rect class="wlblbg" x="745" y="151" width="210" height="17" rx="3"/>
+    <text class="wlbl" x="850" y="164" text-anchor="middle">UDP: Cookie datagram</text>
+  
+    <g font-family="Arial, Helvetica, sans-serif">
+      <rect class="proc" x="40" y="869" width="16" height="12" rx="2"/><text class="legend-r" x="60" y="879">step</text>
+      <polygon class="dec" points="150,869 158,875 150,881 142,875"/><text class="legend-r" x="164" y="879">decision</text>
+      <rect class="endok" x="240" y="869" width="16" height="12" rx="6"/><text class="legend-r" x="260" y="879">success exit</text>
+      <rect class="discard" x="360" y="869" width="16" height="12" rx="3"/><text class="legend-r" x="380" y="879">silent discard</text>
+      <rect class="except" x="480" y="869" width="16" height="12" rx="3"/><text class="legend-r" x="500" y="879">exceptional path (see sibling folder)</text>
+      <rect class="replay" x="730" y="869" width="16" height="12" rx="3"/><text class="legend-r" x="750" y="879">idempotent replay</text>
+      <line class="wire" x1="880" y1="875" x2="910" y2="875" marker-end="url(#arrow-wire)"/><text class="legend-r" x="918" y="879">UDP wire</text>
+    </g>
+</svg>
