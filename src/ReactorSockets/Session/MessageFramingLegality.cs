@@ -80,38 +80,29 @@ internal static class MessageFramingLegality
         ReadOnlySpan<byte> filled, int maxMessageSize, bool remoteGoodbyeAlreadyReceived,
         out uint announcedLength, out int messageEnd)
     {
-        if (remoteGoodbyeAlreadyReceived && filled.Length > 0)
-        {
-            announcedLength = 0;
-            messageEnd = 0;
-            return MessageFramingOutcome.DataAfterGoodbye;
-        }
+        // TryReadLengthPrefix is a pure peek at bytes already in hand — calling it unconditionally
+        // costs nothing and lets every outcome below be one switch expression. Its own out parameter
+        // is 0 whenever it returns false, which is what feeds AwaitingPrefix; DataAfterGoodbye reports
+        // 0 regardless of what (if anything) it read, matching the original short-circuit that never
+        // let a claimed length drive that decision.
+        bool hasPrefix = MessageFramingCodec.TryReadLengthPrefix(filled, out uint length);
+        bool dataAfterGoodbye = remoteGoodbyeAlreadyReceived && filled.Length > 0;
 
-        if (!MessageFramingCodec.TryReadLengthPrefix(filled, out announcedLength))
+        (MessageFramingOutcome outcome, uint reportedLength, int end) = (dataAfterGoodbye, hasPrefix) switch
         {
-            messageEnd = 0;
-            return MessageFramingOutcome.AwaitingPrefix;
-        }
+            (true, _) => (MessageFramingOutcome.DataAfterGoodbye, 0u, 0),
+            (false, false) => (MessageFramingOutcome.AwaitingPrefix, 0u, 0),
+            (false, true) when length == MessageFramingCodec.GoodbyeSentinel =>
+                (MessageFramingOutcome.GoodbyeReceived, length, MessageFramingCodec.LengthPrefixSize),
+            (false, true) when length == 0 => (MessageFramingOutcome.ZeroLengthPrefix, length, 0),
+            (false, true) when length > (uint)maxMessageSize => (MessageFramingOutcome.OversizedPrefix, length, 0),
+            (false, true) when filled.Length < MessageFramingCodec.LengthPrefixSize + (int)length =>
+                (MessageFramingOutcome.AwaitingMessage, length, 0),
+            (false, true) => (MessageFramingOutcome.Ready, length, MessageFramingCodec.LengthPrefixSize + (int)length),
+        };
 
-        if (announcedLength == MessageFramingCodec.GoodbyeSentinel)
-        {
-            messageEnd = MessageFramingCodec.LengthPrefixSize;
-            return MessageFramingOutcome.GoodbyeReceived;
-        }
-
-        if (announcedLength == 0)
-        {
-            messageEnd = 0;
-            return MessageFramingOutcome.ZeroLengthPrefix;
-        }
-
-        if (announcedLength > (uint)maxMessageSize)
-        {
-            messageEnd = 0;
-            return MessageFramingOutcome.OversizedPrefix;
-        }
-
-        messageEnd = MessageFramingCodec.LengthPrefixSize + (int)announcedLength;
-        return filled.Length >= messageEnd ? MessageFramingOutcome.Ready : MessageFramingOutcome.AwaitingMessage;
+        announcedLength = reportedLength;
+        messageEnd = end;
+        return outcome;
     }
 }
