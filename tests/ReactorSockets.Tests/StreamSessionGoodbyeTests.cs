@@ -405,6 +405,186 @@ public class StreamSessionGoodbyeTests
             "no Message may follow a Goodbye onto the wire, whichever end sent it");
     }
 
+    // =========================================================================================
+    // Data after Goodbye: a Peer that announces it is leaving and keeps sending is a protocol
+    // violation, not an infinite grant of ordinary delivery (issue #93)
+    // =========================================================================================
+
+    [Fact]
+    public void DataAfterGoodbye_MessageArrivesBehindGoodbyeInTheSameWrite_ClosesWithProtocolViolationAndNeverDeliversIt()
+    {
+        // Arrange — a preceding legitimate Message keeps HasUndeliveredInboundWork true for the Frame
+        // the Goodbye is classified in, so GoodbyeReceived defers the close instead of taking it
+        // immediately, and the parse loop keeps going to the bytes right behind the Goodbye — exactly
+        // the state the bug this closes left unguarded.
+        using StreamSessionReactorHarness accepter = new();
+        using GoodbyePeer peer = new(accepter.Endpoint);
+        PeerId id = EstablishSession(accepter, peer);
+        byte[] precedingMessage = PayloadOf(16, 1);
+        byte[] trailingMessage = PayloadOf(16, 2);
+
+        // Act — one write: a Message, the Goodbye, then another Message immediately behind it.
+        peer.Send([.. BuildFrame(precedingMessage), .. BuildGoodbye(), .. BuildFrame(trailingMessage)]);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
+        for (int i = 0; i < 20 && !drained.Any(e => e.Kind == SessionEventKind.PeerClosed); i++)
+        {
+            accepter.Reactor.Pump();
+            drained.AddRange(accepter.DrainToList());
+        }
+
+        // Assert — closed with ProtocolViolation, and only the Message ahead of the Goodbye was ever
+        // delivered — the one behind it never reaches MessageReceived.
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.ProtocolViolation);
+        drained.Count(e => e.Kind == SessionEventKind.MessageReceived).Should().Be(1);
+    }
+
+    [Fact]
+    public void DataAfterGoodbye_ContinuousStreamOfMessagesBehindGoodbye_ClosesWithProtocolViolationWithinBoundedPumps()
+    {
+        // Arrange — same deferral as the single-Message case above, but fifty Messages queued behind
+        // the Goodbye in one write: the regression case for the hole this closes, where every one of
+        // them would otherwise have been delivered as an ordinary MessageReceived event, forever,
+        // rather than the Peer ever reaching PeerClosed.
+        using StreamSessionReactorHarness accepter = new();
+        using GoodbyePeer peer = new(accepter.Endpoint);
+        PeerId id = EstablishSession(accepter, peer);
+        byte[] precedingMessage = PayloadOf(16, 1);
+
+        List<byte> burst = [.. BuildFrame(precedingMessage), .. BuildGoodbye()];
+        for (int i = 0; i < 50; i++)
+        {
+            burst.AddRange(BuildFrame(PayloadOf(16, (byte)i)));
+        }
+
+        // Act
+        peer.Send([.. burst]);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
+        for (int i = 0; i < 20 && !drained.Any(e => e.Kind == SessionEventKind.PeerClosed); i++)
+        {
+            accepter.Reactor.Pump();
+            drained.AddRange(accepter.DrainToList());
+        }
+
+        // Assert — closed with ProtocolViolation within the Pump budget, and only the one legitimate
+        // Message ahead of the Goodbye was ever delivered — none of the fifty behind it.
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.ProtocolViolation);
+        drained.Count(e => e.Kind == SessionEventKind.MessageReceived).Should().Be(1);
+    }
+
+    [Fact]
+    public void DataAfterGoodbye_MessageArrivesInASeparateLaterWrite_ClosesWithProtocolViolation()
+    {
+        // Arrange — this end's own outbound retention is driven to genuine exhaustion against a
+        // counterparty whose receive window is shrunk and that never reads (mirrors
+        // StreamSessionRetentionFlushTests' Send_AgainstACounterpartyThatNeverReadsAfterTheHandshake_
+        // EventuallyReturnsRetentionExhausted): RetentionIsDrained stays false across Pump boundaries,
+        // so the peer's Goodbye alone cannot close this end directly and the Peer sits in Closing for
+        // more than one Pump — the only way a genuinely later, separate write can still reach
+        // DeliverCompleteMessages after the Goodbye rather than arriving at an already-closed socket.
+        const int maxMessageSize = 8192;
+        using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: maxMessageSize + 4);
+        using GoodbyePeer peer = new(accepter.Endpoint, receiveBufferSize: 1024);
+        PeerId id = EstablishSession(accepter, peer);
+        byte[] stuckMessage = PayloadOf(maxMessageSize, 1);
+        byte[] trailingMessage = PayloadOf(16, 9);
+
+        // Act — queue and flush against the unread socket until retention is genuinely, durably full.
+        SendOutcome outcome = SendOutcome.Sent;
+        for (int attempt = 0; attempt < 500 && outcome == SendOutcome.Sent; attempt++)
+        {
+            outcome = accepter.Reactor.Send(id, stuckMessage);
+            accepter.Reactor.Pump();
+        }
+
+        outcome.Should().Be(SendOutcome.RetentionExhausted,
+            "the test's own precondition — retention must be durably non-empty across Pumps");
+
+        // Act — the peer's Goodbye, on its own Pump: Closing is observed, not a close, since this
+        // end's own retention still has bytes it cannot get onto the wire.
+        peer.Send(BuildGoodbye());
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
+        accepter.Reactor.Pump();
+        drained.AddRange(accepter.DrainToList());
+
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosing);
+        drained.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+
+        // Act — a genuinely separate write, on a later Pump, behind the already-classified Goodbye.
+        peer.Send(BuildFrame(trailingMessage));
+        for (int i = 0; i < 20 && !drained.Any(e => e.Kind == SessionEventKind.PeerClosed); i++)
+        {
+            accepter.Reactor.Pump();
+            drained.AddRange(accepter.DrainToList());
+        }
+
+        // Assert
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.ProtocolViolation);
+        drained.Should().NotContain(e => e.Kind == SessionEventKind.MessageReceived);
+    }
+
+    [Fact]
+    public void InboundMessage_AfterThisEndCallsClose_IsStillDeliveredAndIsNotAViolation()
+    {
+        // Arrange — this end announces its own departure via Close, but the far end has not sent (and
+        // in this test never sends) a Goodbye of its own. RemoteGoodbyeReceived must stay false from a
+        // purely local Close — a Message the far end sent before it had any way to know this end was
+        // leaving is legitimate, not a violation. This is the distinction issue #93 requires between
+        // an inbound Goodbye and this end's own PendingCloseReasonAfterRetentionDrains/LocalGoodbyeSent,
+        // which a local Close sets without any inbound Goodbye ever having arrived.
+        using StreamSessionReactorHarness accepter = new();
+        using GoodbyePeer peer = new(accepter.Endpoint);
+        PeerId id = EstablishSession(accepter, peer);
+        byte[] message = PayloadOf(16, 4);
+
+        // Act — this end closes locally, then the peer's own Message (sent before it could possibly
+        // have seen this end's Goodbye) arrives.
+        accepter.Reactor.Close(id);
+        peer.Send(BuildFrame(message));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> drained = [];
+        for (int i = 0; i < 20 && !drained.Any(e => e.Kind == SessionEventKind.MessageReceived); i++)
+        {
+            accepter.Reactor.Pump();
+            drained.AddRange(accepter.DrainToListWithPayload());
+        }
+
+        // Assert — delivered normally, not a violation.
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.MessageReceived)
+            .Which.Payload.Should().Equal(message);
+        drained.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed && e.Reason == DisconnectReason.ProtocolViolation);
+    }
+
+    [Fact]
+    public void FinAfterGoodbye_WithNothingElseBuffered_ClosesWithPeerGoodbyeNotProtocolViolation()
+    {
+        // Arrange — a preceding legitimate Message keeps this end's Peer in Closing rather than closing
+        // immediately when the Goodbye is classified, so the connection is still open when the peer's
+        // clean FIN follows with nothing else on the wire — exactly the shape ClassifyEndOfStream must
+        // still treat as an ordinary, unreported end of stream (issue #23), not a violation, now that
+        // DataAfterGoodbye exists (issue #93): ClassifyEndOfStream is untouched by that change and
+        // still keys only off whether anything is left buffered, never off RemoteGoodbyeReceived.
+        using StreamSessionReactorHarness accepter = new();
+        using GoodbyePeer peer = new(accepter.Endpoint);
+        PeerId id = EstablishSession(accepter, peer);
+        byte[] precedingMessage = PayloadOf(16, 1);
+
+        // Act
+        peer.Send([.. BuildFrame(precedingMessage), .. BuildGoodbye()]);
+        peer.CloseGracefully();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
+        for (int i = 0; i < 20 && !drained.Any(e => e.Kind == SessionEventKind.PeerClosed); i++)
+        {
+            accepter.Reactor.Pump();
+            drained.AddRange(accepter.DrainToList());
+        }
+
+        // Assert
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.PeerGoodbye);
+    }
+
     /// <summary>
     /// A plain BCL TCP socket connected to a Reactor's bound endpoint, standing in for a counterparty
     /// that can put a raw Goodbye sentinel on the wire directly — something no consumer of the public
@@ -417,17 +597,35 @@ public class StreamSessionGoodbyeTests
     {
         private readonly Socket _socket;
 
-        public GoodbyePeer(IPEndPoint destination)
+        /// <param name="destination">The Reactor's bound endpoint to connect to.</param>
+        /// <param name="receiveBufferSize">
+        /// Applied before <c>Connect</c>, so the negotiated receive window is small from the handshake
+        /// onward — never applied after connecting (mirrors <c>StreamSessionRetentionFlushTests</c>'s
+        /// <c>FlushPeer</c>, the house pattern for shrinking a counterparty's window so this end's own
+        /// outbound retention cannot fully flush in one write). Omit for the OS default.
+        /// </param>
+        public GoodbyePeer(IPEndPoint destination, int? receiveBufferSize = null)
         {
             _socket = new Socket(destination.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
             {
                 ReceiveTimeout = 5000,
             };
+            if (receiveBufferSize is int size)
+            {
+                _socket.ReceiveBufferSize = size;
+            }
+
             _socket.Connect(destination);
         }
 
         /// <summary>Sends every byte of <paramref name="bytes"/> in a single write.</summary>
         public void Send(byte[] bytes) => _socket.Send(bytes);
+
+        /// <summary>
+        /// Ends the connection gracefully — a bare FIN with nothing further on the wire — mirrors
+        /// <see cref="StreamSessionMalformedFramingTests"/>'s <c>MalformedPeer.CloseGracefully</c>.
+        /// </summary>
+        public void CloseGracefully() => _socket.Shutdown(SocketShutdown.Send);
 
         /// <summary>Blocks until exactly <paramref name="count"/> bytes have been read off the socket.</summary>
         public byte[] Receive(int count)

@@ -1084,19 +1084,21 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Repeatedly classifies the front of a Peer's receive buffer against the malformed-framing table
+    /// Repeatedly classifies the front of a Peer's receive buffer against the framing table
     /// (<see cref="MessageFramingLegality"/>). A complete, legal Message is copied into the shared
     /// frame arena and queued as a <see cref="SessionEventKind.MessageReceived"/> event, shifting the
-    /// remainder of the buffer down to offset zero. An oversized or zero-length prefix ends the
-    /// Session immediately with <see cref="DisconnectReason.ProtocolViolation"/> — the whole reason
-    /// <c>MaxMessageSize</c> is announced as a receive limit is so this never becomes an allocation.
-    /// Stops — leaving whatever is left in place for a later Pump — the moment the front of the buffer
-    /// holds less than a whole Message, or an arena reservation cannot be made this Frame. A Goodbye
-    /// control record at the front (<see cref="MessageFramingOutcome.GoodbyeReceived"/>, issue #23)
-    /// closes the Peer directly only if nothing is outstanding on either side: this end's own outbound
-    /// retention for it already empty, and nothing this end already reassembled from it still queued
-    /// undelivered (<see cref="HasUndeliveredInboundWork"/> — a Message parsed earlier in this same
-    /// loop, ahead of the Goodbye in the same read, counts even though it already reached
+    /// remainder of the buffer down to offset zero. An oversized or zero-length prefix, or bytes
+    /// arriving behind an already-received Goodbye (<see cref="MessageFramingOutcome.DataAfterGoodbye"/>,
+    /// issue #93 — a Peer that announced it is leaving and then keeps sending), ends the Session
+    /// immediately with <see cref="DisconnectReason.ProtocolViolation"/> — the whole reason
+    /// <c>MaxMessageSize</c> is announced as a receive limit is so an oversized claim never becomes an
+    /// allocation. Stops — leaving whatever is left in place for a later Pump — the moment the front of
+    /// the buffer holds less than a whole Message, or an arena reservation cannot be made this Frame. A
+    /// Goodbye control record at the front (<see cref="MessageFramingOutcome.GoodbyeReceived"/>, issue
+    /// #23) closes the Peer directly only if nothing is outstanding on either side: this end's own
+    /// outbound retention for it already empty, and nothing this end already reassembled from it still
+    /// queued undelivered (<see cref="HasUndeliveredInboundWork"/> — a Message parsed earlier in this
+    /// same loop, ahead of the Goodbye in the same read, counts even though it already reached
     /// <see cref="SessionEventKind.MessageReceived"/> first). Otherwise marks it
     /// <see cref="SessionEventKind.PeerClosing"/> and defers the close to whenever both sides drain
     /// (<see cref="TryCloseAfterRetentionDrained"/>) — never both a <c>PeerClosing</c> event and an
@@ -1108,7 +1110,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         {
             ReadOnlySpan<byte> filled = slot.ReceiveBuffer.AsSpan(0, slot.ReceiveBytesFilled);
             MessageFramingOutcome outcome = MessageFramingLegality.Classify(
-                filled, _options.MaxMessageSize, out uint length, out int messageEnd);
+                filled, _options.MaxMessageSize, slot.RemoteGoodbyeReceived, out uint length, out int messageEnd);
 
             switch (outcome)
             {
@@ -1147,6 +1149,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 case MessageFramingOutcome.GoodbyeReceived:
                 {
                     CompactReceiveBuffer(slot, messageEnd);
+                    slot.RemoteGoodbyeReceived = true;
 
                     if (slot.PendingCloseReasonAfterRetentionDrains is null)
                     {
@@ -1167,6 +1170,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
                     continue;
                 }
+
+                // A separate arm from the discard arm below rather than folded into it: length is always
+                // 0 here (Classify returns before the prefix is even read), so there is no claimed
+                // length to report — the peer's fault is contradicting its own Goodbye by sending
+                // anything further, not a bad prefix.
+                case MessageFramingOutcome.DataAfterGoodbye:
+                    if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                    {
+                        _diagnostics.Log(DiagnosticRecord.ForMalformedFraming(ToPeerId(handle), length, _options.MaxMessageSize));
+                    }
+
+                    ClosePeer(handle, DisconnectReason.ProtocolViolation);
+                    return;
 
                 // The discard arm refuses rather than permits (the RawLinkLegality/TryReserve house
                 // rule): OversizedPrefix and ZeroLengthPrefix are named explicitly, and any outcome
@@ -1596,6 +1612,22 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// waits on the append actually committing.
         /// </summary>
         public bool LocalGoodbyeSent { get; set; }
+
+        /// <summary>
+        /// Set by <see cref="DeliverCompleteMessages"/> the moment an inbound Goodbye is classified for
+        /// this Peer (<see cref="MessageFramingOutcome.GoodbyeReceived"/>) — never by anything on this
+        /// end's own outbound side. Deliberately a distinct fact from <see cref="LocalGoodbyeSent"/> and
+        /// <see cref="PendingCloseReasonAfterRetentionDrains"/>: both of those can be set by this end's
+        /// own <see cref="Close"/>, and a local Close must never make the far end's still-in-flight
+        /// Messages a violation — they were sent legitimately, before that far end had any way to know
+        /// this end was leaving. Only an inbound Goodbye — this Peer announcing its own departure — means
+        /// anything it sends afterward is announcing one thing and doing another. Once true, every
+        /// further byte at the front of <see cref="ReceiveBuffer"/> classifies as
+        /// <see cref="MessageFramingOutcome.DataAfterGoodbye"/> (issue #93) and ends the Session with
+        /// <see cref="DisconnectReason.ProtocolViolation"/> — the fix for a Peer that could otherwise
+        /// hold its capacity Slot open indefinitely after announcing it was leaving.
+        /// </summary>
+        public bool RemoteGoodbyeReceived { get; set; }
 
         /// <summary>
         /// The reason <see cref="ClosePeer"/> is eventually called with, once both this end's own
