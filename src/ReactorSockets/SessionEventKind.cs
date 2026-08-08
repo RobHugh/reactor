@@ -11,7 +11,7 @@ public enum SessionEventKind
 {
     /// <summary>
     /// A Session is established and the Peer is addressable. Raised on both ends: on the dialler when
-    /// the Accept arrives, on the accepting end when a cookie-validated Hello is admitted.
+    /// the Accept arrives, on the accepting end when a Hello is admitted.
     /// </summary>
     PeerConnected = 1,
 

@@ -34,8 +34,8 @@ public enum DisconnectReason
 
     /// <summary>
     /// The remote end had no capacity Slot free for this Session and said so. Distinct from silence:
-    /// a Reactor at capacity answers a cookie-validated Hello rather than dropping it, so the dialler
-    /// learns the difference between "full" and "gone".
+    /// a Reactor at capacity answers a Hello it received rather than dropping it, so the dialler learns
+    /// the difference between "full" and "gone".
     /// </summary>
     RemoteAtCapacity = 2,
 
