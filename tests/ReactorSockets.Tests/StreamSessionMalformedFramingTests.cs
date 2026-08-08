@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using FluentAssertions;
@@ -15,55 +14,13 @@ namespace ReactorSockets.Tests;
 /// </summary>
 public class StreamSessionMalformedFramingTests
 {
-    private const int RecordSize = 41; // 1 type byte + 40-byte Hello payload; a Refusal is padded to it.
-    private const byte HelloType = 1;
-    private const uint ProtocolVersion = 1;
+    private static byte[] BuildFrame(byte[] payload) => StreamSessionTestRecords.BuildFrame(payload);
 
-    private static byte[] BuildHello(uint maxMessageSize = 4096, ulong sendIdleMs = 1000, ulong lingerMs = 1000)
-    {
-        byte[] record = new byte[RecordSize];
-        record[0] = HelloType;
-        int offset = 1;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(offset, 4), ProtocolVersion);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(offset, 4), maxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), sendIdleMs);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), lingerMs);
-        return record;
-    }
-
-    private static byte[] BuildFrame(byte[] payload)
-    {
-        byte[] frame = new byte[4 + payload.Length];
-        BinaryPrimitives.WriteUInt32BigEndian(frame, (uint)payload.Length);
-        payload.CopyTo(frame.AsSpan(4));
-        return frame;
-    }
-
-    private static byte[] BuildPrefix(uint length)
-    {
-        byte[] prefix = new byte[4];
-        BinaryPrimitives.WriteUInt32BigEndian(prefix, length);
-        return prefix;
-    }
+    private static byte[] BuildPrefix(uint length) => StreamSessionTestRecords.BuildPrefix(length);
 
     /// <summary>Pumps <paramref name="accepter"/> until it has drained a <see cref="SessionEventKind.PeerConnected"/> event.</summary>
-    private static void EstablishSession(StreamSessionReactorHarness accepter, MalformedPeer peer, int maxPumps = 20)
-    {
-        peer.Send(BuildHello());
-        for (int i = 0; i < maxPumps; i++)
-        {
-            accepter.Reactor.Pump();
-            if (accepter.DrainToListWithPayload().Any(e => e.Kind == SessionEventKind.PeerConnected))
-            {
-                return;
-            }
-        }
-
-        throw new InvalidOperationException("The Session never established within the Pump budget.");
-    }
+    private static void EstablishSession(StreamSessionReactorHarness accepter, MalformedPeer peer, int maxPumps = 20) =>
+        StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
 
     /// <summary>Pumps until a <see cref="SessionEventKind.PeerClosed"/> drains, or the budget runs out.</summary>
     private static List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> PumpUntilClosed(

@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using FluentAssertions;
@@ -15,46 +14,15 @@ namespace ReactorSockets.Tests;
 /// </summary>
 public class StreamSessionSendRetentionTests
 {
-    private const int RecordSize = 41; // 1 type byte + 40-byte Hello payload; a Refusal is padded to it.
-    private const byte HelloType = 1;
-    private const uint ProtocolVersion = 1;
-
-    private static byte[] BuildHello(uint maxMessageSize = 4096, ulong sendIdleMs = 1000, ulong lingerMs = 1000)
-    {
-        byte[] record = new byte[RecordSize];
-        record[0] = HelloType;
-        int offset = 1;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(offset, 4), ProtocolVersion);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(offset, 4), maxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), sendIdleMs);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), lingerMs);
-        return record;
-    }
-
     /// <summary>
     /// Connects a bare TCP peer, drives the handshake to completion, and returns the <see cref="PeerId"/>
     /// the accepter assigned it — the address every <c>Send</c> call in this file is made against.
     /// </summary>
     private static PeerId EstablishSession(StreamSessionReactorHarness accepter, out HandshakePeer peer, int maxPumps = 20)
     {
-        peer = new HandshakePeer(accepter.Endpoint);
-        peer.Send(BuildHello());
-        for (int i = 0; i < maxPumps; i++)
-        {
-            accepter.Reactor.Pump();
-            foreach ((SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload) evt in accepter.DrainToListWithPayload())
-            {
-                if (evt.Kind == SessionEventKind.PeerConnected)
-                {
-                    return evt.Peer;
-                }
-            }
-        }
-
-        throw new InvalidOperationException("The Session never established within the Pump budget.");
+        HandshakePeer newPeer = new(accepter.Endpoint);
+        peer = newPeer;
+        return StreamSessionTestRecords.EstablishSession(accepter, newPeer.Send, maxPumps);
     }
 
     [Fact]

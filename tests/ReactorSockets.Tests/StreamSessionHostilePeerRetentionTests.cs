@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using FluentAssertions;
 using Xunit;
 
@@ -17,25 +16,6 @@ namespace ReactorSockets.Tests;
 /// </summary>
 public class StreamSessionHostilePeerRetentionTests
 {
-    private const int RecordSize = 41; // 1 type byte + 40-byte Hello payload; a Refusal is padded to it.
-    private const byte HelloType = 1;
-    private const uint ProtocolVersion = 1;
-
-    private static byte[] BuildHello(uint version = ProtocolVersion, uint maxMessageSize = 4096, ulong sendIdleMs = 1000, ulong lingerMs = 1000)
-    {
-        byte[] record = new byte[RecordSize];
-        record[0] = HelloType;
-        int offset = 1;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(offset, 4), version);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(offset, 4), maxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), sendIdleMs);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), lingerMs);
-        return record;
-    }
-
     /// <summary>
     /// Connects a fresh legitimate dialler to <paramref name="accepter"/> and asserts it establishes
     /// a Session — the only public-surface proof available that a Slot (and its retention region)
@@ -87,7 +67,7 @@ public class StreamSessionHostilePeerRetentionTests
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 1);
         using HostilePeer hostile = new();
-        byte[] partial = BuildHello().AsSpan(0, 10).ToArray();
+        byte[] partial = StreamSessionTestRecords.BuildHello().AsSpan(0, 10).ToArray();
 
         // Act
         Action act = () =>
@@ -113,7 +93,7 @@ public class StreamSessionHostilePeerRetentionTests
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 1);
         using HostilePeer hostile = new();
-        byte[] garbage = BuildHello(version: 0xDEAD_BEEF);
+        byte[] garbage = StreamSessionTestRecords.BuildHello(version: 0xDEAD_BEEF);
 
         // Act — the reactor refuses and closes this connection on its own; no explicit Close needed.
         Action act = () =>
@@ -152,7 +132,7 @@ public class StreamSessionHostilePeerRetentionTests
         // Act & Assert — a truncated handshake reuses the same, now-reclaimed Slot.
         using (HostilePeer truncated = new())
         {
-            LinkId link = truncated.ConnectAndSend(accepter.Endpoint, BuildHello().AsSpan(0, 10).ToArray());
+            LinkId link = truncated.ConnectAndSend(accepter.Endpoint, StreamSessionTestRecords.BuildHello().AsSpan(0, 10).ToArray());
             accepter.PumpAndDrainAll(3);
             truncated.Close(link);
             accepter.PumpAndDrainAll(3);
@@ -161,7 +141,7 @@ public class StreamSessionHostilePeerRetentionTests
         // Act & Assert — a garbage-version handshake reuses it a third time.
         using (HostilePeer garbageVersion = new())
         {
-            garbageVersion.ConnectAndSend(accepter.Endpoint, BuildHello(version: 0xDEAD_BEEF));
+            garbageVersion.ConnectAndSend(accepter.Endpoint, StreamSessionTestRecords.BuildHello(version: 0xDEAD_BEEF));
             accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused), maxPumps: 10);
             accepter.PumpAndDrainAll(3);
         }

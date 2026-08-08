@@ -16,30 +16,12 @@ namespace ReactorSockets.Tests;
 /// </summary>
 public class StreamSessionHandshakeGuardTests
 {
-    private const int RecordSize = 41; // 1 type byte + 40-byte Hello payload; a Refusal is padded to it.
-    private const byte HelloType = 1;
+    private const int RecordSize = StreamSessionTestRecords.HandshakeRecordSize;
+    private const byte HelloType = StreamSessionTestRecords.HelloRecordType;
     private const byte RefusalType = 2;
     private const byte RefusalReasonVersion = 1;
     private const byte RefusalReasonCapacity = 2;
-    private const uint ProtocolVersion = 1;
-
-    // ---- wire helpers: build ----
-
-    private static byte[] BuildHello(uint version, uint maxMessageSize = 4096, ulong sendIdleMs = 1000, ulong lingerMs = 1000)
-    {
-        byte[] record = new byte[RecordSize];
-        record[0] = HelloType;
-        int offset = 1;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(offset, 4), version);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(offset, 4), maxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), sendIdleMs);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), lingerMs);
-        // The trailing 16-byte resume secret is left zeroed — its content plays no part in these tests.
-        return record;
-    }
+    private const uint ProtocolVersion = StreamSessionTestRecords.ProtocolVersion;
 
     // ---- wire helpers: parse ----
 
@@ -64,7 +46,7 @@ public class StreamSessionHandshakeGuardTests
 
         // Act — the accepter also sends its own unconditional Hello the instant it accepts, before it
         // has read enough of the peer's to know the version is wrong; the Refusal follows once it does.
-        peer.Send(BuildHello(version: 2));
+        peer.Send(StreamSessionTestRecords.BuildHello(version: 2));
         accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused));
         byte[] reply = peer.ReceiveNextNonHelloRecord();
 
@@ -85,7 +67,7 @@ public class StreamSessionHandshakeGuardTests
         using RawTcpPeer peer = new(accepter.Endpoint);
 
         // Act
-        peer.Send(BuildHello(version: 2));
+        peer.Send(StreamSessionTestRecords.BuildHello(version: 2));
         Action act = () => peer.ReceiveNextNonHelloRecord();
         accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused));
 
@@ -101,7 +83,7 @@ public class StreamSessionHandshakeGuardTests
         using RawTcpPeer peer = new(accepter.Endpoint);
 
         // Act
-        peer.Send(BuildHello(version: 2));
+        peer.Send(StreamSessionTestRecords.BuildHello(version: 2));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.PumpAndDrainAll(10);
 
         // Assert
@@ -118,7 +100,7 @@ public class StreamSessionHandshakeGuardTests
         using RawTcpPeer peer = new(accepter.Endpoint);
 
         // Act
-        peer.Send(BuildHello(version: 7));
+        peer.Send(StreamSessionTestRecords.BuildHello(version: 7));
         accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused));
 
         // Assert — a version mismatch is a routine, expected outcome of running this profile, not a
@@ -151,7 +133,7 @@ public class StreamSessionHandshakeGuardTests
             // Act
             foreach (RawTcpPeer peer in peers)
             {
-                peer.Send(BuildHello(version: 2));
+                peer.Send(StreamSessionTestRecords.BuildHello(version: 2));
             }
 
             List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.PumpAndDrainAll(30);
@@ -198,7 +180,7 @@ public class StreamSessionHandshakeGuardTests
 
         // Act
         using RawTcpPeer peer = new(accepter.Endpoint);
-        peer.Send(BuildHello(ProtocolVersion));
+        peer.Send(StreamSessionTestRecords.BuildHello(ProtocolVersion));
         accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused));
         byte[] reply = peer.Receive(RecordSize);
 
@@ -226,7 +208,7 @@ public class StreamSessionHandshakeGuardTests
         // Act — a refusal says something on the wire and ends the connection; it must not be counted
         // as a Deferral (silent, waits for a later Pump) or a Discard (this profile never produces one).
         using RawTcpPeer peer = new(accepter.Endpoint);
-        peer.Send(BuildHello(ProtocolVersion));
+        peer.Send(StreamSessionTestRecords.BuildHello(ProtocolVersion));
         accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused));
 
         // Assert
@@ -246,7 +228,7 @@ public class StreamSessionHandshakeGuardTests
 
         // Act
         using RawTcpPeer peer = new(accepter.Endpoint);
-        peer.Send(BuildHello(ProtocolVersion));
+        peer.Send(StreamSessionTestRecords.BuildHello(ProtocolVersion));
         accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
 
@@ -399,7 +381,7 @@ public class StreamSessionHandshakeGuardTests
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 1);
         using HostilePeer hostile = new();
-        byte[] partial = BuildHello(ProtocolVersion).AsSpan(0, 10).ToArray();
+        byte[] partial = StreamSessionTestRecords.BuildHello(ProtocolVersion).AsSpan(0, 10).ToArray();
 
         // Act
         Action act = () =>
@@ -424,7 +406,7 @@ public class StreamSessionHandshakeGuardTests
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 1);
         using HostilePeer hostile = new();
-        byte[] garbage = BuildHello(version: 0xDEAD_BEEF);
+        byte[] garbage = StreamSessionTestRecords.BuildHello(version: 0xDEAD_BEEF);
 
         // Act
         Action act = () =>

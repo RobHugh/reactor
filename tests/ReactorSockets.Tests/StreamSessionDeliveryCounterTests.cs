@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using FluentAssertions;
@@ -17,58 +16,12 @@ namespace ReactorSockets.Tests;
 /// </summary>
 public class StreamSessionDeliveryCounterTests
 {
-    private const int RecordSize = 41; // 1 type byte + 40-byte Hello payload; a Refusal is padded to it.
-    private const byte HelloType = 1;
-    private const uint ProtocolVersion = 1;
+    private static byte[] BuildFrame(byte[] payload) => StreamSessionTestRecords.BuildFrame(payload);
 
-    private static byte[] BuildHello(uint maxMessageSize = 4096, ulong sendIdleMs = 1000, ulong lingerMs = 1000)
-    {
-        byte[] record = new byte[RecordSize];
-        record[0] = HelloType;
-        int offset = 1;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(offset, 4), ProtocolVersion);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(offset, 4), maxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), sendIdleMs);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), lingerMs);
-        return record;
-    }
+    private static byte[] PayloadOf(int length, byte marker) => StreamSessionTestRecords.PayloadOf(length, marker);
 
-    private static byte[] BuildFrame(byte[] payload)
-    {
-        byte[] frame = new byte[4 + payload.Length];
-        BinaryPrimitives.WriteUInt32BigEndian(frame, (uint)payload.Length);
-        payload.CopyTo(frame.AsSpan(4));
-        return frame;
-    }
-
-    private static byte[] PayloadOf(int length, byte marker)
-    {
-        byte[] payload = new byte[length];
-        Array.Fill(payload, marker);
-        return payload;
-    }
-
-    /// <summary>Pumps <paramref name="accepter"/> until it has drained a <see cref="SessionEventKind.PeerConnected"/> event, returning the established Peer's id.</summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, CounterPeer peer, int maxPumps = 20)
-    {
-        peer.Send(BuildHello());
-        for (int i = 0; i < maxPumps; i++)
-        {
-            accepter.Reactor.Pump();
-            foreach (var evt in accepter.DrainToListWithPayload())
-            {
-                if (evt.Kind == SessionEventKind.PeerConnected)
-                {
-                    return evt.Peer;
-                }
-            }
-        }
-
-        throw new InvalidOperationException("The Session never established within the Pump budget.");
-    }
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, CounterPeer peer, int maxPumps = 20) =>
+        StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
 
     [Fact]
     public void CountersOf_AfterThreeDeliveredMessages_MessagesReceivedReadsThree()
