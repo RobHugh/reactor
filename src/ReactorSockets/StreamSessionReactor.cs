@@ -51,6 +51,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly List<RefusalSlot> _refusals = [];
     private readonly HashSet<SlotHandle> _peersWithBufferedMessages = [];
     private readonly HashSet<SlotHandle> _peersWithPendingRetentionWrites = [];
+    private readonly HashSet<SlotHandle> _peersWithGoodbyeOwed = [];
+    private readonly HashSet<SlotHandle> _peersPendingClose = [];
     private readonly int _constructingThreadId;
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
@@ -135,13 +137,15 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     int ISessionEventSource.PendingEventCount => _pendingEvents.Count;
 
     /// <summary>
-    /// One synchronous advance: wipes the previous Frame's events, then admits ready connections,
-    /// advances every in-flight dial and reads whatever bound socket is ready right now, running the
-    /// handshake for everything that arrived, then flushes every Peer's queued retention bytes exactly
-    /// once (<see cref="FlushPendingRetentionWrites"/>, #90/3.6.2) regardless of how many
-    /// <see cref="Send"/> calls queued them. Throws <see cref="InvalidOperationException"/> if called
-    /// from any thread other than the one that constructed this Reactor, or from inside a Pump already
-    /// in progress.
+    /// One synchronous advance: wipes the previous Frame's events — which is also the moment a Peer
+    /// still <see cref="SessionEventKind.PeerClosing"/> only because the last Frame's Messages had not
+    /// been drained past yet becomes eligible to close (<see cref="RetryPeersPendingClose"/>) — then
+    /// admits ready connections, advances every in-flight dial and reads whatever bound socket is
+    /// ready right now, running the handshake for everything that arrived, then flushes every Peer's
+    /// queued retention bytes exactly once (<see cref="FlushPendingRetentionWrites"/>, #90/3.6.2)
+    /// regardless of how many <see cref="Send"/> calls queued them. Throws
+    /// <see cref="InvalidOperationException"/> if called from any thread other than the one that
+    /// constructed this Reactor, or from inside a Pump already in progress.
     /// </summary>
     public void Pump()
     {
@@ -155,7 +159,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             _arena.Reset();
             _admissionsThisFrame = 0;
             _capDeferralsThisFrame = 0;
+            RetryPeersPendingClose();
             RetryPeersWithBufferedMessages();
+            RetryGoodbyeAppends();
             _dispatcher.Pump();
             FlushPendingRetentionWrites();
             ProcessConnectingPeers();
@@ -210,16 +216,20 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Announces this end is ending the Session with <paramref name="peer"/> on purpose: appends a
-    /// Goodbye control record to whatever this Peer's retention region already holds, so it is the
-    /// last thing flushed and everything queued before it is delivered first, then forbids any further
-    /// <see cref="Send"/> to it. The <see cref="SessionEventKind.PeerClosed"/> carrying
-    /// <see cref="DisconnectReason.LocalClose"/> is queued once that flush fully drains — immediately,
-    /// on a later Pump, if nothing was queued when <see cref="Close"/> was called, or after however
-    /// many Pumps a short write takes to carry everything already retained plus the Goodbye itself.
-    /// Idempotent: a stale <see cref="PeerId"/>, or a Peer already closing, is a no-op — a Peer closing
-    /// under a caller, or a caller that closes the same Peer twice, is an ordinary race rather than a
-    /// programmer error.
+    /// Announces this end is ending the Session with <paramref name="peer"/> on purpose: attempts to
+    /// append a Goodbye control record to whatever this Peer's retention region already holds, so it
+    /// is the last thing flushed and everything queued before it is delivered first, then forbids any
+    /// further <see cref="Send"/> to it. If retention has no room for it yet, the attempt is retried
+    /// on every later Pump (<see cref="RetryGoodbyeAppends"/>) until it commits — <see cref="Close"/>
+    /// must never leave the far end open indefinitely because the Goodbye it promised was silently
+    /// dropped (issue #23 review finding), and this end never closes itself locally until its own
+    /// Goodbye has actually been appended and flushed. The <see cref="SessionEventKind.PeerClosed"/>
+    /// carrying <see cref="DisconnectReason.LocalClose"/> is queued once that flush fully drains —
+    /// immediately, on a later Pump, if nothing was queued when <see cref="Close"/> was called, or
+    /// after however many Pumps a short write (or a retention append retry) takes to carry everything
+    /// already retained plus the Goodbye itself. Idempotent: a stale <see cref="PeerId"/>, or a Peer
+    /// already closing, is a no-op — a Peer closing under a caller, or a caller that closes the same
+    /// Peer twice, is an ordinary race rather than a programmer error.
     /// </summary>
     public void Close(PeerId peer)
     {
@@ -241,23 +251,77 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        slot.PendingCloseReasonAfterRetentionDrains = DisconnectReason.LocalClose;
+        AppendGoodbyeOrDefer(handle, slot);
+    }
 
+    /// <summary>
+    /// Attempts to append this end's own Goodbye sentinel to <paramref name="handle"/>'s retention
+    /// region. On <see cref="RetentionOutcome.Committed"/>, marks the write pending
+    /// (<see cref="FlushPendingRetentionWrites"/> carries it out) and records
+    /// <see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/> as
+    /// <see cref="DisconnectReason.LocalClose"/> — set only now, once the Goodbye is truly queued
+    /// behind whatever else this Peer's retention already held, never eagerly at <see cref="Close"/>:
+    /// setting it before the append succeeds is exactly the bug this method closes, since
+    /// <see cref="TryCloseAfterRetentionDrained"/> would otherwise see retention run dry once the
+    /// pre-<see cref="Close"/> Sends flush and close this end locally without the Goodbye it promised
+    /// ever having reached the wire. On <see cref="RetentionOutcome.Exhausted"/>, the attempt is
+    /// recorded in <see cref="_peersWithGoodbyeOwed"/> for <see cref="RetryGoodbyeAppends"/> to retry
+    /// on a later Pump, mirroring the shape #81's <see cref="RetryPeersWithBufferedMessages"/>
+    /// established — that set is for Messages a Peer sent this end; this one is for the single control
+    /// record this end owes the far end.
+    /// </summary>
+    private void AppendGoodbyeOrDefer(SlotHandle handle, PeerSlot slot)
+    {
         Span<byte> goodbye = stackalloc byte[MessageFramingCodec.LengthPrefixSize];
         MessageFramingCodec.WriteGoodbye(goodbye);
-        switch (_retention.TryAppend(handle.Index, goodbye))
+        RetentionOutcome outcome = _retention.TryAppend(handle.Index, goodbye);
+        switch (outcome)
         {
             case RetentionOutcome.Committed:
                 slot.HasPendingRetentionWrite = true;
                 _peersWithPendingRetentionWrites.Add(handle);
+                slot.PendingCloseReasonAfterRetentionDrains = DisconnectReason.LocalClose;
+                _peersPendingClose.Add(handle);
+                _peersWithGoodbyeOwed.Remove(handle);
                 break;
 
             case RetentionOutcome.Exhausted:
-                // No room left for the Goodbye sentinel behind whatever Sends already queued. The Peer
-                // still stops accepting further Sends (LocalGoodbyeSent above), but nothing announces
-                // the ending on the wire until retention frees up — Close does not retry on the
-                // caller's behalf (#81's RetryPeersWithBufferedMessages is for Messages, not this).
+                // No room yet for the Goodbye sentinel behind whatever Sends already queued.
+                // RetryGoodbyeAppends re-attempts this on a later Pump once bytes are released — Close
+                // must never leave the ending unannounced just because retention happened to be full
+                // the moment it was called.
+                _peersWithGoodbyeOwed.Add(handle);
                 break;
+
+            default:
+                throw new InvalidOperationException($"Unrecognised {nameof(RetentionOutcome)}: {outcome}.");
+        }
+    }
+
+    /// <summary>
+    /// Re-attempts <see cref="AppendGoodbyeOrDefer"/> for every Peer whose <see cref="Close"/> found
+    /// retention exhausted at the time. Runs once, at the start of every Pump, after an earlier
+    /// Frame's flush may have released the room the first attempt lacked — the same position and
+    /// snapshot-then-clear shape as <see cref="RetryPeersWithBufferedMessages"/> (#81), so a Peer whose
+    /// append keeps failing is simply re-added to <see cref="_peersWithGoodbyeOwed"/> by
+    /// <see cref="AppendGoodbyeOrDefer"/> itself rather than left off this list.
+    /// </summary>
+    private void RetryGoodbyeAppends()
+    {
+        if (_peersWithGoodbyeOwed.Count == 0)
+        {
+            return;
+        }
+
+        SlotHandle[] pending = [.. _peersWithGoodbyeOwed];
+        _peersWithGoodbyeOwed.Clear();
+
+        foreach (SlotHandle handle in pending)
+        {
+            if (_peers.TryResolve(handle) is PeerSlot slot)
+            {
+                AppendGoodbyeOrDefer(handle, slot);
+            }
         }
     }
 
@@ -284,7 +348,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// (<see cref="PeerSlot.HasPendingRetentionWrite"/>), which the next <see cref="Pump"/>'s explicit
     /// flush step (<see cref="FlushPendingRetentionWrites"/>) drains in a single write carrying
     /// everything queued, including whatever was already sitting there. A Send with no following Pump
-    /// call puts nothing on the wire.
+    /// call puts nothing on the wire. Refuses once a Goodbye has passed in either direction — this
+    /// end's own (<see cref="PeerSlot.LocalGoodbyeSent"/>) or the far end's arrived and this Peer is
+    /// already <see cref="SessionEventKind.PeerClosing"/> or on its way to
+    /// <see cref="SessionEventKind.PeerClosed"/> (<see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/>)
+    /// — since a Message queued after a Goodbye is not one the far end has any business receiving
+    /// (issue #23).
     /// </summary>
     /// <param name="peer">The Peer to send to. Throws if not open, matching <see cref="CountersOf"/>.</param>
     /// <param name="message">
@@ -307,7 +376,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         SlotHandle handle = ToHandle(peer);
         PeerSlot slot = _peers.TryResolve(handle) ?? throw new ArgumentException($"Peer {peer} is not open.", nameof(peer));
 
-        if (slot.LocalGoodbyeSent)
+        if (slot.LocalGoodbyeSent || slot.PendingCloseReasonAfterRetentionDrains is not null)
         {
             return SendOutcome.Closed;
         }
@@ -370,6 +439,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _pendingEvents.Clear();
         _peersWithBufferedMessages.Clear();
         _peersWithPendingRetentionWrites.Clear();
+        _peersPendingClose.Clear();
+        _peersWithGoodbyeOwed.Clear();
         _disposed = true;
         DisposeLinks();
     }
@@ -841,25 +912,68 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Closes a Peer whose Goodbye — its own, from <see cref="Close"/>, or the remote's, observed while
-    /// this end's retention for it was still non-empty — has finished flushing
-    /// (<see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/>). Called from every point in
-    /// <see cref="FlushRetention"/> that finds nothing left to send; a no-op when nothing is pending,
-    /// which is the ordinary case for a Peer that was never told to close.
+    /// The single authority for "should this Peer close now": true only once a Goodbye — its own, from
+    /// <see cref="Close"/>, or the remote's, observed while something was still outstanding
+    /// (<see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/>) — has been recorded, this end's
+    /// own outbound retention for it has fully flushed (<see cref="RetentionIsDrained"/>), and nothing
+    /// this end already reassembled from it remains undelivered to the consumer
+    /// (<see cref="HasUndeliveredInboundWork"/>, issue #23 review finding — a Goodbye does not outrun
+    /// the Messages queued ahead of it). Called both from every point in <see cref="FlushRetention"/>
+    /// that finds nothing left to send, and once per Pump for every Peer still waiting
+    /// (<see cref="RetryPeersPendingClose"/>) in case only the inbound side was still outstanding; a
+    /// no-op when nothing is pending, which is the ordinary case for a Peer that was never told to
+    /// close.
     /// </summary>
     private void TryCloseAfterRetentionDrained(SlotHandle handle, PeerSlot slot)
     {
-        if (slot.PendingCloseReasonAfterRetentionDrains is DisconnectReason reason)
+        if (slot.PendingCloseReasonAfterRetentionDrains is DisconnectReason reason
+            && RetentionIsDrained(handle)
+            && !HasUndeliveredInboundWork(handle))
         {
             ClosePeer(handle, reason);
         }
     }
 
-    /// <summary>Whether <paramref name="handle"/> has nothing left in its own outbound retention to flush.</summary>
+    /// <summary>
+    /// Whether <paramref name="handle"/> has nothing left in its own outbound retention to flush — this
+    /// end's own half of what <see cref="TryCloseAfterRetentionDrained"/> requires before closing.
+    /// Says nothing about inbound work still owed to the consumer; see
+    /// <see cref="HasUndeliveredInboundWork"/> for that half.
+    /// </summary>
     private bool RetentionIsDrained(SlotHandle handle)
     {
         (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) = _retention.GetReadable(handle.Index);
         return first.Length == 0 && second.Length == 0;
+    }
+
+    /// <summary>
+    /// Whether the consumer still has something outstanding to receive from <paramref name="handle"/>:
+    /// either a Message this end already reassembled and queued as
+    /// <see cref="SessionEventKind.MessageReceived"/> in the current Frame's undrained events, or bytes
+    /// still buffered in its receive share awaiting arena room (<see cref="_peersWithBufferedMessages"/>,
+    /// #81). Checked live against <see cref="_pendingEvents"/> rather than any separate counter: since
+    /// <see cref="Pump"/> clears that list first thing, a Message from an earlier Frame is — by the
+    /// library's own memory-validity contract — already considered delivered, so this naturally reports
+    /// false for anything older than the Frame in progress without this end needing to track whether
+    /// the consumer literally called <c>Drain</c>.
+    /// </summary>
+    private bool HasUndeliveredInboundWork(SlotHandle handle)
+    {
+        if (_peersWithBufferedMessages.Contains(handle))
+        {
+            return true;
+        }
+
+        PeerId peer = ToPeerId(handle);
+        foreach (PendingEvent pending in _pendingEvents)
+        {
+            if (pending.Kind == SessionEventKind.MessageReceived && pending.Peer == peer)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -974,9 +1088,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Stops — leaving whatever is left in place for a later Pump — the moment the front of the buffer
     /// holds less than a whole Message, or an arena reservation cannot be made this Frame. A Goodbye
     /// control record at the front (<see cref="MessageFramingOutcome.GoodbyeReceived"/>, issue #23)
-    /// closes the Peer directly if this end's own retention for it is already empty, or otherwise marks
-    /// it <see cref="SessionEventKind.PeerClosing"/> and defers the close to whenever that retention
-    /// next drains (<see cref="FlushRetention"/>) — never both a <c>PeerClosing</c> event and an
+    /// closes the Peer directly only if nothing is outstanding on either side: this end's own outbound
+    /// retention for it already empty, and nothing this end already reassembled from it still queued
+    /// undelivered (<see cref="HasUndeliveredInboundWork"/> — a Message parsed earlier in this same
+    /// loop, ahead of the Goodbye in the same read, counts even though it already reached
+    /// <see cref="SessionEventKind.MessageReceived"/> first). Otherwise marks it
+    /// <see cref="SessionEventKind.PeerClosing"/> and defers the close to whenever both sides drain
+    /// (<see cref="TryCloseAfterRetentionDrained"/>) — never both a <c>PeerClosing</c> event and an
     /// immediate close for the same Goodbye.
     /// </summary>
     private void DeliverCompleteMessages(SlotHandle handle, PeerSlot slot)
@@ -1025,15 +1143,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 {
                     CompactReceiveBuffer(slot, messageEnd);
 
-                    if (RetentionIsDrained(handle))
-                    {
-                        ClosePeer(handle, DisconnectReason.PeerGoodbye);
-                        return;
-                    }
-
                     if (slot.PendingCloseReasonAfterRetentionDrains is null)
                     {
+                        if (!HasUndeliveredInboundWork(handle) && RetentionIsDrained(handle))
+                        {
+                            ClosePeer(handle, DisconnectReason.PeerGoodbye);
+                            return;
+                        }
+
                         slot.PendingCloseReasonAfterRetentionDrains = DisconnectReason.PeerGoodbye;
+                        _peersPendingClose.Add(handle);
                         _pendingEvents.Add(new PendingEvent
                         {
                             Kind = SessionEventKind.PeerClosing,
@@ -1091,6 +1210,41 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             if (_peers.TryResolve(handle) is PeerSlot slot)
             {
                 DeliverCompleteMessages(handle, slot);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gives every Peer waiting on <see cref="TryCloseAfterRetentionDrained"/> a fresh chance now that
+    /// this Frame's just-cleared <see cref="_pendingEvents"/> may have let
+    /// <see cref="HasUndeliveredInboundWork"/> turn false: a Peer that entered
+    /// <see cref="SessionEventKind.PeerClosing"/> because a Message was still queued for the consumer
+    /// has nothing left to trigger <see cref="FlushRetention"/>'s own close check once its own outbound
+    /// retention was already drained at the time — the only thing still pending was delivery, and
+    /// delivery has no socket event of its own. Runs once, at the very start of every Pump, right after
+    /// the clear that is what makes a previous Frame's Messages count as delivered. Unlike
+    /// <see cref="RetryPeersWithBufferedMessages"/>, this does not snapshot-and-clear:
+    /// <see cref="_peersPendingClose"/> is a durable membership list a handle leaves only via
+    /// <see cref="ClosePeer"/>, not a one-shot retry queue, so it is safe — and necessary — to just walk
+    /// a snapshot of it every time without ever clearing it out from under itself.
+    /// </summary>
+    private void RetryPeersPendingClose()
+    {
+        if (_peersPendingClose.Count == 0)
+        {
+            return;
+        }
+
+        SlotHandle[] pending = [.. _peersPendingClose];
+        foreach (SlotHandle handle in pending)
+        {
+            if (_peers.TryResolve(handle) is PeerSlot slot)
+            {
+                TryCloseAfterRetentionDrained(handle, slot);
+            }
+            else
+            {
+                _peersPendingClose.Remove(handle);
             }
         }
     }
@@ -1271,6 +1425,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         slot.Link.Dispose();
         _peersWithBufferedMessages.Remove(handle);
         _peersWithPendingRetentionWrites.Remove(handle);
+        _peersPendingClose.Remove(handle);
+        _peersWithGoodbyeOwed.Remove(handle);
         _retention.ResetShareHolder(handle.Index);
         _pendingEvents.Add(new PendingEvent
         {
@@ -1432,12 +1588,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         public bool LocalGoodbyeSent { get; set; }
 
         /// <summary>
-        /// Set by <see cref="Close"/> or by an inbound Goodbye that found this end's own retention for
-        /// the Peer still non-empty: the reason <see cref="ClosePeer"/> is called with the moment
-        /// <see cref="FlushRetention"/> next finds that retention fully drained
-        /// (<c>TryCloseAfterRetentionDrained</c>). Whichever of the two sets it first wins — a
-        /// <c>??=</c>, never overwritten — since either way this end is on its way out and the first
-        /// reason recorded is the truest account of why.
+        /// The reason <see cref="ClosePeer"/> is eventually called with, once both this end's own
+        /// outbound retention for the Peer is drained and nothing this end already reassembled from it
+        /// remains undelivered to the consumer (<c>TryCloseAfterRetentionDrained</c>). Set once, by an
+        /// explicit null guard at each writer rather than a <c>??=</c>: <see cref="AppendGoodbyeOrDefer"/>
+        /// sets it to <see cref="DisconnectReason.LocalClose"/> only once this end's own Goodbye has
+        /// actually been appended to retention — not eagerly when <see cref="Close"/> is called, which
+        /// would let this end close locally before the Goodbye it announced ever reached the wire — and
+        /// <see cref="DeliverCompleteMessages"/> sets it to <see cref="DisconnectReason.PeerGoodbye"/>
+        /// the first time an inbound Goodbye finds something still outstanding on either side.
+        /// Whichever writer runs first wins, since either way this end is already on its way out and
+        /// the first reason recorded is the truest account of why; <see cref="Close"/>'s own early
+        /// return when this is already non-null — which also skips announcing a second Goodbye, not
+        /// merely coalescing the reason — is what stops a second writer from ever running.
         /// </summary>
         public DisconnectReason? PendingCloseReasonAfterRetentionDrains { get; set; }
     }

@@ -28,12 +28,16 @@ public enum SessionEventKind
     MessageReceived = 3,
 
     /// <summary>
-    /// The Peer's Goodbye arrived while this end still had bytes of its own outstanding for it — still
-    /// being flushed to the socket. The Peer accepts no further <c>Send</c>s worth making from here
-    /// (issue #23) and a <see cref="SessionEventKind.PeerClosed"/> carrying
-    /// <see cref="DisconnectReason.PeerGoodbye"/> follows once that flush drains. Never raised when
-    /// nothing was outstanding — a Goodbye that finds the Peer already caught up closes it directly,
-    /// with no zero-Frame Closing observable in between.
+    /// The Peer's Goodbye arrived while something was still outstanding to deliver: either Messages
+    /// this end had already reassembled from it but the consumer had not yet drained (issue #23 review
+    /// finding — a Message queued ahead of the Goodbye in the same read counts, even though it reached
+    /// <see cref="SessionEventKind.MessageReceived"/> first), or bytes still buffered in its receive
+    /// share awaiting arena room (#81), or this end's own outbound retention for it still being
+    /// flushed to the socket. The Peer accepts no further <c>Send</c>s worth making from here (issue
+    /// #23) and a <see cref="SessionEventKind.PeerClosed"/> carrying
+    /// <see cref="DisconnectReason.PeerGoodbye"/> follows once all of that is exhausted. Never raised
+    /// when nothing was outstanding on either side — a Goodbye that finds the Peer already caught up
+    /// closes it directly, with no zero-Frame Closing observable in between.
     /// </summary>
     PeerClosing = 4,
 }
