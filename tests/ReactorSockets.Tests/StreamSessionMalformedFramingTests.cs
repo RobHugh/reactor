@@ -148,6 +148,44 @@ public class StreamSessionMalformedFramingTests
     }
 
     // =========================================================================================
+    // Goodbye sentinel precedence over the oversized-prefix rule
+    // =========================================================================================
+
+    [Fact]
+    public void DeliverCompleteMessages_PrefixOneLessThanTheGoodbyeSentinel_ClosesWithProtocolViolation()
+    {
+        // Arrange — pins the boundary from the violation side: 0xFFFFFFFE is one below the sentinel.
+        using StreamSessionReactorHarness accepter = new();
+        using MalformedPeer peer = new(accepter.Endpoint);
+        EstablishSession(accepter, peer);
+
+        // Act
+        peer.Send(BuildPrefix(0xFFFFFFFE));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> drained = PumpUntilClosed(accepter);
+
+        // Assert
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.ProtocolViolation);
+    }
+
+    [Fact]
+    public void DeliverCompleteMessages_PrefixEqualToTheGoodbyeSentinel_ClosesCleanlyAsGoodbye()
+    {
+        // Arrange — pins the boundary from the sentinel side: 0xFFFFFFFF is a clean Goodbye, not a violation.
+        using StreamSessionReactorHarness accepter = new();
+        using MalformedPeer peer = new(accepter.Endpoint);
+        EstablishSession(accepter, peer);
+
+        // Act
+        peer.Send(BuildPrefix(0xFFFFFFFF));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> drained = PumpUntilClosed(accepter);
+
+        // Assert
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.PeerGoodbye);
+    }
+
+    // =========================================================================================
     // Zero-length prefix
     // =========================================================================================
 
