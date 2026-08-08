@@ -264,7 +264,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// setting it before the append succeeds is exactly the bug this method closes, since
     /// <see cref="TryCloseAfterRetentionDrained"/> would otherwise see retention run dry once the
     /// pre-<see cref="Close"/> Sends flush and close this end locally without the Goodbye it promised
-    /// ever having reached the wire. On <see cref="RetentionOutcome.Exhausted"/>, the attempt is
+    /// ever having reached the wire. The <c>??=</c> is what keeps that record first-writer-wins even
+    /// on the one path that reaches here without passing <see cref="Close"/>'s guard: a
+    /// <see cref="Close"/> whose append was deferred, followed by an inbound Goodbye recording
+    /// <see cref="DisconnectReason.PeerGoodbye"/>, followed by <see cref="RetryGoodbyeAppends"/>
+    /// finally committing — the far end's reason was recorded first and stays.
+    /// On <see cref="RetentionOutcome.Exhausted"/>, the attempt is
     /// recorded in <see cref="_peersWithGoodbyeOwed"/> for <see cref="RetryGoodbyeAppends"/> to retry
     /// on a later Pump, mirroring the shape #81's <see cref="RetryPeersWithBufferedMessages"/>
     /// established — that set is for Messages a Peer sent this end; this one is for the single control
@@ -280,7 +285,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             case RetentionOutcome.Committed:
                 slot.HasPendingRetentionWrite = true;
                 _peersWithPendingRetentionWrites.Add(handle);
-                slot.PendingCloseReasonAfterRetentionDrains = DisconnectReason.LocalClose;
+                slot.PendingCloseReasonAfterRetentionDrains ??= DisconnectReason.LocalClose;
                 _peersPendingClose.Add(handle);
                 _peersWithGoodbyeOwed.Remove(handle);
                 break;
@@ -1581,26 +1586,33 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         public bool HasPendingRetentionWrite { get; set; }
 
         /// <summary>
-        /// Set once <see cref="Close"/> has appended this end's Goodbye to its own retention ring.
-        /// Idempotent-guard and Send-refusal flag in one: a second <see cref="Close"/> call is a no-op,
-        /// and <see cref="Send"/> refuses once this is set (issue #23).
+        /// Set the moment <see cref="Close"/> accepts responsibility for this end's Goodbye — before
+        /// the append is attempted, and it stays set even when that append is deferred for want of
+        /// retention room, because from the caller's point of view the ending is already decided and
+        /// the Goodbye is owed either way. Idempotent-guard and Send-refusal flag in one: a second
+        /// <see cref="Close"/> call is a no-op, and <see cref="Send"/> refuses once this is set
+        /// (issue #23). Note this says the Goodbye is owed, not that it has reached retention, let
+        /// alone the wire — <see cref="PendingCloseReasonAfterRetentionDrains"/> is the record that
+        /// waits on the append actually committing.
         /// </summary>
         public bool LocalGoodbyeSent { get; set; }
 
         /// <summary>
         /// The reason <see cref="ClosePeer"/> is eventually called with, once both this end's own
         /// outbound retention for the Peer is drained and nothing this end already reassembled from it
-        /// remains undelivered to the consumer (<c>TryCloseAfterRetentionDrained</c>). Set once, by an
-        /// explicit null guard at each writer rather than a <c>??=</c>: <see cref="AppendGoodbyeOrDefer"/>
-        /// sets it to <see cref="DisconnectReason.LocalClose"/> only once this end's own Goodbye has
-        /// actually been appended to retention — not eagerly when <see cref="Close"/> is called, which
-        /// would let this end close locally before the Goodbye it announced ever reached the wire — and
-        /// <see cref="DeliverCompleteMessages"/> sets it to <see cref="DisconnectReason.PeerGoodbye"/>
-        /// the first time an inbound Goodbye finds something still outstanding on either side.
-        /// Whichever writer runs first wins, since either way this end is already on its way out and
-        /// the first reason recorded is the truest account of why; <see cref="Close"/>'s own early
-        /// return when this is already non-null — which also skips announcing a second Goodbye, not
-        /// merely coalescing the reason — is what stops a second writer from ever running.
+        /// remains undelivered to the consumer (<c>TryCloseAfterRetentionDrained</c>). Written by two
+        /// places, and the first of them to run wins: <see cref="AppendGoodbyeOrDefer"/> records
+        /// <see cref="DisconnectReason.LocalClose"/> once this end's own Goodbye has actually been
+        /// appended to retention — not eagerly when <see cref="Close"/> is called, which would let this
+        /// end close locally before the Goodbye it announced ever reached the wire — and
+        /// <see cref="DeliverCompleteMessages"/> records <see cref="DisconnectReason.PeerGoodbye"/> when
+        /// an inbound Goodbye finds something still outstanding on either side. Two guards keep that
+        /// first-writer-wins rule rather than one: <see cref="Close"/>'s early return when this is
+        /// already non-null (which also skips announcing a second Goodbye, not merely coalescing the
+        /// reason), and <see cref="AppendGoodbyeOrDefer"/>'s own <c>??=</c>, which covers the
+        /// interleaving that never passes through that early return — a deferred append committing on
+        /// a later Pump, after an inbound Goodbye has already recorded its reason. Either way this end
+        /// is on its way out, and the first reason recorded is the truest account of why.
         /// </summary>
         public DisconnectReason? PendingCloseReasonAfterRetentionDrains { get; set; }
     }
