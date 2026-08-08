@@ -521,9 +521,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                     // socket itself is unaffected — see TcpListenLink.TryAccept's own remarks — so the
                     // next Pump simply tries again.
                     return;
-                case TcpAcceptOutcome.Accepted:
+                case TcpAcceptOutcome.Accepted when result.IsAccepted:
                     _admissionsThisFrame++;
-                    AdmitOrRefuse(result.Socket!);
+                    AdmitOrRefuse(result.Socket);
                     break;
             }
         }

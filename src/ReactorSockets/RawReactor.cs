@@ -857,8 +857,8 @@ public sealed class RawReactor : IDisposable
                 case TcpAcceptOutcome.Failed:
                     RecordAcceptFailed(handle, result.Error);
                     return;
-                case TcpAcceptOutcome.Accepted:
-                    AdmitAccepted(handle, result.Socket!);
+                case TcpAcceptOutcome.Accepted when result.IsAccepted:
+                    AdmitAccepted(handle, result.Socket);
                     break;
             }
         }
