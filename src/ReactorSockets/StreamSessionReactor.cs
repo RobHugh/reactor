@@ -752,8 +752,22 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// the moment the record is fully on the wire — immediately if the send completes now, or from
     /// <see cref="OnPeerWritable"/> once a short send's remainder finishes flushing.
     /// </summary>
+    /// <remarks>
+    /// If this end's own earlier record (its Hello) short-sent and is still draining, its remainder in
+    /// <see cref="PeerSlot.PendingHandshakeBytesToSend"/> must not be overwritten by a Refusal that
+    /// becomes necessary before that flush finishes (#98) — writing <paramref name="record"/> to the
+    /// wire now would interleave it into the still-unfinished one. This queues it in
+    /// <see cref="PeerSlot.QueuedHandshakeSend"/> instead; <see cref="OnPeerWritable"/> sends it, in
+    /// order, once the pending remainder is fully flushed.
+    /// </remarks>
     private void SendRecordOrArm(SlotHandle handle, PeerSlot slot, byte[] record, DisconnectReason? closeReasonAfterSend)
     {
+        if (slot.PendingHandshakeBytesToSend is { Length: > 0 })
+        {
+            slot.QueuedHandshakeSend = (record, closeReasonAfterSend);
+            return;
+        }
+
         TcpLinkSendResult result = slot.Link.Send(record);
         if (!result.IsSuccess)
         {
@@ -810,6 +824,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             if (slot.PendingCloseReason is DisconnectReason reason)
             {
                 ClosePeer(handle, reason);
+                return;
+            }
+
+            if (slot.QueuedHandshakeSend is { } queued)
+            {
+                slot.QueuedHandshakeSend = null;
+                SendRecordOrArm(handle, slot, queued.Record, queued.CloseReasonAfterSend);
                 return;
             }
         }
@@ -1015,6 +1036,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="StreamHandshakeCodec.RecordSize"/> has arrived; once Established, reads instead feed
     /// the Peer's persistent receive buffer and Message reassembly (<see cref="OnEstablishedPeerReadable"/>).
     /// </summary>
+    /// <remarks>
+    /// A full record already filled but not yet acted on (this end's Refusal is still draining a short
+    /// send, deferring <c>ClosePeer</c>) must not be read again: <see cref="PeerSlot.HandshakeBytesFilled"/>
+    /// sitting at <see cref="StreamHandshakeCodec.RecordSize"/> would otherwise hand
+    /// <c>Receive</c> a zero-length span and re-enter <see cref="OnHandshakeRecordFilled"/> on the same
+    /// buffer for whatever readability fires next (#98). This Peer's own writable/close path owns what
+    /// happens next once a record is full; a further read is not this state's job.
+    /// </remarks>
     private void OnPeerReadable(SlotHandle handle)
     {
         if (_peers.TryResolve(handle) is not PeerSlot slot)
@@ -1025,6 +1054,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         if (slot.State == HandshakeState.Established)
         {
             OnEstablishedPeerReadable(handle, slot);
+            return;
+        }
+
+        if (slot.HandshakeBytesFilled >= StreamHandshakeCodec.RecordSize)
+        {
             return;
         }
 
@@ -1603,6 +1637,15 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// closes nothing on completion.
         /// </summary>
         public DisconnectReason? PendingCloseReason { get; set; }
+
+        /// <summary>
+        /// A second handshake record — always a Refusal — that arrived while
+        /// <see cref="PendingHandshakeBytesToSend"/> was still draining a short-sent first one (#98),
+        /// queued here rather than overwriting the still-pending remainder or interleaving early.
+        /// <see cref="OnPeerWritable"/> sends it, via <c>SendRecordOrArm</c>, the moment the first
+        /// record's remainder is fully on the wire.
+        /// </summary>
+        public (byte[] Record, DisconnectReason? CloseReasonAfterSend)? QueuedHandshakeSend { get; set; }
 
         /// <summary>
         /// Set by <see cref="Send"/> when it appends to this Peer's retention ring, and again by

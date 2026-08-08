@@ -129,6 +129,60 @@ public class StreamSessionHandshakeGuardTests
     }
 
     // =========================================================================================
+    // A Refusal never overwrites or reorders with a still-draining Hello (#98)
+    // =========================================================================================
+
+    [Fact]
+    public void Connect_ManySimultaneousVersionMismatchesWithShrunkReceiveBuffers_EachGetsExactlyOneWellFormedRefusalAndCleanClose()
+    {
+        // Arrange — every peer offers a version this Reactor does not speak, and every one shrinks its
+        // own receive buffer before connecting (mirrors CreateCounterpartyListener's doc: this has to
+        // happen before the handshake to actually clamp the negotiated window). This end's own Hello
+        // is sent unconditionally the instant each connection is accepted, before anything of the
+        // peer's has been read — a short send of that Hello racing the Refusal that follows once the
+        // bad version is discovered (#98) is "improbable in practice, not impossible" per the issue,
+        // so this admits every peer in a single Frame to give that race as many chances as one Pump
+        // can offer, rather than pinning any one connection as the one that must reproduce it.
+        const int peerCount = 30;
+        using StreamSessionReactorHarness accepter = new(capacity: peerCount, admissionCap: peerCount);
+        List<RawTcpPeer> peers = [.. Enumerable.Range(0, peerCount).Select(_ => new RawTcpPeer(accepter.Endpoint, receiveBufferSize: 1))];
+        try
+        {
+            // Act
+            foreach (RawTcpPeer peer in peers)
+            {
+                peer.Send(BuildHello(version: 2));
+            }
+
+            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.PumpAndDrainAll(30);
+
+            // Assert — every connection sees exactly one clean version-mismatch close, and the Refusal
+            // each received off the wire is byte-correct: a short-sent Hello's remainder was never
+            // silently overwritten or interleaved with the Refusal that followed it, and no connection
+            // was double-processed into more than one close.
+            events.Should().HaveCount(peerCount);
+            events.Should().OnlyContain(e => e.Kind == SessionEventKind.PeerClosed && e.Reason == DisconnectReason.VersionMismatch);
+
+            foreach (RawTcpPeer peer in peers)
+            {
+                byte[] reply = peer.ReceiveNextNonHelloRecord();
+                reply[0].Should().Be(RefusalType);
+                (byte reason, uint offered, uint required) = ParseRefusal(reply);
+                reason.Should().Be(RefusalReasonVersion);
+                offered.Should().Be(2);
+                required.Should().Be(ProtocolVersion);
+            }
+        }
+        finally
+        {
+            foreach (RawTcpPeer peer in peers)
+            {
+                peer.Dispose();
+            }
+        }
+    }
+
+    // =========================================================================================
     // Capacity refusal
     // =========================================================================================
 
@@ -397,9 +451,20 @@ public class StreamSessionHandshakeGuardTests
     {
         private readonly Socket _socket;
 
-        public RawTcpPeer(IPEndPoint destination)
+        /// <param name="destination">The Reactor's bound endpoint to connect to.</param>
+        /// <param name="receiveBufferSize">
+        /// Applied before <c>Connect</c> — mirrors <see cref="RawReactorHarness.CreateCounterpartyListener"/>'s
+        /// receive-buffer parameter — so the negotiated window is small from the handshake onward, which is
+        /// how a short-send is provoked without pinning a magic payload size. Omit for the OS default.
+        /// </param>
+        public RawTcpPeer(IPEndPoint destination, int? receiveBufferSize = null)
         {
             _socket = new Socket(destination.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            if (receiveBufferSize is int size)
+            {
+                _socket.ReceiveBufferSize = size;
+            }
+
             _socket.Connect(destination);
             _socket.ReceiveTimeout = 5000;
         }
