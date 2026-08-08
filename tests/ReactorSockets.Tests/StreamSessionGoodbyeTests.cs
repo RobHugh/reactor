@@ -511,10 +511,20 @@ public class StreamSessionGoodbyeTests
         drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosing);
         drained.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
 
-        // Act — a genuinely separate write, on a later Pump, behind the already-classified Goodbye.
+        // Act — a genuinely separate write, on a later Pump, behind the already-classified Goodbye. A
+        // sleep-on-no-progress retry, not a tight sleepless Pump loop: this end's own outbound side is
+        // already saturated, so the OS needs real wall-clock time to schedule and deliver the peer's
+        // small trailing write on top of that congestion — the same idiom StreamSessionDeliveryCounterTests'
+        // CountersOf_AfterThreeDeliveredMessages_MessagesReceivedReadsThree uses for Linux's longer
+        // ack latency, itself mirroring RawReactorSendTests' sleep-on-no-progress idiom.
         peer.Send(BuildFrame(trailingMessage));
-        for (int i = 0; i < 20 && !drained.Any(e => e.Kind == SessionEventKind.PeerClosed); i++)
+        for (int attempt = 0; attempt < 20 && !drained.Any(e => e.Kind == SessionEventKind.PeerClosed); attempt++)
         {
+            if (attempt > 0)
+            {
+                Thread.Sleep(20);
+            }
+
             accepter.Reactor.Pump();
             drained.AddRange(accepter.DrainToList());
         }
