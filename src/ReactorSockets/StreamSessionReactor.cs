@@ -197,6 +197,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         EnsureCallingThreadIsConstructingThread();
         ArgumentNullException.ThrowIfNull(destination);
 
+        if (!_peers.HasFreeSlot)
+        {
+            throw new InvalidOperationException(
+                $"This Reactor's capacity of {_options.Reactor.Capacity} Peers is fully occupied — close a Peer before dialling another.");
+        }
+
         TcpLink link = TcpLink.Dial(destination);
         PeerSlot slot = new()
         {
@@ -206,8 +212,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             ReceiveBuffer = new byte[_options.ResolvedReceiveBufferSize],
         };
 
-        SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
-            $"This Reactor's capacity of {_options.Reactor.Capacity} Peers is fully occupied — close a Peer before dialling another.");
+        // `HasFreeSlot` was just checked and this Reactor is single-threaded (ADR 0002), so `TryAdd`
+        // cannot fail here — the guard is defensive rather than a case this branch expects to take.
+        if (_peers.TryAdd(slot) is not SlotHandle handle)
+        {
+            link.Dispose();
+            throw new InvalidOperationException(
+                $"This Reactor's capacity of {_options.Reactor.Capacity} Peers is fully occupied — close a Peer before dialling another.");
+        }
 
         slot.Handle = handle;
         _connectingPeers.Add(handle);

@@ -153,6 +153,29 @@ public class StreamSessionEndpointTests
         firstAccepted[0].Peer.Should().NotBe(secondAccepted[0].Peer);
     }
 
+    [Fact]
+    public void Connect_WhenThePeerTableIsAtCapacity_ThrowsRepeatablyWithoutTouchingTheTable()
+    {
+        // Arrange — capacity 1: the first Connect exhausts it while its handshake is still pending, so
+        // a further Connect must be refused before TcpLink.Dial ever creates a socket for it (issue
+        // #97) — the same order RawReactor checks capacity in before Listen or Connect creates
+        // anything. The socket that would otherwise leak is not observable at the L2 seam (tests/
+        // CLAUDE.md, ADR 0015); what is observable is that the refusal never reaches the Peer table, so
+        // repeating it behaves identically rather than degrading — which it would if a Slot were ever
+        // reserved and then abandoned on the failure path.
+        using StreamSessionReactorHarness harness = new(capacity: 1);
+        IPEndPoint destination = new(IPAddress.Loopback, 1);
+        harness.Reactor.Connect(destination);
+
+        // Act
+        Action first = () => harness.Reactor.Connect(destination);
+        Action second = () => harness.Reactor.Connect(destination);
+
+        // Assert
+        first.Should().Throw<InvalidOperationException>().WithMessage("*capacity*");
+        second.Should().Throw<InvalidOperationException>().WithMessage("*capacity*");
+    }
+
     // --- Frame and Drain ---------------------------------------------------
 
     [Fact]
