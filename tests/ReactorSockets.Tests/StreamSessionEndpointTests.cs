@@ -343,6 +343,30 @@ public class StreamSessionEndpointTests
     }
 
     [Fact]
+    public void Connect_WhenTheFarEndRefusesForCapacity_DrainsPeerClosedWithRemoteAtCapacity()
+    {
+        // Arrange — with the sole Slot occupied by the first dialler's established Session, a second
+        // dialler is refused for capacity.
+        using StreamSessionReactorHarness accepter = new(capacity: 1);
+        using StreamSessionReactorHarness firstDialler = new(bindLoopback: false, capacity: 1);
+        using StreamSessionReactorHarness secondDialler = new(bindLoopback: false, capacity: 1);
+
+        firstDialler.Reactor.Connect(accepter.Endpoint);
+        StreamSessionReactorHarness.PumpBothUntil(firstDialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 10);
+        accepter.DrainToList().Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerConnected);
+        accepter.Reactor.Pump(); // Ends the Frame the PeerConnected belongs to, so the Slot is settled before the second dial.
+
+        // Act
+        PeerId dialled = secondDialler.Reactor.Connect(accepter.Endpoint);
+        StreamSessionReactorHarness.PumpBothUntil(secondDialler, accepter, () => secondDialler.DrainToList().Count > 0, maxRounds: 10);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = secondDialler.DrainToList();
+
+        // Assert
+        drained.Should().ContainSingle()
+            .Which.Should().BeEquivalentTo((SessionEventKind.PeerClosed, dialled, DisconnectReason.RemoteAtCapacity));
+    }
+
+    [Fact]
     public void NoPublicMember_ExposesASocketAHandleOrALinkFromThisProfile()
     {
         // Arrange — a structural check on the public surface rather than a behavioural one: every
