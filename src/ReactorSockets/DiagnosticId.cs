@@ -145,4 +145,27 @@ public enum DiagnosticId
     /// remote can produce this at will by ignoring the Goodbye it just sent.
     /// </remarks>
     DataAfterGoodbye = 303,
+
+    /// <summary>
+    /// An established Peer's delivery-counter record (issue #109) claimed to have received more
+    /// Messages than this end has ever sent it, and the Session was closed with
+    /// <see cref="DisconnectReason.ProtocolViolation"/> (issue #113) — the peer is confirming Messages
+    /// this end never queued, rather than merely repeating a count it already reported. Subject is the
+    /// Peer. <c>Value0</c> is the claimed cumulative count; <c>Value1</c> is the count of Messages (and,
+    /// if this end's own Goodbye has already been queued for this Peer, that too) this end has actually
+    /// appended to this Peer's retention — the largest count a legitimate confirmation could ever sit
+    /// at or below.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="DiagnosticLevel.Warn"/>, for the same reason as <see cref="MalformedFraming"/>: a
+    /// remote can produce this at will by inflating its own counter.
+    /// </para>
+    /// <para>
+    /// Numbered 308 rather than the next free 304: 304-307 are already spoken for by the rest of slice 4
+    /// (ResumeMatched, ResumeUnmatched, RedialAttempted, RedialFailed), and a value published in a
+    /// closed permanent enum cannot be moved later to make room.
+    /// </para>
+    /// </remarks>
+    DeliveryCounterRefused = 308,
 }

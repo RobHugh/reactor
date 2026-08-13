@@ -19,6 +19,7 @@ public class DiagnosticIdTests
     [InlineData(DiagnosticId.LingerNegotiated, 301)]
     [InlineData(DiagnosticId.MalformedFraming, 302)]
     [InlineData(DiagnosticId.DataAfterGoodbye, 303)]
+    [InlineData(DiagnosticId.DeliveryCounterRefused, 308)]
     public void Values_EveryMember_MatchesItsReservedBlockNumber(DiagnosticId id, int expected)
     {
         // Arrange

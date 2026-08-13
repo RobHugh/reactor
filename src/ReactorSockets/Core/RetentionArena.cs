@@ -3,19 +3,36 @@ namespace ReactorSockets.Core;
 /// <summary>
 /// The retention ring's pure-arithmetic core (issue #21, 3.5): one buffer, sliced into one
 /// fixed-size region per share-holder (a Peer, in the Session profile), that already-framed bytes
-/// a send could not deliver immediately are copied into and released from as delivery confirms.
+/// a send could not deliver immediately are copied into, drained to the transport from, and released
+/// from as delivery confirms.
 /// </summary>
 /// <remarks>
 /// <para>
 /// A share-holder is identified by a zero-based index below <see cref="Capacity"/>, the same
 /// convention <see cref="FrameArena"/> uses. Per-share-holder usage is tracked in preallocated
-/// arrays sized once at construction, so nothing here allocates later. Usage is tracked as two
-/// <c>ulong</c> monotonically-increasing running totals — bytes ever written and bytes ever
-/// released — rather than wrapping head/tail indices (ADR 0015, the same move made for
-/// <see cref="ShareHolderTable{T}"/>'s generation counter). 2^64 bytes through one share-holder's
-/// region is unreachable by any process that will ever run, so the totals cannot wrap and the ring
-/// position derived from them (<c>total % BoundPerShareHolder</c>) is always correct by
-/// unreachability rather than by a bound this type has to check for.
+/// arrays sized once at construction, so nothing here allocates later. Usage is tracked as
+/// monotonically-increasing <c>ulong</c> running totals rather than wrapping head/tail indices (ADR
+/// 0015, the same move made for <see cref="ShareHolderTable{T}"/>'s generation counter). 2^64 bytes
+/// through one share-holder's region is unreachable by any process that will ever run, so the totals
+/// cannot wrap and the ring position derived from them (<c>total % BoundPerShareHolder</c>) is always
+/// correct by unreachability rather than by a bound this type has to check for.
+/// </para>
+/// <para>
+/// <b>Two cursors past the written total, for two unrelated questions (issue #113).</b>
+/// <see cref="_sentTotal"/> is how far this end has gotten handing already-appended bytes to its own
+/// transport — advanced by <see cref="MarkSent"/>, read by <see cref="GetUnsent"/>, and never anything
+/// but monotonically non-decreasing up to <see cref="_writtenTotal"/>. <see cref="_releasedTotal"/> is
+/// how far the *peer* has confirmed receiving — advanced only by <see cref="ReleaseThroughMessageCount"/>
+/// once a Session profile decodes that confirmation off the wire, and it is what <see cref="TryAppend"/>
+/// weighs against <see cref="BoundPerShareHolder"/> to decide whether more room exists. The two cannot
+/// be collapsed into one cursor: this end's own Goodbye sentinel is appended through the very same
+/// <see cref="TryAppend"/> a Message is (see below), so it is something this end must still *send*, but
+/// nothing a peer's Message-received counter — which counts Messages, not control records — will ever
+/// confirm. A single cursor answering both questions would leave the Goodbye's own bytes eternally
+/// short of "released" and, depending which question it was actually answering, either wedge
+/// <see cref="StreamSessionReactor"/>'s own local-close check forever or re-hand already-sent bytes to
+/// the transport a second time the next Pump a Send lands on. Splitting the cursor is what keeps both
+/// questions answerable independently, and correctly, once release-on-write is gone.
 /// </para>
 /// <para>
 /// Release also comes in a second unit (issue #110, subtask 4.1.2): <see cref="TryAppend"/> counts
@@ -34,6 +51,19 @@ namespace ReactorSockets.Core;
 /// <paramref name="boundPerShareHolder"/> would break <see cref="TryAppend"/>'s exhaustion check.
 /// </para>
 /// <para>
+/// <b>The Goodbye sentinel needs no reconciling against a peer's Message count (issue #113).</b>
+/// <see cref="TryAppend"/> is called for a Session profile's own outbound Goodbye sentinel exactly as
+/// it is for an application Message, so the appended-Message count can run one ahead of the count of
+/// Messages a caller would ever describe to <see cref="ReleaseThroughMessageCount"/>. That still needs
+/// no offset: a caller only ever appends its Goodbye once every Message it will ever send has already
+/// been appended (a Session profile refuses further Sends the moment its own Goodbye is queued), so
+/// the Goodbye's boundary entry always sits strictly after every Message's — a legitimate
+/// <paramref name="messageCount"/>, which counts only Messages, can never reach it, and every count
+/// below it resolves to exactly the Message it names. The Goodbye's own bytes are freed by
+/// <see cref="MarkSent"/> instead, the moment this end has handed them to its transport — see the
+/// cursor split above.
+/// </para>
+/// <para>
 /// <b>Cost.</b> Each ring entry is one <c>uint</c> (4 bytes), not a <c>ulong</c>: a boundary does not
 /// need the same 2^64-of-headroom argument the byte totals get, because the only thing
 /// <see cref="ReleaseThroughMessageCount"/> ever needs from one is its position within the region's
@@ -44,9 +74,9 @@ namespace ReactorSockets.Core;
 /// unsigned wraparound subtraction — the same trick sequence-number arithmetic uses, correct here for
 /// the same reason: the true distance between the current written total and any boundary this method
 /// is ever asked to resolve cannot reach 2^32, so recovering it from 32 bits of the difference is
-/// unambiguous. That holds as long as this method is what keeps the share-holder's released total
-/// caught up — the state issue #113 establishes once it removes <see cref="Release"/>'s call site, the
-/// "switch" issue #25 describes. The ring adds
+/// unambiguous. That holds as long as <see cref="ReleaseThroughMessageCount"/> is the only thing
+/// advancing <see cref="_releasedTotal"/> — true since issue #113 removed the byte-count
+/// <c>Release</c> method that used to share the role, the "switch" issue #25 describes. The ring adds
 /// <c>4 × Capacity × ⌈BoundPerShareHolder / MinimumFramedMessageSize⌉</c> bytes on top of the
 /// <c>Capacity × BoundPerShareHolder</c> the byte buffer already costs — roughly
 /// <c>4 / MinimumFramedMessageSize</c> times the retention bill. The stream Session profile passes its
@@ -59,6 +89,7 @@ internal sealed class RetentionArena
 {
     private readonly byte[] _buffer;
     private readonly ulong[] _writtenTotal;
+    private readonly ulong[] _sentTotal;
     private readonly ulong[] _releasedTotal;
     private readonly ulong[] _highWaterBytes;
     private readonly ulong[] _appendedMessageCount;
@@ -129,6 +160,7 @@ internal sealed class RetentionArena
 
         _buffer = new byte[boundPerShareHolder * capacity];
         _writtenTotal = new ulong[capacity];
+        _sentTotal = new ulong[capacity];
         _releasedTotal = new ulong[capacity];
         _highWaterBytes = new ulong[capacity];
         _appendedMessageCount = new ulong[capacity];
@@ -215,60 +247,66 @@ internal sealed class RetentionArena
     }
 
     /// <summary>
-    /// Returns <paramref name="shareHolderId"/>'s unread bytes — from its released total to its
-    /// written total — as one or two contiguous memory segments over the backing array.
-    /// <paramref name="second"/> is <see langword="default"/> unless the unread range wraps past
-    /// the region's end boundary, in which case it holds the wrapped remainder.
+    /// Returns <paramref name="shareHolderId"/>'s unsent bytes — from its sent total to its written
+    /// total — as one or two contiguous memory segments over the backing array, for a caller about to
+    /// hand them to its own transport. <paramref name="second"/> is <see langword="default"/> unless
+    /// the unsent range wraps past the region's end boundary, in which case it holds the wrapped
+    /// remainder. Deliberately independent of what the peer has confirmed
+    /// (<see cref="ReleaseThroughMessageCount"/>): see the class remarks on the two cursors past the
+    /// written total.
     /// </summary>
     /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
-    public (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) GetReadable(int shareHolderId)
+    public (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) GetUnsent(int shareHolderId)
     {
         ValidateShareHolderId(shareHolderId);
 
-        ulong retained = _writtenTotal[shareHolderId] - _releasedTotal[shareHolderId];
+        ulong unsent = _writtenTotal[shareHolderId] - _sentTotal[shareHolderId];
         int regionStart = shareHolderId * BoundPerShareHolder;
-        int position = (int)(_releasedTotal[shareHolderId] % (ulong)BoundPerShareHolder);
+        int position = (int)(_sentTotal[shareHolderId] % (ulong)BoundPerShareHolder);
         int spaceToRegionEnd = BoundPerShareHolder - position;
 
-        if (retained <= (ulong)spaceToRegionEnd)
+        if (unsent <= (ulong)spaceToRegionEnd)
         {
-            return (_buffer.AsMemory(regionStart + position, (int)retained), default);
+            return (_buffer.AsMemory(regionStart + position, (int)unsent), default);
         }
 
         ReadOnlyMemory<byte> first = _buffer.AsMemory(regionStart + position, spaceToRegionEnd);
-        ReadOnlyMemory<byte> second = _buffer.AsMemory(regionStart, (int)retained - spaceToRegionEnd);
+        ReadOnlyMemory<byte> second = _buffer.AsMemory(regionStart, (int)unsent - spaceToRegionEnd);
         return (first, second);
     }
 
     /// <summary>
-    /// Advances <paramref name="shareHolderId"/>'s released total by <paramref name="bytesConfirmed"/>,
-    /// marking that many of its oldest retained bytes as delivered. Throws — rather than silently
-    /// clamping — when <paramref name="bytesConfirmed"/> exceeds what the share-holder currently
-    /// retains.
+    /// Advances <paramref name="shareHolderId"/>'s sent total by <paramref name="bytesSent"/>, marking
+    /// that many of its oldest unsent bytes as handed to the transport — the counterpart to
+    /// <see cref="GetUnsent"/> a caller advances the instant a socket write accepts them. Throws —
+    /// rather than silently clamping — when <paramref name="bytesSent"/> exceeds what
+    /// <see cref="GetUnsent"/> currently reports. Never touches <see cref="ReleaseThroughMessageCount"/>'s
+    /// released total or the ring room it governs: handing bytes to a transport is not a peer
+    /// confirming receipt of them (see the class remarks on the two cursors).
     /// </summary>
     /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
-    /// <param name="bytesConfirmed">The number of oldest retained bytes to release.</param>
-    public void Release(int shareHolderId, int bytesConfirmed)
+    /// <param name="bytesSent">The number of oldest unsent bytes to mark sent.</param>
+    public void MarkSent(int shareHolderId, int bytesSent)
     {
         ValidateShareHolderId(shareHolderId);
 
-        ulong retained = _writtenTotal[shareHolderId] - _releasedTotal[shareHolderId];
-        if ((ulong)bytesConfirmed > retained)
+        ulong unsent = _writtenTotal[shareHolderId] - _sentTotal[shareHolderId];
+        if ((ulong)bytesSent > unsent)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(bytesConfirmed),
-                bytesConfirmed,
-                $"share-holder {shareHolderId} retains only {retained} bytes — cannot release {bytesConfirmed}.");
+                nameof(bytesSent),
+                bytesSent,
+                $"share-holder {shareHolderId} has only {unsent} unsent bytes — cannot mark {bytesSent} sent.");
         }
 
-        _releasedTotal[shareHolderId] += (ulong)bytesConfirmed;
+        _sentTotal[shareHolderId] += (ulong)bytesSent;
     }
 
     /// <summary>
     /// Releases <paramref name="shareHolderId"/>'s retained bytes through its <paramref name="messageCount"/>th
-    /// appended Message — the count-based counterpart to <see cref="Release"/>, for a caller that
-    /// knows what the peer has confirmed receiving in Messages rather than in bytes (issue #25's
-    /// delivery counter, issue #110).
+    /// appended Message — the sole way <see cref="_releasedTotal"/> ever advances (issue #113), for a
+    /// caller that knows what the peer has confirmed receiving in Messages rather than in bytes (issue
+    /// #25's delivery counter, issue #110).
     /// </summary>
     /// <remarks>
     /// A <paramref name="messageCount"/> at or below what is already released is
@@ -279,9 +317,12 @@ internal sealed class RetentionArena
     /// the no-op case: it means the peer claims to have received Messages this share-holder never
     /// sent, which is this call's caller's protocol violation to act on, not something to clamp away
     /// silently. Otherwise the share-holder's released total advances to the byte position recorded
-    /// for its <paramref name="messageCount"/>th Message — never backwards, even if
-    /// <see cref="Release"/>'s independent byte-based bookkeeping had already advanced past that
-    /// position — and its released-Message total advances to match.
+    /// for its <paramref name="messageCount"/>th Message — never backwards — and its released-Message
+    /// total advances to match. This is entirely independent of <see cref="MarkSent"/>: what a peer has
+    /// confirmed receiving and what this end has merely handed to its own transport are different
+    /// facts (see the class remarks on the two cursors), and a caller's own Goodbye sentinel — appended
+    /// through the same <see cref="TryAppend"/> a Message is — is freed by <see cref="MarkSent"/> alone,
+    /// since no legitimate <paramref name="messageCount"/> ever names it.
     /// </remarks>
     /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
     /// <param name="messageCount">
@@ -350,11 +391,12 @@ internal sealed class RetentionArena
     }
 
     /// <summary>
-    /// Zeroes <paramref name="shareHolderId"/>'s written total, released total, high-water mark, and
-    /// Message counts — used when its slot is reused by a new connection, so the previous occupant's
-    /// history does not bleed into the new one's. The Message boundary ring itself is left alone:
-    /// every entry is overwritten by <see cref="TryAppend"/> before <see cref="AppendedMessageCount"/>
-    /// can reach it again, since that total is reset to zero here too.
+    /// Zeroes <paramref name="shareHolderId"/>'s written total, sent total, released total, high-water
+    /// mark, and Message counts — used when its slot is reused by a new connection, so the previous
+    /// occupant's history does not bleed into the new one's. The Message boundary ring itself is left
+    /// alone: every entry is overwritten by <see cref="TryAppend"/> before
+    /// <see cref="AppendedMessageCount"/> can reach it again, since that total is reset to zero here
+    /// too.
     /// </summary>
     /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
     public void ResetShareHolder(int shareHolderId)
@@ -362,6 +404,7 @@ internal sealed class RetentionArena
         ValidateShareHolderId(shareHolderId);
 
         _writtenTotal[shareHolderId] = 0;
+        _sentTotal[shareHolderId] = 0;
         _releasedTotal[shareHolderId] = 0;
         _highWaterBytes[shareHolderId] = 0;
         _appendedMessageCount[shareHolderId] = 0;

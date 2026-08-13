@@ -175,4 +175,13 @@ public readonly record struct DiagnosticRecord
     /// </summary>
     public static DiagnosticRecord ForDataAfterGoodbye(PeerId peer) =>
         new(DiagnosticId.DataAfterGoodbye, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, 0, 0);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.DeliveryCounterRefused"/> record for the Peer whose
+    /// delivery-counter record claimed more Messages than this end ever sent it. <c>Value0</c> is the
+    /// claimed cumulative count; <c>Value1</c> is the count of Messages this end has actually appended
+    /// to this Peer's retention.
+    /// </summary>
+    public static DiagnosticRecord ForDeliveryCounterRefused(PeerId peer, long claimedCount, long appendedMessageCount) =>
+        new(DiagnosticId.DeliveryCounterRefused, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, claimedCount, appendedMessageCount);
 }
