@@ -78,6 +78,27 @@ internal static class StreamSessionTestRecords
         return record;
     }
 
+    /// <summary>
+    /// Decodes a whole 12-byte delivery-counter record read off the wire — the counterpart to
+    /// <see cref="BuildDeliveryCounterRecord"/>, for tests reading a record <see cref="StreamSessionReactor"/>
+    /// itself emitted (issue #116) rather than building one to send. Hand-rolled independently of the
+    /// internal <c>MessageFramingCodec</c> that owns this encoding in production, for the same L0/L1
+    /// untested-through reason every other builder in this file is. Returns <see langword="false"/>
+    /// without touching <paramref name="count"/> if <paramref name="record"/> is not exactly 12 bytes or
+    /// its first four do not carry <see cref="DeliveryCounterSentinel"/>.
+    /// </summary>
+    public static bool TryReadDeliveryCounterRecord(byte[] record, out ulong count)
+    {
+        if (record.Length != 12 || BinaryPrimitives.ReadUInt32BigEndian(record.AsSpan(0, 4)) != DeliveryCounterSentinel)
+        {
+            count = 0;
+            return false;
+        }
+
+        count = BinaryPrimitives.ReadUInt64BigEndian(record.AsSpan(4, 8));
+        return true;
+    }
+
     /// <summary>Builds a payload of <paramref name="length"/> bytes, every byte set to <paramref name="marker"/>.</summary>
     public static byte[] PayloadOf(int length, byte marker)
     {
