@@ -44,6 +44,22 @@ internal enum MessageFramingOutcome
     /// further bytes are a violation regardless of what they would otherwise have classified as.
     /// </summary>
     DataAfterGoodbye,
+
+    /// <summary>
+    /// The prefix is <see cref="MessageFramingCodec.DeliveryCounterSentinel"/>, but fewer than
+    /// <see cref="MessageFramingCodec.DeliveryCounterBodySize"/> bytes of its <c>u64</c> body have
+    /// arrived yet (issue #109). An ordinary, expected state while a receive buffer is filling — not a
+    /// violation, and not yet a whole record either.
+    /// </summary>
+    AwaitingDeliveryCounterBody,
+
+    /// <summary>
+    /// A whole delivery-counter control record — <see cref="MessageFramingCodec.DeliveryCounterSentinel"/>
+    /// followed by its full <c>u64</c> body — is buffered at the front (issue #109). Decoding the count
+    /// itself is left to the caller via <see cref="MessageFramingCodec.ReadDeliveryCounter"/>, exactly as
+    /// <see cref="Ready"/> leaves Message-body extraction to its caller.
+    /// </summary>
+    DeliveryCounterReceived,
 }
 
 /// <summary>
@@ -94,6 +110,17 @@ internal static class MessageFramingLegality
             (false, false) => (MessageFramingOutcome.AwaitingPrefix, 0u, 0),
             (false, true) when length == MessageFramingCodec.GoodbyeSentinel =>
                 (MessageFramingOutcome.GoodbyeReceived, length, MessageFramingCodec.LengthPrefixSize),
+
+            // Both sentinel checks sit ahead of ZeroLengthPrefix and OversizedPrefix below on purpose
+            // (issue #109, mirroring how #95 pinned GoodbyeSentinel's own precedence): each sentinel is
+            // itself a "length" far larger than any legal MaxMessageSize, so checking size first would
+            // misclassify a whole sentinel-led record as an oversized claim before ever recognising what
+            // it actually is.
+            (false, true) when length == MessageFramingCodec.DeliveryCounterSentinel
+                && filled.Length < MessageFramingCodec.DeliveryCounterRecordSize =>
+                (MessageFramingOutcome.AwaitingDeliveryCounterBody, length, 0),
+            (false, true) when length == MessageFramingCodec.DeliveryCounterSentinel =>
+                (MessageFramingOutcome.DeliveryCounterReceived, length, MessageFramingCodec.DeliveryCounterRecordSize),
             (false, true) when length == 0 => (MessageFramingOutcome.ZeroLengthPrefix, length, 0),
             (false, true) when length > (uint)maxMessageSize => (MessageFramingOutcome.OversizedPrefix, length, 0),
             (false, true) when filled.Length < MessageFramingCodec.LengthPrefixSize + (int)length =>
