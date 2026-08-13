@@ -37,6 +37,7 @@ namespace ReactorSockets;
 /// </remarks>
 public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 {
+    private readonly SessionReactorLifecycle _lifecycle = new();
     private readonly StreamSessionOptions _options;
     private readonly ReadinessDispatcher _dispatcher;
     private readonly DiagnosticGateway _diagnostics;
@@ -53,12 +54,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly HashSet<SlotHandle> _peersWithPendingRetentionWrites = [];
     private readonly HashSet<SlotHandle> _peersWithGoodbyeOwed = [];
     private readonly HashSet<SlotHandle> _peersPendingClose = [];
-    private readonly int _constructingThreadId;
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
     private int _capDeferralsThisFrame;
-    private bool _inPump;
-    private bool _disposed;
 
     /// <summary>
     /// Validates <paramref name="options"/> — every knob and cross-check, then the frame arena's
@@ -77,7 +75,6 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         int arenaSize = options.ResolveArenaSize();
 
         _options = options;
-        _constructingThreadId = Environment.CurrentManagedThreadId;
         _dispatcher = new ReadinessDispatcher();
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Reactor.Sink, options.Reactor.MinimumLevel, _counters);
@@ -96,7 +93,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
         catch
         {
-            DisposeLinks();
+            _listenLinks.DisposeAndClear(_dispatcher, link => link.Socket);
             throw;
         }
     }
@@ -152,7 +149,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
 
-        _inPump = true;
+        _lifecycle.InPump = true;
         try
         {
             _pendingEvents.Clear();
@@ -169,7 +166,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
         finally
         {
-            _inPump = false;
+            _lifecycle.InPump = false;
         }
     }
 
@@ -431,7 +428,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// </remarks>
     public void Dispose()
     {
-        if (_disposed)
+        if (_lifecycle.IsDisposed)
         {
             return;
         }
@@ -458,18 +455,21 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _peersWithPendingRetentionWrites.Clear();
         _peersPendingClose.Clear();
         _peersWithGoodbyeOwed.Clear();
-        _disposed = true;
-        DisposeLinks();
+        _lifecycle.IsDisposed = true;
+        _listenLinks.DisposeAndClear(_dispatcher, link => link.Socket);
     }
 
     /// <inheritdoc cref="ISessionEventSource.GetPendingEvent"/>
     SessionEvent ISessionEventSource.GetPendingEvent(int index)
     {
         PendingEvent pending = _pendingEvents[index];
+        if (pending.Kind.TryCreateCommonSessionEvent(pending.Peer, pending.Reason, out SessionEvent common))
+        {
+            return common;
+        }
+
         return pending.Kind switch
         {
-            SessionEventKind.PeerConnected => SessionEvent.ForPeerConnected(pending.Peer),
-            SessionEventKind.PeerClosed => SessionEvent.ForPeerClosed(pending.Peer, pending.Reason),
             SessionEventKind.MessageReceived => SessionEvent.ForMessageReceived(
                 pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
             SessionEventKind.PeerClosing => SessionEvent.ForPeerClosing(pending.Peer),
@@ -598,17 +598,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>Sends a Refusal record, arming for a short send exactly as a Hello record does.</summary>
     private void SendRefusalRecord(RefusalSlot refusal, byte[] record)
     {
-        TcpLinkSendResult result = refusal.Link.Send(record);
-        if (!result.IsSuccess)
+        if (SendPendingRecord(refusal.Link, record, out ReadOnlyMemory<byte> remainder) == PendingRecordSendOutcome.ShortSend)
         {
-            CloseRefusal(refusal);
-            return;
-        }
-
-        if (result.BytesSent < record.Length)
-        {
-            refusal.PendingBytesToSend = record.AsMemory(result.BytesSent);
-            _dispatcher.ArmWritable(refusal.Link.Socket);
+            refusal.PendingBytesToSend = remainder;
             return;
         }
 
@@ -623,22 +615,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        TcpLinkSendResult result = refusal.Link.Send(pending.Span);
-        if (!result.IsSuccess)
+        if (SendPendingRecord(refusal.Link, pending, out ReadOnlyMemory<byte> remainder) == PendingRecordSendOutcome.ShortSend)
         {
-            CloseRefusal(refusal);
+            refusal.PendingBytesToSend = remainder;
             return;
         }
 
-        refusal.PendingBytesToSend = result.BytesSent < pending.Length ? pending[result.BytesSent..] : null;
-        if (refusal.PendingBytesToSend is null)
-        {
-            CloseRefusal(refusal);
-        }
-        else
-        {
-            _dispatcher.ArmWritable(refusal.Link.Socket);
-        }
+        CloseRefusal(refusal);
     }
 
     /// <summary>
@@ -768,24 +751,24 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        TcpLinkSendResult result = slot.Link.Send(record);
-        if (!result.IsSuccess)
+        switch (SendPendingRecord(slot.Link, record, out ReadOnlyMemory<byte> remainder))
         {
-            ClosePeer(handle, closeReasonAfterSend ?? DisconnectReason.TransportFailed);
-            return;
-        }
+            case PendingRecordSendOutcome.Failed:
+                ClosePeer(handle, closeReasonAfterSend ?? DisconnectReason.TransportFailed);
+                break;
 
-        if (result.BytesSent < record.Length)
-        {
-            slot.PendingHandshakeBytesToSend = record.AsMemory(result.BytesSent);
-            slot.PendingCloseReason = closeReasonAfterSend;
-            _dispatcher.ArmWritable(slot.Link.Socket);
-            return;
-        }
+            case PendingRecordSendOutcome.ShortSend:
+                slot.PendingHandshakeBytesToSend = remainder;
+                slot.PendingCloseReason = closeReasonAfterSend;
+                break;
 
-        if (closeReasonAfterSend is DisconnectReason reason)
-        {
-            ClosePeer(handle, reason);
+            case PendingRecordSendOutcome.Complete:
+                if (closeReasonAfterSend is DisconnectReason reason)
+                {
+                    ClosePeer(handle, reason);
+                }
+
+                break;
         }
     }
 
@@ -807,36 +790,73 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         if (slot.PendingHandshakeBytesToSend is { Length: > 0 } pending)
         {
-            TcpLinkSendResult result = slot.Link.Send(pending.Span);
-            if (!result.IsSuccess)
+            switch (SendPendingRecord(slot.Link, pending, out ReadOnlyMemory<byte> remainder))
             {
-                ClosePeer(handle, slot.PendingCloseReason ?? DisconnectReason.TransportFailed);
-                return;
-            }
+                case PendingRecordSendOutcome.Failed:
+                    ClosePeer(handle, slot.PendingCloseReason ?? DisconnectReason.TransportFailed);
+                    return;
 
-            slot.PendingHandshakeBytesToSend = result.BytesSent < pending.Length ? pending[result.BytesSent..] : null;
-            if (slot.PendingHandshakeBytesToSend is not null)
-            {
-                _dispatcher.ArmWritable(slot.Link.Socket);
-                return;
-            }
+                case PendingRecordSendOutcome.ShortSend:
+                    slot.PendingHandshakeBytesToSend = remainder;
+                    return;
 
-            if (slot.PendingCloseReason is DisconnectReason reason)
-            {
-                ClosePeer(handle, reason);
-                return;
-            }
+                case PendingRecordSendOutcome.Complete:
+                    slot.PendingHandshakeBytesToSend = null;
+                    if (slot.PendingCloseReason is DisconnectReason reason)
+                    {
+                        ClosePeer(handle, reason);
+                        return;
+                    }
 
-            if (slot.QueuedHandshakeSend is { } queued)
-            {
-                slot.QueuedHandshakeSend = null;
-                SendRecordOrArm(handle, slot, queued.Record, queued.CloseReasonAfterSend);
-                return;
+                    if (slot.QueuedHandshakeSend is { } queued)
+                    {
+                        slot.QueuedHandshakeSend = null;
+                        SendRecordOrArm(handle, slot, queued.Record, queued.CloseReasonAfterSend);
+                        return;
+                    }
+
+                    break;
             }
         }
 
         slot.HasPendingRetentionWrite = true;
         _peersWithPendingRetentionWrites.Add(handle);
+    }
+
+    /// <summary>Whether one attempted socket send of a short handshake/Refusal record failed, fully landed, or left a remainder.</summary>
+    private enum PendingRecordSendOutcome
+    {
+        Failed,
+        ShortSend,
+        Complete,
+    }
+
+    /// <summary>
+    /// The four-step shape both the Refusal send (<see cref="SendRefusalRecord"/>/<see cref="OnRefusalWritable"/>)
+    /// and the handshake send (<see cref="SendRecordOrArm"/>/<see cref="OnPeerWritable"/>) repeat twice
+    /// each (issue #103): send once, and either the send failed, the whole record landed, or a short
+    /// send left <paramref name="remainder"/> for the caller to store and re-arm for. Arming on a short
+    /// send happens here, since every caller does the same thing with it; what a failure or a complete
+    /// send means — close, or close only if a reason was given — differs per caller and is left to it.
+    /// </summary>
+    private PendingRecordSendOutcome SendPendingRecord(TcpLink link, ReadOnlyMemory<byte> record, out ReadOnlyMemory<byte> remainder)
+    {
+        TcpLinkSendResult result = link.Send(record.Span);
+        if (!result.IsSuccess)
+        {
+            remainder = default;
+            return PendingRecordSendOutcome.Failed;
+        }
+
+        if (result.BytesSent < record.Length)
+        {
+            remainder = record[result.BytesSent..];
+            _dispatcher.ArmWritable(link.Socket);
+            return PendingRecordSendOutcome.ShortSend;
+        }
+
+        remainder = default;
+        return PendingRecordSendOutcome.Complete;
     }
 
     /// <summary>
@@ -1511,49 +1531,15 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         return secret;
     }
 
-    private static PeerId ToPeerId(SlotHandle handle) => new(handle.Origin, handle.Index, handle.Generation);
+    private void EnsureUsable() => _lifecycle.EnsureUsable(this);
 
-    private static SlotHandle ToHandle(PeerId peer) => new(peer.Origin, peer.Index, peer.Generation);
+    private void EnsureNotInsideAPump() => _lifecycle.EnsureNotInsideAPump();
 
-    private void DisposeLinks()
-    {
-        foreach (TcpListenLink link in _listenLinks)
-        {
-            _dispatcher.Unregister(link.Socket);
-            link.Dispose();
-        }
+    private void EnsureCallingThreadIsConstructingThread() => _lifecycle.EnsureCallingThreadIsConstructingThread();
 
-        _listenLinks.Clear();
-    }
+    private static PeerId ToPeerId(SlotHandle handle) => handle.ToPeerId();
 
-    private void EnsureUsable()
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        EnsureNotInsideAPump();
-    }
-
-    /// <summary>
-    /// Rejects re-entry (ADR 0005). The only caller this library hands control to mid-Pump is a
-    /// Diagnostic Sink, so this is what stops a Sink acting on the Reactor it is reporting on.
-    /// </summary>
-    private void EnsureNotInsideAPump()
-    {
-        if (_inPump)
-        {
-            throw new InvalidOperationException(
-                "This Reactor is already inside Pump — a Diagnostic Sink may not call back into the Reactor it is reporting on. Copy what the record carries and act on it after Pump returns.");
-        }
-    }
-
-    private void EnsureCallingThreadIsConstructingThread()
-    {
-        int callingThreadId = Environment.CurrentManagedThreadId;
-        if (callingThreadId != _constructingThreadId)
-        {
-            throw new InvalidOperationException(
-                $"Called from thread {callingThreadId}, but this Reactor was constructed on thread {_constructingThreadId} — a Reactor may only be driven from the thread that constructed it.");
-        }
-    }
+    private static SlotHandle ToHandle(PeerId peer) => peer.ToHandle();
 
     /// <summary>How far through the handshake one Peer has got.</summary>
     private enum HandshakeState
@@ -1719,26 +1705,5 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// has all been sent.
         /// </summary>
         public ReadOnlyMemory<byte>? PendingBytesToSend { get; set; }
-    }
-
-    private readonly record struct PendingEvent
-    {
-        public SessionEventKind Kind { get; init; }
-
-        public PeerId Peer { get; init; }
-
-        public DisconnectReason Reason { get; init; }
-
-        /// <summary>
-        /// The committed Message's offset into the frame arena. Populated only when <see cref="Kind"/>
-        /// is <see cref="SessionEventKind.MessageReceived"/>.
-        /// </summary>
-        public int PayloadOffset { get; init; }
-
-        /// <summary>
-        /// The committed Message's length. Populated only when <see cref="Kind"/> is
-        /// <see cref="SessionEventKind.MessageReceived"/>.
-        /// </summary>
-        public int PayloadLength { get; init; }
     }
 }

@@ -59,6 +59,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private const int MaxUdpDatagramSize = 65_507;
 
+    private readonly SessionReactorLifecycle _lifecycle = new();
     private readonly DatagramSessionOptions _options;
     private readonly ReadinessDispatcher _dispatcher;
     private readonly FrameArena _arena;
@@ -86,13 +87,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     private readonly byte[] _scratchBuffer = new byte[MaxUdpDatagramSize];
     private readonly byte[] _sendBuffer = new byte[DatagramSessionProtocol.ControlDatagramSize];
-    private readonly int _constructingThreadId;
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
     private int _capDiscardsThisFrame;
     private int _capacityDiscardsThisFrame;
-    private bool _inPump;
-    private bool _disposed;
 
     /// <summary>
     /// Constructs a Reactor bound to the calling thread (ADR 0002) — every future mutating call must
@@ -111,7 +109,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         options.Validate();
 
         _options = options;
-        _constructingThreadId = Environment.CurrentManagedThreadId;
         _dispatcher = new ReadinessDispatcher();
         _arena = new FrameArena(options.ResolveArenaSize(), options.Reactor.Capacity);
         _counters = new ReactorCounterSet();
@@ -130,7 +127,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
         catch
         {
-            DisposeLinks();
+            _links.DisposeAndClear(_dispatcher, link => link.Socket);
             throw;
         }
     }
@@ -180,7 +177,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
 
-        _inPump = true;
+        _lifecycle.InPump = true;
         try
         {
             _pendingEvents.Clear();
@@ -193,7 +190,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
         finally
         {
-            _inPump = false;
+            _lifecycle.InPump = false;
         }
     }
 
@@ -284,32 +281,29 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </remarks>
     public void Dispose()
     {
-        if (_disposed)
+        if (_lifecycle.IsDisposed)
         {
             return;
         }
 
         EnsureCallingThreadIsConstructingThread();
 
-        _disposed = true;
+        _lifecycle.IsDisposed = true;
         _peers.DrainAll();
         _peersBySessionId.Clear();
         _dialsByNonce.Clear();
         _acceptedHandshakes.Clear();
         _pendingEvents.Clear();
-        DisposeLinks();
+        _links.DisposeAndClear(_dispatcher, link => link.Socket);
     }
 
     /// <inheritdoc cref="ISessionEventSource.GetPendingEvent"/>
     SessionEvent ISessionEventSource.GetPendingEvent(int index)
     {
         PendingEvent pending = _pendingEvents[index];
-        return pending.Kind switch
-        {
-            SessionEventKind.PeerConnected => SessionEvent.ForPeerConnected(pending.Peer),
-            SessionEventKind.PeerClosed => SessionEvent.ForPeerClosed(pending.Peer, pending.Reason),
-            _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind."),
-        };
+        return pending.Kind.TryCreateCommonSessionEvent(pending.Peer, pending.Reason, out SessionEvent sessionEvent)
+            ? sessionEvent
+            : throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind.");
     }
 
     /// <summary>
@@ -834,49 +828,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         return secret;
     }
 
-    private static PeerId ToPeerId(SlotHandle handle) => new(handle.Origin, handle.Index, handle.Generation);
+    private void EnsureUsable() => _lifecycle.EnsureUsable(this);
 
-    private static SlotHandle ToHandle(PeerId peer) => new(peer.Origin, peer.Index, peer.Generation);
+    private void EnsureNotInsideAPump() => _lifecycle.EnsureNotInsideAPump();
 
-    private void DisposeLinks()
-    {
-        foreach (UdpLink link in _links)
-        {
-            _dispatcher.Unregister(link.Socket);
-            link.Dispose();
-        }
+    private void EnsureCallingThreadIsConstructingThread() => _lifecycle.EnsureCallingThreadIsConstructingThread();
 
-        _links.Clear();
-    }
+    private static PeerId ToPeerId(SlotHandle handle) => handle.ToPeerId();
 
-    private void EnsureUsable()
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        EnsureNotInsideAPump();
-    }
-
-    /// <summary>
-    /// Rejects re-entry (ADR 0005). The only caller this library hands control to mid-Pump is a
-    /// Diagnostic Sink, so this is what stops a Sink acting on the Reactor it is reporting on.
-    /// </summary>
-    private void EnsureNotInsideAPump()
-    {
-        if (_inPump)
-        {
-            throw new InvalidOperationException(
-                "This Reactor is already inside Pump — a Diagnostic Sink may not call back into the Reactor it is reporting on. Copy what the record carries and act on it after Pump returns.");
-        }
-    }
-
-    private void EnsureCallingThreadIsConstructingThread()
-    {
-        int callingThreadId = Environment.CurrentManagedThreadId;
-        if (callingThreadId != _constructingThreadId)
-        {
-            throw new InvalidOperationException(
-                $"Called from thread {callingThreadId}, but this Reactor was constructed on thread {_constructingThreadId} — a Reactor may only be driven from the thread that constructed it.");
-        }
-    }
+    private static SlotHandle ToHandle(PeerId peer) => peer.ToHandle();
 
     /// <summary>How far through the handshake one Peer has got.</summary>
     private enum HandshakeState
@@ -928,14 +888,5 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>How far through the handshake this Peer has got.</summary>
         public required HandshakeState State { get; set; }
-    }
-
-    private readonly record struct PendingEvent
-    {
-        public SessionEventKind Kind { get; init; }
-
-        public PeerId Peer { get; init; }
-
-        public DisconnectReason Reason { get; init; }
     }
 }
