@@ -97,4 +97,52 @@ public enum DiagnosticId
     /// version it claimed.
     /// </remarks>
     VersionRefused = 202,
+
+    /// <summary>
+    /// A dialler was refused in-protocol during the stream handshake, either because it announced a
+    /// different protocol version or because every capacity Slot was occupied. Subject is the claimed
+    /// Source: at refusal time there is no Peer, only a claimed origin. For a capacity refusal,
+    /// <c>Value0</c> is this Reactor's capacity and <c>Value1</c> is unused. For a version refusal,
+    /// <c>Value0</c> is the version offered and <c>Value1</c> is the version this Reactor requires.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Info"/>, not <see cref="DiagnosticLevel.Warn"/>: a version mismatch
+    /// on an upgrade and an ordinary burst at capacity are both routine, expected outcomes of running
+    /// this profile, not conditions a consumer needs to act on.
+    /// </remarks>
+    PeerRefused = 300,
+
+    /// <summary>
+    /// A stream handshake completed and the two ends' announced Linger values were negotiated to their
+    /// minimum (ADR 0011). Subject is the newly established Peer. <c>Value0</c> is this end's own
+    /// Linger in milliseconds; <c>Value1</c> is the effective (minimum) Linger in milliseconds.
+    /// </summary>
+    LingerNegotiated = 301,
+
+    /// <summary>
+    /// An established Peer's Message framing broke this profile's rules and the Session was closed
+    /// with <see cref="DisconnectReason.ProtocolViolation"/>: an oversized or zero-length prefix, or a
+    /// stream that ended before a prefix or the Message body it named had fully arrived. Subject is
+    /// the Peer. <c>Value0</c> is the offending length prefix — 0 for a truncation, where no full
+    /// prefix was ever read; <c>Value1</c> is this Reactor's own <c>MaxMessageSize</c>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>: a remote can produce this at will by sending malformed
+    /// bytes, which is exactly why the Session ends rather than throws, and why this is a Diagnostic
+    /// rather than an Event on the consumer's own stream.
+    /// </remarks>
+    MalformedFraming = 302,
+
+    /// <summary>
+    /// An established Peer sent Message bytes after its own Goodbye had already been received, and
+    /// the Session was closed with <see cref="DisconnectReason.ProtocolViolation"/> (issue #93).
+    /// Subject is the Peer. Carries no claimed length — <see cref="MessageFramingLegality"/> reaches
+    /// this outcome before ever reading a prefix, so there is nothing to report but the contradiction
+    /// itself. <c>Value0</c> and <c>Value1</c> are unused.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>, for the same reason as <see cref="MalformedFraming"/>: a
+    /// remote can produce this at will by ignoring the Goodbye it just sent.
+    /// </remarks>
+    DataAfterGoodbye = 303,
 }

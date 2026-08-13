@@ -1,0 +1,1709 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using ReactorSockets.Core;
+using ReactorSockets.Session;
+using ReactorSockets.Transports;
+
+namespace ReactorSockets;
+
+/// <summary>
+/// The stream Session profile (ADR 0010): Sessions established over TCP, addressed as Peers,
+/// delivering <c>u32</c> length-prefixed Messages rather than the byte runs the transport gives.
+/// Slices 3.1-3.3 validate <see cref="StreamSessionOptions"/> and its allocation bill at
+/// construction, bind the declared endpoint set, and carry a Peer through the handshake to an
+/// established Session. Slice 3.4 adds the data plane: each established Peer reassembles Messages in
+/// its own persistent receive buffer and delivers each whole one as a
+/// <see cref="SessionEventKind.MessageReceived"/> event copied into the shared frame arena. Retention,
+/// write batching and the Goodbye exchange are not yet built and land in the sub-issues that follow.
+/// </summary>
+/// <remarks>
+/// <para>
+/// There is no cookie, no ack, no sequence space, no fragment and no RTO in this profile: TCP already
+/// provides what those were built for. The datagram Session protocol is deliberately not carried over
+/// TCP, because that would put retransmission on top of retransmission.
+/// </para>
+/// <para>
+/// <b>Send timing (ADR 0011).</b> Nagle (<c>TCP_NODELAY</c>) is off, unconditionally, on every stream
+/// Session socket — it is not a knob on <see cref="StreamSessionOptions"/> and cannot be turned back
+/// on. In its place, every <see cref="Send"/> queued since the last <see cref="Pump"/> is written to
+/// the wire together, once, by that <see cref="Pump"/> call: batching we do ourselves, on our own
+/// schedule, rather than the connection's delayed acknowledgements deciding when a small Message may
+/// leave. That is a better version of what Nagle exists for, without Nagle's cost — a small Message
+/// waiting up to a round trip behind outstanding data — so a consumer measuring latency needs to know
+/// which of the two is doing the batching: theirs, by calling <see cref="Pump"/> less often, or ours,
+/// always.
+/// </para>
+/// </remarks>
+public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
+{
+    private readonly SessionReactorLifecycle _lifecycle = new();
+    private readonly StreamSessionOptions _options;
+    private readonly ReadinessDispatcher _dispatcher;
+    private readonly DiagnosticGateway _diagnostics;
+    private readonly ReactorCounterSet _counters;
+    private readonly FrameArena _arena;
+    private readonly RetentionArena _retention;
+    private readonly ShareHolderTable<PeerSlot> _peers;
+    private readonly RandomNumberGenerator _entropy;
+    private readonly List<TcpListenLink> _listenLinks = [];
+    private readonly List<SlotHandle> _connectingPeers = [];
+    private readonly List<PendingEvent> _pendingEvents = [];
+    private readonly List<RefusalSlot> _refusals = [];
+    private readonly HashSet<SlotHandle> _peersWithBufferedMessages = [];
+    private readonly HashSet<SlotHandle> _peersWithPendingRetentionWrites = [];
+    private readonly HashSet<SlotHandle> _peersWithGoodbyeOwed = [];
+    private readonly HashSet<SlotHandle> _peersPendingClose = [];
+    private readonly int _admissionCap;
+    private int _admissionsThisFrame;
+    private int _capDeferralsThisFrame;
+
+    /// <summary>
+    /// Validates <paramref name="options"/> — every knob and cross-check, then the frame arena's
+    /// floor — before anything is allocated or bound, then binds every declared endpoint in the order
+    /// supplied. A bind that fails throws here, naming the endpoint: binding is part of what this
+    /// Reactor is, so there is no half-built Reactor to hand back.
+    /// </summary>
+    /// <param name="options">
+    /// Composed rather than inherited (ADR 0011): the shared L0 budget plus this profile's own
+    /// required and defaulted knobs, with no shared base between profiles.
+    /// </param>
+    public StreamSessionReactor(StreamSessionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        options.Validate();
+        int arenaSize = options.ResolveArenaSize();
+
+        _options = options;
+        _dispatcher = new ReadinessDispatcher();
+        _counters = new ReactorCounterSet();
+        _diagnostics = new DiagnosticGateway(options.Reactor.Sink, options.Reactor.MinimumLevel, _counters);
+        _arena = new FrameArena(arenaSize, options.Reactor.Capacity);
+        _retention = new RetentionArena(options.RetentionBytes, options.Reactor.Capacity);
+        _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity);
+        _entropy = options.Entropy;
+        _admissionCap = options.Reactor.ResolvedAdmissionCap;
+
+        try
+        {
+            foreach (IPEndPoint endpoint in options.Endpoints)
+            {
+                BindAndRegister(endpoint);
+            }
+        }
+        catch
+        {
+            _listenLinks.DisposeAndClear(_dispatcher, link => link.Socket);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// The endpoints this Reactor is bound to right now, in the order they were declared. A snapshot:
+    /// it answers what is bound, and there is no member that binds another — there is no rebinding
+    /// (ADR 0014), and unlike the datagram profile a stream dial never binds a wildcard socket of its
+    /// own, since TCP's own connect already binds an ephemeral local port implicitly.
+    /// </summary>
+    public IReadOnlyList<IPEndPoint> BoundEndpoints
+    {
+        get
+        {
+            EnsureUsable();
+
+            IPEndPoint[] snapshot = new IPEndPoint[_listenLinks.Count];
+            for (int index = 0; index < _listenLinks.Count; index++)
+            {
+                snapshot[index] = _listenLinks[index].LocalEndPoint;
+            }
+
+            return snapshot;
+        }
+    }
+
+    /// <summary>A point-in-time snapshot of this Reactor's own counters (ADR 0013). No reset.</summary>
+    public ReactorCounters Counters
+    {
+        get
+        {
+            EnsureUsable();
+            return _counters.Snapshot();
+        }
+    }
+
+    /// <inheritdoc cref="ISessionEventSource.PendingEventCount"/>
+    int ISessionEventSource.PendingEventCount => _pendingEvents.Count;
+
+    /// <summary>
+    /// One synchronous advance: wipes the previous Frame's events — which is also the moment a Peer
+    /// still <see cref="SessionEventKind.PeerClosing"/> only because the last Frame's Messages had not
+    /// been drained past yet becomes eligible to close (<see cref="RetryPeersPendingClose"/>) — then
+    /// admits ready connections, advances every in-flight dial and reads whatever bound socket is
+    /// ready right now, running the handshake for everything that arrived, then flushes every Peer's
+    /// queued retention bytes exactly once (<see cref="FlushPendingRetentionWrites"/>, #90/3.6.2)
+    /// regardless of how many <see cref="Send"/> calls queued them. Throws
+    /// <see cref="InvalidOperationException"/> if called from any thread other than the one that
+    /// constructed this Reactor, or from inside a Pump already in progress.
+    /// </summary>
+    public void Pump()
+    {
+        EnsureUsable();
+        EnsureCallingThreadIsConstructingThread();
+
+        _lifecycle.InPump = true;
+        try
+        {
+            _pendingEvents.Clear();
+            _arena.Reset();
+            _admissionsThisFrame = 0;
+            _capDeferralsThisFrame = 0;
+            RetryPeersPendingClose();
+            RetryPeersWithBufferedMessages();
+            RetryGoodbyeAppends();
+            _dispatcher.Pump();
+            FlushPendingRetentionWrites();
+            ProcessConnectingPeers();
+            ReportDeclinedAdmissions();
+        }
+        finally
+        {
+            _lifecycle.InPump = false;
+        }
+    }
+
+    /// <summary>
+    /// Drains every event produced this Frame — since the last <see cref="Pump"/> — in the order it was
+    /// produced.
+    /// </summary>
+    public SessionEventEnumerator Drain()
+    {
+        EnsureUsable();
+        return new(this);
+    }
+
+    /// <summary>
+    /// Begins a Session with <paramref name="destination"/>, returning the <see cref="PeerId"/> that
+    /// will address it. The Peer occupies a capacity Slot from this moment, exactly as a dialling Link
+    /// does in <see cref="RawReactor"/>: the handshake is work this Reactor is holding, and pretending
+    /// otherwise would let a consumer dial past capacity and discover it only on the far side of a
+    /// round trip. <see cref="SessionEventKind.PeerConnected"/> or <see cref="SessionEventKind.PeerClosed"/>
+    /// resolves it on a later Pump.
+    /// </summary>
+    public PeerId Connect(IPEndPoint destination)
+    {
+        EnsureUsable();
+        EnsureCallingThreadIsConstructingThread();
+        ArgumentNullException.ThrowIfNull(destination);
+
+        if (!_peers.HasFreeSlot)
+        {
+            throw new InvalidOperationException(
+                $"This Reactor's capacity of {_options.Reactor.Capacity} Peers is fully occupied — close a Peer before dialling another.");
+        }
+
+        TcpLink link = TcpLink.Dial(destination);
+        PeerSlot slot = new()
+        {
+            Link = link,
+            LocalResumeSecret = NextResumeSecret(),
+            State = HandshakeState.Connecting,
+            ReceiveBuffer = new byte[_options.ResolvedReceiveBufferSize],
+        };
+
+        // `HasFreeSlot` was just checked and this Reactor is single-threaded (ADR 0002), so `TryAdd`
+        // cannot fail here — the guard is defensive rather than a case this branch expects to take.
+        if (_peers.TryAdd(slot) is not SlotHandle handle)
+        {
+            link.Dispose();
+            throw new InvalidOperationException(
+                $"This Reactor's capacity of {_options.Reactor.Capacity} Peers is fully occupied — close a Peer before dialling another.");
+        }
+
+        slot.Handle = handle;
+        _connectingPeers.Add(handle);
+
+        return ToPeerId(handle);
+    }
+
+    /// <summary>
+    /// Announces this end is ending the Session with <paramref name="peer"/> on purpose: attempts to
+    /// append a Goodbye control record to whatever this Peer's retention region already holds, so it
+    /// is the last thing flushed and everything queued before it is delivered first, then forbids any
+    /// further <see cref="Send"/> to it. If retention has no room for it yet, the attempt is retried
+    /// on every later Pump (<see cref="RetryGoodbyeAppends"/>) until it commits — <see cref="Close"/>
+    /// must never leave the far end open indefinitely because the Goodbye it promised was silently
+    /// dropped (issue #23 review finding), and this end never closes itself locally until its own
+    /// Goodbye has actually been appended and flushed. The <see cref="SessionEventKind.PeerClosed"/>
+    /// carrying <see cref="DisconnectReason.LocalClose"/> is queued once that flush fully drains —
+    /// immediately, on a later Pump, if nothing was queued when <see cref="Close"/> was called, or
+    /// after however many Pumps a short write (or a retention append retry) takes to carry everything
+    /// already retained plus the Goodbye itself. Idempotent: a stale <see cref="PeerId"/>, or a Peer
+    /// already closing, is a no-op — a Peer closing under a caller, or a caller that closes the same
+    /// Peer twice, is an ordinary race rather than a programmer error.
+    /// </summary>
+    public void Close(PeerId peer)
+    {
+        EnsureUsable();
+        EnsureCallingThreadIsConstructingThread();
+
+        SlotHandle handle = ToHandle(peer);
+        if (_peers.TryResolve(handle) is not PeerSlot slot || slot.LocalGoodbyeSent)
+        {
+            return;
+        }
+
+        slot.LocalGoodbyeSent = true;
+        if (slot.PendingCloseReasonAfterRetentionDrains is not null)
+        {
+            // A remote Goodbye already put this Peer into Closing (or would have closed it outright,
+            // in which case _peers.TryResolve above would already have failed) — the peer already
+            // knows this Session is ending, so there is nothing further to announce on the wire.
+            return;
+        }
+
+        AppendGoodbyeOrDefer(handle, slot);
+    }
+
+    /// <summary>
+    /// Attempts to append this end's own Goodbye sentinel to <paramref name="handle"/>'s retention
+    /// region. On <see cref="RetentionOutcome.Committed"/>, marks the write pending
+    /// (<see cref="FlushPendingRetentionWrites"/> carries it out) and records
+    /// <see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/> as
+    /// <see cref="DisconnectReason.LocalClose"/> — set only now, once the Goodbye is truly queued
+    /// behind whatever else this Peer's retention already held, never eagerly at <see cref="Close"/>:
+    /// setting it before the append succeeds is exactly the bug this method closes, since
+    /// <see cref="TryCloseAfterRetentionDrained"/> would otherwise see retention run dry once the
+    /// pre-<see cref="Close"/> Sends flush and close this end locally without the Goodbye it promised
+    /// ever having reached the wire. The <c>??=</c> is what keeps that record first-writer-wins even
+    /// on the one path that reaches here without passing <see cref="Close"/>'s guard: a
+    /// <see cref="Close"/> whose append was deferred, followed by an inbound Goodbye recording
+    /// <see cref="DisconnectReason.PeerGoodbye"/>, followed by <see cref="RetryGoodbyeAppends"/>
+    /// finally committing — the far end's reason was recorded first and stays.
+    /// On <see cref="RetentionOutcome.Exhausted"/>, the attempt is
+    /// recorded in <see cref="_peersWithGoodbyeOwed"/> for <see cref="RetryGoodbyeAppends"/> to retry
+    /// on a later Pump, mirroring the shape #81's <see cref="RetryPeersWithBufferedMessages"/>
+    /// established — that set is for Messages a Peer sent this end; this one is for the single control
+    /// record this end owes the far end.
+    /// </summary>
+    private void AppendGoodbyeOrDefer(SlotHandle handle, PeerSlot slot)
+    {
+        Span<byte> goodbye = stackalloc byte[MessageFramingCodec.LengthPrefixSize];
+        MessageFramingCodec.WriteGoodbye(goodbye);
+        RetentionOutcome outcome = _retention.TryAppend(handle.Index, goodbye);
+        switch (outcome)
+        {
+            case RetentionOutcome.Committed:
+                slot.HasPendingRetentionWrite = true;
+                _peersWithPendingRetentionWrites.Add(handle);
+                slot.PendingCloseReasonAfterRetentionDrains ??= DisconnectReason.LocalClose;
+                _peersPendingClose.Add(handle);
+                _peersWithGoodbyeOwed.Remove(handle);
+                break;
+
+            case RetentionOutcome.Exhausted:
+                // No room yet for the Goodbye sentinel behind whatever Sends already queued.
+                // RetryGoodbyeAppends re-attempts this on a later Pump once bytes are released — Close
+                // must never leave the ending unannounced just because retention happened to be full
+                // the moment it was called.
+                _peersWithGoodbyeOwed.Add(handle);
+                break;
+
+            default:
+                throw new InvalidOperationException($"Unrecognised {nameof(RetentionOutcome)}: {outcome}.");
+        }
+    }
+
+    /// <summary>
+    /// Re-attempts <see cref="AppendGoodbyeOrDefer"/> for every Peer whose <see cref="Close"/> found
+    /// retention exhausted at the time. Runs once, at the start of every Pump, after an earlier
+    /// Frame's flush may have released the room the first attempt lacked — the same position and
+    /// snapshot-then-clear shape as <see cref="RetryPeersWithBufferedMessages"/> (#81), so a Peer whose
+    /// append keeps failing is simply re-added to <see cref="_peersWithGoodbyeOwed"/> by
+    /// <see cref="AppendGoodbyeOrDefer"/> itself rather than left off this list.
+    /// </summary>
+    private void RetryGoodbyeAppends()
+    {
+        if (_peersWithGoodbyeOwed.Count == 0)
+        {
+            return;
+        }
+
+        SlotHandle[] pending = [.. _peersWithGoodbyeOwed];
+        _peersWithGoodbyeOwed.Clear();
+
+        foreach (SlotHandle handle in pending)
+        {
+            if (_peers.TryResolve(handle) is PeerSlot slot)
+            {
+                AppendGoodbyeOrDefer(handle, slot);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A point-in-time snapshot of one Peer's counters (ADR 0013). Throws if the Peer is not open.
+    /// Mirrors <see cref="RawReactor.CountersOf(LinkId)"/>'s shape for the Raw profile.
+    /// </summary>
+    public PeerCounters CountersOf(PeerId peer)
+    {
+        EnsureUsable();
+
+        SlotHandle handle = ToHandle(peer);
+        PeerSlot slot = _peers.TryResolve(handle)
+            ?? throw new ArgumentException($"Peer {peer} is not open.", nameof(peer));
+
+        return slot.Counters.Snapshot(_retention.HighWaterBytes(handle.Index));
+    }
+
+    /// <summary>
+    /// Frames <paramref name="message"/> as a <c>u32</c> big-endian length prefix followed by its
+    /// bytes (<see cref="MessageFramingCodec"/>, ADR 0010) and appends the framed bytes to
+    /// <paramref name="peer"/>'s retention region. Nothing is written to the socket here, ever (#90,
+    /// 3.6.2 write batching) — a successful append only sets this Peer's pending-write marker
+    /// (<see cref="PeerSlot.HasPendingRetentionWrite"/>), which the next <see cref="Pump"/>'s explicit
+    /// flush step (<see cref="FlushPendingRetentionWrites"/>) drains in a single write carrying
+    /// everything queued, including whatever was already sitting there. A Send with no following Pump
+    /// call puts nothing on the wire. Refuses once a Goodbye has passed in either direction — this
+    /// end's own (<see cref="PeerSlot.LocalGoodbyeSent"/>) or the far end's arrived and this Peer is
+    /// already <see cref="SessionEventKind.PeerClosing"/> or on its way to
+    /// <see cref="SessionEventKind.PeerClosed"/> (<see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/>)
+    /// — since a Message queued after a Goodbye is not one the far end has any business receiving
+    /// (issue #23).
+    /// </summary>
+    /// <param name="peer">The Peer to send to. Throws if not open, matching <see cref="CountersOf"/>.</param>
+    /// <param name="message">
+    /// The Message payload, unframed. Throws if longer than <see cref="StreamSessionOptions.MaxMessageSize"/> —
+    /// the same floor the receive side enforces, so this can never frame a Message the far end's
+    /// announced limit would reject.
+    /// </param>
+    public SendOutcome Send(PeerId peer, ReadOnlySpan<byte> message)
+    {
+        EnsureUsable();
+        EnsureCallingThreadIsConstructingThread();
+
+        if (message.Length > _options.MaxMessageSize)
+        {
+            throw new ArgumentException(
+                $"message of {message.Length} bytes exceeds MaxMessageSize of {_options.MaxMessageSize}.",
+                nameof(message));
+        }
+
+        SlotHandle handle = ToHandle(peer);
+        PeerSlot slot = _peers.TryResolve(handle) ?? throw new ArgumentException($"Peer {peer} is not open.", nameof(peer));
+
+        if (slot.LocalGoodbyeSent || slot.PendingCloseReasonAfterRetentionDrains is not null)
+        {
+            return SendOutcome.Closed;
+        }
+
+        Span<byte> framed = new byte[MessageFramingCodec.LengthPrefixSize + message.Length];
+        MessageFramingCodec.WriteLengthPrefix(framed, (uint)message.Length);
+        message.CopyTo(framed[MessageFramingCodec.LengthPrefixSize..]);
+
+        RetentionOutcome outcome = _retention.TryAppend(handle.Index, framed);
+        if (outcome == RetentionOutcome.Committed)
+        {
+            slot.HasPendingRetentionWrite = true;
+            _peersWithPendingRetentionWrites.Add(handle);
+        }
+
+        return outcome switch
+        {
+            RetentionOutcome.Committed => SendOutcome.Sent,
+            RetentionOutcome.Exhausted => SendOutcome.RetentionExhausted,
+            _ => throw new InvalidOperationException($"Unrecognised {nameof(RetentionOutcome)}: {outcome}."),
+        };
+    }
+
+    /// <summary>
+    /// Releases every socket this Reactor bound or accepted. A Reactor owns every socket it bound, so
+    /// a consumer that drops one without disposing it leaks those sockets until each
+    /// <see cref="Socket"/>'s finalizer runs. No <see cref="SessionEventKind.PeerClosed"/> events are
+    /// queued: nothing can drain a disposed Reactor. Idempotent; every other member throws
+    /// <see cref="ObjectDisposedException"/> afterwards.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="StreamSessionOptions.Entropy"/> is deliberately not disposed. It may be a source the
+    /// consumer holds and uses elsewhere, and a Reactor disposing a value it was merely handed would be
+    /// reaching outside what it owns.
+    /// </remarks>
+    public void Dispose()
+    {
+        if (_lifecycle.IsDisposed)
+        {
+            return;
+        }
+
+        EnsureCallingThreadIsConstructingThread();
+        EnsureNotInsideAPump();
+
+        foreach (PeerSlot slot in _peers.DrainAll())
+        {
+            _dispatcher.Unregister(slot.Link.Socket);
+            slot.Link.Dispose();
+        }
+
+        foreach (RefusalSlot refusal in _refusals)
+        {
+            _dispatcher.Unregister(refusal.Link.Socket);
+            refusal.Link.Dispose();
+        }
+
+        _refusals.Clear();
+        _connectingPeers.Clear();
+        _pendingEvents.Clear();
+        _peersWithBufferedMessages.Clear();
+        _peersWithPendingRetentionWrites.Clear();
+        _peersPendingClose.Clear();
+        _peersWithGoodbyeOwed.Clear();
+        _lifecycle.IsDisposed = true;
+        _listenLinks.DisposeAndClear(_dispatcher, link => link.Socket);
+    }
+
+    /// <inheritdoc cref="ISessionEventSource.GetPendingEvent"/>
+    SessionEvent ISessionEventSource.GetPendingEvent(int index)
+    {
+        PendingEvent pending = _pendingEvents[index];
+        if (pending.Kind.TryCreateCommonSessionEvent(pending.Peer, pending.Reason, out SessionEvent common))
+        {
+            return common;
+        }
+
+        return pending.Kind switch
+        {
+            SessionEventKind.MessageReceived => SessionEvent.ForMessageReceived(
+                pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
+            SessionEventKind.PeerClosing => SessionEvent.ForPeerClosing(pending.Peer),
+            _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind."),
+        };
+    }
+
+    /// <summary>
+    /// Binds one listening socket and registers it for readiness dispatch and accept. The binding
+    /// rules are unchanged from the Raw profile's (ADR 0014): exclusive, no dual-mode, no hostname, no
+    /// configure callback.
+    /// </summary>
+    private void BindAndRegister(IPEndPoint endpoint)
+    {
+        TcpListenLink link = TcpListenLink.Listen(endpoint);
+        _listenLinks.Add(link);
+        _dispatcher.Register(link.Socket, () => OnListeningLinkReadable(link));
+    }
+
+    /// <summary>
+    /// Accepts as many pending connections as the shared admission cap still allows this Frame,
+    /// stopping the moment it is spent or the backlog runs dry — whichever comes first. Every accepted
+    /// connection is admitted as a Peer or, if this Reactor has no capacity Slot free, refused
+    /// in-protocol and closed (subtask 3.3): a burst of connections beyond capacity is an
+    /// accept-refuse-close cycle inside the admission budget, never a silent drop and never left
+    /// waiting in the backlog the way a cap-exhausted Frame's remainder is.
+    /// </summary>
+    private void OnListeningLinkReadable(TcpListenLink link)
+    {
+        while (true)
+        {
+            if (_admissionsThisFrame >= _admissionCap)
+            {
+                if (link.HasPendingConnection)
+                {
+                    _capDeferralsThisFrame++;
+                }
+
+                return;
+            }
+
+            TcpAcceptResult result = link.TryAccept();
+            switch (result.Outcome)
+            {
+                case TcpAcceptOutcome.NoPendingConnection:
+                    return;
+                case TcpAcceptOutcome.Failed:
+                    // No Diagnostic is logged here: there is no Peer to attribute it to. The listening
+                    // socket itself is unaffected — see TcpListenLink.TryAccept's own remarks — so the
+                    // next Pump simply tries again.
+                    return;
+                case TcpAcceptOutcome.Accepted when result.IsAccepted:
+                    _admissionsThisFrame++;
+                    AdmitOrRefuse(result.Socket);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Registers a socket a listening Link just accepted as a new Peer's transport and immediately
+    /// sends this end's handshake record — or, if every capacity Slot is occupied, refuses it
+    /// in-protocol instead of ever creating one. Checked here rather than before accepting: the
+    /// admission cap alone bounds how many of these accept-then-decide cycles one Frame performs
+    /// (Scope: "a burst of a thousand inbound connections is a thousand accept-refuse-close cycles").
+    /// </summary>
+    private void AdmitOrRefuse(Socket acceptedSocket)
+    {
+        TcpLink link = TcpLink.FromAccepted(acceptedSocket);
+        if (!_peers.HasFreeSlot)
+        {
+            RefuseForCapacity(link);
+            return;
+        }
+
+        PeerSlot slot = new()
+        {
+            Link = link,
+            LocalResumeSecret = NextResumeSecret(),
+            State = HandshakeState.AwaitingPeerHandshake,
+            ReceiveBuffer = new byte[_options.ResolvedReceiveBufferSize],
+        };
+
+        // `HasFreeSlot` was just checked and this Reactor is single-threaded (ADR 0002), so `TryAdd`
+        // cannot fail here — the guard is defensive rather than a case this branch expects to take.
+        if (_peers.TryAdd(slot) is not SlotHandle handle)
+        {
+            link.Dispose();
+            return;
+        }
+
+        slot.Handle = handle;
+        RegisterPeerTransport(handle, slot);
+        SendHandshakeRecord(handle, slot);
+    }
+
+    /// <summary>
+    /// Refuses a just-accepted connection because every capacity Slot is occupied, without ever giving
+    /// it one: a Refusal record naming this Reactor's capacity is sent and the connection is then
+    /// closed. Never counted as an Admission Deferral or Discard — a refusal says something on the wire
+    /// and ends the connection, which is a different outcome from silently leaving declined work for a
+    /// later Pump.
+    /// </summary>
+    private void RefuseForCapacity(TcpLink link)
+    {
+        Source remote = Source.FromIPEndPoint(link.RemoteEndPoint);
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForPeerRefusedCapacity(remote, _peers.Capacity));
+        }
+
+        RefusalSlot refusal = new() { Link = link };
+        _refusals.Add(refusal);
+        _dispatcher.Register(link.Socket, () => DrainRefusal(refusal), () => OnRefusalWritable(refusal));
+
+        // The dialler's own Hello may already be sitting in the receive buffer by the time this
+        // connection is accepted — draining it now, before the Refusal is sent, is what keeps the
+        // close below clean rather than a reset (unread inbound data at close time is what forces one).
+        DrainRefusal(refusal);
+
+        byte[] record = new byte[StreamHandshakeCodec.RecordSize];
+        StreamHandshakeCodec.WriteRefusal(record, RefusalReason.Capacity, (uint)_peers.Capacity, 0);
+        SendRefusalRecord(refusal, record);
+    }
+
+    /// <summary>Sends a Refusal record, arming for a short send exactly as a Hello record does.</summary>
+    private void SendRefusalRecord(RefusalSlot refusal, byte[] record)
+    {
+        if (SendPendingRecord(refusal.Link, record, out ReadOnlyMemory<byte> remainder) == PendingRecordSendOutcome.ShortSend)
+        {
+            refusal.PendingBytesToSend = remainder;
+            return;
+        }
+
+        CloseRefusal(refusal);
+    }
+
+    /// <summary>Flushes whatever remains of a Refusal record a short send left behind, then closes.</summary>
+    private void OnRefusalWritable(RefusalSlot refusal)
+    {
+        if (refusal.PendingBytesToSend is not { Length: > 0 } pending)
+        {
+            return;
+        }
+
+        if (SendPendingRecord(refusal.Link, pending, out ReadOnlyMemory<byte> remainder) == PendingRecordSendOutcome.ShortSend)
+        {
+            refusal.PendingBytesToSend = remainder;
+            return;
+        }
+
+        CloseRefusal(refusal);
+    }
+
+    /// <summary>
+    /// Reads and discards whatever a connection being refused sends — nothing it contains is ever
+    /// examined, since a capacity refusal needs nothing from the far end and this exists solely to keep
+    /// the eventual close from racing an unread Hello into a reset.
+    /// </summary>
+    private void DrainRefusal(RefusalSlot refusal)
+    {
+        Span<byte> scratch = stackalloc byte[64];
+        while (true)
+        {
+            TcpLinkReceiveResult result = refusal.Link.Receive(scratch);
+            if (result.Outcome != TcpLinkReceiveOutcome.Delivered || result.Payload.Length < scratch.Length)
+            {
+                return;
+            }
+        }
+    }
+
+    private void CloseRefusal(RefusalSlot refusal)
+    {
+        _dispatcher.Unregister(refusal.Link.Socket);
+        refusal.Link.Dispose();
+        _refusals.Remove(refusal);
+    }
+
+    /// <summary>
+    /// Polls every Peer still dialling for a resolved TCP connect, in the order each was begun. A
+    /// resolved dial is removed from the tracking list whether it succeeded or failed; one still in
+    /// flight is left for the next Pump to check again. Each entry's generation is re-checked against
+    /// the Slot before polling, so a Peer the consumer closed mid-dial is dropped rather than polling
+    /// whatever now occupies that Slot.
+    /// </summary>
+    private void ProcessConnectingPeers()
+    {
+        int surviving = 0;
+        for (int i = 0; i < _connectingPeers.Count; i++)
+        {
+            SlotHandle handle = _connectingPeers[i];
+            if (_peers.TryResolve(handle) is not PeerSlot slot)
+            {
+                continue;
+            }
+
+            TcpConnectPollResult result = slot.Link.PollConnect();
+            switch (result.Outcome)
+            {
+                case TcpConnectPollOutcome.Pending:
+                    _connectingPeers[surviving++] = handle;
+                    break;
+                case TcpConnectPollOutcome.Connected:
+                    slot.State = HandshakeState.AwaitingPeerHandshake;
+                    RegisterPeerTransport(handle, slot);
+                    SendHandshakeRecord(handle, slot);
+                    break;
+                case TcpConnectPollOutcome.Failed:
+                    ClosePeer(handle, DisconnectReason.TransportFailed);
+                    break;
+            }
+        }
+
+        _connectingPeers.RemoveRange(surviving, _connectingPeers.Count - surviving);
+    }
+
+    private void RegisterPeerTransport(SlotHandle handle, PeerSlot slot) =>
+        _dispatcher.Register(slot.Link.Socket, () => OnPeerReadable(handle), () => OnPeerWritable(handle));
+
+    /// <summary>
+    /// Writes this end's Hello record and sends as much of it as the socket will take right now.
+    /// A short send arms this Peer's socket for <see cref="OnPeerWritable"/>, which flushes whatever
+    /// remains — the record is 41 bytes, so a short send is not expected in practice, but nothing here
+    /// assumes the whole record lands in one syscall.
+    /// </summary>
+    private void SendHandshakeRecord(SlotHandle handle, PeerSlot slot)
+    {
+        byte[] record = new byte[StreamHandshakeCodec.RecordSize];
+        StreamHandshakeCodec.Write(
+            record,
+            StreamSessionProtocol.Version,
+            (uint)_options.MaxMessageSize,
+            (ulong)_options.SendIdleInterval.TotalMilliseconds,
+            (ulong)_options.Linger.TotalMilliseconds,
+            slot.LocalResumeSecret);
+
+        SendRecordOrArm(handle, slot, record, closeReasonAfterSend: null);
+    }
+
+    /// <summary>
+    /// Refuses a Peer whose Hello record announced a version this Reactor does not speak: sends a
+    /// Refusal naming both versions, then closes with <see cref="DisconnectReason.VersionMismatch"/>
+    /// once it is fully on the wire. The full Hello that revealed the mismatch has already been read in
+    /// its entirety by the time this runs, so there is nothing unread left to force a reset on close.
+    /// </summary>
+    private void RefuseVersionAndClose(SlotHandle handle, PeerSlot slot, uint remoteVersion)
+    {
+        Source remote = Source.FromIPEndPoint(slot.Link.RemoteEndPoint);
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForPeerRefusedVersion(remote, remoteVersion, StreamSessionProtocol.Version));
+        }
+
+        byte[] record = new byte[StreamHandshakeCodec.RecordSize];
+        StreamHandshakeCodec.WriteRefusal(record, RefusalReason.Version, remoteVersion, StreamSessionProtocol.Version);
+        SendRecordOrArm(handle, slot, record, closeReasonAfterSend: DisconnectReason.VersionMismatch);
+    }
+
+    /// <summary>
+    /// Sends a handshake or Refusal record for <paramref name="slot"/>, arming for a short send exactly
+    /// as before. When <paramref name="closeReasonAfterSend"/> is supplied, the Peer is closed with it
+    /// the moment the record is fully on the wire — immediately if the send completes now, or from
+    /// <see cref="OnPeerWritable"/> once a short send's remainder finishes flushing.
+    /// </summary>
+    /// <remarks>
+    /// If this end's own earlier record (its Hello) short-sent and is still draining, its remainder in
+    /// <see cref="PeerSlot.PendingHandshakeBytesToSend"/> must not be overwritten by a Refusal that
+    /// becomes necessary before that flush finishes (#98) — writing <paramref name="record"/> to the
+    /// wire now would interleave it into the still-unfinished one. This queues it in
+    /// <see cref="PeerSlot.QueuedHandshakeSend"/> instead; <see cref="OnPeerWritable"/> sends it, in
+    /// order, once the pending remainder is fully flushed.
+    /// </remarks>
+    private void SendRecordOrArm(SlotHandle handle, PeerSlot slot, byte[] record, DisconnectReason? closeReasonAfterSend)
+    {
+        if (slot.PendingHandshakeBytesToSend is { Length: > 0 })
+        {
+            slot.QueuedHandshakeSend = (record, closeReasonAfterSend);
+            return;
+        }
+
+        switch (SendPendingRecord(slot.Link, record, out ReadOnlyMemory<byte> remainder))
+        {
+            case PendingRecordSendOutcome.Failed:
+                ClosePeer(handle, closeReasonAfterSend ?? DisconnectReason.TransportFailed);
+                break;
+
+            case PendingRecordSendOutcome.ShortSend:
+                slot.PendingHandshakeBytesToSend = remainder;
+                slot.PendingCloseReason = closeReasonAfterSend;
+                break;
+
+            case PendingRecordSendOutcome.Complete:
+                if (closeReasonAfterSend is DisconnectReason reason)
+                {
+                    ClosePeer(handle, reason);
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Flushes whatever remains of a handshake record a short send left behind, closes if a reason is
+    /// pending on it, then — with the handshake bytes clear — marks this Peer's retention pending
+    /// again, so a short retention write's own re-arm (<see cref="FlushRetention"/>) is picked up by
+    /// this Frame's explicit flush step (<see cref="FlushPendingRetentionWrites"/>) rather than writing
+    /// to the socket directly here. This is what keeps every retention write routed through exactly one
+    /// call site: a socket that is both freshly re-armed from a short write and independently marked
+    /// pending by a same-Frame <see cref="Send"/> still gets flushed exactly once.
+    /// </summary>
+    private void OnPeerWritable(SlotHandle handle)
+    {
+        if (_peers.TryResolve(handle) is not PeerSlot slot)
+        {
+            return;
+        }
+
+        if (slot.PendingHandshakeBytesToSend is { Length: > 0 } pending)
+        {
+            switch (SendPendingRecord(slot.Link, pending, out ReadOnlyMemory<byte> remainder))
+            {
+                case PendingRecordSendOutcome.Failed:
+                    ClosePeer(handle, slot.PendingCloseReason ?? DisconnectReason.TransportFailed);
+                    return;
+
+                case PendingRecordSendOutcome.ShortSend:
+                    slot.PendingHandshakeBytesToSend = remainder;
+                    return;
+
+                case PendingRecordSendOutcome.Complete:
+                    slot.PendingHandshakeBytesToSend = null;
+                    if (slot.PendingCloseReason is DisconnectReason reason)
+                    {
+                        ClosePeer(handle, reason);
+                        return;
+                    }
+
+                    if (slot.QueuedHandshakeSend is { } queued)
+                    {
+                        slot.QueuedHandshakeSend = null;
+                        SendRecordOrArm(handle, slot, queued.Record, queued.CloseReasonAfterSend);
+                        return;
+                    }
+
+                    break;
+            }
+        }
+
+        slot.HasPendingRetentionWrite = true;
+        _peersWithPendingRetentionWrites.Add(handle);
+    }
+
+    /// <summary>Whether one attempted socket send of a short handshake/Refusal record failed, fully landed, or left a remainder.</summary>
+    private enum PendingRecordSendOutcome
+    {
+        Failed,
+        ShortSend,
+        Complete,
+    }
+
+    /// <summary>
+    /// The four-step shape both the Refusal send (<see cref="SendRefusalRecord"/>/<see cref="OnRefusalWritable"/>)
+    /// and the handshake send (<see cref="SendRecordOrArm"/>/<see cref="OnPeerWritable"/>) repeat twice
+    /// each (issue #103): send once, and either the send failed, the whole record landed, or a short
+    /// send left <paramref name="remainder"/> for the caller to store and re-arm for. Arming on a short
+    /// send happens here, since every caller does the same thing with it; what a failure or a complete
+    /// send means — close, or close only if a reason was given — differs per caller and is left to it.
+    /// </summary>
+    private PendingRecordSendOutcome SendPendingRecord(TcpLink link, ReadOnlyMemory<byte> record, out ReadOnlyMemory<byte> remainder)
+    {
+        TcpLinkSendResult result = link.Send(record.Span);
+        if (!result.IsSuccess)
+        {
+            remainder = default;
+            return PendingRecordSendOutcome.Failed;
+        }
+
+        if (result.BytesSent < record.Length)
+        {
+            remainder = record[result.BytesSent..];
+            _dispatcher.ArmWritable(link.Socket);
+            return PendingRecordSendOutcome.ShortSend;
+        }
+
+        remainder = default;
+        return PendingRecordSendOutcome.Complete;
+    }
+
+    /// <summary>
+    /// Visits every Peer whose pending-write marker (<see cref="PeerSlot.HasPendingRetentionWrite"/>)
+    /// is set — from a <see cref="Send"/> this Frame or an earlier one, or from a short write's own
+    /// re-arm landing via <see cref="OnPeerWritable"/> above — and flushes it exactly once
+    /// (<see cref="FlushRetention"/>), clearing the marker first so a Peer <see cref="FlushRetention"/>
+    /// re-arms for a further short write starts this Frame with a clean marker rather than one already
+    /// (spuriously) set. Runs once per <see cref="Pump"/>, after the readiness dispatcher, which is what
+    /// makes "at most one write per Peer per Pump" an enforced property of this method rather than an
+    /// incidental one of how readiness happened to fire (#90, 3.6.2 write batching): a Peer that
+    /// received any number of <see cref="Send"/> calls since the last Pump is serviced here in a single
+    /// pass over everything <see cref="RetentionArena.GetReadable"/> currently reports, and a Peer with
+    /// no marker set — because nothing was ever sent to it, or a Send with no following Pump — is never
+    /// visited at all.
+    /// </summary>
+    private void FlushPendingRetentionWrites()
+    {
+        if (_peersWithPendingRetentionWrites.Count == 0)
+        {
+            return;
+        }
+
+        // Snapshot and clear first, mirroring RetryPeersWithBufferedMessages: FlushRetention's own
+        // short-write re-arm flows back through OnPeerWritable on a later Pump, not synchronously
+        // within this loop, so there is no risk of this set being repopulated while it is enumerated —
+        // but taking the same defensive shape keeps this method's invariant obvious without relying on
+        // that timing.
+        SlotHandle[] pending = [.. _peersWithPendingRetentionWrites];
+        _peersWithPendingRetentionWrites.Clear();
+
+        foreach (SlotHandle handle in pending)
+        {
+            if (_peers.TryResolve(handle) is not PeerSlot slot)
+            {
+                continue;
+            }
+
+            slot.HasPendingRetentionWrite = false;
+            FlushRetention(handle, slot);
+        }
+    }
+
+    /// <summary>
+    /// Writes as much of <paramref name="handle"/>'s unread retained bytes
+    /// (<see cref="RetentionArena.GetReadable"/>) to the socket as it will currently take, releasing
+    /// each portion (<see cref="RetentionArena.Release"/>) the instant it is handed off. This is a
+    /// local flush only (#86's scope boundary, ADR 0011/#21/#82): bytes are released once the OS
+    /// socket buffer has accepted them, not once the peer has acknowledged them — the peer-ack
+    /// mechanism that will eventually move the release trigger is #25's job, not this one's.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RetentionArena.GetReadable"/> can return two wrap segments. A short write partway
+    /// through <paramref name="first"/> stops here and re-arms without touching <c>second</c> at all —
+    /// releasing only what was actually accepted keeps the ring's released total honest with what the
+    /// socket has truly taken. Only once <c>first</c> is entirely on the wire is <c>second</c>
+    /// attempted, with the same short-write re-arm applied to it in turn.
+    /// </remarks>
+    private void FlushRetention(SlotHandle handle, PeerSlot slot)
+    {
+        (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) = _retention.GetReadable(handle.Index);
+        if (first.Length == 0)
+        {
+            TryCloseAfterRetentionDrained(handle, slot);
+            return;
+        }
+
+        TcpLinkSendResult firstResult = slot.Link.Send(first.Span);
+        if (!firstResult.IsSuccess)
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        if (firstResult.BytesSent > 0)
+        {
+            _retention.Release(handle.Index, firstResult.BytesSent);
+        }
+
+        if (firstResult.BytesSent < first.Length)
+        {
+            _dispatcher.ArmWritable(slot.Link.Socket);
+            return;
+        }
+
+        if (second.Length == 0)
+        {
+            TryCloseAfterRetentionDrained(handle, slot);
+            return;
+        }
+
+        TcpLinkSendResult secondResult = slot.Link.Send(second.Span);
+        if (!secondResult.IsSuccess)
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        if (secondResult.BytesSent > 0)
+        {
+            _retention.Release(handle.Index, secondResult.BytesSent);
+        }
+
+        if (secondResult.BytesSent < second.Length)
+        {
+            _dispatcher.ArmWritable(slot.Link.Socket);
+            return;
+        }
+
+        TryCloseAfterRetentionDrained(handle, slot);
+    }
+
+    /// <summary>
+    /// The single authority for "should this Peer close now": true only once a Goodbye — its own, from
+    /// <see cref="Close"/>, or the remote's, observed while something was still outstanding
+    /// (<see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/>) — has been recorded, this end's
+    /// own outbound retention for it has fully flushed (<see cref="RetentionIsDrained"/>), and nothing
+    /// this end already reassembled from it remains undelivered to the consumer
+    /// (<see cref="HasUndeliveredInboundWork"/>, issue #23 review finding — a Goodbye does not outrun
+    /// the Messages queued ahead of it). Called both from every point in <see cref="FlushRetention"/>
+    /// that finds nothing left to send, and once per Pump for every Peer still waiting
+    /// (<see cref="RetryPeersPendingClose"/>) in case only the inbound side was still outstanding; a
+    /// no-op when nothing is pending, which is the ordinary case for a Peer that was never told to
+    /// close.
+    /// </summary>
+    private void TryCloseAfterRetentionDrained(SlotHandle handle, PeerSlot slot)
+    {
+        if (slot.PendingCloseReasonAfterRetentionDrains is DisconnectReason reason
+            && RetentionIsDrained(handle)
+            && !HasUndeliveredInboundWork(handle))
+        {
+            ClosePeer(handle, reason);
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="handle"/> has nothing left in its own outbound retention to flush — this
+    /// end's own half of what <see cref="TryCloseAfterRetentionDrained"/> requires before closing.
+    /// Says nothing about inbound work still owed to the consumer; see
+    /// <see cref="HasUndeliveredInboundWork"/> for that half.
+    /// </summary>
+    private bool RetentionIsDrained(SlotHandle handle)
+    {
+        (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) = _retention.GetReadable(handle.Index);
+        return first.Length == 0 && second.Length == 0;
+    }
+
+    /// <summary>
+    /// Whether the consumer still has something outstanding to receive from <paramref name="handle"/>:
+    /// either a Message this end already reassembled and queued as
+    /// <see cref="SessionEventKind.MessageReceived"/> in the current Frame's undrained events, or bytes
+    /// still buffered in its receive share awaiting arena room (<see cref="_peersWithBufferedMessages"/>,
+    /// #81). Checked live against <see cref="_pendingEvents"/> rather than any separate counter: since
+    /// <see cref="Pump"/> clears that list first thing, a Message from an earlier Frame is — by the
+    /// library's own memory-validity contract — already considered delivered, so this naturally reports
+    /// false for anything older than the Frame in progress without this end needing to track whether
+    /// the consumer literally called <c>Drain</c>.
+    /// </summary>
+    private bool HasUndeliveredInboundWork(SlotHandle handle)
+    {
+        if (_peersWithBufferedMessages.Contains(handle))
+        {
+            return true;
+        }
+
+        PeerId peer = ToPeerId(handle);
+        foreach (PendingEvent pending in _pendingEvents)
+        {
+            if (pending.Kind == SessionEventKind.MessageReceived && pending.Peer == peer)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Shifts whatever bytes remain after a just-consumed Message or Goodbye (<paramref name="messageEnd"/>)
+    /// down to the front of <paramref name="slot"/>'s receive buffer, so the next parse in the same loop
+    /// starts at offset zero.
+    /// </summary>
+    private static void CompactReceiveBuffer(PeerSlot slot, int messageEnd)
+    {
+        int remaining = slot.ReceiveBytesFilled - messageEnd;
+        if (remaining > 0)
+        {
+            slot.ReceiveBuffer.AsSpan(messageEnd, remaining).CopyTo(slot.ReceiveBuffer.AsSpan(0, remaining));
+        }
+
+        slot.ReceiveBytesFilled = remaining;
+    }
+
+    /// <summary>
+    /// Reads whatever is ready on a Peer's transport. Before <see cref="HandshakeState.Established"/>
+    /// this accumulates into the Peer's own handshake buffer until a full
+    /// <see cref="StreamHandshakeCodec.RecordSize"/> has arrived; once Established, reads instead feed
+    /// the Peer's persistent receive buffer and Message reassembly (<see cref="OnEstablishedPeerReadable"/>).
+    /// </summary>
+    /// <remarks>
+    /// A full record already filled but not yet acted on (this end's Refusal is still draining a short
+    /// send, deferring <c>ClosePeer</c>) must not be read again: <see cref="PeerSlot.HandshakeBytesFilled"/>
+    /// sitting at <see cref="StreamHandshakeCodec.RecordSize"/> would otherwise hand
+    /// <c>Receive</c> a zero-length span and re-enter <see cref="OnHandshakeRecordFilled"/> on the same
+    /// buffer for whatever readability fires next (#98). This Peer's own writable/close path owns what
+    /// happens next once a record is full; a further read is not this state's job.
+    /// </remarks>
+    private void OnPeerReadable(SlotHandle handle)
+    {
+        if (_peers.TryResolve(handle) is not PeerSlot slot)
+        {
+            return;
+        }
+
+        if (slot.State == HandshakeState.Established)
+        {
+            OnEstablishedPeerReadable(handle, slot);
+            return;
+        }
+
+        if (slot.HandshakeBytesFilled >= StreamHandshakeCodec.RecordSize)
+        {
+            return;
+        }
+
+        TcpLinkReceiveResult result = slot.Link.Receive(slot.HandshakeBuffer.AsSpan(slot.HandshakeBytesFilled));
+        switch (result.Outcome)
+        {
+            case TcpLinkReceiveOutcome.Delivered:
+                slot.HandshakeBytesFilled += result.Payload.Length;
+                if (slot.HandshakeBytesFilled == StreamHandshakeCodec.RecordSize)
+                {
+                    OnHandshakeRecordFilled(handle, slot);
+                }
+
+                break;
+            case TcpLinkReceiveOutcome.EndOfStream:
+            case TcpLinkReceiveOutcome.Failed:
+                ClosePeer(handle, DisconnectReason.TransportFailed);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Reads whatever is ready on an established Peer's transport into its persistent per-Peer receive
+    /// buffer — never the frame arena directly, since a partial Message's tail must survive the arena
+    /// being wiped every Pump (Scope 3.4.1) — then delivers every whole Message the buffer now holds
+    /// (<see cref="DeliverCompleteMessages"/>). The read is skipped, not failed, when the buffer is
+    /// already full of a Message body still legally in flight: the escape that lets a Peer always
+    /// deliver one whole Message is #81's job, not this one's — this slice only refuses to read out of
+    /// bounds. An oversized or zero-length prefix never reaches this state: <see cref="DeliverCompleteMessages"/>
+    /// closes the Session the moment the four-byte prefix that names it has arrived, long before the
+    /// buffer could fill.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="TcpLinkReceiveOutcome.EndOfStream"/> and <see cref="TcpLinkReceiveOutcome.Failed"/>
+    /// are deliberately not folded into one branch here, unlike the handshake path above: a pending
+    /// socket error (<c>Failed</c>) is always <see cref="DisconnectReason.TransportFailed"/>, the
+    /// malformed-framing table's transport-failure row, arriving through this same read path exactly
+    /// as PR #73's readiness dispatcher promises and needing nothing extra to detect. A graceful end of
+    /// stream (<c>EndOfStream</c>) is classified by <see cref="ClassifyEndOfStream"/> instead, because
+    /// whether it is ordinary or a truncation depends on what this Peer's receive buffer was still
+    /// holding.
+    /// </remarks>
+    private void OnEstablishedPeerReadable(SlotHandle handle, PeerSlot slot)
+    {
+        int room = slot.ReceiveBuffer.Length - slot.ReceiveBytesFilled;
+        if (room == 0)
+        {
+            return;
+        }
+
+        TcpLinkReceiveResult result = slot.Link.Receive(slot.ReceiveBuffer.AsSpan(slot.ReceiveBytesFilled, room));
+        switch (result.Outcome)
+        {
+            case TcpLinkReceiveOutcome.Delivered:
+                slot.ReceiveBytesFilled += result.Payload.Length;
+                DeliverCompleteMessages(handle, slot);
+                break;
+            case TcpLinkReceiveOutcome.EndOfStream:
+                if (ClassifyEndOfStream(slot) is DisconnectReason reason)
+                {
+                    ClosePeer(handle, reason);
+                }
+
+                break;
+            case TcpLinkReceiveOutcome.Failed:
+                ClosePeer(handle, DisconnectReason.TransportFailed);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Repeatedly classifies the front of a Peer's receive buffer against the framing table
+    /// (<see cref="MessageFramingLegality"/>). A complete, legal Message is copied into the shared
+    /// frame arena and queued as a <see cref="SessionEventKind.MessageReceived"/> event, shifting the
+    /// remainder of the buffer down to offset zero. An oversized or zero-length prefix, or bytes
+    /// arriving behind an already-received Goodbye (<see cref="MessageFramingOutcome.DataAfterGoodbye"/>,
+    /// issue #93 — a Peer that announced it is leaving and then keeps sending), ends the Session
+    /// immediately with <see cref="DisconnectReason.ProtocolViolation"/> — the whole reason
+    /// <c>MaxMessageSize</c> is announced as a receive limit is so an oversized claim never becomes an
+    /// allocation. Stops — leaving whatever is left in place for a later Pump — the moment the front of
+    /// the buffer holds less than a whole Message, or an arena reservation cannot be made this Frame. A
+    /// Goodbye control record at the front (<see cref="MessageFramingOutcome.GoodbyeReceived"/>, issue
+    /// #23) closes the Peer directly only if nothing is outstanding on either side: this end's own
+    /// outbound retention for it already empty, and nothing this end already reassembled from it still
+    /// queued undelivered (<see cref="HasUndeliveredInboundWork"/> — a Message parsed earlier in this
+    /// same loop, ahead of the Goodbye in the same read, counts even though it already reached
+    /// <see cref="SessionEventKind.MessageReceived"/> first). Otherwise marks it
+    /// <see cref="SessionEventKind.PeerClosing"/> and defers the close to whenever both sides drain
+    /// (<see cref="TryCloseAfterRetentionDrained"/>) — never both a <c>PeerClosing</c> event and an
+    /// immediate close for the same Goodbye.
+    /// </summary>
+    private void DeliverCompleteMessages(SlotHandle handle, PeerSlot slot)
+    {
+        while (true)
+        {
+            ReadOnlySpan<byte> filled = slot.ReceiveBuffer.AsSpan(0, slot.ReceiveBytesFilled);
+            MessageFramingOutcome outcome = MessageFramingLegality.Classify(
+                filled, _options.MaxMessageSize, slot.RemoteGoodbyeReceived, out uint length, out int messageEnd);
+
+            switch (outcome)
+            {
+                case MessageFramingOutcome.AwaitingPrefix:
+                case MessageFramingOutcome.AwaitingMessage:
+                    return;
+
+                case MessageFramingOutcome.Ready:
+                {
+                    ReadOnlySpan<byte> message = slot.ReceiveBuffer.AsSpan(MessageFramingCodec.LengthPrefixSize, (int)length);
+                    if (!TryReserveMessage(handle, message, out int payloadOffset))
+                    {
+                        // Arena or per-Peer share exhausted for this Frame. The Message stays
+                        // buffered, whole, at the front of ReceiveBuffer — nothing is consumed. Reads
+                        // are level-triggered on new socket activity, so if the far end sends nothing
+                        // further this Peer would otherwise never be revisited; recording the handle
+                        // here is what lets RetryPeersWithBufferedMessages give it a fresh share on
+                        // the next Pump regardless (#81).
+                        _peersWithBufferedMessages.Add(handle);
+                        return;
+                    }
+
+                    _pendingEvents.Add(new PendingEvent
+                    {
+                        Kind = SessionEventKind.MessageReceived,
+                        Peer = ToPeerId(handle),
+                        PayloadOffset = payloadOffset,
+                        PayloadLength = (int)length,
+                    });
+                    slot.Counters.RecordMessageReceived();
+
+                    CompactReceiveBuffer(slot, messageEnd);
+                    continue;
+                }
+
+                case MessageFramingOutcome.GoodbyeReceived:
+                {
+                    CompactReceiveBuffer(slot, messageEnd);
+                    slot.RemoteGoodbyeReceived = true;
+
+                    if (slot.PendingCloseReasonAfterRetentionDrains is null)
+                    {
+                        if (!HasUndeliveredInboundWork(handle) && RetentionIsDrained(handle))
+                        {
+                            ClosePeer(handle, DisconnectReason.PeerGoodbye);
+                            return;
+                        }
+
+                        slot.PendingCloseReasonAfterRetentionDrains = DisconnectReason.PeerGoodbye;
+                        _peersPendingClose.Add(handle);
+                        _pendingEvents.Add(new PendingEvent
+                        {
+                            Kind = SessionEventKind.PeerClosing,
+                            Peer = ToPeerId(handle),
+                        });
+                    }
+
+                    continue;
+                }
+
+                // A separate arm from the discard arm below rather than folded into it: length is always
+                // 0 here (Classify returns before the prefix is even read), so there is no claimed
+                // length to report — the peer's fault is contradicting its own Goodbye by sending
+                // anything further, not a bad prefix (issue #106).
+                case MessageFramingOutcome.DataAfterGoodbye:
+                    if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                    {
+                        _diagnostics.Log(DiagnosticRecord.ForDataAfterGoodbye(ToPeerId(handle)));
+                    }
+
+                    ClosePeer(handle, DisconnectReason.ProtocolViolation);
+                    return;
+
+                // The discard arm refuses rather than permits (the RawLinkLegality/TryReserve house
+                // rule): OversizedPrefix and ZeroLengthPrefix are named explicitly, and any outcome
+                // this switch does not otherwise recognise falls into the same arm rather than being
+                // silently read as legal.
+                case MessageFramingOutcome.OversizedPrefix:
+                case MessageFramingOutcome.ZeroLengthPrefix:
+                default:
+                    if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                    {
+                        _diagnostics.Log(DiagnosticRecord.ForMalformedFraming(ToPeerId(handle), length, _options.MaxMessageSize));
+                    }
+
+                    ClosePeer(handle, DisconnectReason.ProtocolViolation);
+                    return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gives every Peer whose receive buffer still holds a whole, undelivered Message — one that lost
+    /// the per-Peer read-share or arena race on an earlier Pump (see <see cref="DeliverCompleteMessages"/>)
+    /// — a fresh chance now that this Frame's arena and shares have just been reset. Runs once, at the
+    /// start of every Pump, before the readiness dispatcher: without it, a Peer whose only remaining
+    /// data already sits in this Reactor's own buffer — nothing left ready on the socket — would never
+    /// be read again, since the dispatcher only re-fires when the far end sends more, and a Peer that
+    /// never does would hold that Message forever. A Peer redelivered here that also has fresh bytes
+    /// waiting on the wire is not double-serviced: <see cref="DeliverCompleteMessages"/> simply
+    /// continues from wherever this call leaves its buffer.
+    /// </summary>
+    private void RetryPeersWithBufferedMessages()
+    {
+        if (_peersWithBufferedMessages.Count == 0)
+        {
+            return;
+        }
+
+        // Snapshot and clear first: DeliverCompleteMessages repopulates this set for any Peer that
+        // stalls again, and iterating the field directly while it may be mutated underneath this loop
+        // would be unsound.
+        SlotHandle[] pending = [.. _peersWithBufferedMessages];
+        _peersWithBufferedMessages.Clear();
+
+        foreach (SlotHandle handle in pending)
+        {
+            if (_peers.TryResolve(handle) is PeerSlot slot)
+            {
+                DeliverCompleteMessages(handle, slot);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gives every Peer waiting on <see cref="TryCloseAfterRetentionDrained"/> a fresh chance now that
+    /// this Frame's just-cleared <see cref="_pendingEvents"/> may have let
+    /// <see cref="HasUndeliveredInboundWork"/> turn false: a Peer that entered
+    /// <see cref="SessionEventKind.PeerClosing"/> because a Message was still queued for the consumer
+    /// has nothing left to trigger <see cref="FlushRetention"/>'s own close check once its own outbound
+    /// retention was already drained at the time — the only thing still pending was delivery, and
+    /// delivery has no socket event of its own. Runs once, at the very start of every Pump, right after
+    /// the clear that is what makes a previous Frame's Messages count as delivered. Unlike
+    /// <see cref="RetryPeersWithBufferedMessages"/>, this does not snapshot-and-clear:
+    /// <see cref="_peersPendingClose"/> is a durable membership list a handle leaves only via
+    /// <see cref="ClosePeer"/>, not a one-shot retry queue, so it is safe — and necessary — to just walk
+    /// a snapshot of it every time without ever clearing it out from under itself.
+    /// </summary>
+    private void RetryPeersPendingClose()
+    {
+        if (_peersPendingClose.Count == 0)
+        {
+            return;
+        }
+
+        SlotHandle[] pending = [.. _peersPendingClose];
+        foreach (SlotHandle handle in pending)
+        {
+            if (_peers.TryResolve(handle) is PeerSlot slot)
+            {
+                TryCloseAfterRetentionDrained(handle, slot);
+            }
+            else
+            {
+                _peersPendingClose.Remove(handle);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The <see cref="DisconnectReason"/> for an established Peer's transport reporting a graceful end
+    /// of stream, or <see langword="null"/> if this FIN closes nothing. Anything buffered can only be
+    /// an incomplete length prefix or an incomplete Message body: <see cref="DeliverCompleteMessages"/>
+    /// already drains every whole, legal Message and closes on an oversized or zero-length prefix the
+    /// instant its four bytes arrive, so nonzero leftover bytes here are always a mid-prefix or
+    /// mid-Message truncation — <see cref="DisconnectReason.ProtocolViolation"/>, the malformed-framing
+    /// table's other two rows. Nothing buffered means no Message was in flight when it ended — but a
+    /// FIN is not a Goodbye (issue #23): without one, an otherwise-ordinary transport ending is not an
+    /// ending this library reports at all, so the Peer stays open for whatever's still on the wire
+    /// ahead of it or a Goodbye yet to arrive.
+    /// </summary>
+    private static DisconnectReason? ClassifyEndOfStream(PeerSlot slot) =>
+        slot.ReceiveBytesFilled == 0 ? null : DisconnectReason.ProtocolViolation;
+
+    /// <summary>
+    /// Reserves <paramref name="message"/> in the shared frame arena under this Peer's own
+    /// share-holder identity (<see cref="SlotHandle.Index"/>, per ADR 0014), logging
+    /// <see cref="DiagnosticId.ArenaExhausted"/> only for the outcome that names an actual shortfall.
+    /// </summary>
+    private bool TryReserveMessage(SlotHandle handle, ReadOnlySpan<byte> message, out int payloadOffset)
+    {
+        payloadOffset = _arena.BytesUsed;
+        ArenaReservation reservation = _arena.Reserve(handle.Index, message);
+        switch (reservation.Outcome)
+        {
+            case ArenaReservationOutcome.Committed:
+                return true;
+            case ArenaReservationOutcome.ShareExhausted:
+                return false;
+            case ArenaReservationOutcome.ArenaExhausted:
+                if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                {
+                    _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(ToPeerId(handle), reservation.BytesRequested, reservation.BytesFree));
+                }
+
+                return false;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Dispatches a Peer's now-complete handshake record by its message type: a Hello, the ordinary
+    /// case, or a Refusal — the shape the far end's reply takes when it declines instead of
+    /// establishing (subtask 3.3). A record naming neither is malformed and closes the Peer, per the
+    /// house rule that a discard arm refuses rather than guesses.
+    /// </summary>
+    private void OnHandshakeRecordFilled(SlotHandle handle, PeerSlot slot)
+    {
+        if (!StreamHandshakeCodec.TryReadMessageType(slot.HandshakeBuffer, out StreamHandshakeMessageType type))
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        switch (type)
+        {
+            case StreamHandshakeMessageType.Hello:
+                OnHelloRecordReceived(handle, slot);
+                break;
+            case StreamHandshakeMessageType.Refusal:
+                OnRefusalRecordReceived(handle, slot);
+                break;
+            default:
+                ClosePeer(handle, DisconnectReason.TransportFailed);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Parses a Peer's Hello record. A version this Reactor does not speak refuses the Peer in-protocol
+    /// rather than establishing it (Scope: exact match, no negotiation). Otherwise the Session
+    /// establishes, Linger is negotiated to the minimum of the two ends' announced values (ADR 0011),
+    /// and <see cref="SessionEventKind.PeerConnected"/> is queued.
+    /// </summary>
+    private void OnHelloRecordReceived(SlotHandle handle, PeerSlot slot)
+    {
+        Span<byte> remoteResumeSecret = stackalloc byte[StreamSessionProtocol.ResumeSecretLength];
+        if (!StreamHandshakeCodec.TryRead(
+                slot.HandshakeBuffer,
+                out uint version,
+                out uint remoteMaxMessageSize,
+                out ulong remoteSendIdleIntervalMilliseconds,
+                out ulong remoteLingerMilliseconds,
+                remoteResumeSecret))
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        if (version != StreamSessionProtocol.Version)
+        {
+            RefuseVersionAndClose(handle, slot, version);
+            return;
+        }
+
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
+        TimeSpan effectiveLinger = _options.Linger < remoteLinger ? _options.Linger : remoteLinger;
+
+        slot.RemoteVersion = version;
+        slot.RemoteMaxMessageSize = remoteMaxMessageSize;
+        slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
+        slot.RemoteLinger = remoteLinger;
+        slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
+        slot.EffectiveLinger = effectiveLinger;
+        slot.State = HandshakeState.Established;
+
+        PeerId peer = ToPeerId(handle);
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = peer });
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForLingerNegotiated(
+                peer, (long)_options.Linger.TotalMilliseconds, (long)effectiveLinger.TotalMilliseconds));
+        }
+    }
+
+    /// <summary>
+    /// Ends a Peer the far end refused instead of establishing, translating the wire
+    /// <see cref="RefusalReason"/> to a <see cref="DisconnectReason"/>. A reason this profile does not
+    /// recognise is treated as malformed rather than mapped to some default disconnection — the house
+    /// rule that a discard arm refuses.
+    /// </summary>
+    private void OnRefusalRecordReceived(SlotHandle handle, PeerSlot slot)
+    {
+        if (!StreamHandshakeCodec.TryReadRefusal(slot.HandshakeBuffer, out RefusalReason reason, out _, out _))
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        if (RefusalReasonMap.DisconnectReasonFor(reason) is not DisconnectReason disconnectReason)
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        ClosePeer(handle, disconnectReason);
+    }
+
+    /// <summary>
+    /// Reports the Frame's declined Admissions once, at its end, rather than once per declining. A
+    /// capacity refusal is not reported here: it is an in-protocol Refusal that ends the connection,
+    /// never a Deferral left for a later Pump, and the two counters this method feeds must stay
+    /// untouched by it (see <see cref="RefuseForCapacity"/>).
+    /// </summary>
+    private void ReportDeclinedAdmissions()
+    {
+        if (_capDeferralsThisFrame == 0)
+        {
+            return;
+        }
+
+        for (int i = 0; i < _capDeferralsThisFrame; i++)
+        {
+            _counters.RecordAdmissionDeferral();
+        }
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForAdmissionCapReached(_admissionCap, _capDeferralsThisFrame));
+        }
+    }
+
+    private void ClosePeer(SlotHandle handle, DisconnectReason reason)
+    {
+        if (_peers.Remove(handle) is not PeerSlot slot)
+        {
+            return;
+        }
+
+        _dispatcher.Unregister(slot.Link.Socket);
+        slot.Link.Dispose();
+        _peersWithBufferedMessages.Remove(handle);
+        _peersWithPendingRetentionWrites.Remove(handle);
+        _peersPendingClose.Remove(handle);
+        _peersWithGoodbyeOwed.Remove(handle);
+        _retention.ResetShareHolder(handle.Index);
+        _pendingEvents.Add(new PendingEvent
+        {
+            Kind = SessionEventKind.PeerClosed,
+            Peer = ToPeerId(handle),
+            Reason = reason,
+        });
+    }
+
+    /// <summary>A fresh secret for a later Resume. Established during the handshake and stored, never sent again once the handshake is over.</summary>
+    private byte[] NextResumeSecret()
+    {
+        byte[] secret = new byte[StreamSessionProtocol.ResumeSecretLength];
+        _entropy.GetBytes(secret);
+        return secret;
+    }
+
+    private void EnsureUsable() => _lifecycle.EnsureUsable(this);
+
+    private void EnsureNotInsideAPump() => _lifecycle.EnsureNotInsideAPump();
+
+    private void EnsureCallingThreadIsConstructingThread() => _lifecycle.EnsureCallingThreadIsConstructingThread();
+
+    private static PeerId ToPeerId(SlotHandle handle) => handle.ToPeerId();
+
+    private static SlotHandle ToHandle(PeerId peer) => peer.ToHandle();
+
+    /// <summary>How far through the handshake one Peer has got.</summary>
+    private enum HandshakeState
+    {
+        /// <summary>A dial is waiting for its TCP connect to resolve.</summary>
+        Connecting,
+
+        /// <summary>The transport exists and this end has sent its own record; waiting for the other end's.</summary>
+        AwaitingPeerHandshake,
+
+        /// <summary>Both ends' handshake records have been exchanged and the Session exists.</summary>
+        Established,
+    }
+
+    /// <summary>The state one occupied capacity Slot holds.</summary>
+    private sealed class PeerSlot
+    {
+        /// <summary>The connected (or connecting) transport this Peer runs over.</summary>
+        public required TcpLink Link { get; init; }
+
+        /// <summary>The secret this Reactor will require to be presented before it resumes this Session.</summary>
+        public required byte[] LocalResumeSecret { get; init; }
+
+        /// <summary>How far through the handshake this Peer has got.</summary>
+        public required HandshakeState State { get; set; }
+
+        /// <summary>The Slot this Peer occupies, filled in once the table has admitted it.</summary>
+        public SlotHandle Handle { get; set; }
+
+        /// <summary>This Peer's own counters (ADR 0013), living as long as its Slot does.</summary>
+        public PeerCounterSet Counters { get; } = new();
+
+        /// <summary>
+        /// Whatever remains of this end's own handshake record after a short send, or
+        /// <see langword="null"/> once it has all been sent.
+        /// </summary>
+        public ReadOnlyMemory<byte>? PendingHandshakeBytesToSend { get; set; }
+
+        /// <summary>The bytes of the remote's handshake record received so far, accumulated across Pumps.</summary>
+        public byte[] HandshakeBuffer { get; } = new byte[StreamHandshakeCodec.RecordSize];
+
+        /// <summary>How many bytes of <see cref="HandshakeBuffer"/> are filled so far.</summary>
+        public int HandshakeBytesFilled { get; set; }
+
+        /// <summary>
+        /// The persistent per-Peer receive buffer a partial Message's tail survives in across Pumps —
+        /// never the frame arena, which is wiped every Pump. Sized at construction from
+        /// <see cref="StreamSessionOptions.ResolvedReceiveBufferSize"/>: at least one incomplete
+        /// maximum Message plus its length prefix.
+        /// </summary>
+        public required byte[] ReceiveBuffer { get; init; }
+
+        /// <summary>How many bytes of <see cref="ReceiveBuffer"/> are filled so far, from the front.</summary>
+        public int ReceiveBytesFilled { get; set; }
+
+        /// <summary>The protocol version the remote's handshake record offered.</summary>
+        public uint RemoteVersion { get; set; }
+
+        /// <summary>The largest Message the remote said it will accept.</summary>
+        public uint RemoteMaxMessageSize { get; set; }
+
+        /// <summary>The send-idle interval the remote announced.</summary>
+        public TimeSpan RemoteSendIdleInterval { get; set; }
+
+        /// <summary>The Linger the remote announced. The minimum of the two ends' Lingers governs (ADR 0011).</summary>
+        public TimeSpan RemoteLinger { get; set; }
+
+        /// <summary>
+        /// The negotiated Linger — the minimum of this end's own <see cref="StreamSessionOptions.Linger"/>
+        /// and <see cref="RemoteLinger"/> — set once the Session establishes. Immutable for the
+        /// Session's lifetime from that point on, exactly as every other negotiated parameter is.
+        /// </summary>
+        public TimeSpan EffectiveLinger { get; set; }
+
+        /// <summary>The secret the remote will require before it resumes this Session. Stored, unused until Resume lands.</summary>
+        public byte[] RemoteResumeSecret { get; set; } = [];
+
+        /// <summary>
+        /// Set when this Peer is being closed once its pending send finishes flushing — a Refusal
+        /// record — rather than kept open. <see langword="null"/> for an ordinary Hello send, which
+        /// closes nothing on completion.
+        /// </summary>
+        public DisconnectReason? PendingCloseReason { get; set; }
+
+        /// <summary>
+        /// A second handshake record — always a Refusal — that arrived while
+        /// <see cref="PendingHandshakeBytesToSend"/> was still draining a short-sent first one (#98),
+        /// queued here rather than overwriting the still-pending remainder or interleaving early.
+        /// <see cref="OnPeerWritable"/> sends it, via <c>SendRecordOrArm</c>, the moment the first
+        /// record's remainder is fully on the wire.
+        /// </summary>
+        public (byte[] Record, DisconnectReason? CloseReasonAfterSend)? QueuedHandshakeSend { get; set; }
+
+        /// <summary>
+        /// Set by <see cref="Send"/> when it appends to this Peer's retention ring, and again by
+        /// <see cref="OnPeerWritable"/> when a short retention write's own re-arm lands — cleared by
+        /// <see cref="FlushPendingRetentionWrites"/> the moment it visits this Peer. This is the single
+        /// signal that routes every retention write through that one call site (#90, 3.6.2): a
+        /// <see cref="Send"/> never writes to the socket itself, it only sets this.
+        /// </summary>
+        public bool HasPendingRetentionWrite { get; set; }
+
+        /// <summary>
+        /// Set the moment <see cref="Close"/> accepts responsibility for this end's Goodbye — before
+        /// the append is attempted, and it stays set even when that append is deferred for want of
+        /// retention room, because from the caller's point of view the ending is already decided and
+        /// the Goodbye is owed either way. Idempotent-guard and Send-refusal flag in one: a second
+        /// <see cref="Close"/> call is a no-op, and <see cref="Send"/> refuses once this is set
+        /// (issue #23). Note this says the Goodbye is owed, not that it has reached retention, let
+        /// alone the wire — <see cref="PendingCloseReasonAfterRetentionDrains"/> is the record that
+        /// waits on the append actually committing.
+        /// </summary>
+        public bool LocalGoodbyeSent { get; set; }
+
+        /// <summary>
+        /// Set by <see cref="DeliverCompleteMessages"/> the moment an inbound Goodbye is classified for
+        /// this Peer (<see cref="MessageFramingOutcome.GoodbyeReceived"/>) — never by anything on this
+        /// end's own outbound side. Deliberately a distinct fact from <see cref="LocalGoodbyeSent"/> and
+        /// <see cref="PendingCloseReasonAfterRetentionDrains"/>: both of those can be set by this end's
+        /// own <see cref="Close"/>, and a local Close must never make the far end's still-in-flight
+        /// Messages a violation — they were sent legitimately, before that far end had any way to know
+        /// this end was leaving. Only an inbound Goodbye — this Peer announcing its own departure — means
+        /// anything it sends afterward is announcing one thing and doing another. Once true, every
+        /// further byte at the front of <see cref="ReceiveBuffer"/> classifies as
+        /// <see cref="MessageFramingOutcome.DataAfterGoodbye"/> (issue #93) and ends the Session with
+        /// <see cref="DisconnectReason.ProtocolViolation"/> — the fix for a Peer that could otherwise
+        /// hold its capacity Slot open indefinitely after announcing it was leaving.
+        /// </summary>
+        public bool RemoteGoodbyeReceived { get; set; }
+
+        /// <summary>
+        /// The reason <see cref="ClosePeer"/> is eventually called with, once both this end's own
+        /// outbound retention for the Peer is drained and nothing this end already reassembled from it
+        /// remains undelivered to the consumer (<c>TryCloseAfterRetentionDrained</c>). Written by two
+        /// places, and the first of them to run wins: <see cref="AppendGoodbyeOrDefer"/> records
+        /// <see cref="DisconnectReason.LocalClose"/> once this end's own Goodbye has actually been
+        /// appended to retention — not eagerly when <see cref="Close"/> is called, which would let this
+        /// end close locally before the Goodbye it announced ever reached the wire — and
+        /// <see cref="DeliverCompleteMessages"/> records <see cref="DisconnectReason.PeerGoodbye"/> when
+        /// an inbound Goodbye finds something still outstanding on either side. Two guards keep that
+        /// first-writer-wins rule rather than one: <see cref="Close"/>'s early return when this is
+        /// already non-null (which also skips announcing a second Goodbye, not merely coalescing the
+        /// reason), and <see cref="AppendGoodbyeOrDefer"/>'s own <c>??=</c>, which covers the
+        /// interleaving that never passes through that early return — a deferred append committing on
+        /// a later Pump, after an inbound Goodbye has already recorded its reason. Either way this end
+        /// is on its way out, and the first reason recorded is the truest account of why.
+        /// </summary>
+        public DisconnectReason? PendingCloseReasonAfterRetentionDrains { get; set; }
+    }
+
+    /// <summary>
+    /// A just-accepted connection being refused for capacity, tracked outside <see cref="_peers"/>
+    /// entirely: refusing it is precisely what happens because this Reactor has no capacity Slot to
+    /// give it.
+    /// </summary>
+    private sealed class RefusalSlot
+    {
+        /// <summary>The accepted transport this refusal is being sent over, then closed.</summary>
+        public required TcpLink Link { get; init; }
+
+        /// <summary>
+        /// Whatever remains of the Refusal record after a short send, or <see langword="null"/> once it
+        /// has all been sent.
+        /// </summary>
+        public ReadOnlyMemory<byte>? PendingBytesToSend { get; set; }
+    }
+}

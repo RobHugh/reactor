@@ -99,4 +99,57 @@ public class DiagnosticRecordTests
         record.Source.Should().Be(source);
         record.Value0.Should().Be(65_507);
     }
+
+    [Fact]
+    public void ForPeerRefusedCapacity_SourceAndCapacity_CarriesSourceSubjectAndInfoLevel()
+    {
+        // Arrange
+        Source source = new(SourceFamily.IPv4, AddressBytes: 0x7F000001, ScopeId: 0, Port: 5000);
+
+        // Act
+        DiagnosticRecord record = DiagnosticRecord.ForPeerRefusedCapacity(source, capacity: 8);
+
+        // Assert
+        record.Id.Should().Be(DiagnosticId.PeerRefused);
+        record.Level.Should().Be(DiagnosticLevel.Info);
+        record.SubjectKind.Should().Be(DiagnosticSubjectKind.Source);
+        record.Source.Should().Be(source);
+        record.Value0.Should().Be(8);
+        record.Value1.Should().Be(0);
+    }
+
+    [Fact]
+    public void ForPeerRefusedVersion_SourceAndVersions_CarriesSourceSubjectAndInfoLevel()
+    {
+        // Arrange
+        Source source = new(SourceFamily.IPv4, AddressBytes: 0x7F000001, ScopeId: 0, Port: 5001);
+
+        // Act
+        DiagnosticRecord record = DiagnosticRecord.ForPeerRefusedVersion(source, versionOffered: 2, versionRequired: 1);
+
+        // Assert
+        record.Id.Should().Be(DiagnosticId.PeerRefused);
+        record.Level.Should().Be(DiagnosticLevel.Info);
+        record.SubjectKind.Should().Be(DiagnosticSubjectKind.Source);
+        record.Value0.Should().Be(2);
+        record.Value1.Should().Be(1);
+    }
+
+    [Fact]
+    public void ForLingerNegotiated_PeerAndDurations_CarriesPeerSubjectAndInfoLevel()
+    {
+        // Arrange
+        PeerId peer = new(Origin: 1, Index: 0, Generation: 1);
+
+        // Act
+        DiagnosticRecord record = DiagnosticRecord.ForLingerNegotiated(peer, oursMilliseconds: 10_000, effectiveMilliseconds: 2_000);
+
+        // Assert
+        record.Id.Should().Be(DiagnosticId.LingerNegotiated);
+        record.Level.Should().Be(DiagnosticLevel.Info);
+        record.SubjectKind.Should().Be(DiagnosticSubjectKind.Peer);
+        record.Peer.Should().Be(peer);
+        record.Value0.Should().Be(10_000);
+        record.Value1.Should().Be(2_000);
+    }
 }

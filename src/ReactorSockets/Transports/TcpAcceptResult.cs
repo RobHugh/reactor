@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Sockets;
 
 namespace ReactorSockets.Transports;
@@ -17,6 +18,13 @@ internal readonly struct TcpAcceptResult
 
     /// <summary>The newly accepted socket. Populated only for <see cref="TcpAcceptOutcome.Accepted"/>.</summary>
     public Socket? Socket { get; }
+
+    /// <summary>
+    /// Whether this attempt produced an accepted socket. Lets a caller narrow <see cref="Socket"/> to
+    /// non-null on the success path without a null-forgiving operator (#99).
+    /// </summary>
+    [MemberNotNullWhen(true, nameof(Socket))]
+    public bool IsAccepted => Outcome == TcpAcceptOutcome.Accepted;
 
     /// <summary>The platform error. Populated only for <see cref="TcpAcceptOutcome.Failed"/>.</summary>
     public SocketError Error { get; }

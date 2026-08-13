@@ -53,11 +53,15 @@ public class AssemblySkeletonTests
             nameof(LinkCounters),
             nameof(DatagramSessionReactor),
             nameof(DatagramSessionOptions),
+            nameof(StreamSessionReactor),
+            nameof(StreamSessionOptions),
             nameof(SessionEvent),
             nameof(SessionEventKind),
             nameof(SessionEventEnumerator),
             nameof(PeerId),
-            nameof(DisconnectReason));
+            nameof(PeerCounters),
+            nameof(DisconnectReason),
+            nameof(SendOutcome));
     }
 
     [Fact]
