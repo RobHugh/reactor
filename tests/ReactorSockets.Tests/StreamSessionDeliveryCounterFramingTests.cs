@@ -8,12 +8,17 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Slice 4.1.1 (issue #109): the delivery-counter control record's wire format and its classification
 /// in the framing table — <see cref="StreamSessionTestRecords.DeliveryCounterSentinel"/> followed by an
-/// 8-byte <c>u64</c> body, a second reserved sentinel alongside Goodbye's (issue #23/#95). This ticket
-/// is the wire format and classification only: nothing here wires a received counter into an emitted
-/// Event, a retention release or a timer (that is #113/#116's job), so a whole record still fails
-/// closed once classified — the same discard-arm-refuses rule <see cref="StreamSessionMalformedFramingTests"/>
-/// already covers for an oversized or zero-length prefix. The counterparty in every test here is a
-/// hand-built raw TCP peer, mirroring <see cref="StreamSessionMalformedFramingTests"/>'s
+/// 8-byte <c>u64</c> body, a second reserved sentinel alongside Goodbye's (issue #23/#95). Issue #113
+/// then wired a complete record into <see cref="RetentionArena.ReleaseThroughMessageCount"/>: a
+/// legitimate count — at or below what this end has actually sent this Peer — is consumed silently and
+/// releases retention, while a count above that is refused and closes the Peer with
+/// <see cref="DisconnectReason.ProtocolViolation"/>, the same discard-arm-refuses rule
+/// <see cref="StreamSessionMalformedFramingTests"/> already covers for an oversized or zero-length
+/// prefix. Every test in this file happens to describe the second shape — no Send is ever made to this
+/// Peer, so any nonzero claimed count is already above what was sent — because that is what this file's
+/// job (classification, not release accounting) needs; <see cref="StreamSessionDeliveryCounterReleaseTests"/>
+/// is where a legitimate count and the retention it frees are actually exercised. The counterparty in
+/// every test here is a hand-built raw TCP peer, mirroring <see cref="StreamSessionMalformedFramingTests"/>'s
 /// <c>MalformedPeer</c> — the house pattern for this shape of test.
 /// </summary>
 public class StreamSessionDeliveryCounterFramingTests
@@ -24,7 +29,7 @@ public class StreamSessionDeliveryCounterFramingTests
 
     private static byte[] BuildDeliveryCounterRecord(ulong count) => StreamSessionTestRecords.BuildDeliveryCounterRecord(count);
 
-    private static void EstablishSession(StreamSessionReactorHarness accepter, CounterRecordPeer peer, int maxPumps = 20) =>
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, CounterRecordPeer peer, int maxPumps = 20) =>
         StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
 
     /// <summary>Pumps until a <see cref="SessionEventKind.PeerClosed"/> drains, or the budget runs out.</summary>
@@ -89,12 +94,13 @@ public class StreamSessionDeliveryCounterFramingTests
     }
 
     [Fact]
-    public void DeliverCompleteMessages_BodySplitAcrossTwoWrites_StaysOpenThenFailsClosedOnceTheRestArrives()
+    public void DeliverCompleteMessages_BodySplitAcrossTwoWrites_StaysOpenThenClosesOnceTheRestArrives()
     {
         // Arrange — proves the classification genuinely completes once the remaining bytes arrive
-        // (rather than being stuck forever), while this ticket deliberately leaves consumption of a
-        // complete record to #113/#116: the fail-closed discard arm is what a not-yet-wired but
-        // fully-classified record hits for now.
+        // (rather than being stuck forever): once whole, the record is consumed by
+        // RetentionArena.ReleaseThroughMessageCount (issue #113), and a claimed count of 7 against a
+        // Peer this end never Sent anything to is refused — the peer is confirming Messages that were
+        // never sent.
         using StreamSessionReactorHarness accepter = new();
         using CounterRecordPeer peer = new(accepter.Endpoint);
         EstablishSession(accepter, peer);
@@ -117,20 +123,22 @@ public class StreamSessionDeliveryCounterFramingTests
         peer.Send(secondPart);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = PumpUntilClosed(accepter);
 
-        // Assert — the record is now whole and classified, but not yet consumed by anything, so it
-        // fails closed rather than being silently accepted or waited on forever.
+        // Assert — the record is now whole, classified, and consumed, but a count of 7 exceeds the zero
+        // Messages this end ever sent this Peer, so it is refused rather than silently accepted.
         drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
             .Which.Reason.Should().Be(DisconnectReason.ProtocolViolation);
     }
 
     // =========================================================================================
-    // Complete: the discard arm refuses rather than permits (mirrors the malformed-framing table)
+    // Complete: a legitimate count is consumed silently; a count above what was sent is refused
+    // (mirrors the malformed-framing table's discard-arm-refuses rule)
     // =========================================================================================
 
     [Fact]
-    public void DeliverCompleteMessages_WholeRecordArrivesInOneWrite_FailsClosedRatherThanBeingSilentlyAcceptedOrTreatedAsGoodbye()
+    public void DeliverCompleteMessages_ACountAboveWhatThisEndEverSent_ClosesWithProtocolViolationRatherThanBeingSilentlyAcceptedOrTreatedAsGoodbye()
     {
-        // Arrange
+        // Arrange — no Send is ever made to this Peer, so any nonzero claimed count already exceeds
+        // what this end sent it.
         using StreamSessionReactorHarness accepter = new();
         using CounterRecordPeer peer = new(accepter.Endpoint);
         EstablishSession(accepter, peer);
@@ -143,6 +151,56 @@ public class StreamSessionDeliveryCounterFramingTests
         // values, and only Goodbye's carries the PeerGoodbye close reason.
         drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
             .Which.Reason.Should().Be(DisconnectReason.ProtocolViolation);
+    }
+
+    [Fact]
+    public void DeliverCompleteMessages_ACountOfZeroAgainstAPeerNeverSentAnything_IsConsumedSilentlyAndNeverClosesThePeer()
+    {
+        // Arrange — a legitimate confirmation: zero Messages sent, zero confirmed. Distinguishes
+        // "consumed" from "fails closed": before issue #113 wired this record into
+        // RetentionArena.ReleaseThroughMessageCount, every whole record — legitimate or not — fell into
+        // the fail-closed discard arm and closed the Peer.
+        using StreamSessionReactorHarness accepter = new();
+        using CounterRecordPeer peer = new(accepter.Endpoint);
+        EstablishSession(accepter, peer);
+
+        // Act
+        peer.Send(BuildDeliveryCounterRecord(0));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
+        for (int i = 0; i < 20; i++)
+        {
+            accepter.Reactor.Pump();
+            drained.AddRange(accepter.DrainToList());
+        }
+
+        // Assert
+        drained.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+    }
+
+    [Fact]
+    public void DeliverCompleteMessages_ACountAboveWhatThisEndEverSent_LogsDeliveryCounterRefusedRatherThanMalformedFraming()
+    {
+        // Arrange — the distinct-diagnostic-shape rule #106 established for DataAfterGoodbye applies
+        // here too: a refused delivery counter is its own violation, not a reuse of MalformedFraming's
+        // claimed-length-vs-MaxMessageSize shape, which this claim has nothing to do with.
+        using StreamSessionReactorHarness accepter = new();
+        using CounterRecordPeer peer = new(accepter.Endpoint);
+        PeerId id = EstablishSession(accepter, peer);
+        accepter.Sink.Received.Clear();
+
+        // Act
+        peer.Send(BuildDeliveryCounterRecord(100));
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.DeliveryCounterRefused));
+
+        // Assert
+        DiagnosticRecord record = accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.DeliveryCounterRefused).Which;
+        record.Level.Should().Be(DiagnosticLevel.Warn);
+        record.SubjectKind.Should().Be(DiagnosticSubjectKind.Peer);
+        record.Peer.Should().Be(id);
+        record.Value0.Should().Be(100, "the claimed cumulative count");
+        record.Value1.Should().Be(0, "this end never sent this Peer anything");
+        accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.MalformedFraming,
+            "DeliveryCounterRefused is a distinct diagnostic shape, not a reuse of MalformedFraming's claimed-length one");
     }
 
     // =========================================================================================

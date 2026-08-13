@@ -309,14 +309,29 @@ public class StreamSessionOptionsTests
     }
 
     [Fact]
+    public void BoundaryRingBudgetBytes_WorkedExample_EqualsCapacityTimesEntriesTimesFourBytes()
+    {
+        // Arrange — 7000 divides the four-byte length prefix evenly, so the ceiling division inside
+        // the formula introduces no rounding and the expected figure is exact arithmetic (issue #110).
+        StreamSessionOptions options = CreateOptions(capacity: 3, retentionBytes: 7000);
+
+        // Act
+        long budget = options.BoundaryRingBudgetBytes;
+
+        // Assert
+        budget.Should().Be(3L * (7000 / 4) * 4);
+    }
+
+    [Fact]
     public void Constructor_MemoryBillExceedsMaxAllocatable_ThrowsArgumentExceptionNamingTheTotal()
     {
         // Arrange — capacity 100 000 with a 1 000 000-byte retention adds to far more than can be
-        // allocated.
+        // allocated, on the send line alone.
         StreamSessionOptions options = CreateOptions(capacity: 100_000, maxMessageSize: 4096, retentionBytes: 1_000_000);
         long expectedReceive = 100_000L * 4100;
         long expectedSend = 100_000L * 1_000_000;
-        long expectedTotal = expectedReceive + expectedSend;
+        long expectedBoundaryRing = 100_000L * (1_000_000 / 4) * 4;
+        long expectedTotal = expectedReceive + expectedSend + expectedBoundaryRing;
 
         // Act
         Action act = () => new StreamSessionReactor(options);
@@ -327,6 +342,36 @@ public class StreamSessionOptionsTests
             .Which.Message.Should()
             .Contain(expectedTotal.ToString())
             .And.Contain(expectedReceive.ToString())
-            .And.Contain(expectedSend.ToString());
+            .And.Contain(expectedSend.ToString())
+            .And.Contain(expectedBoundaryRing.ToString());
+    }
+
+    [Fact]
+    public void Constructor_MemoryBillExceedsMaxAllocatableOnlyBecauseOfTheBoundaryRing_ThrowsArgumentExceptionNamingTheTotal()
+    {
+        // Arrange — receive and send alone (capacity 1 against a 1.2-billion-byte retention) fit
+        // comfortably under Array.MaxLength; the Message-boundary ring (issue #110) is roughly as
+        // large as the send line itself — one four-byte entry per four retained bytes at this
+        // profile's length-prefix floor — and it alone is what tips the total over.
+        const int capacity = 1;
+        const int maxMessageSize = 4096;
+        const int retentionBytes = 1_200_000_000;
+        StreamSessionOptions options = CreateOptions(capacity: capacity, maxMessageSize: maxMessageSize, retentionBytes: retentionBytes);
+        long expectedReceive = capacity * 4100L;
+        long expectedSend = capacity * (long)retentionBytes;
+        long expectedBoundaryRing = capacity * (retentionBytes / 4L) * 4;
+        long expectedTotal = expectedReceive + expectedSend + expectedBoundaryRing;
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert — receive + send alone would fit; only adding the ring pushes the total over.
+        (expectedReceive + expectedSend).Should().BeLessThan(Array.MaxLength);
+        expectedTotal.Should().BeGreaterThan(Array.MaxLength);
+        act.Should().Throw<ArgumentException>()
+            .WithParameterName(nameof(StreamSessionOptions.Reactor))
+            .Which.Message.Should()
+            .Contain(expectedTotal.ToString())
+            .And.Contain(expectedBoundaryRing.ToString());
     }
 }

@@ -79,7 +79,15 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Reactor.Sink, options.Reactor.MinimumLevel, _counters);
         _arena = new FrameArena(arenaSize, options.Reactor.Capacity);
-        _retention = new RetentionArena(options.RetentionBytes, options.Reactor.Capacity);
+        // The true floor of any single TryAppend call this Reactor ever makes: the Goodbye sentinel
+        // (AppendGoodbyeOrDefer) is exactly LengthPrefixSize bytes with no payload at all, and Send
+        // enforces no lower bound on message.Length, so a zero-payload Message frames to the same
+        // LengthPrefixSize bytes. Neither ever writes fewer bytes than that, so this is the minimum
+        // RetentionArena can be told without it rejecting a write this Reactor actually makes.
+        _retention = new RetentionArena(
+            options.RetentionBytes,
+            options.Reactor.Capacity,
+            MessageFramingCodec.LengthPrefixSize);
         _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity);
         _entropy = options.Entropy;
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
@@ -869,7 +877,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// makes "at most one write per Peer per Pump" an enforced property of this method rather than an
     /// incidental one of how readiness happened to fire (#90, 3.6.2 write batching): a Peer that
     /// received any number of <see cref="Send"/> calls since the last Pump is serviced here in a single
-    /// pass over everything <see cref="RetentionArena.GetReadable"/> currently reports, and a Peer with
+    /// pass over everything <see cref="RetentionArena.GetUnsent"/> currently reports, and a Peer with
     /// no marker set — because nothing was ever sent to it, or a Send with no following Pump — is never
     /// visited at all.
     /// </summary>
@@ -901,23 +909,27 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Writes as much of <paramref name="handle"/>'s unread retained bytes
-    /// (<see cref="RetentionArena.GetReadable"/>) to the socket as it will currently take, releasing
-    /// each portion (<see cref="RetentionArena.Release"/>) the instant it is handed off. This is a
-    /// local flush only (#86's scope boundary, ADR 0011/#21/#82): bytes are released once the OS
-    /// socket buffer has accepted them, not once the peer has acknowledged them — the peer-ack
-    /// mechanism that will eventually move the release trigger is #25's job, not this one's.
+    /// Writes as much of <paramref name="handle"/>'s unsent retained bytes
+    /// (<see cref="RetentionArena.GetUnsent"/>) to the socket as it will currently take, marking each
+    /// portion sent (<see cref="RetentionArena.MarkSent"/>) the instant it is handed off. Retention
+    /// itself — the room a further <see cref="Send"/> has to work with — is released only once the
+    /// peer's own delivery-counter record confirms it (<see cref="RetentionArena.ReleaseThroughMessageCount"/>,
+    /// issue #113/#25); this method never frees any of that, it only tracks what has and has not yet
+    /// reached the transport, which is a different question with a different answer (see
+    /// <see cref="RetentionArena"/>'s class remarks on its two cursors). Marking sent rather than
+    /// released is also what keeps a later Pump's flush from ever re-handing the same bytes to the
+    /// socket a second time.
     /// </summary>
     /// <remarks>
-    /// <see cref="RetentionArena.GetReadable"/> can return two wrap segments. A short write partway
+    /// <see cref="RetentionArena.GetUnsent"/> can return two wrap segments. A short write partway
     /// through <paramref name="first"/> stops here and re-arms without touching <c>second</c> at all —
-    /// releasing only what was actually accepted keeps the ring's released total honest with what the
+    /// marking sent only what was actually accepted keeps the ring's sent total honest with what the
     /// socket has truly taken. Only once <c>first</c> is entirely on the wire is <c>second</c>
     /// attempted, with the same short-write re-arm applied to it in turn.
     /// </remarks>
     private void FlushRetention(SlotHandle handle, PeerSlot slot)
     {
-        (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) = _retention.GetReadable(handle.Index);
+        (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) = _retention.GetUnsent(handle.Index);
         if (first.Length == 0)
         {
             TryCloseAfterRetentionDrained(handle, slot);
@@ -933,7 +945,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         if (firstResult.BytesSent > 0)
         {
-            _retention.Release(handle.Index, firstResult.BytesSent);
+            _retention.MarkSent(handle.Index, firstResult.BytesSent);
         }
 
         if (firstResult.BytesSent < first.Length)
@@ -957,7 +969,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         if (secondResult.BytesSent > 0)
         {
-            _retention.Release(handle.Index, secondResult.BytesSent);
+            _retention.MarkSent(handle.Index, secondResult.BytesSent);
         }
 
         if (secondResult.BytesSent < second.Length)
@@ -995,12 +1007,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Whether <paramref name="handle"/> has nothing left in its own outbound retention to flush — this
     /// end's own half of what <see cref="TryCloseAfterRetentionDrained"/> requires before closing.
-    /// Says nothing about inbound work still owed to the consumer; see
-    /// <see cref="HasUndeliveredInboundWork"/> for that half.
+    /// Deliberately asks whether everything has been *sent*, not whether the peer has *confirmed* it
+    /// (<see cref="RetentionArena.GetUnsent"/>, not released-through-count): this end's own Goodbye
+    /// sentinel is never confirmed by a peer's Message-received counter at all (issue #113 — see
+    /// <see cref="RetentionArena"/>'s remarks), so a drained check that waited on confirmation would
+    /// never fire once a Goodbye was the last thing queued. Says nothing about inbound work still owed
+    /// to the consumer; see <see cref="HasUndeliveredInboundWork"/> for that half.
     /// </summary>
     private bool RetentionIsDrained(SlotHandle handle)
     {
-        (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) = _retention.GetReadable(handle.Index);
+        (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) = _retention.GetUnsent(handle.Index);
         return first.Length == 0 && second.Length == 0;
     }
 
@@ -1171,9 +1187,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// immediate close for the same Goodbye. A delivery-counter sentinel with fewer than its full u64
     /// body arrived (<see cref="MessageFramingOutcome.AwaitingDeliveryCounterBody"/>, issue #109) waits
     /// exactly like an incomplete Message; a whole delivery-counter record
-    /// (<see cref="MessageFramingOutcome.DeliveryCounterReceived"/>) is not yet consumed by this method —
-    /// that lands in #113/#116 — so for now it falls into the same fail-closed discard arm as an
-    /// unrecognised outcome.
+    /// (<see cref="MessageFramingOutcome.DeliveryCounterReceived"/>, issue #113) releases this Peer's own
+    /// outbound retention through the confirmed count
+    /// (<see cref="RetentionArena.ReleaseThroughMessageCount"/>) — or, if the count claims Messages this
+    /// end never sent, ends the Session with <see cref="DisconnectReason.ProtocolViolation"/> exactly as
+    /// the other named violations below do.
     /// </summary>
     private void DeliverCompleteMessages(SlotHandle handle, PeerSlot slot)
     {
@@ -1259,14 +1277,44 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                     ClosePeer(handle, DisconnectReason.ProtocolViolation);
                     return;
 
+                case MessageFramingOutcome.DeliveryCounterReceived:
+                {
+                    ReadOnlySpan<byte> body = slot.ReceiveBuffer.AsSpan(
+                        MessageFramingCodec.LengthPrefixSize, MessageFramingCodec.DeliveryCounterBodySize);
+                    ulong confirmedThroughMessage = MessageFramingCodec.ReadDeliveryCounter(body);
+                    CompactReceiveBuffer(slot, messageEnd);
+
+                    // No offset is needed between the peer's Message count and the arena's own
+                    // appended-Message count even though a locally queued Goodbye also goes through
+                    // TryAppend: a Session profile refuses further Sends the instant its own Goodbye is
+                    // queued, so the Goodbye's boundary entry always sits strictly after every Message's,
+                    // and a legitimate confirmedThroughMessage — which counts only Messages, never a
+                    // control record — can never reach it (see RetentionArena's remarks). Refused means
+                    // the peer claims Messages this end never sent — a protocol violation, not something
+                    // to clamp.
+                    MessageReleaseOutcome releaseOutcome =
+                        _retention.ReleaseThroughMessageCount(handle.Index, confirmedThroughMessage);
+                    if (releaseOutcome == MessageReleaseOutcome.Refused)
+                    {
+                        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                        {
+                            _diagnostics.Log(DiagnosticRecord.ForDeliveryCounterRefused(
+                                ToPeerId(handle),
+                                (long)confirmedThroughMessage,
+                                (long)_retention.AppendedMessageCount(handle.Index)));
+                        }
+
+                        ClosePeer(handle, DisconnectReason.ProtocolViolation);
+                        return;
+                    }
+
+                    continue;
+                }
+
                 // The discard arm refuses rather than permits (the RawLinkLegality/TryReserve house
                 // rule): OversizedPrefix and ZeroLengthPrefix are named explicitly, and any outcome
                 // this switch does not otherwise recognise falls into the same arm rather than being
-                // silently read as legal. A whole DeliveryCounterReceived record (issue #109) falls
-                // through to default here deliberately — this ticket is the wire format and its
-                // classification only; consuming a received counter (emitting it, releasing retention)
-                // is #113/#116's job, so until one of them adds its own case, a complete counter record
-                // fails closed rather than being silently accepted as something it is not handled for.
+                // silently read as legal.
                 case MessageFramingOutcome.OversizedPrefix:
                 case MessageFramingOutcome.ZeroLengthPrefix:
                 default:
