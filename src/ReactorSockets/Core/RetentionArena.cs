@@ -34,14 +34,25 @@ namespace ReactorSockets.Core;
 /// <paramref name="boundPerShareHolder"/> would break <see cref="TryAppend"/>'s exhaustion check.
 /// </para>
 /// <para>
-/// <b>Cost.</b> Each ring entry is one <c>ulong</c> (8 bytes) standing in for one whole Message, so
-/// the ring adds <c>8 × Capacity × ⌈BoundPerShareHolder / MinimumFramedMessageSize⌉</c> bytes on top
-/// of the <c>Capacity × BoundPerShareHolder</c> the byte buffer already costs — roughly
-/// <c>8 / MinimumFramedMessageSize</c> times the retention bill, not the flat 8× a 1-byte-per-entry
-/// bound would have cost. The stream Session profile passes its wire format's true floor — the
-/// four-byte length prefix alone, since both the Goodbye sentinel and a zero-payload Message write
-/// exactly that many bytes and nothing shorter is ever appended — which keeps this at 2× rather than
-/// 8×.
+/// <b>Cost.</b> Each ring entry is one <c>uint</c> (4 bytes), not a <c>ulong</c>: a boundary does not
+/// need the same 2^64-of-headroom argument the byte totals get, because the only thing
+/// <see cref="ReleaseThroughMessageCount"/> ever needs from one is its position within the region's
+/// currently retained bytes, and that is bounded by <see cref="BoundPerShareHolder"/> — an
+/// <c>int</c>, so under 2^31. Each entry stores only the low 32 bits of the running total at the
+/// moment its Message was appended; <see cref="ReleaseThroughMessageCount"/> reconstructs the full
+/// <c>ulong</c> position from those 32 bits and the share-holder's current written total by ordinary
+/// unsigned wraparound subtraction — the same trick sequence-number arithmetic uses, correct here for
+/// the same reason: the true distance between the current written total and any boundary this method
+/// is ever asked to resolve cannot reach 2^32, so recovering it from 32 bits of the difference is
+/// unambiguous. That holds as long as this method is what keeps the share-holder's released total
+/// caught up — the state issue #113 establishes once it removes <see cref="Release"/>'s call site, the
+/// "switch" issue #25 describes. The ring adds
+/// <c>4 × Capacity × ⌈BoundPerShareHolder / MinimumFramedMessageSize⌉</c> bytes on top of the
+/// <c>Capacity × BoundPerShareHolder</c> the byte buffer already costs — roughly
+/// <c>4 / MinimumFramedMessageSize</c> times the retention bill. The stream Session profile passes its
+/// wire format's true floor — the four-byte length prefix alone, since both the Goodbye sentinel and a
+/// zero-payload Message write exactly that many bytes and nothing shorter is ever appended — which
+/// keeps this at roughly 1× rather than the flat 4× a 1-byte-per-entry bound would have cost.
 /// </para>
 /// </remarks>
 internal sealed class RetentionArena
@@ -52,7 +63,7 @@ internal sealed class RetentionArena
     private readonly ulong[] _highWaterBytes;
     private readonly ulong[] _appendedMessageCount;
     private readonly ulong[] _releasedMessageCount;
-    private readonly ulong[] _messageBoundaryBytes;
+    private readonly uint[] _messageBoundaryLow32;
     private readonly int _boundaryEntriesPerShareHolder;
 
     /// <summary>
@@ -108,9 +119,9 @@ internal sealed class RetentionArena
         MinimumFramedMessageSize = minimumFramedMessageSize;
 
         // Ceiling division in `long`, not `int`: capacity and boundPerShareHolder are each caller
-        // controlled and their product — let alone their product times 8 bytes per ring entry — can
+        // controlled and their product — let alone their product times 4 bytes per ring entry — can
         // exceed int.MaxLength well before it would exceed Array.MaxLength, which is what the checked
-        // cast below actually enforces (the same limit `new ulong[...]` would throw against anyway,
+        // cast below actually enforces (the same limit `new uint[...]` would throw against anyway,
         // just with a clearer failure than a silently wrapped negative length).
         long boundaryEntriesPerShareHolder =
             ((long)boundPerShareHolder + minimumFramedMessageSize - 1) / minimumFramedMessageSize;
@@ -122,7 +133,7 @@ internal sealed class RetentionArena
         _highWaterBytes = new ulong[capacity];
         _appendedMessageCount = new ulong[capacity];
         _releasedMessageCount = new ulong[capacity];
-        _messageBoundaryBytes = new ulong[checked(_boundaryEntriesPerShareHolder * capacity)];
+        _messageBoundaryLow32 = new uint[checked(_boundaryEntriesPerShareHolder * capacity)];
     }
 
     /// <summary>The number of bytes each share-holder's region holds.</summary>
@@ -198,7 +209,7 @@ internal sealed class RetentionArena
         _appendedMessageCount[shareHolderId]++;
         int boundaryIndex = shareHolderId * _boundaryEntriesPerShareHolder
             + (int)((_appendedMessageCount[shareHolderId] - 1) % (ulong)_boundaryEntriesPerShareHolder);
-        _messageBoundaryBytes[boundaryIndex] = _writtenTotal[shareHolderId];
+        _messageBoundaryLow32[boundaryIndex] = unchecked((uint)_writtenTotal[shareHolderId]);
 
         return RetentionOutcome.Committed;
     }
@@ -293,7 +304,16 @@ internal sealed class RetentionArena
 
         int boundaryIndex = shareHolderId * _boundaryEntriesPerShareHolder
             + (int)((messageCount - 1) % (ulong)_boundaryEntriesPerShareHolder);
-        ulong boundaryBytes = _messageBoundaryBytes[boundaryIndex];
+
+        // Reconstructs the boundary's full ulong position from its stored low 32 bits and the
+        // share-holder's current written total: `delta`, computed by ordinary uint wraparound
+        // subtraction, is exactly `writtenTotal - boundary` as long as that true difference is under
+        // 2^32 (see the class remarks for why it always is). Subtracting `delta` back out of
+        // `writtenTotal` — rather than reconstructing the boundary's own high bits directly — is what
+        // keeps this correct without caring which side of a 32-bit rollover either value falls on.
+        ulong writtenTotal = _writtenTotal[shareHolderId];
+        uint delta = unchecked((uint)writtenTotal - _messageBoundaryLow32[boundaryIndex]);
+        ulong boundaryBytes = writtenTotal - delta;
         if (boundaryBytes > _releasedTotal[shareHolderId])
         {
             _releasedTotal[shareHolderId] = boundaryBytes;
