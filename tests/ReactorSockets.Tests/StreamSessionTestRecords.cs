@@ -55,6 +55,29 @@ internal static class StreamSessionTestRecords
         return prefix;
     }
 
+    /// <summary>
+    /// The reserved length-prefix value announcing a delivery-counter control record rather than a
+    /// Message (ADR 0010, issue #109). Hand-rolled here rather than reaching into the internal
+    /// <c>MessageFramingCodec</c> that owns this value in production — the same reason
+    /// <see cref="BuildFrame"/> and <see cref="BuildPrefix"/> hand-roll the ordinary length prefix
+    /// instead of calling it: L0/L1 are untested-through (tests/CLAUDE.md, ADR 0015), so a hostile or
+    /// merely hand-built counterparty's bytes are constructed independently of the production encoder
+    /// they are meant to probe.
+    /// </summary>
+    public const uint DeliveryCounterSentinel = uint.MaxValue - 2;
+
+    /// <summary>
+    /// Builds a whole delivery-counter control record: the 4-byte <see cref="DeliveryCounterSentinel"/>
+    /// prefix followed by <paramref name="count"/> as an 8-byte big-endian <c>u64</c> body.
+    /// </summary>
+    public static byte[] BuildDeliveryCounterRecord(ulong count)
+    {
+        byte[] record = new byte[12];
+        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(0, 4), DeliveryCounterSentinel);
+        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(4, 8), count);
+        return record;
+    }
+
     /// <summary>Builds a payload of <paramref name="length"/> bytes, every byte set to <paramref name="marker"/>.</summary>
     public static byte[] PayloadOf(int length, byte marker)
     {

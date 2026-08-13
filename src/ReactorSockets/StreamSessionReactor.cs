@@ -1168,7 +1168,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="SessionEventKind.MessageReceived"/> first). Otherwise marks it
     /// <see cref="SessionEventKind.PeerClosing"/> and defers the close to whenever both sides drain
     /// (<see cref="TryCloseAfterRetentionDrained"/>) — never both a <c>PeerClosing</c> event and an
-    /// immediate close for the same Goodbye.
+    /// immediate close for the same Goodbye. A delivery-counter sentinel with fewer than its full u64
+    /// body arrived (<see cref="MessageFramingOutcome.AwaitingDeliveryCounterBody"/>, issue #109) waits
+    /// exactly like an incomplete Message; a whole delivery-counter record
+    /// (<see cref="MessageFramingOutcome.DeliveryCounterReceived"/>) is not yet consumed by this method —
+    /// that lands in #113/#116 — so for now it falls into the same fail-closed discard arm as an
+    /// unrecognised outcome.
     /// </summary>
     private void DeliverCompleteMessages(SlotHandle handle, PeerSlot slot)
     {
@@ -1182,6 +1187,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             {
                 case MessageFramingOutcome.AwaitingPrefix:
                 case MessageFramingOutcome.AwaitingMessage:
+                // A delivery-counter sentinel has arrived but not yet its full u64 body (issue #109) —
+                // an ordinary incomplete state, waited out exactly like the two above rather than acted
+                // on early.
+                case MessageFramingOutcome.AwaitingDeliveryCounterBody:
                     return;
 
                 case MessageFramingOutcome.Ready:
@@ -1253,7 +1262,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 // The discard arm refuses rather than permits (the RawLinkLegality/TryReserve house
                 // rule): OversizedPrefix and ZeroLengthPrefix are named explicitly, and any outcome
                 // this switch does not otherwise recognise falls into the same arm rather than being
-                // silently read as legal.
+                // silently read as legal. A whole DeliveryCounterReceived record (issue #109) falls
+                // through to default here deliberately — this ticket is the wire format and its
+                // classification only; consuming a received counter (emitting it, releasing retention)
+                // is #113/#116's job, so until one of them adds its own case, a complete counter record
+                // fails closed rather than being silently accepted as something it is not handled for.
                 case MessageFramingOutcome.OversizedPrefix:
                 case MessageFramingOutcome.ZeroLengthPrefix:
                 default:
