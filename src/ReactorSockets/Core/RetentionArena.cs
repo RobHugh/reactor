@@ -23,12 +23,25 @@ namespace ReactorSockets.Core;
 /// a peer's "I have received through Message N" onto the byte extent that covers Messages 1..N. The
 /// appended-Message count and released-Message count are two more <c>ulong</c> running totals, the
 /// same discipline as the byte totals and for the same reason. The byte extent of each outstanding
-/// Message is recorded in a ring sized <see cref="BoundPerShareHolder"/> entries per share-holder —
-/// the most Messages that could ever be outstanding at once, since <see cref="TryAppend"/> refuses an
-/// empty write and retained bytes can never exceed <see cref="BoundPerShareHolder"/>, so at most one
-/// entry is needed per byte of the region. That is looser than any real framing (every Message this
-/// library frames carries at least a length prefix), but this type has no framing knowledge to
-/// tighten it with — the bound it can prove is the one it uses.
+/// Message is recorded in a ring sized <c>⌈BoundPerShareHolder / MinimumFramedMessageSize⌉</c>
+/// entries per share-holder — the most Messages that could ever be outstanding at once, since
+/// <see cref="TryAppend"/> refuses a write shorter than <see cref="MinimumFramedMessageSize"/> and
+/// retained bytes can never exceed <see cref="BoundPerShareHolder"/>. This type still carries no
+/// framing knowledge of its own — no length-prefix size, no wire format — it is only ever *told* the
+/// smallest write it must plan room for, the same way it is already told
+/// <paramref name="boundPerShareHolder"/> and <paramref name="capacity"/>: a caller that understates
+/// it breaks the bound the ring is sized on, exactly as a caller that understated
+/// <paramref name="boundPerShareHolder"/> would break <see cref="TryAppend"/>'s exhaustion check.
+/// </para>
+/// <para>
+/// <b>Cost.</b> Each ring entry is one <c>ulong</c> (8 bytes) standing in for one whole Message, so
+/// the ring adds <c>8 × Capacity × ⌈BoundPerShareHolder / MinimumFramedMessageSize⌉</c> bytes on top
+/// of the <c>Capacity × BoundPerShareHolder</c> the byte buffer already costs — roughly
+/// <c>8 / MinimumFramedMessageSize</c> times the retention bill, not the flat 8× a 1-byte-per-entry
+/// bound would have cost. The stream Session profile passes its wire format's true floor — the
+/// four-byte length prefix alone, since both the Goodbye sentinel and a zero-payload Message write
+/// exactly that many bytes and nothing shorter is ever appended — which keeps this at 2× rather than
+/// 8×.
 /// </para>
 /// </remarks>
 internal sealed class RetentionArena
@@ -40,6 +53,7 @@ internal sealed class RetentionArena
     private readonly ulong[] _appendedMessageCount;
     private readonly ulong[] _releasedMessageCount;
     private readonly ulong[] _messageBoundaryBytes;
+    private readonly int _boundaryEntriesPerShareHolder;
 
     /// <summary>
     /// Constructs an arena of <paramref name="capacity"/> fixed-size regions, each
@@ -50,7 +64,20 @@ internal sealed class RetentionArena
     /// hold anything.
     /// </param>
     /// <param name="capacity">The number of share-holders this arena divides its regions across.</param>
-    public RetentionArena(int boundPerShareHolder, int capacity)
+    /// <param name="minimumFramedMessageSize">
+    /// The smallest number of bytes any single <see cref="TryAppend"/> call will ever be asked to
+    /// retain — a stream Session profile's bare length prefix, for instance, since its Goodbye
+    /// sentinel carries no payload and <c>Send</c> enforces no lower bound on a Message's own. Rejected
+    /// below 1, the same floor <paramref name="boundPerShareHolder"/> is held to.
+    /// This exists solely to size the Message-boundary ring
+    /// (<c>⌈boundPerShareHolder / minimumFramedMessageSize⌉</c> entries per share-holder, see the
+    /// class remarks) without this type having to know anything about framing itself — the caller
+    /// states the floor, and <see cref="TryAppend"/> then enforces it, exactly as it already enforces
+    /// <paramref name="boundPerShareHolder"/>. A caller that passes a value larger than any write it
+    /// actually makes breaks the ring's bound silently, which is why <see cref="TryAppend"/> refuses
+    /// any write shorter than this rather than trusting the caller never to occur.
+    /// </param>
+    public RetentionArena(int boundPerShareHolder, int capacity, int minimumFramedMessageSize)
     {
         if (boundPerShareHolder < 1)
         {
@@ -68,15 +95,34 @@ internal sealed class RetentionArena
                 $"capacity of {capacity} admits no share-holders — capacity must be at least 1.");
         }
 
+        if (minimumFramedMessageSize < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(minimumFramedMessageSize),
+                minimumFramedMessageSize,
+                $"minimum framed Message size of {minimumFramedMessageSize} bytes cannot describe any write — it must be at least 1.");
+        }
+
         BoundPerShareHolder = boundPerShareHolder;
         Capacity = capacity;
+        MinimumFramedMessageSize = minimumFramedMessageSize;
+
+        // Ceiling division in `long`, not `int`: capacity and boundPerShareHolder are each caller
+        // controlled and their product — let alone their product times 8 bytes per ring entry — can
+        // exceed int.MaxLength well before it would exceed Array.MaxLength, which is what the checked
+        // cast below actually enforces (the same limit `new ulong[...]` would throw against anyway,
+        // just with a clearer failure than a silently wrapped negative length).
+        long boundaryEntriesPerShareHolder =
+            ((long)boundPerShareHolder + minimumFramedMessageSize - 1) / minimumFramedMessageSize;
+        _boundaryEntriesPerShareHolder = checked((int)boundaryEntriesPerShareHolder);
+
         _buffer = new byte[boundPerShareHolder * capacity];
         _writtenTotal = new ulong[capacity];
         _releasedTotal = new ulong[capacity];
         _highWaterBytes = new ulong[capacity];
         _appendedMessageCount = new ulong[capacity];
         _releasedMessageCount = new ulong[capacity];
-        _messageBoundaryBytes = new ulong[boundPerShareHolder * capacity];
+        _messageBoundaryBytes = new ulong[checked(_boundaryEntriesPerShareHolder * capacity)];
     }
 
     /// <summary>The number of bytes each share-holder's region holds.</summary>
@@ -84,6 +130,12 @@ internal sealed class RetentionArena
 
     /// <summary>The number of share-holders this arena divides its regions across.</summary>
     public int Capacity { get; }
+
+    /// <summary>
+    /// The smallest number of bytes any single <see cref="TryAppend"/> call is declared to ever
+    /// retain, supplied at construction. Sizes the Message-boundary ring; see the class remarks.
+    /// </summary>
+    public int MinimumFramedMessageSize { get; }
 
     /// <summary>
     /// Attempts to copy <paramref name="framedBytes"/> into <paramref name="shareHolderId"/>'s
@@ -97,19 +149,20 @@ internal sealed class RetentionArena
     /// </summary>
     /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
     /// <param name="framedBytes">
-    /// The already-framed bytes to retain. Rejected when empty — an empty write has no byte extent
-    /// to give the appended-Message ring a distinct entry for, and admitting one would let an
-    /// unbounded number of them share a single byte of the region, breaking the bound that ring is
-    /// sized on (see the class remarks).
+    /// The already-framed bytes to retain. Rejected when shorter than
+    /// <see cref="MinimumFramedMessageSize"/> — a write the caller declared could never happen is
+    /// exactly the write that would let more Messages be outstanding at once than the Message-boundary
+    /// ring has room for (see the class remarks), so this is enforced rather than trusted.
     /// </param>
     public RetentionOutcome TryAppend(int shareHolderId, ReadOnlySpan<byte> framedBytes)
     {
         ValidateShareHolderId(shareHolderId);
 
-        if (framedBytes.Length == 0)
+        if (framedBytes.Length < MinimumFramedMessageSize)
         {
             throw new ArgumentException(
-                "framedBytes cannot be empty — an empty write has no Message boundary to record.",
+                $"framedBytes of {framedBytes.Length} bytes is shorter than the declared minimum framed " +
+                $"Message size of {MinimumFramedMessageSize} bytes.",
                 nameof(framedBytes));
         }
 
@@ -143,8 +196,8 @@ internal sealed class RetentionArena
         }
 
         _appendedMessageCount[shareHolderId]++;
-        int boundaryIndex = shareHolderId * BoundPerShareHolder
-            + (int)((_appendedMessageCount[shareHolderId] - 1) % (ulong)BoundPerShareHolder);
+        int boundaryIndex = shareHolderId * _boundaryEntriesPerShareHolder
+            + (int)((_appendedMessageCount[shareHolderId] - 1) % (ulong)_boundaryEntriesPerShareHolder);
         _messageBoundaryBytes[boundaryIndex] = _writtenTotal[shareHolderId];
 
         return RetentionOutcome.Committed;
@@ -238,7 +291,8 @@ internal sealed class RetentionArena
             return MessageReleaseOutcome.Released;
         }
 
-        int boundaryIndex = shareHolderId * BoundPerShareHolder + (int)((messageCount - 1) % (ulong)BoundPerShareHolder);
+        int boundaryIndex = shareHolderId * _boundaryEntriesPerShareHolder
+            + (int)((messageCount - 1) % (ulong)_boundaryEntriesPerShareHolder);
         ulong boundaryBytes = _messageBoundaryBytes[boundaryIndex];
         if (boundaryBytes > _releasedTotal[shareHolderId])
         {

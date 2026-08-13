@@ -79,7 +79,15 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Reactor.Sink, options.Reactor.MinimumLevel, _counters);
         _arena = new FrameArena(arenaSize, options.Reactor.Capacity);
-        _retention = new RetentionArena(options.RetentionBytes, options.Reactor.Capacity);
+        // The true floor of any single TryAppend call this Reactor ever makes: the Goodbye sentinel
+        // (AppendGoodbyeOrDefer) is exactly LengthPrefixSize bytes with no payload at all, and Send
+        // enforces no lower bound on message.Length, so a zero-payload Message frames to the same
+        // LengthPrefixSize bytes. Neither ever writes fewer bytes than that, so this is the minimum
+        // RetentionArena can be told without it rejecting a write this Reactor actually makes.
+        _retention = new RetentionArena(
+            options.RetentionBytes,
+            options.Reactor.Capacity,
+            MessageFramingCodec.LengthPrefixSize);
         _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity);
         _entropy = options.Entropy;
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
