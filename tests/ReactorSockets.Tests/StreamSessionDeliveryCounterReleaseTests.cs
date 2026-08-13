@@ -271,6 +271,53 @@ public class StreamSessionDeliveryCounterReleaseTests
     }
 
     // =========================================================================================
+    // A count naming an appended-but-unsent Message is refused (found in review of #113)
+    // =========================================================================================
+
+    [Fact]
+    public void ReleaseThroughMessageCount_ACountNamingAMessageStillQueuedBehindBackpressure_ClosesWithProtocolViolation()
+    {
+        // Arrange — a peer with a tiny receive window that never reads. The Reactor's own send buffer
+        // absorbs a first tranche, then its socket writes go short and the rest of what Send appended
+        // sits in retention unsent. That gap between "appended" and "sent" is the whole point: it is the
+        // only state in which a peer can name a Message whose bytes never reached the wire, and refusing
+        // to release through it is what stops the released total overtaking the sent total and handing
+        // the next Send room over bytes still queued to go out (see RetentionArena's remarks).
+        const int maxMessageSize = 4096;
+        const int retentionBytes = 1024 * 1024;
+        using StreamSessionReactorHarness accepter = new(
+            capacity: 2, maxMessageSize: maxMessageSize, retentionBytes: retentionBytes);
+        using ReleasePeer peer = new(accepter.Endpoint, receiveBufferSize: 512);
+        PeerId id = EstablishSession(accepter, peer);
+
+        // Act — fill retention without the peer ever reading a byte of it.
+        byte[] message = PayloadOf(maxMessageSize, 7);
+        int appended = 0;
+        while (accepter.Reactor.Send(id, message) == SendOutcome.Sent)
+        {
+            appended++;
+            accepter.Reactor.Pump();
+        }
+
+        appended.Should().BeGreaterThan(0, "the ring must have taken at least one Message to name one");
+
+        // The peer claims every appended Message, including the tail still queued behind backpressure.
+        peer.SendDeliveryCounter((ulong)appended);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
+        for (int i = 0; i < 40 && !drained.Any(e => e.Kind == SessionEventKind.PeerClosed); i++)
+        {
+            accepter.Reactor.Pump();
+            drained.AddRange(accepter.DrainToList());
+        }
+
+        // Assert — refused as a protocol violation, exactly as a count above the appended total is. The
+        // peer cannot have received what this end never sent.
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.ProtocolViolation);
+        accepter.Sink.Received.Should().Contain(r => r.Id == DiagnosticId.DeliveryCounterRefused);
+    }
+
+    // =========================================================================================
     // #110 AC6 — the high-water mark is unchanged by any release
     // =========================================================================================
 
@@ -319,12 +366,26 @@ public class StreamSessionDeliveryCounterReleaseTests
     {
         private readonly Socket _socket;
 
-        public ReleasePeer(IPEndPoint destination)
+        /// <param name="destination">The Reactor's bound endpoint to connect to.</param>
+        /// <param name="receiveBufferSize">
+        /// Applied before <c>Connect</c>, so the negotiated receive window is small from the handshake
+        /// onward — never applied after connecting, which on Linux clamps the advertised window and
+        /// disables receive autotuning for the rest of the connection's life (mirrors
+        /// <c>StreamSessionRetentionFlushTests.FlushPeer</c>'s own doc and commit 8426ff3). A small
+        /// window is how a test provokes real write backpressure on the Reactor's side. Omit for the OS
+        /// default.
+        /// </param>
+        public ReleasePeer(IPEndPoint destination, int? receiveBufferSize = null)
         {
             _socket = new Socket(destination.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
             {
                 ReceiveTimeout = 5000,
             };
+            if (receiveBufferSize is int size)
+            {
+                _socket.ReceiveBufferSize = size;
+            }
+
             _socket.Connect(destination);
         }
 

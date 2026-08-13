@@ -162,9 +162,9 @@ public enum DiagnosticId
     /// remote can produce this at will by inflating its own counter.
     /// </para>
     /// <para>
-    /// Numbered 308 rather than the next free 304: 304-307 are already spoken for by the rest of slice 4
-    /// (ResumeMatched, ResumeUnmatched, RedialAttempted, RedialFailed), and a value published in a
-    /// closed permanent enum cannot be moved later to make room.
+    /// Numbered 308 rather than the next free 304: ADR 0013's roster, as amended for this slice, reserves
+    /// 304-307 for the rest of slice 4 (ResumeMatched, ResumeUnmatched, RedialAttempted, RedialFailed),
+    /// and a value published in a closed permanent enum cannot be moved later to make room.
     /// </para>
     /// </remarks>
     DeliveryCounterRefused = 308,

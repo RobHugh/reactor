@@ -193,12 +193,23 @@ apart reads the diagnostics, which is what diagnostics are for.
 | --- | --- | --- | --- | --- |
 | 300 | `PeerRefused` | `Info` | Source | capacity / — |
 | 301 | `LingerNegotiated` | `Info` | Peer | ours in ms / effective in ms |
-| 302 | `ResumeMatched` | `Info` | Peer | bytes rewound / — |
-| 303 | `ResumeUnmatched` | `Warn` | Source | — / — |
-| 304 | `RedialAttempted` | `Info` | Peer | attempt number / delay in ms |
-| 305 | `RedialFailed` | `Info` | Peer | `SocketError` / attempt number |
+| 302 | `MalformedFraming` | `Warn` | Peer | claimed length / — |
+| 303 | `DataAfterGoodbye` | `Warn` | Peer | — / — |
+| 304 | `ResumeMatched` | `Info` | Peer | bytes rewound / — |
+| 305 | `ResumeUnmatched` | `Warn` | Source | — / — |
+| 306 | `RedialAttempted` | `Info` | Peer | attempt number / delay in ms |
+| 307 | `RedialFailed` | `Info` | Peer | `SocketError` / attempt number |
+| 308 | `DeliveryCounterRefused` | `Warn` | Peer | claimed count / appended count |
 
-Sixteen members. What the rules **removed** is the more useful half of the exercise:
+**Amended (slice 3, slice 4.1).** `MalformedFraming` and `DataAfterGoodbye` came out of the framing work
+and took 302–303 — the values this table had drafted for `ResumeMatched` and `ResumeUnmatched`. The
+Resume and re-dial four therefore shift to **304–307**, and slice 4.1's `DeliveryCounterRefused` takes
+**308** rather than the next free value, so those four keep contiguous numbers reserved ahead of the
+tickets that implement them. Explicit values are not optional here precisely because this happens: a
+value published in a closed permanent enum cannot be moved later, so this table follows the code once
+the code has shipped a value, never the other way round.
+
+Sixteen members as first drafted. What the rules **removed** is the more useful half of the exercise:
 
 - **`DatagramDuplicate` and `PacketOutOfWindow`** are per-packet volume driven by loss and reordering.
   They fail the record test and become per-Peer counters.

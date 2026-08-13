@@ -160,12 +160,13 @@ public sealed class StreamSessionOptions
 
     /// <summary>
     /// The number of <see cref="Core.RetentionArena"/> Message-boundary ring entries one Peer's region
-    /// holds: <c>⌈RetentionBytes / 4⌉</c>, the same ceiling division <see cref="Core.RetentionArena"/>
-    /// itself does against the four-byte length prefix this profile passes it as
-    /// <c>minimumFramedMessageSize</c> (issue #110). In <see langword="long"/> for the same overflow
-    /// reason every other line of this bill is.
+    /// holds: <c>⌈RetentionBytes / 4⌉</c>, against the four-byte length prefix this profile passes the
+    /// arena as its <c>minimumFramedMessageSize</c> (issue #110). Delegates to
+    /// <see cref="Core.RetentionArena.BoundaryEntriesFor"/> rather than repeating the ceiling division,
+    /// so this published memory bill cannot drift from what the arena actually allocates.
     /// </summary>
-    private long BoundaryRingEntriesPerPeer => ((long)RetentionBytes + LengthPrefixSize - 1) / LengthPrefixSize;
+    private long BoundaryRingEntriesPerPeer =>
+        Core.RetentionArena.BoundaryEntriesFor(RetentionBytes, LengthPrefixSize);
 
     /// <summary>
     /// The Message-boundary ring line of the memory bill in bytes (issue #110): one <c>uint</c> (4

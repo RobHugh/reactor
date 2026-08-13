@@ -149,14 +149,8 @@ internal sealed class RetentionArena
         Capacity = capacity;
         MinimumFramedMessageSize = minimumFramedMessageSize;
 
-        // Ceiling division in `long`, not `int`: capacity and boundPerShareHolder are each caller
-        // controlled and their product — let alone their product times 4 bytes per ring entry — can
-        // exceed int.MaxLength well before it would exceed Array.MaxLength, which is what the checked
-        // cast below actually enforces (the same limit `new uint[...]` would throw against anyway,
-        // just with a clearer failure than a silently wrapped negative length).
-        long boundaryEntriesPerShareHolder =
-            ((long)boundPerShareHolder + minimumFramedMessageSize - 1) / minimumFramedMessageSize;
-        _boundaryEntriesPerShareHolder = checked((int)boundaryEntriesPerShareHolder);
+        _boundaryEntriesPerShareHolder =
+            checked((int)BoundaryEntriesFor(boundPerShareHolder, minimumFramedMessageSize));
 
         _buffer = new byte[boundPerShareHolder * capacity];
         _writtenTotal = new ulong[capacity];
@@ -179,6 +173,24 @@ internal sealed class RetentionArena
     /// retain, supplied at construction. Sizes the Message-boundary ring; see the class remarks.
     /// </summary>
     public int MinimumFramedMessageSize { get; }
+
+    /// <summary>
+    /// How many Message-boundary ring entries one share-holder's region needs —
+    /// <c>⌈boundPerShareHolder / minimumFramedMessageSize⌉</c>, the most whole Messages that region can
+    /// hold at once. Public and static so the one caller that must advertise this arena's memory cost
+    /// before constructing it (<see cref="StreamSessionOptions.BoundaryRingBudgetBytes"/>) bills the
+    /// same arithmetic the constructor allocates against, rather than a copy of it that could drift and
+    /// quietly make the published memory bill a lie.
+    /// </summary>
+    /// <remarks>
+    /// Returns <c>long</c>, and divides in <c>long</c>, because both arguments are caller-controlled:
+    /// the entry count — let alone the count times <c>Capacity</c> times 4 bytes per entry — can exceed
+    /// <see cref="int"/> well before it exceeds <see cref="Array.MaxLength"/>, and a silently wrapped
+    /// negative length is a far worse failure than an explicit one. The constructor's own
+    /// <c>checked</c> cast is what turns the excess into that explicit failure.
+    /// </remarks>
+    public static long BoundaryEntriesFor(int boundPerShareHolder, int minimumFramedMessageSize) =>
+        ((long)boundPerShareHolder + minimumFramedMessageSize - 1) / minimumFramedMessageSize;
 
     /// <summary>
     /// Attempts to copy <paramref name="framedBytes"/> into <paramref name="shareHolderId"/>'s
@@ -239,9 +251,8 @@ internal sealed class RetentionArena
         }
 
         _appendedMessageCount[shareHolderId]++;
-        int boundaryIndex = shareHolderId * _boundaryEntriesPerShareHolder
-            + (int)((_appendedMessageCount[shareHolderId] - 1) % (ulong)_boundaryEntriesPerShareHolder);
-        _messageBoundaryLow32[boundaryIndex] = unchecked((uint)_writtenTotal[shareHolderId]);
+        _messageBoundaryLow32[BoundaryIndex(shareHolderId, _appendedMessageCount[shareHolderId])] =
+            unchecked((uint)_writtenTotal[shareHolderId]);
 
         return RetentionOutcome.Committed;
     }
@@ -316,7 +327,11 @@ internal sealed class RetentionArena
     /// <see cref="MessageReleaseOutcome.Refused"/> without touching the arena, distinguishably from
     /// the no-op case: it means the peer claims to have received Messages this share-holder never
     /// sent, which is this call's caller's protocol violation to act on, not something to clamp away
-    /// silently. Otherwise the share-holder's released total advances to the byte position recorded
+    /// silently. A count whose byte boundary lies past what <see cref="MarkSent"/> has recorded is
+    /// refused on the same footing — the peer cannot have received bytes this end never handed to its
+    /// transport, and admitting one would let the released total overtake the sent total and hand
+    /// <see cref="TryAppend"/> room over bytes still queued for <see cref="GetUnsent"/>. Otherwise the
+    /// share-holder's released total advances to the byte position recorded
     /// for its <paramref name="messageCount"/>th Message — never backwards — and its released-Message
     /// total advances to match. This is entirely independent of <see cref="MarkSent"/>: what a peer has
     /// confirmed receiving and what this end has merely handed to its own transport are different
@@ -343,8 +358,7 @@ internal sealed class RetentionArena
             return MessageReleaseOutcome.Released;
         }
 
-        int boundaryIndex = shareHolderId * _boundaryEntriesPerShareHolder
-            + (int)((messageCount - 1) % (ulong)_boundaryEntriesPerShareHolder);
+        int boundaryIndex = BoundaryIndex(shareHolderId, messageCount);
 
         // Reconstructs the boundary's full ulong position from its stored low 32 bits and the
         // share-holder's current written total: `delta`, computed by ordinary uint wraparound
@@ -355,6 +369,20 @@ internal sealed class RetentionArena
         ulong writtenTotal = _writtenTotal[shareHolderId];
         uint delta = unchecked((uint)writtenTotal - _messageBoundaryLow32[boundaryIndex]);
         ulong boundaryBytes = writtenTotal - delta;
+
+        // A peer cannot have received bytes this end never put on the wire, so a boundary past the sent
+        // total is refused for the same reason a count past the appended total is: the peer is claiming
+        // something impossible. Checking the appended total alone is not enough, because appended runs
+        // ahead of sent the moment a socket write goes short — precisely when retention matters. Without
+        // this, a peer confirming an appended-but-unsent Message would advance the released total past
+        // the sent total, and since TryAppend's room check is `written - released`, the very next Send
+        // would be handed room over bytes still queued for GetUnsent and overwrite them — outbound
+        // stream corruption a remote could provoke at will.
+        if (boundaryBytes > _sentTotal[shareHolderId])
+        {
+            return MessageReleaseOutcome.Refused;
+        }
+
         if (boundaryBytes > _releasedTotal[shareHolderId])
         {
             _releasedTotal[shareHolderId] = boundaryBytes;
@@ -410,6 +438,18 @@ internal sealed class RetentionArena
         _appendedMessageCount[shareHolderId] = 0;
         _releasedMessageCount[shareHolderId] = 0;
     }
+
+    /// <summary>
+    /// Where <paramref name="shareHolderId"/>'s <paramref name="messageOrdinal"/>th appended Message
+    /// (1-based) records its byte boundary in <see cref="_messageBoundaryLow32"/>. The single place
+    /// that arithmetic lives: <see cref="TryAppend"/> writes an entry and
+    /// <see cref="ReleaseThroughMessageCount"/> reads it back, and the two drifting apart would not
+    /// fail loudly — it would silently resolve a confirmation to the wrong Message's boundary and
+    /// release the wrong extent.
+    /// </summary>
+    private int BoundaryIndex(int shareHolderId, ulong messageOrdinal) =>
+        (shareHolderId * _boundaryEntriesPerShareHolder)
+        + (int)((messageOrdinal - 1) % (ulong)_boundaryEntriesPerShareHolder);
 
     private void ValidateShareHolderId(int shareHolderId)
     {
