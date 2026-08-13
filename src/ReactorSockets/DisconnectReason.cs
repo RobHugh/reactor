@@ -49,10 +49,14 @@ public enum DisconnectReason
 
     /// <summary>
     /// An established Peer's Message framing broke this profile's rules: a length prefix exceeding
-    /// the announced <c>MaxMessageSize</c>, a length prefix of zero, or a stream that ended before a
-    /// length prefix or the Message body it named had fully arrived. Distinct from
-    /// <see cref="TransportFailed"/>: the byte stream itself survived long enough to carry the
-    /// violation, and what is wrong is the bytes it carried rather than the transport underneath it.
+    /// the announced <c>MaxMessageSize</c>, a length prefix of zero, a stream that ended before a
+    /// length prefix or the Message body it named had fully arrived, or bytes arriving behind a
+    /// Goodbye already received from that Peer (issue #93) — a Peer that announced it was leaving and
+    /// then kept sending is contradicting its own announcement, so it is disconnected rather than
+    /// believed. Distinct from <see cref="TransportFailed"/>: the byte stream itself survived long
+    /// enough to carry the violation, and what is wrong is the bytes it carried rather than the
+    /// transport underneath it. Distinct from <see cref="PeerGoodbye"/>, which is reserved for an
+    /// ending that stayed clean to the last byte.
     /// </summary>
     ProtocolViolation = 4,
 
