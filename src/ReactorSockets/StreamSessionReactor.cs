@@ -220,6 +220,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             LocalResumeSecret = NextResumeSecret(),
             State = HandshakeState.Connecting,
             ReceiveBuffer = new byte[_options.ResolvedReceiveBufferSize],
+            DeliveryCounterRecord = new byte[MessageFramingCodec.DeliveryCounterRecordSize],
         };
 
         // `HasFreeSlot` was just checked and this Reactor is single-threaded (ADR 0002), so `TryAdd`
@@ -565,6 +566,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             LocalResumeSecret = NextResumeSecret(),
             State = HandshakeState.AwaitingPeerHandshake,
             ReceiveBuffer = new byte[_options.ResolvedReceiveBufferSize],
+            DeliveryCounterRecord = new byte[MessageFramingCodec.DeliveryCounterRecordSize],
         };
 
         // `HasFreeSlot` was just checked and this Reactor is single-threaded (ADR 0002), so `TryAdd`
@@ -983,9 +985,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Builds and sends this end's delivery-counter record — <paramref name="slot"/>'s own
-    /// <see cref="PeerCounterSet.MessagesReceived"/> at this instant — for <see cref="EmitDeliveryCounters"/>.
-    /// Skips building a fresh record entirely when an earlier one is still draining a short send
+    /// Writes this end's delivery-counter record — <paramref name="slot"/>'s own
+    /// <see cref="PeerCounterSet.MessagesReceived"/> at this instant — into that slot's preallocated
+    /// <see cref="PeerSlot.DeliveryCounterRecord"/> buffer and sends it, for
+    /// <see cref="EmitDeliveryCounters"/>. Nothing is allocated here: this fires on every Pump a receiving
+    /// Peer's count advances, which is the steady state for one-way traffic rather than an exceptional
+    /// path. Skips building a fresh record entirely when an earlier one is still draining a short send
     /// (<see cref="PeerSlot.PendingDeliveryCounterBytesToSend"/>): interleaving a second record's bytes
     /// ahead of the first's undelivered remainder would corrupt both on the wire, and since the count is
     /// cumulative and idempotent on the peer's side (<see cref="RetentionArena.ReleaseThroughMessageCount"/>'s
@@ -1000,10 +1005,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        byte[] record = new byte[MessageFramingCodec.DeliveryCounterRecordSize];
-        MessageFramingCodec.WriteDeliveryCounter(record, slot.Counters.MessagesReceived);
+        MessageFramingCodec.WriteDeliveryCounter(slot.DeliveryCounterRecord, slot.Counters.MessagesReceived);
 
-        switch (SendPendingRecord(slot.Link, record, out ReadOnlyMemory<byte> remainder))
+        switch (SendPendingRecord(slot.Link, slot.DeliveryCounterRecord, out ReadOnlyMemory<byte> remainder))
         {
             case PendingRecordSendOutcome.Failed:
                 ClosePeer(handle, DisconnectReason.TransportFailed);
@@ -1811,6 +1815,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// maximum Message plus its length prefix.
         /// </summary>
         public required byte[] ReceiveBuffer { get; init; }
+
+        /// <summary>
+        /// This Peer's own fixed <see cref="MessageFramingCodec.DeliveryCounterRecordSize"/>-byte scratch
+        /// buffer, rewritten in place each time <see cref="SendDeliveryCounterOrArm"/> emits (issue #116).
+        /// Allocated once with the slot, like <see cref="ReceiveBuffer"/>, rather than per emission: the
+        /// per-Pump trigger fires on every Pump a receiving Peer's count advances, so building a fresh
+        /// record each time would put an allocation on the steady-state receive path — the one thing this
+        /// Reactor's preallocate-everything discipline exists to avoid. Safe to reuse in place because
+        /// <see cref="SendDeliveryCounterOrArm"/> refuses to build a new record at all while
+        /// <see cref="PendingDeliveryCounterBytesToSend"/> — a remainder pointing into this very buffer —
+        /// is still draining.
+        /// </summary>
+        public required byte[] DeliveryCounterRecord { get; init; }
 
         /// <summary>How many bytes of <see cref="ReceiveBuffer"/> are filled so far, from the front.</summary>
         public int ReceiveBytesFilled { get; set; }
