@@ -168,4 +168,11 @@ public readonly record struct DiagnosticRecord
     /// </summary>
     public static DiagnosticRecord ForMalformedFraming(PeerId peer, long announcedLength, long maxMessageSize) =>
         new(DiagnosticId.MalformedFraming, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, announcedLength, maxMessageSize);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.DataAfterGoodbye"/> record for the Peer that kept sending
+    /// after its own Goodbye. No claimed length: <c>Value0</c> and <c>Value1</c> are unused.
+    /// </summary>
+    public static DiagnosticRecord ForDataAfterGoodbye(PeerId peer) =>
+        new(DiagnosticId.DataAfterGoodbye, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, 0, 0);
 }

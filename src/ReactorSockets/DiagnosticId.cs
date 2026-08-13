@@ -132,4 +132,17 @@ public enum DiagnosticId
     /// rather than an Event on the consumer's own stream.
     /// </remarks>
     MalformedFraming = 302,
+
+    /// <summary>
+    /// An established Peer sent Message bytes after its own Goodbye had already been received, and
+    /// the Session was closed with <see cref="DisconnectReason.ProtocolViolation"/> (issue #93).
+    /// Subject is the Peer. Carries no claimed length — <see cref="MessageFramingLegality"/> reaches
+    /// this outcome before ever reading a prefix, so there is nothing to report but the contradiction
+    /// itself. <c>Value0</c> and <c>Value1</c> are unused.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>, for the same reason as <see cref="MalformedFraming"/>: a
+    /// remote can produce this at will by ignoring the Goodbye it just sent.
+    /// </remarks>
+    DataAfterGoodbye = 303,
 }

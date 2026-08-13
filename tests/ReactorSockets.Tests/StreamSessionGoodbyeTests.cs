@@ -428,6 +428,32 @@ public class StreamSessionGoodbyeTests
     }
 
     [Fact]
+    public void DataAfterGoodbye_MessageArrivesBehindGoodbyeInTheSameWrite_LogsDataAfterGoodbyeAtWarnWithThePeerSubject()
+    {
+        // Arrange — issue #106: DataAfterGoodbye must log its own diagnostic shape rather than
+        // reusing ForMalformedFraming's claimed-length shape, since Classify returns before any
+        // prefix is read and there is no claimed length to report.
+        using StreamSessionReactorHarness accepter = new();
+        using GoodbyePeer peer = new(accepter.Endpoint);
+        PeerId id = EstablishSession(accepter, peer);
+        byte[] precedingMessage = PayloadOf(16, 1);
+        byte[] trailingMessage = PayloadOf(16, 2);
+        accepter.Sink.Received.Clear();
+
+        // Act
+        peer.Send([.. BuildFrame(precedingMessage), .. BuildGoodbye(), .. BuildFrame(trailingMessage)]);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.DataAfterGoodbye));
+
+        // Assert
+        DiagnosticRecord record = accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.DataAfterGoodbye).Which;
+        record.Level.Should().Be(DiagnosticLevel.Warn);
+        record.SubjectKind.Should().Be(DiagnosticSubjectKind.Peer);
+        record.Peer.Should().Be(id);
+        accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.MalformedFraming,
+            "DataAfterGoodbye is a distinct diagnostic shape, not a reuse of MalformedFraming's claimed-length one");
+    }
+
+    [Fact]
     public void DataAfterGoodbye_MessageArrivesInASeparateLaterWrite_ClosesWithProtocolViolation()
     {
         // Arrange — this end's own outbound retention is driven to genuine exhaustion against a

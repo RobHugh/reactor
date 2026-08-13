@@ -1240,11 +1240,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 // A separate arm from the discard arm below rather than folded into it: length is always
                 // 0 here (Classify returns before the prefix is even read), so there is no claimed
                 // length to report — the peer's fault is contradicting its own Goodbye by sending
-                // anything further, not a bad prefix.
+                // anything further, not a bad prefix (issue #106).
                 case MessageFramingOutcome.DataAfterGoodbye:
                     if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
                     {
-                        _diagnostics.Log(DiagnosticRecord.ForMalformedFraming(ToPeerId(handle), length, _options.MaxMessageSize));
+                        _diagnostics.Log(DiagnosticRecord.ForDataAfterGoodbye(ToPeerId(handle)));
                     }
 
                     ClosePeer(handle, DisconnectReason.ProtocolViolation);
