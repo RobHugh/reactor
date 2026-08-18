@@ -651,11 +651,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// A Resume matching no held Peer is closed rather than admitted: a Resume carries no version and
     /// no announced parameters (issue #115), so there is nothing in one to establish a fresh Session
     /// from, and treating it as a silent success would hand back a Session that does not exist. What an
-    /// operator reads for that, and for the other refusal paths, is issue #124's Diagnostics. A record
-    /// naming no known type is dropped here too, ahead of the capacity check, so the discard arm still
-    /// refuses rather than answering it with a Refusal that implies it was understood. Everything else —
-    /// a Hello, a Refusal, and how each is answered — reaches <see cref="OnHandshakeRecordFilled"/>
-    /// through <see cref="AdmitPendingAdmission"/> unchanged.
+    /// operator reads for that, and for the other refusal paths, is
+    /// <see cref="DiagnosticId.ResumeUnmatched"/> (issue #124). A record naming no known type is dropped
+    /// here too, ahead of the capacity check, so the discard arm still refuses rather than answering it
+    /// with a Refusal that implies it was understood. A Hello announcing a secret a reservation is
+    /// holding is refused ahead of the capacity check as well, since it is a claim on that reserved
+    /// Session and not a request for a Slot (<see cref="IsHelloClaimingAReservedSession"/>). Everything
+    /// else — an ordinary Hello, a Refusal, and how each is answered — reaches
+    /// <see cref="OnHandshakeRecordFilled"/> through <see cref="AdmitPendingAdmission"/> unchanged.
     /// </remarks>
     private void OnPendingAdmissionRecordFilled(PendingAdmission pending)
     {
@@ -675,6 +678,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
+        if (type == StreamHandshakeMessageType.Hello && IsHelloClaimingAReservedSession(pending))
+        {
+            DiscardPendingAdmission(pending);
+            return;
+        }
+
         if (!_peers.HasFreeSlot)
         {
             RefuseForCapacity(pending);
@@ -682,6 +691,43 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
 
         AdmitPendingAdmission(pending);
+    }
+
+    /// <summary>
+    /// Answers whether a held connection's Hello is really a claim on a reserved Session rather than a
+    /// fresh dial: it announces the resume secret one of this Reactor's Interrupted Peers is holding
+    /// its Slot against, but arrives in the one record shape that also re-announces the Session's
+    /// parameters. That is the third way a Resume is refused (issue #124), and it is a protocol
+    /// violation rather than something to accept or ignore. A Resume has no field for parameters by
+    /// construction (issue #115), and re-announcing them would break the retention ring underneath the
+    /// Session: retention holds framed bytes admitted against the <c>MaxMessageSize</c> in force when
+    /// they were sent, so a party announcing a smaller one has made retained Messages illegal, leaving
+    /// only dropping them — silently breaking reliable delivery where a consumer cannot observe it —
+    /// or sending them anyway, which makes the announced limit a lie.
+    /// </summary>
+    /// <remarks>
+    /// A genuine fresh dial announces the secret <em>it</em> minted for the Session it is opening, so
+    /// it reaches the same candidate scan and matches nothing. The connection is closed rather than
+    /// answered with a Refusal for the same reason every other protocol violation in this profile is:
+    /// the wire <see cref="RefusalReason"/> roster names in-protocol declines a well-behaved dialler
+    /// can act on, and this is not one. What an operator reads for it is the
+    /// <see cref="DiagnosticId.ResumeUnmatched"/> record logged here.
+    /// </remarks>
+    private bool IsHelloClaimingAReservedSession(PendingAdmission pending)
+    {
+        Span<byte> announcedSecret = stackalloc byte[StreamSessionProtocol.ResumeSecretLength];
+        if (!StreamHandshakeCodec.TryRead(pending.Record, out _, out _, out _, out _, announcedSecret))
+        {
+            return false;
+        }
+
+        if (MatchInterruptedSlot(announcedSecret, out int candidatesChecked) is null)
+        {
+            return false;
+        }
+
+        LogResumeUnmatched(pending, candidatesChecked, StreamHandshakeMessageType.Hello);
+        return true;
     }
 
     /// <summary>
@@ -720,11 +766,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Matches a held connection's Resume record onto the Interrupted Peer whose Slot is reserving the
     /// Session it names, answering whether one was found. The secret authorises the match and never
-    /// selects it: every Interrupted Peer's secret is compared, in constant time and without stopping
-    /// at the first that matches, so neither the comparison nor the loop leaks which Slot answered or
-    /// whether any did — the same discipline <see cref="CookieMinter"/> applies on the datagram side.
+    /// selects it — <see cref="MatchInterruptedSlot"/> owns the scan and the constant-time comparison.
     /// An established Peer is never a candidate: its transport is alive, and a second connection
-    /// claiming a live Session is not a reconnection.
+    /// claiming a live Session is not a reconnection. A claim that matches nothing is refused, saying
+    /// so to an operator as <see cref="DiagnosticId.ResumeUnmatched"/> and to the party as a close.
     /// </summary>
     /// <remarks>
     /// The delivery counter the record carries is read but not acted on here. Rewinding this end's
@@ -739,7 +784,29 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return false;
         }
 
+        if (MatchInterruptedSlot(presentedSecret, out int candidatesChecked) is not PeerSlot matched)
+        {
+            LogResumeUnmatched(pending, candidatesChecked, StreamHandshakeMessageType.Resume);
+            return false;
+        }
+
+        ResumeHeldPeer(matched, ReleasePendingAdmission(pending));
+        return true;
+    }
+
+    /// <summary>
+    /// Scans every Interrupted Peer's reservation for one whose resume secret is
+    /// <paramref name="presentedSecret"/>, reporting through <paramref name="candidatesChecked"/> how
+    /// many reservations were held to be scanned at all — 0 says nothing was being held, which is what
+    /// tells a once-valid secret arriving after its Linger expired apart from a secret that was never
+    /// right. Every candidate is compared, in constant time and without stopping at the first that
+    /// matches, so neither the comparison nor the loop leaks which Slot answered or whether any did —
+    /// the same discipline <see cref="CookieMinter"/> applies on the datagram side.
+    /// </summary>
+    private PeerSlot? MatchInterruptedSlot(ReadOnlySpan<byte> presentedSecret, out int candidatesChecked)
+    {
         PeerSlot? matched = null;
+        int candidates = 0;
         for (int index = 0; index < _peers.Capacity; index++)
         {
             if (_peers.OccupantAt(index) is not PeerSlot slot || !slot.IsInterrupted)
@@ -747,19 +814,32 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
+            candidates++;
             if (CryptographicOperations.FixedTimeEquals(slot.LocalResumeSecret, presentedSecret))
             {
                 matched = slot;
             }
         }
 
-        if (matched is null)
+        candidatesChecked = candidates;
+        return matched;
+    }
+
+    /// <summary>
+    /// Logs the <see cref="DiagnosticId.ResumeUnmatched"/> record for a held connection whose claim on
+    /// an existing Session was refused. Subject is the claimed Source, read off the still-connected
+    /// transport before it is released: an unmatched claim comes from a party that is by construction
+    /// not a Peer, so there is no Peer to name.
+    /// </summary>
+    private void LogResumeUnmatched(PendingAdmission pending, int candidatesChecked, StreamHandshakeMessageType type)
+    {
+        if (!_diagnostics.IsEnabled(DiagnosticLevel.Warn))
         {
-            return false;
+            return;
         }
 
-        ResumeHeldPeer(matched, ReleasePendingAdmission(pending));
-        return true;
+        _diagnostics.Log(DiagnosticRecord.ForResumeUnmatched(
+            Source.FromIPEndPoint(pending.Link.RemoteEndPoint), candidatesChecked, (long)type));
     }
 
     /// <summary>
@@ -799,6 +879,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         if (slot.HasPendingRetentionWrite)
         {
             _peersWithPendingRetentionWrites.Add(slot.Handle);
+        }
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            // Zero bytes rewound: this slice matches the Resume and reads the counter it reports
+            // without acting on it, so the rewind issue #127 delivers has not happened and 0 is what
+            // the match can honestly report for the field.
+            _diagnostics.Log(DiagnosticRecord.ForResumeMatched(ToPeerId(slot.Handle), bytesRewound: 0));
         }
     }
 

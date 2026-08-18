@@ -147,6 +147,50 @@ public enum DiagnosticId
     DataAfterGoodbye = 303,
 
     /// <summary>
+    /// A connection presenting a valid resume secret was matched onto the Interrupted Peer whose Slot
+    /// was reserving the Session it named, and that Session continued over the replacement transport
+    /// rather than a new one being established (issue #123, ADR 0011). Subject is the resumed Peer —
+    /// the same <see cref="PeerId"/>, generation included, the Session had before the interruption,
+    /// since nothing about a Peer's identity is renewed by a Resume. <c>Value0</c> is the number of
+    /// retained outbound bytes the match rewound to the counter the Resume reported; <c>Value1</c> is
+    /// unused.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="DiagnosticLevel.Info"/>: a reconnection is the outcome reserving a Slot exists to
+    /// produce, not a condition a consumer needs to act on.
+    /// </para>
+    /// <para>
+    /// <c>Value0</c> reads 0 until issue #127 supplies the rewind: this slice matches the Resume and
+    /// reads the counter it reports without acting on it, so no bytes have been rewound yet and 0 is
+    /// what the match can honestly report.
+    /// </para>
+    /// <para>
+    /// Numbered 304 rather than the 302 the slice-4 spec named: 302 and 303 were taken by
+    /// <see cref="MalformedFraming"/> and <see cref="DataAfterGoodbye"/> (issues #92 and #106) after
+    /// that spec was written, and a value published in a closed permanent enum is never renumbered.
+    /// </para>
+    /// </remarks>
+    ResumeMatched = 304,
+
+    /// <summary>
+    /// A connection claiming an existing Session was refused rather than resumed. Subject is the
+    /// claimed Source: a claim that is not matched comes from a party that is by construction not a
+    /// Peer, so there is no Peer to name, only a claimed origin. <c>Value0</c> is the number of
+    /// Interrupted Peers whose reservations the claim was checked against — 0 means nothing was being
+    /// held at all, which is the reconfiguration path where a once-valid secret arrives after its
+    /// Linger expired. <c>Value1</c> is the wire record type the claim arrived as: 3 for a Resume
+    /// whose secret matched no held Peer, and 1 for a Hello presenting a secret that did match, which
+    /// re-announces the parameters a Resume has no field for and is refused as a protocol violation.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/> rather than the <see cref="DiagnosticLevel.Info"/> a version
+    /// mismatch or a capacity refusal carries: those are routine outcomes of running this profile and
+    /// a wrong secret is not.
+    /// </remarks>
+    ResumeUnmatched = 305,
+
+    /// <summary>
     /// An established Peer's delivery-counter record (issue #109) claimed to have received more
     /// Messages than this end has ever sent it, and the Session was closed with
     /// <see cref="DisconnectReason.ProtocolViolation"/> (issue #113) — the peer is confirming Messages
@@ -163,8 +207,9 @@ public enum DiagnosticId
     /// </para>
     /// <para>
     /// Numbered 308 rather than the next free 304: ADR 0013's roster, as amended for this slice, reserves
-    /// 304-307 for the rest of slice 4 (ResumeMatched, ResumeUnmatched, RedialAttempted, RedialFailed),
-    /// and a value published in a closed permanent enum cannot be moved later to make room.
+    /// 304-307 for the rest of slice 4 (<see cref="ResumeMatched"/> and <see cref="ResumeUnmatched"/>,
+    /// which issue #124 has since taken, then RedialAttempted and RedialFailed), and a value published
+    /// in a closed permanent enum cannot be moved later to make room.
     /// </para>
     /// </remarks>
     DeliveryCounterRefused = 308,

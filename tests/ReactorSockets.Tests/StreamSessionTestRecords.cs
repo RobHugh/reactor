@@ -28,9 +28,25 @@ internal static class StreamSessionTestRecords
     /// <summary>The protocol version this test suite's hand-built Hello records offer by default.</summary>
     public const uint ProtocolVersion = 1;
 
-    /// <summary>Builds a <see cref="HandshakeRecordSize"/>-byte Hello record. The trailing 16-byte resume secret is left zeroed.</summary>
-    public static byte[] BuildHello(uint version = ProtocolVersion, uint maxMessageSize = 4096, ulong sendIdleMs = 1000, ulong lingerMs = 1000)
+    /// <summary>
+    /// Builds a <see cref="HandshakeRecordSize"/>-byte Hello record. The trailing 16-byte resume secret
+    /// is left zeroed unless <paramref name="resumeSecret"/> names one — a real dialler announces the
+    /// secret it minted for the Session it is opening, so a test only passes one here when it means to
+    /// send a Hello announcing a secret it did not mint (issue #124's third refusal path).
+    /// </summary>
+    public static byte[] BuildHello(
+        uint version = ProtocolVersion,
+        uint maxMessageSize = 4096,
+        ulong sendIdleMs = 1000,
+        ulong lingerMs = 1000,
+        byte[]? resumeSecret = null)
     {
+        if (resumeSecret is not null && resumeSecret.Length != ResumeSecretLength)
+        {
+            throw new ArgumentException(
+                $"A resume secret is exactly {ResumeSecretLength} bytes on the wire.", nameof(resumeSecret));
+        }
+
         byte[] record = new byte[HandshakeRecordSize];
         record[0] = HelloRecordType;
         int offset = 1;
@@ -41,6 +57,8 @@ internal static class StreamSessionTestRecords
         BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), sendIdleMs);
         offset += 8;
         BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), lingerMs);
+        offset += 8;
+        resumeSecret?.CopyTo(record.AsSpan(offset, ResumeSecretLength));
         return record;
     }
 

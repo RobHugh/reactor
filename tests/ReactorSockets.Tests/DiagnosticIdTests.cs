@@ -19,6 +19,8 @@ public class DiagnosticIdTests
     [InlineData(DiagnosticId.LingerNegotiated, 301)]
     [InlineData(DiagnosticId.MalformedFraming, 302)]
     [InlineData(DiagnosticId.DataAfterGoodbye, 303)]
+    [InlineData(DiagnosticId.ResumeMatched, 304)]
+    [InlineData(DiagnosticId.ResumeUnmatched, 305)]
     [InlineData(DiagnosticId.DeliveryCounterRefused, 308)]
     public void Values_EveryMember_MatchesItsReservedBlockNumber(DiagnosticId id, int expected)
     {
@@ -28,6 +30,22 @@ public class DiagnosticIdTests
 
         // Assert
         actual.Should().Be(expected);
+    }
+
+    [Fact]
+    public void Values_EveryMember_HasAValueNoOtherMemberShares()
+    {
+        // Arrange — C# lets two enum members share a value silently, which would make one of them an
+        // alias for the other in every Sink that switches on the id. The per-member test above pins
+        // each value it knows about; this is the guard that a member added later cannot land on one
+        // already taken.
+        DiagnosticId[] members = Enum.GetValues<DiagnosticId>();
+
+        // Act
+        int distinctValues = members.Select(id => (int)id).Distinct().Count();
+
+        // Assert
+        distinctValues.Should().Be(members.Length);
     }
 
     [Fact]
