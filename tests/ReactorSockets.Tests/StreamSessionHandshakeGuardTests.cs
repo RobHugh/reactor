@@ -300,9 +300,18 @@ public class StreamSessionHandshakeGuardTests
         List<RawTcpPeer> peers = [.. Enumerable.Range(0, 7).Select(_ => new RawTcpPeer(accepter.Endpoint))];
         try
         {
-            // Act — every connection lands in the backlog before the Reactor is Pumped even once; a
-            // short sleep gives loopback time to complete every three-way handshake before that one
-            // Pump call reads the listening socket.
+            // Act — every connection lands in the backlog, and every Hello with it, before the Reactor
+            // is Pumped even once; a short sleep gives loopback time to complete every three-way
+            // handshake and carry every Hello across before that one Pump call reads the listening
+            // socket. The Hellos are what make the reply below possible at all: this end answers a
+            // connection only once it has read the record saying whether it is a fresh dial or a Resume
+            // claiming a Slot it already owns (issue #123), so a peer that connects and says nothing is
+            // held, silently, until it does.
+            foreach (RawTcpPeer peer in peers)
+            {
+                peer.Send(StreamSessionTestRecords.BuildHello());
+            }
+
             Thread.Sleep(20);
             accepter.Reactor.Pump();
 

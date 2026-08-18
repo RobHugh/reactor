@@ -48,6 +48,23 @@ internal sealed class TcpLink : IDisposable
     public Socket Socket { get; }
 
     /// <summary>
+    /// Whether bytes are waiting to be read right now. A non-destructive, non-blocking check
+    /// (<see cref="Socket.Poll(int, SelectMode)"/> with a zero timeout), the same shape
+    /// <see cref="TcpListenLink.HasPendingConnection"/> already uses for a backlog. Exists for a caller
+    /// reading outside the readiness dispatcher's own callback — one that wants whatever already
+    /// arrived without waiting for the next Pump to report this Handle readable — since
+    /// <see cref="Receive"/> on a socket with nothing ready reports a failure, not an empty read, and
+    /// that failure would be indistinguishable from a real one.
+    /// </summary>
+    /// <remarks>
+    /// A remote that half-closed also polls readable here, which is correct for this property's one
+    /// purpose: <see cref="Receive"/> then returns
+    /// <see cref="TcpLinkReceiveOutcome.EndOfStream"/> — a real outcome the caller must act on, not
+    /// the "nothing ready" this guards against.
+    /// </remarks>
+    public bool HasPendingBytes => Socket.Poll(0, SelectMode.SelectRead);
+
+    /// <summary>
     /// Wraps a socket a listening Link just pulled off its backlog. TCP binds the local end
     /// implicitly on accept, so <see cref="LocalEndPoint"/> is read back from the socket rather than
     /// supplied by the caller — and so is <see cref="RemoteEndPoint"/>, since an accepted socket is

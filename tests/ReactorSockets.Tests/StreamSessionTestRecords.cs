@@ -45,6 +45,25 @@ internal static class StreamSessionTestRecords
     }
 
     /// <summary>
+    /// Reads the 16-byte resume secret out of a whole Hello record a Reactor sent — its tail, after the
+    /// type byte, the version, <c>MaxMessageSize</c>, the send-idle interval and Linger. The only way a
+    /// test learns the secret a Reactor will require before it resumes a Session (issue #123): it comes
+    /// off the wire exactly as the far end would read it, never out of the Reactor, since how the secret
+    /// is stored is not something a test may assert on (tests/CLAUDE.md, ADR 0015).
+    /// </summary>
+    public static byte[] ReadResumeSecretFromHello(byte[] hello)
+    {
+        if (hello.Length != HandshakeRecordSize || hello[0] != HelloRecordType)
+        {
+            throw new ArgumentException(
+                $"Not a whole {HandshakeRecordSize}-byte Hello record.", nameof(hello));
+        }
+
+        const int secretOffset = 1 + 4 + 4 + 8 + 8;
+        return hello[secretOffset..];
+    }
+
+    /// <summary>
     /// Builds a <see cref="HandshakeRecordSize"/>-byte Resume record: the type byte, the 16-byte resume
     /// secret, the 8-byte big-endian delivery counter, and zero padding out to the size a Hello occupies
     /// (issue #115). Hand-rolled independently of the internal <c>StreamHandshakeCodec</c> that owns this

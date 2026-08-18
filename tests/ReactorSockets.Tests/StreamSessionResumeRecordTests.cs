@@ -7,19 +7,23 @@ namespace ReactorSockets.Tests;
 /// Slice 4.4.2 (issue #115): the Resume record on the wire — a third stream-handshake message type
 /// carrying only the resume secret and the delivery counter, padded to exactly the size a Hello and a
 /// Refusal occupy so a Peer waiting on a fixed-size handshake record never has to know which kind is
-/// coming before it has read the whole thing. What a Resume <em>means</em> — matching it against a held
-/// Interrupted Peer, ahead of the capacity check — is issue #123, so here a well-formed Resume is read
-/// as one whole record and then refused, exactly as an unrecognised type is.
+/// coming before it has read the whole thing. Every Resume here names a Session this Reactor is not
+/// holding, so every one of them is unmatched — what a Resume that <em>does</em> match means, and the
+/// order the match runs in, is <see cref="StreamSessionResumeMatchTests"/> (issue #123).
 /// </summary>
 /// <remarks>
+/// <para>
 /// The codec is internal and reached nowhere here (tests/CLAUDE.md, ADR 0015): every record is
 /// hand-built by <see cref="StreamSessionTestRecords"/> over a raw counterparty socket, and every
-/// assertion is on what the public L2 surface does with those bytes. Three of #115's acceptance
-/// criteria are therefore not assertable here and are pinned by #123 instead, once a Resume has
-/// somewhere to go: the round trip of secret and counter, the refusal of a wrong-length secret buffer,
-/// and reading a Resume out of a Hello or Refusal record. Until then nothing in the profile reads a
-/// Resume's payload, so no L2 behaviour depends on it — reaching past the seam to assert it anyway is
-/// what ADR 0015 forbids.
+/// assertion is on what the public L2 surface does with those bytes.
+/// </para>
+/// <para>
+/// An unmatched Resume ends its connection without ever raising an Event: this end reads a connection's
+/// first record before it decides anything (issue #123), so a Resume naming no held Peer never gets a
+/// capacity Slot and never becomes a Peer, and there is correspondingly no
+/// <see cref="SessionEventKind.PeerClosed"/> for something that was never connected. The end of the
+/// connection is what a test can see, and that is what these assert.
+/// </para>
 /// </remarks>
 public class StreamSessionResumeRecordTests
 {
@@ -46,7 +50,7 @@ public class StreamSessionResumeRecordTests
     }
 
     [Fact]
-    public void Handshake_TheLastByteOfAResumeRecordArrivingSeparately_CompletesTheRecordAndClosesThePeer()
+    public void Handshake_TheLastByteOfAResumeRecordArrivingSeparately_CompletesTheRecordAndEndsTheConnection()
     {
         // Arrange — the same bytes as the test above, finished. That a Resume completes at exactly the
         // byte a Hello would is what pins the two records to one size on the wire.
@@ -58,11 +62,10 @@ public class StreamSessionResumeRecordTests
 
         // Act
         peer.Send(resume[(RecordSize - 1)..]);
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.PumpAndDrainAll(10);
+        accepter.PumpAndDrainAll(10);
 
-        // Assert
-        events.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
-            .Which.Reason.Should().Be(DisconnectReason.TransportFailed);
+        // Assert — the record is complete, names no held Peer, and the connection ends.
+        peer.ExpectGracefulClose();
     }
 
     [Fact]
@@ -118,7 +121,22 @@ public class StreamSessionResumeRecordTests
     }
 
     [Fact]
-    public void Handshake_AWholeResumeRecordInPlaceOfAHello_ClosesThePeerRatherThanGuessing()
+    public void Handshake_AWholeResumeRecordInPlaceOfAHello_EndsTheConnectionRatherThanGuessing()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = new();
+        using StreamSessionReactorHarness.RawStreamPeer peer = new(accepter.Endpoint);
+
+        // Act
+        peer.Send(StreamSessionTestRecords.BuildResume());
+        accepter.PumpAndDrainAll(10);
+
+        // Assert — never a silent success: a Resume matching nothing is ended, not admitted.
+        peer.ExpectGracefulClose();
+    }
+
+    [Fact]
+    public void Handshake_AWholeResumeRecordInPlaceOfAHello_RaisesNoEventAtAll()
     {
         // Arrange
         using StreamSessionReactorHarness accepter = new();
@@ -128,13 +146,13 @@ public class StreamSessionResumeRecordTests
         peer.Send(StreamSessionTestRecords.BuildResume());
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.PumpAndDrainAll(10);
 
-        // Assert
-        events.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
-            .Which.Reason.Should().Be(DisconnectReason.TransportFailed);
+        // Assert — the connection never took a capacity Slot and was never reported as a Peer, so there
+        // is no PeerClosed for something the consumer never saw connect.
+        events.Should().BeEmpty();
     }
 
     [Fact]
-    public void Handshake_ARecordWhoseTypeByteNamesNoKnownKind_ClosesThePeerRatherThanGuessing()
+    public void Handshake_ARecordWhoseTypeByteNamesNoKnownKind_EndsTheConnectionRatherThanGuessing()
     {
         // Arrange — one past the Resume type this ticket added: the discard arm refuses an unrecognised
         // type rather than treating it as the nearest kind it knows.
@@ -145,10 +163,9 @@ public class StreamSessionResumeRecordTests
 
         // Act
         peer.Send(record);
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.PumpAndDrainAll(10);
+        accepter.PumpAndDrainAll(10);
 
         // Assert
-        events.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
-            .Which.Reason.Should().Be(DisconnectReason.TransportFailed);
+        peer.ExpectGracefulClose();
     }
 }

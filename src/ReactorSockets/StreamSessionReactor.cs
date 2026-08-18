@@ -50,6 +50,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly List<SlotHandle> _connectingPeers = [];
     private readonly List<PendingEvent> _pendingEvents = [];
     private readonly List<RefusalSlot> _refusals = [];
+    private readonly List<PendingAdmission> _pendingAdmissions = [];
     private readonly HashSet<SlotHandle> _peersWithBufferedMessages = [];
     private readonly HashSet<SlotHandle> _peersWithPendingRetentionWrites = [];
     private readonly HashSet<SlotHandle> _peersWithGoodbyeOwed = [];
@@ -487,7 +488,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             refusal.Link.Dispose();
         }
 
+        foreach (PendingAdmission pending in _pendingAdmissions)
+        {
+            _dispatcher.Unregister(pending.Link.Socket);
+            pending.Link.Dispose();
+        }
+
         _refusals.Clear();
+        _pendingAdmissions.Clear();
         _connectingPeers.Clear();
         _pendingEvents.Clear();
         _peersWithBufferedMessages.Clear();
@@ -564,28 +572,126 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                     return;
                 case TcpAcceptOutcome.Accepted when result.IsAccepted:
                     _admissionsThisFrame++;
-                    AdmitOrRefuse(result.Socket);
+                    HoldUntilFirstRecord(result.Socket);
                     break;
             }
         }
     }
 
     /// <summary>
-    /// Registers a socket a listening Link just accepted as a new Peer's transport and immediately
-    /// sends this end's handshake record — or, if every capacity Slot is occupied, refuses it
-    /// in-protocol instead of ever creating one. Checked here rather than before accepting: the
+    /// Holds a socket a listening Link just accepted outside <see cref="_peers"/> until its first
+    /// handshake record has arrived in full, deciding nothing before then. Nothing is sent to it and
+    /// no capacity Slot is touched: the record is what says whether this connection is a fresh dial
+    /// asking for a Slot or a Resume claiming one it already owns, and that difference has to be known
+    /// before the capacity check runs (issue #123, ADR 0011). Whatever the far end has already sent is
+    /// read here rather than left for the next Pump, so a dialler whose record landed before this
+    /// accept is still answered on the Frame that accepted it — the same reason
+    /// <see cref="RefuseForCapacity"/> drains before it closes. A connection with nothing waiting is
+    /// left for the dispatcher, which is what <see cref="TcpLink.HasPendingBytes"/> is checked for.
+    /// </summary>
+    /// <remarks>
+    /// Accepting first and deciding after is unchanged from before this held state existed: the
     /// admission cap alone bounds how many of these accept-then-decide cycles one Frame performs
     /// (Scope: "a burst of a thousand inbound connections is a thousand accept-refuse-close cycles").
-    /// </summary>
-    private void AdmitOrRefuse(Socket acceptedSocket)
+    /// What changed is only how much is known at the decision point.
+    /// </remarks>
+    private void HoldUntilFirstRecord(Socket acceptedSocket)
     {
         TcpLink link = TcpLink.FromAccepted(acceptedSocket, _options.SendBufferSize);
-        if (!_peers.HasFreeSlot)
+        PendingAdmission pending = new() { Link = link };
+        _pendingAdmissions.Add(pending);
+        _dispatcher.Register(link.Socket, () => OnPendingAdmissionReadable(pending));
+        if (link.HasPendingBytes)
         {
-            RefuseForCapacity(link);
+            OnPendingAdmissionReadable(pending);
+        }
+    }
+
+    /// <summary>
+    /// Accumulates a held connection's first handshake record across Pumps, exactly as
+    /// <see cref="OnPeerReadable"/> does for a Peer that already has a Slot. A record already filled is
+    /// never read again — the decision it triggered owns this connection from that point on. A
+    /// transport that ends or fails before a whole record arrived is dropped without ever having been
+    /// anything: no Slot was taken and no Peer was reported, so there is nothing to close.
+    /// </summary>
+    private void OnPendingAdmissionReadable(PendingAdmission pending)
+    {
+        if (pending.BytesFilled >= StreamHandshakeCodec.RecordSize)
+        {
             return;
         }
 
+        TcpLinkReceiveResult result = pending.Link.Receive(pending.Record.AsSpan(pending.BytesFilled));
+        switch (result.Outcome)
+        {
+            case TcpLinkReceiveOutcome.Delivered:
+                pending.BytesFilled += result.Payload.Length;
+                if (pending.BytesFilled == StreamHandshakeCodec.RecordSize)
+                {
+                    OnPendingAdmissionRecordFilled(pending);
+                }
+
+                break;
+            case TcpLinkReceiveOutcome.EndOfStream:
+            case TcpLinkReceiveOutcome.Failed:
+                DiscardPendingAdmission(pending);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Decides what a held connection is, now that its whole first record has arrived. The order of
+    /// the three arms is the point of issue #123 and ADR 0011: <b>the resume match runs before the
+    /// capacity check</b>. A reconnecting Peer is not asking for a Slot, it already owns one — the very
+    /// Slot its Interrupted self is reserving — so checking capacity first would refuse a reconnection
+    /// into a Reactor holding the state being reconnected to, which is the failure reserving exists to
+    /// prevent and which only appears once the Reactor is full.
+    /// </summary>
+    /// <remarks>
+    /// A Resume matching no held Peer is closed rather than admitted: a Resume carries no version and
+    /// no announced parameters (issue #115), so there is nothing in one to establish a fresh Session
+    /// from, and treating it as a silent success would hand back a Session that does not exist. What an
+    /// operator reads for that, and for the other refusal paths, is issue #124's Diagnostics. A record
+    /// naming no known type is dropped here too, ahead of the capacity check, so the discard arm still
+    /// refuses rather than answering it with a Refusal that implies it was understood. Everything else —
+    /// a Hello, a Refusal, and how each is answered — reaches <see cref="OnHandshakeRecordFilled"/>
+    /// through <see cref="AdmitPendingAdmission"/> unchanged.
+    /// </remarks>
+    private void OnPendingAdmissionRecordFilled(PendingAdmission pending)
+    {
+        if (!StreamHandshakeCodec.TryReadMessageType(pending.Record, out StreamHandshakeMessageType type))
+        {
+            DiscardPendingAdmission(pending);
+            return;
+        }
+
+        if (type == StreamHandshakeMessageType.Resume)
+        {
+            if (!TryResumeHeldPeer(pending))
+            {
+                DiscardPendingAdmission(pending);
+            }
+
+            return;
+        }
+
+        if (!_peers.HasFreeSlot)
+        {
+            RefuseForCapacity(pending);
+            return;
+        }
+
+        AdmitPendingAdmission(pending);
+    }
+
+    /// <summary>
+    /// Gives a held connection a capacity Slot and carries it into the handshake it was already
+    /// holding: this end's own Hello goes out first, then the record already read is dispatched exactly
+    /// as it would have been had it arrived after the Slot existed.
+    /// </summary>
+    private void AdmitPendingAdmission(PendingAdmission pending)
+    {
+        TcpLink link = ReleasePendingAdmission(pending);
         PeerSlot slot = new()
         {
             Link = link,
@@ -604,16 +710,122 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
 
         slot.Handle = handle;
+        pending.Record.CopyTo(slot.HandshakeBuffer, 0);
+        slot.HandshakeBytesFilled = StreamHandshakeCodec.RecordSize;
         RegisterPeerTransport(handle, slot);
         SendHandshakeRecord(handle, slot);
+        OnHandshakeRecordFilled(handle, slot);
     }
 
     /// <summary>
-    /// Refuses a just-accepted connection because every capacity Slot is occupied, without ever giving
-    /// it one: a Refusal record naming this Reactor's capacity is sent and the connection is then
-    /// closed. Never counted as an Admission Deferral or Discard — a refusal says something on the wire
-    /// and ends the connection, which is a different outcome from silently leaving declined work for a
-    /// later Pump.
+    /// Matches a held connection's Resume record onto the Interrupted Peer whose Slot is reserving the
+    /// Session it names, answering whether one was found. The secret authorises the match and never
+    /// selects it: every Interrupted Peer's secret is compared, in constant time and without stopping
+    /// at the first that matches, so neither the comparison nor the loop leaks which Slot answered or
+    /// whether any did — the same discipline <see cref="CookieMinter"/> applies on the datagram side.
+    /// An established Peer is never a candidate: its transport is alive, and a second connection
+    /// claiming a live Session is not a reconnection.
+    /// </summary>
+    /// <remarks>
+    /// The delivery counter the record carries is read but not acted on here. Rewinding this end's
+    /// retention to it, and the <c>Resumed</c> event the consumer sees, are issue #127 and its
+    /// siblings; this delivers the match itself.
+    /// </remarks>
+    private bool TryResumeHeldPeer(PendingAdmission pending)
+    {
+        Span<byte> presentedSecret = stackalloc byte[StreamSessionProtocol.ResumeSecretLength];
+        if (!StreamHandshakeCodec.TryReadResume(pending.Record, presentedSecret, out _))
+        {
+            return false;
+        }
+
+        PeerSlot? matched = null;
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot || !slot.IsInterrupted)
+            {
+                continue;
+            }
+
+            if (CryptographicOperations.FixedTimeEquals(slot.LocalResumeSecret, presentedSecret))
+            {
+                matched = slot;
+            }
+        }
+
+        if (matched is null)
+        {
+            return false;
+        }
+
+        ResumeHeldPeer(matched, ReleasePendingAdmission(pending));
+        return true;
+    }
+
+    /// <summary>
+    /// Puts a matched Resume's transport under the held Peer that was reserving the Slot, leaving that
+    /// Peer's identity and state exactly as <see cref="InterruptPeer"/> left them: the same
+    /// <see cref="PeerId"/>, generation included, the same counters, the same retention ring and the
+    /// same undelivered inbound Messages. The identity survives the transport, which is the whole
+    /// premise of a Resume — nothing here is renewed, and nothing is discarded.
+    /// </summary>
+    /// <remarks>
+    /// Only what described the transport that died is cleared: the half-read handshake buffer and any
+    /// record remainders that were still draining to a socket which no longer exists, and
+    /// <see cref="PeerSlot.InterruptedTimestamp"/>, whose Linger deadline no longer applies. Both idle
+    /// timers restart from now for the same reason they are stamped at establishment
+    /// (<see cref="OnHelloRecordReceived"/>) — the interruption's stale timestamps would otherwise read
+    /// as intervals already elapsed. A Peer that queued retention while Interrupted (issue #120) is put
+    /// back on <see cref="_peersWithPendingRetentionWrites"/>, which <see cref="InterruptPeer"/> cleared
+    /// only because it would have handed <see cref="FlushPendingRetentionWrites"/> a disposed socket;
+    /// there is a live one again now.
+    /// </remarks>
+    private void ResumeHeldPeer(PeerSlot slot, TcpLink link)
+    {
+        slot.Link = link;
+        slot.IsInterrupted = false;
+        slot.InterruptedTimestamp = 0;
+        slot.HandshakeBytesFilled = 0;
+        slot.PendingHandshakeBytesToSend = null;
+        slot.QueuedHandshakeSend = null;
+        slot.PendingDeliveryCounterBytesToSend = null;
+        slot.State = HandshakeState.Established;
+
+        long now = _options.Reactor.TimeProvider.GetTimestamp();
+        slot.LastSendTimestamp = now;
+        slot.LastReceiveTimestamp = now;
+
+        RegisterPeerTransport(slot.Handle, slot);
+        if (slot.HasPendingRetentionWrite)
+        {
+            _peersWithPendingRetentionWrites.Add(slot.Handle);
+        }
+    }
+
+    /// <summary>
+    /// Takes a held connection out of <see cref="_pendingAdmissions"/> and off the dispatcher, handing
+    /// its transport to the caller, which owns it from here — every arm out of the held state either
+    /// gives the transport to a Peer, to a <see cref="RefusalSlot"/>, or disposes it.
+    /// </summary>
+    private TcpLink ReleasePendingAdmission(PendingAdmission pending)
+    {
+        _pendingAdmissions.Remove(pending);
+        _dispatcher.Unregister(pending.Link.Socket);
+        return pending.Link;
+    }
+
+    /// <summary>
+    /// Drops a held connection outright, saying nothing on the wire. No Slot was ever taken and no
+    /// <see cref="SessionEventKind.PeerConnected"/> was ever raised, so there is no Peer to close and
+    /// nothing for a consumer to see.
+    /// </summary>
+    private void DiscardPendingAdmission(PendingAdmission pending) => ReleasePendingAdmission(pending).Dispose();
+
+    /// <summary>
+    /// Refuses a held connection because every capacity Slot is occupied, without ever giving it one:
+    /// a Refusal record naming this Reactor's capacity is sent and the connection is then closed. Never
+    /// counted as an Admission Deferral or Discard — a refusal says something on the wire and ends the
+    /// connection, which is a different outcome from silently leaving declined work for a later Pump.
     /// <para>
     /// A Slot an Interrupted Peer is reserving for the length of its Linger (ADR 0010) counts as
     /// occupied here, so a fresh dial arriving against a reservation is refused down this same path and
@@ -621,9 +833,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Refusal names is this Reactor's configured capacity either way, so a dialler cannot tell a
     /// reserved Slot apart from one holding an established Peer — it learns "full", never "gone".
     /// </para>
+    /// <para>
+    /// Reached only once the connection's first record has been read and found not to be a Resume this
+    /// Reactor could match (<see cref="OnPendingAdmissionRecordFilled"/>, issue #123). That ordering is
+    /// what keeps a reconnection out of this path: the Peer a Resume comes back for is the very reason
+    /// the Slot it needs is occupied, so refusing it for capacity would refuse it for its own presence.
+    /// </para>
     /// </summary>
-    private void RefuseForCapacity(TcpLink link)
+    private void RefuseForCapacity(PendingAdmission pending)
     {
+        TcpLink link = ReleasePendingAdmission(pending);
         Source remote = Source.FromIPEndPoint(link.RemoteEndPoint);
         if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
         {
@@ -634,9 +853,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _refusals.Add(refusal);
         _dispatcher.Register(link.Socket, () => DrainRefusal(refusal), () => OnRefusalWritable(refusal));
 
-        // The dialler's own Hello may already be sitting in the receive buffer by the time this
-        // connection is accepted — draining it now, before the Refusal is sent, is what keeps the
-        // close below clean rather than a reset (unread inbound data at close time is what forces one).
+        // The record that got this connection here is already read, but a dialler that sent anything
+        // behind it may have more sitting in the receive buffer — draining that now, before the Refusal
+        // is sent, is what keeps the close below clean rather than a reset (unread inbound data at
+        // close time is what forces one).
         DrainRefusal(refusal);
 
         byte[] record = new byte[StreamHandshakeCodec.RecordSize];
@@ -1818,9 +2038,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// the house rule that a discard arm refuses rather than guesses.
     /// </summary>
     /// <remarks>
-    /// A Resume closes the Peer here for now: the record's wire format exists (issue #115) but the
-    /// matching that gives it meaning is issue #123, so a well-formed Resume is refused rather than
-    /// guessed at, exactly as an unrecognised type is. This arm is where #123 lands.
+    /// A Resume never reaches here on the accepting side: a connection this Reactor accepted is held
+    /// outside <see cref="_peers"/> until its first record has been read, and a Resume is matched onto
+    /// the Peer it names — or dropped — before any Slot exists to reach this method with
+    /// (<see cref="OnPendingAdmissionRecordFilled"/>, issue #123). What can arrive here is a Resume sent
+    /// to a Peer <em>this</em> end dialled, which is a far end claiming a Session in the direction only
+    /// the dialling side may claim one (issue #125): that closes the Peer, exactly as an unrecognised
+    /// type does.
     /// </remarks>
     private void OnHandshakeRecordFilled(SlotHandle handle, PeerSlot slot)
     {
@@ -2073,8 +2297,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>The state one occupied capacity Slot holds.</summary>
     private sealed class PeerSlot
     {
-        /// <summary>The connected (or connecting) transport this Peer runs over.</summary>
-        public required TcpLink Link { get; init; }
+        /// <summary>
+        /// The connected (or connecting) transport this Peer runs over. Settable rather than
+        /// <c>init</c>-only because a Resume replaces it (<see cref="ResumeHeldPeer"/>, issue #123):
+        /// the Session outlives the transport it happened to be running over, which is the one thing a
+        /// Resume is for.
+        /// </summary>
+        public required TcpLink Link { get; set; }
 
         /// <summary>The secret this Reactor will require to be presented before it resumes this Session.</summary>
         public required byte[] LocalResumeSecret { get; init; }
@@ -2263,21 +2492,40 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// its socket has already been unregistered and disposed, but the Slot itself, this end's
         /// counters, retention ring and any undelivered inbound Messages all stay exactly as they
         /// were, so <see cref="EnforceIdleTimers"/> and <see cref="FlushPendingRetentionWrites"/> must
-        /// never touch <see cref="Link"/> again for a Peer with this set. Cleared only by a later
-        /// Resume (a later slice) or by <see cref="ClosePeer"/> removing the Slot outright — Linger
-        /// expiry (issue #121) is what eventually calls that.
+        /// never touch <see cref="Link"/> again for a Peer with this set. Cleared only by a Resume
+        /// matching onto this Slot (<see cref="ResumeHeldPeer"/>, issue #123) or by
+        /// <see cref="ClosePeer"/> removing the Slot outright — Linger expiry (issue #121) is what
+        /// eventually calls that when no Resume arrives first.
         /// </summary>
         public bool IsInterrupted { get; set; }
 
         /// <summary>
         /// The <see cref="TimeProvider.GetTimestamp"/> value at the instant <see cref="InterruptPeer"/>
         /// set <see cref="IsInterrupted"/> (issue #121) — the moment this Peer's effective Linger began
-        /// counting down. Meaningless while <see cref="IsInterrupted"/> is <see langword="false"/>; a
-        /// later Resume re-establishing <see cref="Link"/> would rearm this alongside clearing
-        /// <see cref="IsInterrupted"/> rather than leave a stale value for a Linger deadline that no
-        /// longer applies, though Resume itself is a later slice and does not exist yet.
+        /// counting down. Meaningless while <see cref="IsInterrupted"/> is <see langword="false"/>: a
+        /// Resume replacing <see cref="Link"/> clears this alongside <see cref="IsInterrupted"/>
+        /// (<see cref="ResumeHeldPeer"/>, issue #123) rather than leaving a stale value behind for a
+        /// Linger deadline that no longer applies.
         /// </summary>
         public long InterruptedTimestamp { get; set; }
+    }
+
+    /// <summary>
+    /// A just-accepted connection held outside <see cref="_peers"/> until its first handshake record
+    /// has arrived in full (issue #123). It has no Slot and no <see cref="PeerId"/> because it is not
+    /// yet known to need one: a Resume is claiming the Slot its own Interrupted Peer is already
+    /// reserving, and only the record says which of the two this is.
+    /// </summary>
+    private sealed class PendingAdmission
+    {
+        /// <summary>The accepted transport, held here until its first handshake record decides what it is.</summary>
+        public required TcpLink Link { get; init; }
+
+        /// <summary>The bytes of that first record received so far, accumulated across Pumps.</summary>
+        public byte[] Record { get; } = new byte[StreamHandshakeCodec.RecordSize];
+
+        /// <summary>How many bytes of <see cref="Record"/> are filled so far.</summary>
+        public int BytesFilled { get; set; }
     }
 
     /// <summary>
