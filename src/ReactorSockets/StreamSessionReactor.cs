@@ -393,6 +393,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// — since a Message queued after a Goodbye is not one the far end has any business receiving
     /// (issue #23).
     /// </summary>
+    /// <remarks>
+    /// <see cref="PeerSlot.IsInterrupted"/> is deliberately not one of the refusal conditions above
+    /// (issue #120, ADR 0010's backpressure rule): a Send against an Interrupted Peer is exactly as
+    /// welcome as one against a live Peer, because holding retention across the interruption for a
+    /// possible Resume is the entire point of not closing the Peer in the first place. The append
+    /// behaves identically either way — the difference is only downstream, in
+    /// <see cref="FlushRetention"/>'s own <c>IsInterrupted</c> guard, which leaves these bytes queued
+    /// rather than attempting a dead socket. Once the ring genuinely has no room,
+    /// <see cref="RetentionOutcome.Exhausted"/> reports the same way it would for a live Peer — the
+    /// ring does not know or care why nothing has drained it — so an interruption that outlasts the
+    /// send rate reaches <see cref="SendOutcome.RetentionExhausted"/> exactly like a single oversized
+    /// Message or a sustained rate would, the third of the three paths ADR 0010 names to it.
+    /// </remarks>
     /// <param name="peer">The Peer to send to. Throws if not open, matching <see cref="CountersOf"/>.</param>
     /// <param name="message">
     /// The Message payload, unframed. Throws if longer than <see cref="StreamSessionOptions.MaxMessageSize"/> —
