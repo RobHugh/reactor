@@ -678,8 +678,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        if (type == StreamHandshakeMessageType.Hello && IsHelloClaimingAReservedSession(pending))
+        if (type == StreamHandshakeMessageType.Hello
+            && IsHelloClaimingAReservedSession(pending, out int reservationsChecked))
         {
+            LogResumeUnmatched(pending, reservationsChecked, StreamHandshakeMessageType.Hello);
             DiscardPendingAdmission(pending);
             return;
         }
@@ -706,28 +708,33 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// or sending them anyway, which makes the announced limit a lie.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// A genuine fresh dial announces the secret <em>it</em> minted for the Session it is opening, so
-    /// it reaches the same candidate scan and matches nothing. The connection is closed rather than
-    /// answered with a Refusal for the same reason every other protocol violation in this profile is:
-    /// the wire <see cref="RefusalReason"/> roster names in-protocol declines a well-behaved dialler
-    /// can act on, and this is not one. What an operator reads for it is the
-    /// <see cref="DiagnosticId.ResumeUnmatched"/> record logged here.
+    /// it reaches the same scan and matches nothing. The connection is closed rather than answered with
+    /// a Refusal for the same reason every other protocol violation in this profile is: the wire
+    /// <see cref="RefusalReason"/> roster names in-protocol declines a well-behaved dialler can act on,
+    /// and this is not one. What an operator reads for it is
+    /// <see cref="DiagnosticId.ResumeUnmatched"/>, logged by the caller.
+    /// </para>
+    /// <para>
+    /// This is the whole of the third refusal path. Issue #124 also describes it as reachable by "a
+    /// Resume from a party that has changed its mind about the Session it is resuming", but that shape
+    /// is unrepresentable: a Resume carries a secret and a delivery counter and nothing else (issue
+    /// #115), so there is no field in one for a changed parameter to arrive in. A Hello is the only
+    /// record that can both present the secret and re-announce the parameters, which is why it is the
+    /// only case there is to check.
+    /// </para>
     /// </remarks>
-    private bool IsHelloClaimingAReservedSession(PendingAdmission pending)
+    private bool IsHelloClaimingAReservedSession(PendingAdmission pending, out int reservationsChecked)
     {
         Span<byte> announcedSecret = stackalloc byte[StreamSessionProtocol.ResumeSecretLength];
         if (!StreamHandshakeCodec.TryRead(pending.Record, out _, out _, out _, out _, announcedSecret))
         {
+            reservationsChecked = 0;
             return false;
         }
 
-        if (MatchInterruptedSlot(announcedSecret, out int candidatesChecked) is null)
-        {
-            return false;
-        }
-
-        LogResumeUnmatched(pending, candidatesChecked, StreamHandshakeMessageType.Hello);
-        return true;
+        return MatchInterruptedSlot(announcedSecret, out reservationsChecked) is not null;
     }
 
     /// <summary>

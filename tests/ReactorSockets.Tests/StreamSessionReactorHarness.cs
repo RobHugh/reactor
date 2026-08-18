@@ -179,13 +179,25 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         List<HeldPeer> held = [];
         for (int i = 0; i < Capacity; i++)
         {
-            RawStreamPeer counterparty = new(Endpoint);
-            PeerId id = StreamSessionTestRecords.EstablishSession(this, counterparty.Send);
-            byte[] hello = counterparty.Receive(StreamSessionTestRecords.HandshakeRecordSize);
-            held.Add(new HeldPeer(id, counterparty, StreamSessionTestRecords.ReadResumeSecretFromHello(hello)));
+            held.Add(EstablishOnePeer());
         }
 
         return held;
+    }
+
+    /// <summary>
+    /// Establishes one Peer against <see cref="Endpoint"/> and returns it paired with the raw
+    /// counterparty holding its Slot and the resume secret this Reactor announced to it — the single
+    /// step <see cref="FillToCapacity"/> repeats per Slot, for tests that want a Slot left free so a
+    /// refusal cannot be mistaken for a capacity refusal (issue #124). The caller owns disposing the
+    /// counterparty, exactly as with <see cref="FillToCapacity"/>.
+    /// </summary>
+    public HeldPeer EstablishOnePeer()
+    {
+        RawStreamPeer counterparty = new(Endpoint);
+        PeerId id = StreamSessionTestRecords.EstablishSession(this, counterparty.Send);
+        byte[] hello = counterparty.Receive(StreamSessionTestRecords.HandshakeRecordSize);
+        return new HeldPeer(id, counterparty, StreamSessionTestRecords.ReadResumeSecretFromHello(hello));
     }
 
     /// <summary>
@@ -228,10 +240,18 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// <c>StreamSessionReactor.RefuseForCapacity</c>). The returned <see cref="InboundAttemptResult"/>
     /// owns the raw counterparty; dispose it once a test is done inspecting the connection's own fate.
     /// </summary>
-    public InboundAttemptResult AttemptFreshConnection(int maxPumps = 20, int perPumpTimeoutMs = 100)
+    /// <param name="resumeSecret">
+    /// The secret the dial announces in its Hello, for the tests that need a late reconnection to
+    /// carry a once-valid secret rather than the zeroed default (issue #124's second refusal path).
+    /// Left null, the Hello announces a zeroed secret, which matches no reservation.
+    /// </param>
+    public InboundAttemptResult AttemptFreshConnection(
+        int maxPumps = 20,
+        int perPumpTimeoutMs = 100,
+        byte[]? resumeSecret = null)
     {
         RawStreamPeer counterparty = new(Endpoint);
-        counterparty.Send(StreamSessionTestRecords.BuildHello());
+        counterparty.Send(StreamSessionTestRecords.BuildHello(resumeSecret: resumeSecret));
 
         byte[]? reply = null;
         PeerId? connectedPeer = null;

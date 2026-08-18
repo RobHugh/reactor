@@ -184,9 +184,21 @@ public enum DiagnosticId
     /// re-announces the parameters a Resume has no field for and is refused as a protocol violation.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <see cref="DiagnosticLevel.Warn"/> rather than the <see cref="DiagnosticLevel.Info"/> a version
     /// mismatch or a capacity refusal carries: those are routine outcomes of running this profile and
     /// a wrong secret is not.
+    /// </para>
+    /// <para>
+    /// "Unmatched" names the outcome, not the comparison: the claim was not matched onto a Session.
+    /// The Hello case reaches here having found the secret it announced, and is refused anyway because
+    /// the record it arrived in re-announces parameters — <c>Value1</c> is what tells the two apart.
+    /// </para>
+    /// <para>
+    /// <c>Value0</c> is reported to this end's own Sink and never to the wire: a refused party is
+    /// closed on without being told anything, so it learns neither the count nor which of the three
+    /// refusals it met.
+    /// </para>
     /// </remarks>
     ResumeUnmatched = 305,
 

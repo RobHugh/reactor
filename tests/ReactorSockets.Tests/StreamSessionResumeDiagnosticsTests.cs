@@ -20,8 +20,10 @@ namespace ReactorSockets.Tests;
 /// parameters a Resume has no field for (issue #115) and is refused as a protocol violation. Drives
 /// the public L2 surface only (tests/CLAUDE.md, ADR 0015): the resume secret is read off the wire out
 /// of the Hello the Reactor itself sent, never out of the Reactor, and the Diagnostics are observed
-/// through the recording Sink a consumer would install. Time is driven entirely by
-/// <see cref="StreamSessionReactorHarness.TimeProvider"/> — nothing here sleeps.
+/// through the recording Sink a consumer would install. Every Linger deadline is driven by
+/// <see cref="StreamSessionReactorHarness.TimeProvider"/> rather than by sleeping; the one wall-clock
+/// wait is the bounded receive that proves nothing came back on the wire, which has no other way to
+/// establish an absence.
 /// </remarks>
 public class StreamSessionResumeDiagnosticsTests
 {
@@ -50,12 +52,29 @@ public class StreamSessionResumeDiagnosticsTests
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
         accepter.PumpAndDrainAll(5);
 
-        // Assert — the resumed Peer is the subject, and it is the Peer that was interrupted: the same
-        // PeerId, generation included, since nothing about an identity is renewed by a Resume.
-        DiagnosticRecord matched = accepter.Sink.Received.Should()
-            .ContainSingle(r => r.Id == DiagnosticId.ResumeMatched).Subject;
-        matched.SubjectKind.Should().Be(DiagnosticSubjectKind.Peer);
-        matched.Peer.Should().Be(held[0].Peer);
+        // Assert — one record, and it names the Peer that was interrupted: the same PeerId, generation
+        // included, since nothing about an identity is renewed by a Resume.
+        accepter.Sink.Received.Should()
+            .ContainSingle(r => r.Id == DiagnosticId.ResumeMatched)
+            .Which.Peer.Should().Be(held[0].Peer);
+    }
+
+    [Fact]
+    public void Handshake_AResumePresentingAHeldPeersSecret_LogsResumeMatchedAgainstAPeerSubject()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = new(capacity: 1);
+        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
+        accepter.InterruptHeldPeer(held[0]);
+
+        // Act
+        using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
+        resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
+        accepter.PumpAndDrainAll(5);
+
+        // Assert — a match by definition found a Peer, so there is one to name.
+        accepter.Sink.Received.Single(r => r.Id == DiagnosticId.ResumeMatched)
+            .SubjectKind.Should().Be(DiagnosticSubjectKind.Peer);
     }
 
     [Fact]
@@ -117,10 +136,28 @@ public class StreamSessionResumeDiagnosticsTests
 
         // Assert — the party that sent it is not a Peer and never became one, so the record names the
         // origin it claimed rather than any Peer.
-        DiagnosticRecord unmatched = accepter.Sink.Received.Should()
-            .ContainSingle(r => r.Id == DiagnosticId.ResumeUnmatched).Subject;
-        unmatched.SubjectKind.Should().Be(DiagnosticSubjectKind.Source);
-        unmatched.Peer.Should().Be(default(PeerId));
+        accepter.Sink.Received.Should()
+            .ContainSingle(r => r.Id == DiagnosticId.ResumeUnmatched)
+            .Which.SubjectKind.Should().Be(DiagnosticSubjectKind.Source);
+    }
+
+    [Fact]
+    public void Handshake_AResumePresentingASecretMatchingNoHeldPeer_NamesNoPeerOnTheResumeUnmatchedRecord()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = new(capacity: 1);
+        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
+        accepter.InterruptHeldPeer(held[0]);
+
+        // Act
+        using StreamSessionReactorHarness.RawStreamPeer impostor = new(accepter.Endpoint);
+        impostor.Send(StreamSessionTestRecords.BuildResume(WrongSecretFor(held[0])));
+        accepter.PumpAndDrainAll(5);
+
+        // Assert — the Peer slot is left at its default rather than filled with the Peer the claim
+        // aimed at, which would read as that Peer having done something.
+        accepter.Sink.Received.Single(r => r.Id == DiagnosticId.ResumeUnmatched)
+            .Peer.Should().Be(default(PeerId));
     }
 
     [Fact]
@@ -227,10 +264,12 @@ public class StreamSessionResumeDiagnosticsTests
     }
 
     [Fact]
-    public void AttemptFreshConnection_AfterLingerExpiredOnThePeerAOnceValidSecretNamed_IsAdmittedAsANewPeerWithADifferentPeerId()
+    public void AttemptFreshConnection_CarryingAOnceValidSecretAfterLingerExpired_IsAdmitted()
     {
         // Arrange — the same expired reservation. This is the reconfiguration path and the correct
-        // one: the Session that secret named is gone, so what comes back negotiates fresh.
+        // one: the Session that secret named is gone, so what comes back negotiates fresh. The dial
+        // carries the once-valid secret, which is what makes this the criterion's own case rather
+        // than an unrelated fresh dial that happens to arrive afterwards.
         using StreamSessionReactorHarness accepter = new(capacity: 1);
         List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
         accepter.InterruptHeldPeer(held[0]);
@@ -238,11 +277,30 @@ public class StreamSessionResumeDiagnosticsTests
         accepter.PumpAndDrainAll(2);
 
         // Act
-        using StreamSessionReactorHarness.InboundAttemptResult outcome = accepter.AttemptFreshConnection();
+        using StreamSessionReactorHarness.InboundAttemptResult outcome =
+            accepter.AttemptFreshConnection(resumeSecret: held[0].ResumeSecret);
+
+        // Assert — admitted, not refused as the reserved-Session claim it would have been while the
+        // reservation was still held: there is no reservation left for it to be a claim on.
+        outcome.Admitted.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AttemptFreshConnection_CarryingAOnceValidSecretAfterLingerExpired_BecomesANewPeerWithADifferentPeerId()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = new(capacity: 1);
+        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
+        accepter.InterruptHeldPeer(held[0]);
+        accepter.TimeProvider.Advance(_effectiveLinger);
+        accepter.PumpAndDrainAll(2);
+
+        // Act
+        using StreamSessionReactorHarness.InboundAttemptResult outcome =
+            accepter.AttemptFreshConnection(resumeSecret: held[0].ResumeSecret);
 
         // Assert — a new Peer, not the old one resumed. A PeerId carries its Slot's generation, and the
         // Slot was emptied and reused, so the two ids cannot be equal.
-        outcome.Admitted.Should().BeTrue();
         outcome.Peer.Should().NotBeNull().And.NotBe(held[0].Peer);
     }
 
@@ -277,7 +335,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Hello here would be admitted, which is what makes this a refusal for what the record claims
         // rather than for capacity.
         using StreamSessionReactorHarness accepter = new(capacity: 2);
-        StreamSessionReactorHarness.HeldPeer held = EstablishOnePeer(accepter);
+        StreamSessionReactorHarness.HeldPeer held = accepter.EstablishOnePeer();
         accepter.InterruptHeldPeer(held);
 
         // Act — a Hello, which re-announces version, MaxMessageSize, the send-idle interval and Linger,
@@ -297,7 +355,7 @@ public class StreamSessionResumeDiagnosticsTests
     {
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 2);
-        StreamSessionReactorHarness.HeldPeer held = EstablishOnePeer(accepter);
+        StreamSessionReactorHarness.HeldPeer held = accepter.EstablishOnePeer();
         accepter.InterruptHeldPeer(held);
 
         // Act
@@ -315,7 +373,7 @@ public class StreamSessionResumeDiagnosticsTests
     {
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 2);
-        StreamSessionReactorHarness.HeldPeer held = EstablishOnePeer(accepter);
+        StreamSessionReactorHarness.HeldPeer held = accepter.EstablishOnePeer();
         accepter.InterruptHeldPeer(held);
 
         // Act
@@ -335,7 +393,7 @@ public class StreamSessionResumeDiagnosticsTests
     {
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 2);
-        StreamSessionReactorHarness.HeldPeer held = EstablishOnePeer(accepter);
+        StreamSessionReactorHarness.HeldPeer held = accepter.EstablishOnePeer();
         accepter.InterruptHeldPeer(held);
 
         // Act
@@ -354,7 +412,7 @@ public class StreamSessionResumeDiagnosticsTests
     {
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 2);
-        StreamSessionReactorHarness.HeldPeer held = EstablishOnePeer(accepter);
+        StreamSessionReactorHarness.HeldPeer held = accepter.EstablishOnePeer();
         accepter.InterruptHeldPeer(held);
         using (StreamSessionReactorHarness.RawStreamPeer claimant = new(accepter.Endpoint))
         {
@@ -381,7 +439,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Arrange — the control for the test above. A fresh dialler announces the secret it minted for
         // the Session it is opening, so it reaches the same candidate scan and matches nothing.
         using StreamSessionReactorHarness accepter = new(capacity: 2);
-        StreamSessionReactorHarness.HeldPeer held = EstablishOnePeer(accepter);
+        StreamSessionReactorHarness.HeldPeer held = accepter.EstablishOnePeer();
         accepter.InterruptHeldPeer(held);
 
         // Act
@@ -397,7 +455,7 @@ public class StreamSessionResumeDiagnosticsTests
     {
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 2);
-        StreamSessionReactorHarness.HeldPeer held = EstablishOnePeer(accepter);
+        StreamSessionReactorHarness.HeldPeer held = accepter.EstablishOnePeer();
         accepter.InterruptHeldPeer(held);
 
         // Act
@@ -405,23 +463,6 @@ public class StreamSessionResumeDiagnosticsTests
 
         // Assert — a dialler that claimed nothing is not reported as having had a claim refused.
         accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ResumeUnmatched);
-    }
-
-    /// <summary>
-    /// Establishes one Peer against <paramref name="accepter"/> and returns it paired with its raw
-    /// counterparty and the resume secret the Reactor announced to it — what
-    /// <see cref="StreamSessionReactorHarness.FillToCapacity"/> does for every Slot, for the tests here
-    /// that need a free Slot left over so a refusal cannot be mistaken for a capacity refusal. The
-    /// counterparty is owned by the returned <see cref="StreamSessionReactorHarness.HeldPeer"/>; every
-    /// caller below interrupts it, which closes it.
-    /// </summary>
-    private static StreamSessionReactorHarness.HeldPeer EstablishOnePeer(StreamSessionReactorHarness accepter)
-    {
-        StreamSessionReactorHarness.RawStreamPeer counterparty = new(accepter.Endpoint);
-        PeerId peer = StreamSessionTestRecords.EstablishSession(accepter, counterparty.Send);
-        byte[] hello = counterparty.Receive(StreamSessionTestRecords.HandshakeRecordSize);
-        return new StreamSessionReactorHarness.HeldPeer(
-            peer, counterparty, StreamSessionTestRecords.ReadResumeSecretFromHello(hello));
     }
 
     /// <summary>
