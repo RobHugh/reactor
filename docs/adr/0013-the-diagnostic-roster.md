@@ -141,8 +141,33 @@ Value slot meanings belong in XML docs on each member, per ADR 0005; they are gi
 
 | # | Member | Level | Subject | `Value0` / `Value1` |
 | --- | --- | --- | --- | --- |
-| 1 | `AdmissionCapReached` | `Warn` | none | cap / admissions deferred |
+| 1 | `AdmissionCapReached` | `Warn` | none | cap / deferrals |
 | 2 | `ArenaExhausted` | `Warn` | Peer or Link | bytes requested / bytes free |
+| 3 | `CapacityExhausted` | `Warn` | none | capacity / deferrals |
+
+A **deferral** is one declining of an Admission that leaves the work where it was. Where the work waits
+out of reach it is counted once per Frame per Link or bound endpoint, not once per connection waiting:
+backlog depth is unknowable without accepting, and accepting is precisely what a Reactor at its cap or
+at capacity must not do — it would complete the handshake and then drop it, showing the peer an
+established-then-closed connection where the wire must stay silent. A count nobody can measure is worse
+than an honest smaller one, so the slot carries what is actually known. Where the Reactor is already
+holding the work — a stream Session handshake accepted but not completed — one declining is one piece of
+work and the figure is exact.
+
+Work the Reactor holds and cannot leave waiting is a **Discard**, not a deferral, and is counted
+separately on `AdmissionDiscards`. The distinction is by fate rather than by profile: deferred work
+arrives on a later Pump and Discarded work never does, which is the one difference a consumer acts on.
+A datagram Session over its cap Discards the Hellos it cannot admit — there is no backlog for them to
+wait in — so the same `Value1` slot on these two ids carries an exact count there and a coarse one on
+the stream transports. Both ids stay honest under that split because each says only "this many
+Admissions declined", leaving what became of the work to the counter that names it.
+
+`AdmissionCapReached` and `CapacityExhausted` are separate ids rather than one id with a cause slot,
+because they are fixed by different knobs — the first wants the cap lowered or the Frame budget raised,
+the second wants `Capacity` raised — and an operator who has to read `Value1` to know which lever to pull
+is being asked to do the roster's job. They share one counter — `AdmissionDeferrals` or
+`AdmissionDiscards`, whichever matches the fate of the work; a consumer that needs the two *causes*
+apart reads the diagnostics, which is what diagnostics are for.
 
 ### Raw
 
@@ -168,12 +193,23 @@ Value slot meanings belong in XML docs on each member, per ADR 0005; they are gi
 | --- | --- | --- | --- | --- |
 | 300 | `PeerRefused` | `Info` | Source | capacity / — |
 | 301 | `LingerNegotiated` | `Info` | Peer | ours in ms / effective in ms |
-| 302 | `ResumeMatched` | `Info` | Peer | bytes rewound / — |
-| 303 | `ResumeUnmatched` | `Warn` | Source | — / — |
-| 304 | `RedialAttempted` | `Info` | Peer | attempt number / delay in ms |
-| 305 | `RedialFailed` | `Info` | Peer | `SocketError` / attempt number |
+| 302 | `MalformedFraming` | `Warn` | Peer | claimed length / — |
+| 303 | `DataAfterGoodbye` | `Warn` | Peer | — / — |
+| 304 | `ResumeMatched` | `Info` | Peer | bytes rewound / — |
+| 305 | `ResumeUnmatched` | `Warn` | Source | — / — |
+| 306 | `RedialAttempted` | `Info` | Peer | attempt number / delay in ms |
+| 307 | `RedialFailed` | `Info` | Peer | `SocketError` / attempt number |
+| 308 | `DeliveryCounterRefused` | `Warn` | Peer | claimed count / appended count |
 
-Sixteen members. What the rules **removed** is the more useful half of the exercise:
+**Amended (slice 3, slice 4.1).** `MalformedFraming` and `DataAfterGoodbye` came out of the framing work
+and took 302–303 — the values this table had drafted for `ResumeMatched` and `ResumeUnmatched`. The
+Resume and re-dial four therefore shift to **304–307**, and slice 4.1's `DeliveryCounterRefused` takes
+**308** rather than the next free value, so those four keep contiguous numbers reserved ahead of the
+tickets that implement them. Explicit values are not optional here precisely because this happens: a
+value published in a closed permanent enum cannot be moved later, so this table follows the code once
+the code has shipped a value, never the other way round.
+
+Sixteen members as first drafted. What the rules **removed** is the more useful half of the exercise:
 
 - **`DatagramDuplicate` and `PacketOutOfWindow`** are per-packet volume driven by loss and reordering.
   They fail the record test and become per-Peer counters.
@@ -203,7 +239,7 @@ retention high-water and discards belong to a Peer. Very few appear in both.
 
 | Scope | Counters |
 | --- | --- |
-| Reactor | `SinkFaulted`, datagrams sent, datagrams received, datagrams discarded from an unknown Source, arena high-water in bytes, admissions deferred |
+| Reactor | `SinkFaulted`, datagrams sent, datagrams received, datagrams discarded from an unknown Source, arena high-water in bytes, admission deferrals |
 | Per subject | bytes sent, bytes received, packets retransmitted, duplicate packets, out-of-window packets, horizon deferrals, read-share exhaustions, retention high-water in bytes, resumes |
 
 **Counters are monotonic `ulong` and there is no reset.** A reset is a *write* to observation state, and

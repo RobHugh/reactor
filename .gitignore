@@ -39,6 +39,12 @@ ScaffoldingReadMe.txt
 # dotenv environment variables file
 .env
 
+# Sandcastle orchestrator (see .sandcastle/orchestrate.ts)
+node_modules/
+.sandcastle/worktrees/
+.sandcastle/logs/
+.sandcastle/.env
+
 # Others
 ~$*
 *~

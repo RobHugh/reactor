@@ -1,0 +1,93 @@
+namespace ReactorSockets;
+
+/// <summary>
+/// Why a Peer's Session ended, defined and kept stable by this library rather than borrowed from a
+/// platform enumeration. Deliberately not shared with the Raw profile's <see cref="CloseReason"/>
+/// (ADR 0008): most of the members a Session needs are protocol vocabulary Raw can never produce, and
+/// a single shared enumeration would leave one profile documenting members it cannot emit.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Explicit values throughout, house style since <c>RawLinkLegality</c> (PR #70): a member is added at
+/// the end with the next free number, never inserted, so a value a consumer has already persisted
+/// keeps its meaning across a library upgrade.
+/// </para>
+/// <para>
+/// Every place this library maps something else onto a <see cref="DisconnectReason"/> — a wire
+/// <see cref="Session.RefusalReason"/>, a malformed-framing outcome, a Goodbye control record — states
+/// that mapping as its own table with a discard arm that refuses rather than permits, the same house
+/// rule <c>RawLinkLegality</c> follows: an input this library does not recognise fails closed instead
+/// of being guessed at.
+/// </para>
+/// </remarks>
+public enum DisconnectReason
+{
+    /// <summary>The consumer called <c>Close</c> on this Peer.</summary>
+    LocalClose = 0,
+
+    /// <summary>
+    /// The two ends do not speak the same protocol version. The version match is exact — there is no
+    /// negotiation, no lowest-common-version rule and no compatibility range — so this is produced
+    /// both by the end that refused and by the end whose Hello was refused.
+    /// </summary>
+    VersionMismatch = 1,
+
+    /// <summary>
+    /// The remote end had no capacity Slot free for this Session and said so. Distinct from silence:
+    /// a Reactor at capacity answers a Hello it received rather than dropping it, so the dialler learns
+    /// the difference between "full" and "gone".
+    /// </summary>
+    RemoteAtCapacity = 2,
+
+    /// <summary>
+    /// The underlying transport failed or ended before or during the handshake: a reset, a dial that
+    /// could not connect, or a stream that closed before a full handshake record arrived. Distinct
+    /// from every other member here because nothing about the protocol was at fault — the byte stream
+    /// itself did not survive to carry it. Since issue #119, the same kind of failure on an
+    /// <em>established</em> Peer no longer produces this reason at all — it moves the Peer to
+    /// <see cref="SessionEventKind.PeerInterrupted"/> instead, because its identity and undelivered
+    /// Messages are still worth holding for a Resume. This member now fires only for a Peer that never
+    /// finished becoming one.
+    /// </summary>
+    TransportFailed = 3,
+
+    /// <summary>
+    /// An established Peer's Message framing broke this profile's rules: a length prefix exceeding
+    /// the announced <c>MaxMessageSize</c>, a length prefix of zero, a stream that ended before a
+    /// length prefix or the Message body it named had fully arrived, or bytes arriving behind a
+    /// Goodbye already received from that Peer (issue #93) — a Peer that announced it was leaving and
+    /// then kept sending is contradicting its own announcement, so it is disconnected rather than
+    /// believed. Distinct from <see cref="TransportFailed"/>: the byte stream itself survived long
+    /// enough to carry the violation, and what is wrong is the bytes it carried rather than the
+    /// transport underneath it. Distinct from <see cref="PeerGoodbye"/>, which is reserved for an
+    /// ending that stayed clean to the last byte.
+    /// </summary>
+    ProtocolViolation = 4,
+
+    /// <summary>
+    /// The remote Peer sent a Goodbye: it is ending the Session on purpose rather than failing (issue
+    /// #23). Produced once whatever this end still held for it has finished flushing — immediately, if
+    /// nothing was outstanding when the Goodbye arrived, or after the <c>Closing</c> Session it entered
+    /// (<see cref="SessionEventKind.PeerClosing"/>) has drained.
+    /// </summary>
+    PeerGoodbye = 5,
+
+    /// <summary>
+    /// An <see cref="SessionEventKind.PeerInterrupted"/> Peer's effective Linger — the value
+    /// <c>LingerNegotiated</c> already reported at handshake (ADR 0011), the minimum of the two ends'
+    /// announced Lingers — elapsed before the transport came back (issue #121). Linger, not the loss of
+    /// the transport, is what closes an Interrupted Peer: the loss itself only produced
+    /// <see cref="SessionEventKind.PeerInterrupted"/> (issue #119) and held the Peer's identity,
+    /// counters and undelivered Messages open for a Resume. This member fires once that wait has run
+    /// out, and is also what bounds a <see cref="StreamSessionReactor.Close"/> whose Goodbye can never
+    /// reach a wire that no longer exists — without it, that Peer's retention would sit pending forever
+    /// (issue #92). Distinct from <see cref="TransportFailed"/>, which means the byte stream never
+    /// survived long enough to say anything at all — this means it survived, said nothing further
+    /// within the time this end had promised to wait, and this end gave up on its own clock rather than
+    /// being told to. Distinct from <see cref="PeerGoodbye"/>, which is an ending the remote announced
+    /// on purpose while its transport still worked — this is an ending this end declares unilaterally,
+    /// after silence, with no announcement possible because the transport that would have carried one
+    /// is already gone.
+    /// </summary>
+    LingerExpired = 6,
+}

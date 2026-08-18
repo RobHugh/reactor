@@ -6,6 +6,30 @@ response to a call the consumer made.
 
 ## Language
 
+### How the library is layered
+
+Three layers, named by number because the numbers carry the direction: L0 is furthest from the
+consumer and L2 is the only one they touch (ADR 0003). They are folders and namespaces inside one
+assembly, not separate projects, so the boundary is held by convention and review rather than by the
+compiler.
+
+**L0**:
+The readiness dispatch and the per-Pump budget every profile spends. Deals in Handles and bytes and
+knows nothing of protocols, which is what lets one L0 serve all three profiles. `internal`.
+_Avoid_: Core, kernel, engine, base layer
+
+**L1**:
+The transport wrappers, one per socket kind, each turning a platform socket's error-and-return
+conventions into an outcome this library named. `internal`.
+_Avoid_: Adapter layer, driver, backend
+
+**L2**:
+The profile surface — the Reactors, their Events, their options and their counters — and the only
+layer a consumer ever names a type from. The contractual agreement is with L2 alone, so L0 and L1
+can be replaced wholesale without a major version. Every public L2 type is a permanent commitment,
+which is why the surface stays deliberately small.
+_Avoid_: API layer, facade, public layer
+
 ### The loop
 
 **Pump**:
@@ -45,7 +69,13 @@ _Avoid_: Chunk, packet, buffer
 
 **Message**:
 A complete, self-delimited unit of application data. The thing a consumer is entitled to act on.
-_Avoid_: Packet, frame, record, payload
+_Avoid_: Packet, frame, record, and "payload" as a synonym for this
+
+**Payload**:
+The bytes an Event carries, named without claiming what they are — the same word covers a Segment
+and a Datagram precisely because it promises nothing about wholeness. Never say Payload where the
+claim of a whole Message is the point; say Message.
+_Avoid_: Data, body, contents, bytes
 
 **Datagram**:
 A single unit as delivered by a message-oriented transport, where one receive yields exactly one
@@ -73,6 +103,66 @@ One of the pieces a Message is cut into because it exceeds what a single Datagra
 a Segment, a Fragment is a deliberate division of a known whole — numbered, counted, and meaningless
 until its set is complete.
 _Avoid_: Chunk, piece, part, packet, split
+
+### What a Pump is allowed to spend
+
+**Arena**:
+The single buffer, wiped at the start of every Pump, that every span the Reactor hands out is carved
+from. Its size is the ceiling on how much a Reactor can deliver in one Frame, which is what makes
+delivery bounded by a number the consumer chose rather than by whatever arrived. Nothing is held
+across a Pump, so a Frame's memory cost is known before the Frame starts.
+_Avoid_: Buffer, pool, heap, scratch
+
+**Share-holder**:
+The thing capacity is counted in and the Arena is divided between — a Link in Raw, a Peer in a
+Session. The word exists because the budget rules are identical across profiles while the thing
+being budgeted is not, and naming it lets one L0 serve all three.
+_Avoid_: participant, tenant, client, and "slot" for the holder itself
+
+**Slot**:
+One position in a Reactor's fixed-size table — where a Share-holder sits, not the Share-holder
+itself. A Slot outlives its occupants: it is emptied and refilled, and its generation counts how
+often, which is what lets a handle to a departed occupant be told from one to whatever arrived next.
+_Avoid_: Entry, cell, index, handle
+
+**Capacity**:
+How many Share-holders a Reactor admits, and the multiplier on every preallocation it makes at
+construction. Required at construction with no default, because nothing the library owns implies a
+number.
+_Avoid_: Limit, max connections, size, pool size
+
+**Read share**:
+One Share-holder's fair division of the Arena for one Frame — Arena size ÷ Capacity. Derived, never
+a knob. A Share-holder may always deliver one whole unit even when that exceeds its share, so the
+share bounds sustained greed rather than any single delivery.
+_Avoid_: Quota, allowance, budget, limit
+
+**Admission**:
+Taking on a new Share-holder: an accept in Raw, a completed handshake in a Session. Bounded per Pump
+by a cap, so one Frame never spends more admission work than a full Reactor's worth however many
+connections are waiting.
+_Avoid_: Accept, onboarding, intake
+
+**Deferral**:
+Declining an Admission this Frame and leaving the work exactly where it was, for a later Pump to
+take. Deliberately not a refusal: nothing is said on the wire, and the work survives to be admitted
+later. Counted once per Frame per *declining*, which is a coarser number than it looks where the
+work is out of reach: a listening Link or a bound endpoint declines its whole backlog with one
+declining, because backlog depth is unknowable without accepting and accepting is the thing a
+Deferral consists of not doing. Where the Reactor already holds the work — a stream Session
+handshake it accepted but did not complete — one declining is one piece of work, and the number is
+exact.
+_Avoid_: Reject, drop, throttle, backoff
+
+**Discard**:
+Letting go of work the Reactor was holding, because a cap or capacity was spent and the transport
+gives it nowhere to wait. Unrecoverable in a way a Deferral is not: no later Pump can take it,
+because it is gone. Always counted exactly — a Reactor can only Discard what it had in hand, so
+there is no unknowable depth behind the number. A `DatagramSessionReactor` over its cap Discards the
+Hellos it cannot admit, which is ordinary for UDP and costs the transport nothing; the stream
+transports never Discard, because a connection the Reactor has not accepted waits in the OS backlog
+instead.
+_Avoid_: Reject, deferral, refusal, throttle
 
 ### How a Peer is spoken to
 
@@ -133,15 +223,36 @@ _Avoid_: Reconnect, retry, restore, failover
 The remote party a Session exchanges data with, identified stably by the consumer across the
 lifetime of its association — not to be confused with the transport currently carrying it. A
 Session-only word: Raw has no Peers, which leaves the term free for whatever a consumer's own
-protocol layer calls its remote party.
+protocol layer calls its remote party. Raw says "the remote end" instead, and spends the word
+nowhere — not in a type name, not in an enum member, not in prose.
 _Avoid_: Client, connection, remote, endpoint, socket
 
 **Link**:
 One registered transport in a Raw Reactor — a listening socket, a TCP connection and a bound UDP
 socket alike. Unlike a Peer, a Link is the transport: it has no identity beyond the thing carrying it,
-and when it closes there is nothing left to resume. Listening is a role a Link plays, not a kind of
-thing, which is why there is no such term as Listener.
+and when it closes there is nothing left to resume. Listening is a role a Link plays, not a separate
+species of thing, which is why there is no such term as Listener — the Accepted Event names the
+listening Link that fired, and "listening" is only ever an adjective on a Link.
 _Avoid_: Connection, socket, stream, channel, session, listener
+
+**Link kind**:
+Which transport a Link wraps, named as an adjective on the Link: datagram, stream, or listening. Fixed
+when the Link is bound and never changing after, which is what lets it decide legality once rather than
+per call. A kind is not a rank or a species — the three are peers, and a listening Link consumes a Slot
+and can be Closed exactly like the other two. Never surfaced to a consumer: a consumer knows what it
+bound because it chose the member that bound it, so asking a Link what it is made of is not something
+the public surface offers.
+_Avoid_: Type, class, flavour, mode, role
+
+**Legality**:
+Whether an operation may be asked of a Link of a given kind — `Send` on a datagram Link is illegal,
+`SendTo` on a stream Link is illegal, and so on. Legality is decided by the kind alone, never by the
+Link's current state: a Link already shut down for writing still finds `Shutdown` legal and refuses it
+for a different reason. An illegal call is the caller's mistake, and the refusal always names the kind
+it found and, where one exists, the member to use instead. How it is reported follows the member, not
+the offence: a member with a Result answers through it rather than throwing, while one that returns
+data has no such channel and throws instead.
+_Avoid_: Validation, permission, support, capability, allowed
 
 **Source**:
 The address a datagram claims to have come from. Unauthenticated by construction — a hint about
@@ -179,9 +290,18 @@ unlike Closed, which ends the Link.
 _Avoid_: Half-close, FIN, EOF, shutdown, finished
 
 **Handler**:
-An internal participant registered with a Reactor that is invoked when its Handle is ready. Handlers
-are the Reactor's own machinery; consumers drain Events instead.
-_Avoid_: Listener, subscriber, observer, callback
+Schmidt's name for the internal participant invoked when its Handle is ready. Kept as a role rather
+than a type: what is actually registered is a callback, and no type in this library is called a
+Handler. Say it of the Reactor's own machinery, never of anything a consumer supplies — consumers
+drain Events instead.
+_Avoid_: Listener, subscriber, observer
+
+**Dial**:
+Beginning an outbound connection. The act, not the result: a Dial returns immediately with a Link
+already addressable, and the outcome arrives at whichever later Pump finds the handshake resolved.
+The public verb is `Connect` because that is what the operation is called everywhere; "Dial" is the
+word for the attempt while it is still in flight, and `Connected` names only the success.
+_Avoid_: Open, establish, handshake (for the attempt itself)
 
 ### What it says about itself
 
