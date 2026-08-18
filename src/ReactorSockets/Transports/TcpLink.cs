@@ -60,10 +60,17 @@ internal sealed class TcpLink : IDisposable
     /// documented Nagle-off profile property (ADR 0011) is simply the honest setting for a socket whose
     /// writes are already unbatched everywhere this type is used.
     /// </summary>
-    public static TcpLink FromAccepted(Socket acceptedSocket)
+    /// <param name="acceptedSocket">The socket a listening Link just pulled off its backlog.</param>
+    /// <param name="sendBufferSize">
+    /// <c>SO_SNDBUF</c> for this socket, or <see langword="null"/> for the OS default. Safe to apply
+    /// after the connection already exists, unlike <c>SO_RCVBUF</c> — see
+    /// <see cref="ApplySendBufferSize"/>.
+    /// </param>
+    public static TcpLink FromAccepted(Socket acceptedSocket, int? sendBufferSize = null)
     {
         acceptedSocket.Blocking = false;
         acceptedSocket.NoDelay = true;
+        ApplySendBufferSize(acceptedSocket, sendBufferSize);
 
         // `!` works around a framework limitation: Socket.LocalEndPoint and RemoteEndPoint stay typed
         // EndPoint? for a socket's whole lifetime, but a socket handed back by Accept is connected
@@ -103,13 +110,21 @@ internal sealed class TcpLink : IDisposable
     /// refusal is destroyed inside this method and the dial goes on to report Connected.
     /// </para>
     /// </remarks>
-    public static TcpLink Dial(IPEndPoint endpoint)
+    /// <param name="endpoint">The address to dial.</param>
+    /// <param name="sendBufferSize">
+    /// <c>SO_SNDBUF</c> for this socket, or <see langword="null"/> for the OS default. Applied before
+    /// <see cref="Socket.Connect(System.Net.EndPoint)"/> only because there is a natural place for it
+    /// here, not because it has to be — see <see cref="ApplySendBufferSize"/>.
+    /// </param>
+    public static TcpLink Dial(IPEndPoint endpoint, int? sendBufferSize = null)
     {
         Socket socket = new(endpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
         {
             Blocking = false,
             NoDelay = true
         };
+
+        ApplySendBufferSize(socket, sendBufferSize);
 
         SocketError dialError = SocketError.Success;
         try
@@ -254,6 +269,30 @@ internal sealed class TcpLink : IDisposable
         catch (SocketException exception)
         {
             return TcpLinkShutdownResult.ForFailed(exception.SocketErrorCode);
+        }
+    }
+
+    /// <summary>
+    /// Sets <c>SO_SNDBUF</c> on <paramref name="socket"/> when <paramref name="sendBufferSize"/> is
+    /// supplied, and does nothing at all when it is not — an unset knob leaves the OS default and its
+    /// autotuning exactly as they were, which is what every caller that does not care about the send
+    /// buffer wants.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <c>SO_RCVBUF</c>, which must be set before the connection exists or Linux will neither
+    /// clamp the advertised window nor stop receive autotuning (commit 8426ff3), <c>SO_SNDBUF</c> can be
+    /// set at any point in a socket's life: it bounds the send queue that is consulted on every write,
+    /// and setting it takes the socket off send autotuning from that moment on. That is why
+    /// <see cref="FromAccepted"/> may apply it to an already-connected socket. Both platforms treat the
+    /// value as a request rather than an exact size — Linux doubles it and holds it to its own
+    /// <c>tcp_wmem</c> floor — so this bounds how much the kernel will absorb before a write reports
+    /// <see cref="SocketError.WouldBlock"/>, and never promises a precise byte count.
+    /// </remarks>
+    private static void ApplySendBufferSize(Socket socket, int? sendBufferSize)
+    {
+        if (sendBufferSize is int size)
+        {
+            socket.SendBufferSize = size;
         }
     }
 

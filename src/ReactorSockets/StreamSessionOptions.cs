@@ -25,11 +25,16 @@ namespace ReactorSockets;
 /// </para>
 /// <para>
 /// <b>The memory bill.</b> A Reactor built from these options preallocates
-/// <c>Capacity × (RetentionBytes + receive buffer)</c> bytes, all of it per Peer and none of it
-/// shared, so a <c>Send</c> on a healthy Peer never fails because of somebody else's traffic. This is
-/// buffered <em>twice</em> — once in our retention, once again in the kernel's own send buffer for the
-/// socket — so a stream Peer's real footprint is this bound plus whatever the OS is holding, and the
-/// OS's half is not fully ours to control.
+/// <c>Capacity × (RetentionBytes + receive buffer + Message-boundary ring)</c> bytes, all of it per
+/// Peer and none of it shared, so a <c>Send</c> on a healthy Peer never fails because of somebody
+/// else's traffic. The retention line is buffered <em>twice</em> over — once in our retention, once
+/// again in the kernel's own send buffer for the socket — so a stream Peer's real footprint is this
+/// bound plus whatever the OS is holding, and the OS's half is not fully ours to control. The third
+/// line (issue #110) is what lets retention be released by what the peer has confirmed receiving
+/// rather than by what the local kernel merely accepted — the point of slice 4 — and is driven by
+/// <see cref="RetentionBytes"/> too: one <c>uint</c> per Message that could be outstanding in a Peer's
+/// retention region at once, which this profile's four-byte length prefix bounds at roughly one entry
+/// per four retained bytes, so it costs about as much as retention itself.
 /// </para>
 /// <para>
 /// <see cref="MaxMessageSize"/> appears in three places at once: announced to the remote as a receive
@@ -127,6 +132,24 @@ public sealed class StreamSessionOptions
     public int? ReceiveBufferSize { get; init; }
 
     /// <summary>
+    /// <c>SO_SNDBUF</c> for every Peer socket this Reactor accepts or dials, or <see langword="null"/>
+    /// — the default — for the OS default and its own autotuning. This is the kernel's send queue, not
+    /// <see cref="RetentionBytes"/>: retention is what this end holds until the peer confirms receipt
+    /// (issue #113), while this bounds how much the kernel will absorb from a flush before a write
+    /// reports it would block and the bytes stay in retention, unsent. Unset, the two are unrelated in
+    /// practice on Linux, whose send autotuning will absorb megabytes against a peer that has stopped
+    /// reading; set, a consumer who needs transport backpressure to reach their own flow control at a
+    /// known point can put it there.
+    /// </summary>
+    /// <remarks>
+    /// A request, not an exact size — Linux doubles the value and holds it to its own <c>tcp_wmem</c>
+    /// floor, so nothing may depend on a precise resulting byte count. It also does not bound
+    /// correctness of anything this profile does: a Reactor sends whatever the socket accepts and keeps
+    /// the rest, whatever the buffer's size.
+    /// </remarks>
+    public int? SendBufferSize { get; init; }
+
+    /// <summary>
     /// How many consecutive heartbeat intervals may pass in silence before a Peer is declared gone.
     /// Defaults to 3, RFC 4271's hold-time multiple. Must be at least 2, because a count of 1 makes a
     /// single lost heartbeat fatal, and in .NET the stall that produces it is as ordinary as a
@@ -152,6 +175,24 @@ public sealed class StreamSessionOptions
 
     /// <summary>The send line of the memory bill in bytes, reported the same way.</summary>
     public long SendBudgetBytes => (long)Reactor.Capacity * RetentionBytes;
+
+    /// <summary>
+    /// The number of <see cref="Core.RetentionArena"/> Message-boundary ring entries one Peer's region
+    /// holds: <c>⌈RetentionBytes / 4⌉</c>, against the four-byte length prefix this profile passes the
+    /// arena as its <c>minimumFramedMessageSize</c> (issue #110). Delegates to
+    /// <see cref="Core.RetentionArena.BoundaryEntriesFor"/> rather than repeating the ceiling division,
+    /// so this published memory bill cannot drift from what the arena actually allocates.
+    /// </summary>
+    private long BoundaryRingEntriesPerPeer =>
+        Core.RetentionArena.BoundaryEntriesFor(RetentionBytes, LengthPrefixSize);
+
+    /// <summary>
+    /// The Message-boundary ring line of the memory bill in bytes (issue #110): one <c>uint</c> (4
+    /// bytes) per entry in <see cref="BoundaryRingEntriesPerPeer"/>, across every Peer, reported the
+    /// same way as the other two lines. This is what makes releasing retention by what the peer
+    /// confirmed receiving possible at all — see the class remarks.
+    /// </summary>
+    public long BoundaryRingBudgetBytes => (long)Reactor.Capacity * BoundaryRingEntriesPerPeer * sizeof(uint);
 
     /// <summary>
     /// Validates every knob and every cross-check, throwing before a Reactor allocates anything.
@@ -187,6 +228,17 @@ public sealed class StreamSessionOptions
                 $"a receive buffer of {receiveBuffer} bytes cannot hold one incomplete Message of {MaxMessageSize} bytes " +
                 $"plus its 4-byte length prefix — raise ReceiveBufferSize to at least {receiveBufferFloor}, or lower MaxMessageSize.",
                 nameof(ReceiveBufferSize));
+        }
+
+        // No floor beyond 1, and deliberately none tied to MaxMessageSize: a send buffer smaller than a
+        // Message is a slower connection, not a broken one — a flush hands over what the kernel accepts
+        // and keeps the rest in retention for the next one.
+        if (SendBufferSize is int sendBuffer && sendBuffer < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(SendBufferSize),
+                sendBuffer,
+                $"a send buffer of {sendBuffer} bytes carries nothing — it must be at least 1, or null for the OS default.");
         }
 
         int missedHeartbeats = ResolvedMissedHeartbeats;
@@ -261,15 +313,17 @@ public sealed class StreamSessionOptions
     {
         long receive = ReceiveBudgetBytes;
         long send = SendBudgetBytes;
-        long total = receive + send;
+        long boundaryRing = BoundaryRingBudgetBytes;
+        long total = receive + send + boundaryRing;
 
         if (total > Array.MaxLength)
         {
             throw new ArgumentException(
                 $"these options ask for {total} bytes of preallocation, which cannot be allocated. " +
                 $"Receive is Capacity {Reactor.Capacity} × {ResolvedReceiveBufferSize} bytes = {receive}; " +
-                $"send is Capacity {Reactor.Capacity} × {RetentionBytes} bytes = {send}. " +
-                "Lower Capacity, MaxMessageSize or RetentionBytes.",
+                $"send is Capacity {Reactor.Capacity} × {RetentionBytes} bytes = {send}; " +
+                $"the Message-boundary ring is Capacity {Reactor.Capacity} × {BoundaryRingEntriesPerPeer} entries × " +
+                $"4 bytes = {boundaryRing}. Lower Capacity, MaxMessageSize or RetentionBytes.",
                 nameof(Reactor));
         }
     }

@@ -7,11 +7,13 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// Slice 3.5.4 (issue #86): retained bytes appended by <see cref="StreamSessionReactor.Send"/>
-/// actually reach the socket, and released space becomes available for reuse. This ticket's scope
-/// boundary (ADR 0011, #21, #82) is a local flush only — retention is released once bytes are handed
-/// to the OS socket buffer, not once the peer has acknowledged them via the delivery-counter
-/// mechanism #25 builds — so every assertion here is about what a raw counterparty socket actually
-/// receives, and about a Peer regaining room after its bytes are flushed, never about a peer-ack.
+/// actually reach the socket. Originally also covered released space becoming available for reuse
+/// purely from a local flush; issue #113 replaced that release-on-write policy with release-on-peer-
+/// confirmation (the delivery-counter mechanism #25 describes), so every test here that used to rely
+/// on a flush alone freeing room now has its <see cref="FlushPeer"/> send back a hand-built
+/// delivery-counter record confirming what it read, exactly as a real counterparty would. What every
+/// assertion here still checks is what a raw counterparty socket actually receives, and — now,
+/// genuinely — a Peer regaining room only once its peer has said so.
 /// Also carries slice 3.5.5 (issue #87), which reuses this file's real-socket <see cref="FlushPeer"/>
 /// for two acceptance criteria #21 left untested: that
 /// <see cref="PeerCounters.RetentionHighWaterBytes"/> reads the true peak after a burst and never
@@ -46,9 +48,10 @@ public class StreamSessionRetentionFlushTests
         // retention bound holds two whole framed Messages with 10 bytes to spare, so the third Send —
         // landing at write position 40 with only 10 bytes left before the region's end — wraps into
         // two segments both inside RetentionArena.TryAppend and, on this ticket's flush, inside
-        // RetentionArena.GetReadable. Each Send is followed by its own Pump so the previous Message is
-        // fully flushed (and released) before the next Send lands, which is what walks the write
-        // position all the way to the wrap boundary using only whole, uncontended Sends.
+        // RetentionArena.GetUnsent. Each Send is followed by its own Pump and the peer confirming what
+        // it just read before the next Send lands, which is what walks the write position all the way
+        // to the wrap boundary using only whole, uncontended Sends — retention is released only by that
+        // confirmation now (issue #113), not merely by the flush handing bytes to the socket.
         const int maxMessageSize = 16;
         using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: 50);
         using FlushPeer peer = new(accepter.Endpoint);
@@ -62,13 +65,17 @@ public class StreamSessionRetentionFlushTests
         accepter.Reactor.Send(id, first).Should().Be(SendOutcome.Sent);
         accepter.Reactor.Pump();
         byte[] onWireFirst = peer.Receive(BuildFrame(first).Length);
+        peer.SendDeliveryCounter(1);
+        accepter.Reactor.Pump();
 
         accepter.Reactor.Send(id, second).Should().Be(SendOutcome.Sent);
         accepter.Reactor.Pump();
         byte[] onWireSecond = peer.Receive(BuildFrame(second).Length);
+        peer.SendDeliveryCounter(2);
+        accepter.Reactor.Pump();
 
         // This third Send is the one that wraps: the previous two Sends, each fully flushed and
-        // released before the next was issued, have advanced the ring's write position to exactly 40
+        // confirmed before the next was issued, have advanced the ring's write position to exactly 40
         // of the 50-byte bound.
         accepter.Reactor.Send(id, third).Should().Be(SendOutcome.Sent);
         accepter.Reactor.Pump();
@@ -85,12 +92,13 @@ public class StreamSessionRetentionFlushTests
     public void Send_TwoQueuedMessagesWhoseUnreadRangeWrapsInOneFlush_DeliversBothSegmentsInOrder()
     {
         // Arrange — same 20-byte framing and 50-byte bound as the boundary test above. The first Send
-        // is flushed and released on its own Pump, leaving the ring's write/release position at 20.
-        // The second and third Sends are then queued back-to-back with NO Pump between them: the
-        // second lands at 20..40 (no wrap), and the third lands at 40..60, which does not fit before
+        // is flushed on its own Pump and the peer confirms it before anything else is queued, leaving
+        // the ring's write/released position at 20 (issue #113 — a flush alone no longer releases
+        // anything). The second and third Sends are then queued back-to-back with NO Pump between them:
+        // the second lands at 20..40 (no wrap), and the third lands at 40..60, which does not fit before
         // the region's 50-byte end and wraps in RetentionArena.TryAppend. Because nothing has been
-        // released since the first Message, the pending unread range (20 released .. 60 written) itself
-        // spans the wrap boundary, so the single Pump that flushes it makes RetentionArena.GetReadable
+        // released since the first Message, the pending unsent range (20 sent .. 60 written) itself
+        // spans the wrap boundary, so the single Pump that flushes it makes RetentionArena.GetUnsent
         // return two segments here — a 30-byte first segment (all of the second Message plus the first
         // 10 bytes of the third) and a 10-byte second segment (the third Message's remaining bytes) —
         // that split falls mid-frame, not on a Message boundary, which is exactly the case
@@ -106,7 +114,9 @@ public class StreamSessionRetentionFlushTests
 
         accepter.Reactor.Send(id, first).Should().Be(SendOutcome.Sent);
         accepter.Reactor.Pump();
-        peer.Receive(BuildFrame(first).Length); // drain and release, advancing the write/release position to 20
+        peer.Receive(BuildFrame(first).Length); // drain, then confirm below to actually release the room
+        peer.SendDeliveryCounter(1);
+        accepter.Reactor.Pump();
 
         // Act — queue both remaining Messages before the next Pump does any flushing at all.
         accepter.Reactor.Send(id, second).Should().Be(SendOutcome.Sent);
@@ -120,7 +130,7 @@ public class StreamSessionRetentionFlushTests
     }
 
     [Fact]
-    public void Send_AfterThePeerDrainsAFlushedMessage_AcceptsAnotherMaximumSizeSendThatWouldOtherwiseExhaustRetention()
+    public void Send_AfterThePeerConfirmsAFlushedMessage_AcceptsAnotherMaximumSizeSendThatWouldOtherwiseExhaustRetention()
     {
         // Arrange — retention bounded to exactly one maximum Message plus its 4-byte prefix (mirrors
         // StreamSessionSendRetentionTests), so a second Send before anything is released returns
@@ -136,13 +146,19 @@ public class StreamSessionRetentionFlushTests
         accepter.Reactor.Send(id, firstMessage).Should().Be(SendOutcome.Sent);
         accepter.Reactor.Send(id, [9]).Should().Be(SendOutcome.RetentionExhausted);
 
-        // Act — Pump flushes the first Message to the socket and releases its retention (a local
-        // flush, per this ticket's scope boundary — the peer has not read anything yet at this point).
-        // The peer then drains the bytes off the wire, exactly as the acceptance criterion describes.
+        // Act — Pump flushes the first Message to the socket; the peer reads it off the wire and, per
+        // issue #113, must actually confirm it via a delivery-counter record before this end's own
+        // retention frees any room — merely draining the socket is no longer enough (the regression
+        // this file's class remarks describe, and the behaviour Send_AgainstACounterpartyThatNeverReads
+        // AfterTheHandshake_EventuallyReturnsRetentionExhausted below now demonstrates the other side
+        // of).
         accepter.Reactor.Pump();
         byte[] onWire = peer.Receive(BuildFrame(firstMessage).Length);
+        SendOutcome stillExhausted = accepter.Reactor.Send(id, [9]);
+        peer.SendDeliveryCounter(1);
+        accepter.Reactor.Pump();
 
-        // Act — with the region's only occupant released, a second maximum-size Send now fits.
+        // Act — with the region's only occupant now actually released, a second maximum-size Send fits.
         byte[] secondMessage = PayloadOf(maxMessageSize, 2);
         SendOutcome secondOutcome = accepter.Reactor.Send(id, secondMessage);
         accepter.Reactor.Pump();
@@ -150,6 +166,8 @@ public class StreamSessionRetentionFlushTests
 
         // Assert
         onWire.Should().Equal(BuildFrame(firstMessage));
+        stillExhausted.Should().Be(SendOutcome.RetentionExhausted,
+            "the socket has taken the bytes but the peer has not yet confirmed them");
         secondOutcome.Should().Be(SendOutcome.Sent);
         onWireSecond.Should().Equal(BuildFrame(secondMessage));
     }
@@ -196,12 +214,23 @@ public class StreamSessionRetentionFlushTests
         // Arrange — the real-socket counterpart to StreamSessionSendRetentionTests' pure ring-capacity
         // exhaustion test. The counterparty's receive buffer is shrunk before it connects — never on
         // an already-established socket, per CreateCounterpartyListener's doc and commit 8426ff3 —
-        // and it never reads again once the handshake completes, so the accepter's own kernel send
-        // buffer eventually saturates for real. Retention bounded to exactly one maximum Message means
-        // the ring can only ever hold what one flush has not yet gotten onto the wire, so the first
-        // Send that lands after the accepter can no longer write anything has nowhere to go.
+        // and it never reads again once the handshake completes. Both ends of the transport are pinned
+        // here, not just the counterparty's: shrinking its receive window bounds what it will accept,
+        // while SendBufferSize bounds what this end's own kernel will absorb on its behalf, and issue
+        // #135 found that without the second the first buys nothing on Linux, whose send autotuning
+        // will swallow the whole ring into the accepter's send queue and report every byte of it sent.
+        //
+        // What the assertions below then separate is two different ways this configuration can reach
+        // RetentionExhausted. Retention is released only by a peer's delivery-counter confirmation now
+        // (issue #113), which this counterparty never sends, so the ring fills on appends alone after
+        // exactly its hundred Messages whatever the transport does — an outcome that would be true even
+        // against a peer reading everything as fast as it arrives, and not what this test is for. The
+        // drained-byte count is what makes the transport's own refusal observable and this test's name
+        // honest: far less crosses the wire than was appended, so the ring is full of bytes the
+        // transport genuinely would not take.
         const int maxMessageSize = 8192;
-        using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: maxMessageSize + 4);
+        const int retentionBytes = 100 * (maxMessageSize + 4);
+        using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: retentionBytes, sendBufferSize: 1024);
         using FlushPeer peer = new(accepter.Endpoint, receiveBufferSize: 1024);
         PeerId id = EstablishSession(accepter, peer);
 
@@ -219,8 +248,15 @@ public class StreamSessionRetentionFlushTests
             accepter.Reactor.Pump();
         }
 
+        // Act — only now, with exhaustion already reached, does the counterparty read: this counts what
+        // the transport actually carried, including whatever drains out of the accepter's send queue on
+        // its own once the window reopens, since nothing pumps this Reactor again.
+        long carried = peer.DrainAvailableBytes();
+
         // Assert
         outcome.Should().Be(SendOutcome.RetentionExhausted);
+        carried.Should().BeLessThan(retentionBytes,
+            "the ring is full of bytes the transport refused, not merely of bytes no peer has confirmed");
     }
 
     /// <summary>
@@ -258,6 +294,14 @@ public class StreamSessionRetentionFlushTests
         /// <summary>Sends every byte of <paramref name="bytes"/> in a single write.</summary>
         public void Send(byte[] bytes) => _socket.Send(bytes);
 
+        /// <summary>
+        /// Sends a hand-built delivery-counter control record confirming <paramref name="count"/> —
+        /// standing in for the real acknowledgement <see cref="StreamSessionReactor"/> itself would
+        /// emit once #116 lands the send-idle timer and per-Pump trigger (issue #25), needed here so
+        /// this file's own accepter can see its retention actually released (issue #113).
+        /// </summary>
+        public void SendDeliveryCounter(ulong count) => Send(StreamSessionTestRecords.BuildDeliveryCounterRecord(count));
+
         /// <summary>Blocks until exactly <paramref name="count"/> bytes have been read off the socket.</summary>
         public byte[] Receive(int count)
         {
@@ -275,6 +319,32 @@ public class StreamSessionRetentionFlushTests
             }
 
             return buffer;
+        }
+
+        /// <summary>
+        /// Reads and counts every byte the transport has already carried, stopping once a poll of
+        /// <paramref name="quietMilliseconds"/> finds nothing further — a count, not a payload, since
+        /// its only caller asks how much crossed rather than what. Deliberately keeps reading past the
+        /// first quiet moment's worth of data: draining reopens the receive window, so bytes still
+        /// queued in the far end's send buffer follow on their own, and those were handed to the
+        /// transport too.
+        /// </summary>
+        public long DrainAvailableBytes(int quietMilliseconds = 200)
+        {
+            byte[] scratch = new byte[64 * 1024];
+            long total = 0;
+            while (_socket.Poll(quietMilliseconds * 1000, SelectMode.SelectRead))
+            {
+                int read = _socket.Receive(scratch);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                total += read;
+            }
+
+            return total;
         }
 
         public void Dispose() => _socket.Dispose();

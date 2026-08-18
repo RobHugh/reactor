@@ -260,7 +260,10 @@ public class StreamSessionGoodbyeTests
         // Arrange — retention sized to hold exactly one maximum-size Message frame and nothing more
         // (the smallest legal pair under issue #16's cross-check, retention >= MaxMessageSize + 4):
         // a single 16-byte Send occupies the whole 20-byte ring, leaving the 4-byte Goodbye sentinel
-        // Close tries to append no room at all.
+        // Close tries to append no room at all. Retention is released only by a peer's delivery-counter
+        // confirmation (issue #113) — handing bytes to the socket is no longer enough — so this test's
+        // peer must actually send one back once it has read the Message, or the Goodbye append would
+        // stay Exhausted forever rather than getting the retry-and-commit this ticket is about.
         const int maxMessageSize = 16;
         const int retentionBytes = maxMessageSize + 4; // 4-byte length prefix, matching BuildFrame.
         byte[] message = PayloadOf(maxMessageSize, 7);
@@ -276,19 +279,22 @@ public class StreamSessionGoodbyeTests
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drainedAfterFirstPump = accepter.DrainToList();
         bool goodbyeArrivedEarly = peer.TryReceiveWithinTimeout(1, out _, timeoutMs: 200);
 
-        // Assert — the Message already queued reaches the wire and retention is now empty, but the
-        // Goodbye Close promised has not been sent: the bug this closes would have this end close
-        // itself locally right here, having never announced the ending, because retention happened to
-        // drain to empty on this exact Pump (the retry that lands the Goodbye runs at the *start* of
-        // the next Pump, before that Pump's own flush carries it to the wire).
+        // Assert — the Message already queued reaches the wire and this end is durably waiting on
+        // confirmation before it can even attempt the Goodbye, but the Goodbye Close promised has not
+        // been sent: the bug this closes would have this end close itself locally right here, having
+        // never announced the ending, because retention happened to look drained on this exact Pump
+        // (the retry that lands the Goodbye runs at the *start* of the next Pump, before that Pump's
+        // own flush carries it to the wire).
         sendOutcome.Should().Be(SendOutcome.Sent);
         onWire.Should().Equal(BuildFrame(message));
         drainedAfterFirstPump.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
         goodbyeArrivedEarly.Should().BeFalse(
             "the Goodbye must not reach the wire until its own retention append actually commits");
 
-        // Act — a later Pump retries the deferred append now that retention has room again, and its
-        // own flush step carries the now-committed Goodbye to the wire in that same Pump.
+        // Act — the peer confirms the Message it just read, freeing the one Message's worth of room
+        // the Goodbye needs; a later Pump then retries the deferred append and its own flush step
+        // carries the now-committed Goodbye to the wire in that same Pump.
+        peer.Send(StreamSessionTestRecords.BuildDeliveryCounterRecord(1));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
         for (int i = 0; i < 20 && !drained.Any(e => e.Kind == SessionEventKind.PeerClosed); i++)
         {
@@ -456,15 +462,33 @@ public class StreamSessionGoodbyeTests
     [Fact]
     public void DataAfterGoodbye_MessageArrivesInASeparateLaterWrite_ClosesWithProtocolViolation()
     {
-        // Arrange — this end's own outbound retention is driven to genuine exhaustion against a
-        // counterparty whose receive window is shrunk and that never reads (mirrors
+        // Arrange — this end's own outbound retention is driven to genuine, durable backpressure
+        // against a counterparty whose receive window is shrunk and that never reads (mirrors
         // StreamSessionRetentionFlushTests' Send_AgainstACounterpartyThatNeverReadsAfterTheHandshake_
-        // EventuallyReturnsRetentionExhausted): RetentionIsDrained stays false across Pump boundaries,
-        // so the peer's Goodbye alone cannot close this end directly and the Peer sits in Closing for
-        // more than one Pump — the only way a genuinely later, separate write can still reach
+        // EventuallyReturnsRetentionExhausted). Retention is now released only by a peer's
+        // delivery-counter confirmation (issue #113), which this GoodbyePeer never sends, so a bound
+        // sized for only one Message would reach SendOutcome.RetentionExhausted immediately on the
+        // second Send — before the kernel's own send buffer has had any chance to back up, which is
+        // what this test actually needs: RetentionIsDrained (now "has everything been handed to the
+        // transport", not "has the peer confirmed it") must stay false across Pump boundaries so the
+        // peer's Goodbye alone cannot close this end directly and the Peer sits in Closing for more
+        // than one Pump — the only way a genuinely later, separate write can still reach
         // DeliverCompleteMessages after the Goodbye rather than arriving at an already-closed socket.
+        // A bound wide enough for about a hundred Messages gives real TCP flow control room to stall a
+        // write against the peer's shrunk, never-drained receive window long before this end's own
+        // confirmed-retention exhausts, so both conditions — RetentionExhausted and genuinely unsent
+        // bytes — are true together, as they need to be here.
+        //
+        // Shrinking the peer's receive window is not on its own enough to produce that stall, which is
+        // what issue #135 found: it bounds what the peer will accept, not what this end's own kernel
+        // will absorb on its behalf, and Linux's send autotuning happily swallowed all ~820KB into the
+        // accepter's send queue, advanced MarkSent for every byte of it, and let the Goodbye close this
+        // end outright with PeerGoodbye rather than ever reaching Closing. Windows' smaller default send
+        // buffer hid that. Capping SendBufferSize here bounds the absorbing side too, so the stall this
+        // test is built on is a property of the configuration rather than of the platform's own defaults.
         const int maxMessageSize = 8192;
-        using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: maxMessageSize + 4);
+        const int retentionBytes = 100 * (maxMessageSize + 4);
+        using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: retentionBytes, sendBufferSize: 1024);
         using GoodbyePeer peer = new(accepter.Endpoint, receiveBufferSize: 1024);
         PeerId id = EstablishSession(accepter, peer);
         byte[] stuckMessage = PayloadOf(maxMessageSize, 1);

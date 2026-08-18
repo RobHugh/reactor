@@ -7,7 +7,6 @@ namespace ReactorSockets.Core;
 /// </summary>
 internal sealed class PeerCounterSet
 {
-    private ulong _messagesReceived;
 
     /// <summary>
     /// Records that one whole Message was handed to the frame arena for delivery. Called exactly
@@ -16,7 +15,20 @@ internal sealed class PeerCounterSet
     /// buffered waiting on a read share or arena room, so a Message held back this Frame does not
     /// move this figure until the Frame that actually delivers it.
     /// </summary>
-    public void RecordMessageReceived() => _messagesReceived++;
+    public void RecordMessageReceived() => MessagesReceived++;
+
+    /// <summary>
+    /// The live count of whole Messages handed to the frame arena so far — the same figure
+    /// <see cref="Snapshot"/> exposes as <see cref="PeerCounters.MessagesReceived"/>, but read directly
+    /// rather than through a snapshot that also demands an unrelated
+    /// <see cref="RetentionArena.HighWaterBytes"/> lookup. <see cref="StreamSessionReactor"/>'s
+    /// per-Pump delivery-counter emission (issue #116, #25's second trigger) reads this to build the
+    /// <c>confirmedThroughMessage</c> body it sends the peer, once per Pump in which
+    /// <see cref="RecordMessageReceived"/> was called at least once — a plain property is what lets it
+    /// do that without constructing a throwaway <see cref="PeerCounters"/> just to discard the byte
+    /// figure.
+    /// </summary>
+    public ulong MessagesReceived { get; private set; }
 
     /// <summary>
     /// Takes a point-in-time snapshot of every counter belonging to this Peer.
@@ -24,5 +36,5 @@ internal sealed class PeerCounterSet
     /// the caller (ADR 0005 — Counters are pulled, not pushed) rather than held here, since this set
     /// holds only what a Peer increments on its own hot path.
     /// </summary>
-    public PeerCounters Snapshot(ulong retentionHighWaterBytes) => new(_messagesReceived, retentionHighWaterBytes);
+    public PeerCounters Snapshot(ulong retentionHighWaterBytes) => new(MessagesReceived, retentionHighWaterBytes);
 }
