@@ -19,25 +19,6 @@ public class StreamSessionSlotReservationDialTests
 {
     private static readonly TimeSpan _effectiveLinger = TimeSpan.FromSeconds(1);
 
-    /// <summary>
-    /// Kills <paramref name="held"/>'s transport abruptly and pumps <paramref name="reactor"/> until its
-    /// <see cref="SessionEventKind.PeerInterrupted"/> drains, leaving the reservation under test in
-    /// place — a held Peer occupying a Slot that a subsequent local <c>Connect</c> must not be able to
-    /// take.
-    /// </summary>
-    private static void InterruptHeldPeer(StreamSessionReactorHarness reactor, StreamSessionReactorHarness.HeldPeer held)
-    {
-        held.Counterparty.ResetAbruptly();
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
-        for (int i = 0; i < 20 && !drained.Any(e => e.Kind == SessionEventKind.PeerInterrupted); i++)
-        {
-            reactor.Reactor.Pump();
-            drained.AddRange(reactor.DrainToList());
-        }
-
-        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted && e.Peer == held.Peer);
-    }
-
     // =========================================================================================
     // A local Connect fails naming capacity rather than taking the held Peer's reserved Slot
     // =========================================================================================
@@ -49,7 +30,7 @@ public class StreamSessionSlotReservationDialTests
         using StreamSessionReactorHarness reactor = new();
         using StreamSessionReactorHarness target = new();
         List<StreamSessionReactorHarness.HeldPeer> held = reactor.FillToCapacity();
-        InterruptHeldPeer(reactor, held[0]);
+        reactor.InterruptHeldPeer(held[0]);
 
         // Act
         Action act = () => reactor.Reactor.Connect(target.Endpoint);
@@ -71,17 +52,27 @@ public class StreamSessionSlotReservationDialTests
         using StreamSessionReactorHarness reactor = new();
         using StreamSessionReactorHarness target = new();
         List<StreamSessionReactorHarness.HeldPeer> held = reactor.FillToCapacity();
-        InterruptHeldPeer(reactor, held[0]);
+        reactor.InterruptHeldPeer(held[0]);
 
         // Act
         Action act = () => reactor.Reactor.Connect(target.Endpoint);
-        act.Should().Throw<InvalidOperationException>();
 
         // Assert — the same PeerId is still readable (Interrupted, not closed) and no PeerClosed
         // has been raised for it by the failed Connect attempt.
+        act.Should().Throw<InvalidOperationException>();
         Action stillReadable = () => reactor.Reactor.CountersOf(held[0].Peer);
         stillReadable.Should().NotThrow("the held Peer is still Interrupted, untouched by the refused Connect");
         reactor.PumpAndDrainAll(3).Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+
+        // Assert — distinguishes Interrupted from established or resumed: only a Peer still
+        // Interrupted closes naming LingerExpired once its effective Linger elapses. A Peer that
+        // had silently dropped out of Interrupted would not close this way and would leak its
+        // Slot forever.
+        reactor.TimeProvider.Advance(_effectiveLinger);
+        reactor.Reactor.Pump();
+        reactor.DrainToList().Should().ContainSingle(
+            e => e.Kind == SessionEventKind.PeerClosed && e.Reason == DisconnectReason.LingerExpired
+                && e.Peer == held[0].Peer);
     }
 
     // =========================================================================================
@@ -95,12 +86,11 @@ public class StreamSessionSlotReservationDialTests
         using StreamSessionReactorHarness reactor = new();
         using StreamSessionReactorHarness target = new();
         List<StreamSessionReactorHarness.HeldPeer> held = reactor.FillToCapacity();
-        InterruptHeldPeer(reactor, held[0]);
+        reactor.InterruptHeldPeer(held[0]);
 
         Action failingConnect = () => reactor.Reactor.Connect(target.Endpoint);
         failingConnect.Should().Throw<InvalidOperationException>();
 
-        // Act — the effective Linger elapses, closing the held Peer and freeing its Slot.
         reactor.TimeProvider.Advance(_effectiveLinger);
         reactor.Reactor.Pump();
         reactor.DrainToList().Should().ContainSingle(
