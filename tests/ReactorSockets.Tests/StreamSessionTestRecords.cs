@@ -22,6 +22,9 @@ internal static class StreamSessionTestRecords
     /// <summary>The wire type byte a Resume record's first byte carries (issue #115).</summary>
     public const byte ResumeRecordType = 3;
 
+    /// <summary>The length in bytes of a resume secret on the wire, in a Hello's tail and in a Resume.</summary>
+    public const int ResumeSecretLength = 16;
+
     /// <summary>The protocol version this test suite's hand-built Hello records offer by default.</summary>
     public const uint ProtocolVersion = 1;
 
@@ -49,16 +52,17 @@ internal static class StreamSessionTestRecords
     /// </summary>
     public static byte[] BuildResume(byte[]? resumeSecret = null, ulong deliveryCount = 0)
     {
-        byte[] secret = resumeSecret ?? new byte[16];
-        if (secret.Length != 16)
+        byte[] secret = resumeSecret ?? new byte[ResumeSecretLength];
+        if (secret.Length != ResumeSecretLength)
         {
-            throw new ArgumentException("A resume secret is exactly 16 bytes on the wire.", nameof(resumeSecret));
+            throw new ArgumentException(
+                $"A resume secret is exactly {ResumeSecretLength} bytes on the wire.", nameof(resumeSecret));
         }
 
         byte[] record = new byte[HandshakeRecordSize];
         record[0] = ResumeRecordType;
-        secret.CopyTo(record.AsSpan(1, 16));
-        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(17, 8), deliveryCount);
+        secret.CopyTo(record.AsSpan(1, ResumeSecretLength));
+        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(1 + ResumeSecretLength, 8), deliveryCount);
         return record;
     }
 

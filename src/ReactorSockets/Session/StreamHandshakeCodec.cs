@@ -70,6 +70,30 @@ internal static class StreamHandshakeCodec
     public const int RecordSize = sizeof(byte) + HelloPayloadSize;
 
     /// <summary>
+    /// Rejects a destination buffer that is not exactly one record — every writer here fills a whole
+    /// record or none of it, mirroring <see cref="ControlDatagramCodec"/>'s guard of the same shape.
+    /// </summary>
+    private static void ValidateDestinationSize(Span<byte> destination)
+    {
+        if (destination.Length != RecordSize)
+        {
+            throw new ArgumentException($"A handshake record buffer must be exactly {RecordSize} bytes.", nameof(destination));
+        }
+    }
+
+    /// <summary>
+    /// Rejects a caller-supplied span that is not exactly the fixed wire length its field occupies —
+    /// a caller who cannot hold a full secret could not use one correctly.
+    /// </summary>
+    private static void ValidateFixedLength(ReadOnlySpan<byte> value, int expectedLength, string paramName)
+    {
+        if (value.Length != expectedLength)
+        {
+            throw new ArgumentException($"Must be exactly {expectedLength} bytes.", paramName);
+        }
+    }
+
+    /// <summary>
     /// Reads the one byte that tells a Hello, a Refusal and a Resume apart, without interpreting
     /// anything else. Fails
     /// when <paramref name="record"/> is not exactly <see cref="RecordSize"/> bytes or its first byte
@@ -102,16 +126,8 @@ internal static class StreamHandshakeCodec
         ulong lingerMilliseconds,
         ReadOnlySpan<byte> resumeSecret)
     {
-        if (destination.Length != RecordSize)
-        {
-            throw new ArgumentException($"A handshake record buffer must be exactly {RecordSize} bytes.", nameof(destination));
-        }
-
-        if (resumeSecret.Length != StreamSessionProtocol.ResumeSecretLength)
-        {
-            throw new ArgumentException(
-                $"Must be exactly {StreamSessionProtocol.ResumeSecretLength} bytes.", nameof(resumeSecret));
-        }
+        ValidateDestinationSize(destination);
+        ValidateFixedLength(resumeSecret, StreamSessionProtocol.ResumeSecretLength, nameof(resumeSecret));
 
         destination[0] = (byte)StreamHandshakeMessageType.Hello;
         int offset = 1;
@@ -170,10 +186,7 @@ internal static class StreamHandshakeCodec
     /// </summary>
     public static void WriteRefusal(Span<byte> destination, RefusalReason reason, uint value0, uint value1)
     {
-        if (destination.Length != RecordSize)
-        {
-            throw new ArgumentException($"A handshake record buffer must be exactly {RecordSize} bytes.", nameof(destination));
-        }
+        ValidateDestinationSize(destination);
 
         destination[0] = (byte)StreamHandshakeMessageType.Refusal;
         destination[1] = (byte)reason;
@@ -219,16 +232,8 @@ internal static class StreamHandshakeCodec
     /// </remarks>
     public static void WriteResume(Span<byte> destination, ReadOnlySpan<byte> resumeSecret, ulong deliveryCount)
     {
-        if (destination.Length != RecordSize)
-        {
-            throw new ArgumentException($"A handshake record buffer must be exactly {RecordSize} bytes.", nameof(destination));
-        }
-
-        if (resumeSecret.Length != StreamSessionProtocol.ResumeSecretLength)
-        {
-            throw new ArgumentException(
-                $"Must be exactly {StreamSessionProtocol.ResumeSecretLength} bytes.", nameof(resumeSecret));
-        }
+        ValidateDestinationSize(destination);
+        ValidateFixedLength(resumeSecret, StreamSessionProtocol.ResumeSecretLength, nameof(resumeSecret));
 
         destination[0] = (byte)StreamHandshakeMessageType.Resume;
         int offset = 1;

@@ -14,9 +14,12 @@ namespace ReactorSockets.Tests;
 /// <remarks>
 /// The codec is internal and reached nowhere here (tests/CLAUDE.md, ADR 0015): every record is
 /// hand-built by <see cref="StreamSessionTestRecords"/> over a raw counterparty socket, and every
-/// assertion is on what the public L2 surface does with those bytes. The record's payload layout —
-/// the round trip of secret and counter, and the codec's refusal of a wrong-length secret buffer —
-/// has no observable effect until #123 gives a Resume somewhere to go, and is pinned there.
+/// assertion is on what the public L2 surface does with those bytes. Three of #115's acceptance
+/// criteria are therefore not assertable here and are pinned by #123 instead, once a Resume has
+/// somewhere to go: the round trip of secret and counter, the refusal of a wrong-length secret buffer,
+/// and reading a Resume out of a Hello or Refusal record. Until then nothing in the profile reads a
+/// Resume's payload, so no L2 behaviour depends on it — reaching past the seam to assert it anyway is
+/// what ADR 0015 forbids.
 /// </remarks>
 public class StreamSessionResumeRecordTests
 {
@@ -63,14 +66,27 @@ public class StreamSessionResumeRecordTests
     }
 
     [Fact]
+    public void BuildResume_AgainstBuildHello_IsTheSameNumberOfBytes()
+    {
+        // Arrange
+        byte[] hello = StreamSessionTestRecords.BuildHello();
+
+        // Act
+        byte[] resume = StreamSessionTestRecords.BuildResume();
+
+        // Assert — the premise the two boundary tests above rest on: the record the Reactor is fed is
+        // the size a Hello occupies, not merely 41 bytes by coincidence of this suite.
+        resume.Should().HaveCount(hello.Length);
+    }
+
+    [Fact]
     public void Handshake_AHelloOfTheSameLengthAsAResumeRecord_StillEstablishes()
     {
-        // Arrange — the control for the two tests above: the size a Resume is read at is the size a
-        // Hello establishes at, so the byte counts are not merely equal by accident of this suite.
+        // Arrange — the control for the tests above: the size a Resume is read at is the size a Hello
+        // establishes at.
         using StreamSessionReactorHarness accepter = new();
         using StreamSessionReactorHarness.RawStreamPeer peer = new(accepter.Endpoint);
         byte[] hello = StreamSessionTestRecords.BuildHello();
-        hello.Should().HaveCount(StreamSessionTestRecords.BuildResume().Length);
 
         // Act
         peer.Send(hello);
