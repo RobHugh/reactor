@@ -478,9 +478,17 @@ public class StreamSessionGoodbyeTests
         // write against the peer's shrunk, never-drained receive window long before this end's own
         // confirmed-retention exhausts, so both conditions — RetentionExhausted and genuinely unsent
         // bytes — are true together, as they need to be here.
+        //
+        // Shrinking the peer's receive window is not on its own enough to produce that stall, which is
+        // what issue #135 found: it bounds what the peer will accept, not what this end's own kernel
+        // will absorb on its behalf, and Linux's send autotuning happily swallowed all ~820KB into the
+        // accepter's send queue, advanced MarkSent for every byte of it, and let the Goodbye close this
+        // end outright with PeerGoodbye rather than ever reaching Closing. Windows' smaller default send
+        // buffer hid that. Capping SendBufferSize here bounds the absorbing side too, so the stall this
+        // test is built on is a property of the configuration rather than of the platform's own defaults.
         const int maxMessageSize = 8192;
         const int retentionBytes = 100 * (maxMessageSize + 4);
-        using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: retentionBytes);
+        using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: retentionBytes, sendBufferSize: 1024);
         using GoodbyePeer peer = new(accepter.Endpoint, receiveBufferSize: 1024);
         PeerId id = EstablishSession(accepter, peer);
         byte[] stuckMessage = PayloadOf(maxMessageSize, 1);

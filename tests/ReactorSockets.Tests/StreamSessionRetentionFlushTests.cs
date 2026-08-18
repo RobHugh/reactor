@@ -214,19 +214,23 @@ public class StreamSessionRetentionFlushTests
         // Arrange — the real-socket counterpart to StreamSessionSendRetentionTests' pure ring-capacity
         // exhaustion test. The counterparty's receive buffer is shrunk before it connects — never on
         // an already-established socket, per CreateCounterpartyListener's doc and commit 8426ff3 —
-        // and it never reads again once the handshake completes, so the accepter's own kernel send
-        // buffer eventually saturates for real. Retention is released only by a peer's delivery-counter
-        // confirmation now (issue #113), which this counterparty never sends, so a bound sized for only
-        // one Message would reach RetentionExhausted on the very next Send regardless of whether the
-        // kernel ever actually backs up — that is Send_AfterThePeerConfirmsAFlushedMessage_...'s own
-        // "stillExhausted" assertion above, not what this test is for. A bound wide enough for about a
-        // hundred Messages instead gives real TCP flow control room to genuinely stall a write against
-        // the shrunk, never-drained receive window before this end's own confirmed-retention exhausts,
-        // which is what this test's name promises: an *eventual* RetentionExhausted driven by the
-        // transport, not an immediate one driven purely by the absence of any confirmation.
+        // and it never reads again once the handshake completes. Both ends of the transport are pinned
+        // here, not just the counterparty's: shrinking its receive window bounds what it will accept,
+        // while SendBufferSize bounds what this end's own kernel will absorb on its behalf, and issue
+        // #135 found that without the second the first buys nothing on Linux, whose send autotuning
+        // will swallow the whole ring into the accepter's send queue and report every byte of it sent.
+        //
+        // What the assertions below then separate is two different ways this configuration can reach
+        // RetentionExhausted. Retention is released only by a peer's delivery-counter confirmation now
+        // (issue #113), which this counterparty never sends, so the ring fills on appends alone after
+        // exactly its hundred Messages whatever the transport does — an outcome that would be true even
+        // against a peer reading everything as fast as it arrives, and not what this test is for. The
+        // drained-byte count is what makes the transport's own refusal observable and this test's name
+        // honest: far less crosses the wire than was appended, so the ring is full of bytes the
+        // transport genuinely would not take.
         const int maxMessageSize = 8192;
         const int retentionBytes = 100 * (maxMessageSize + 4);
-        using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: retentionBytes);
+        using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: retentionBytes, sendBufferSize: 1024);
         using FlushPeer peer = new(accepter.Endpoint, receiveBufferSize: 1024);
         PeerId id = EstablishSession(accepter, peer);
 
@@ -244,8 +248,15 @@ public class StreamSessionRetentionFlushTests
             accepter.Reactor.Pump();
         }
 
+        // Act — only now, with exhaustion already reached, does the counterparty read: this counts what
+        // the transport actually carried, including whatever drains out of the accepter's send queue on
+        // its own once the window reopens, since nothing pumps this Reactor again.
+        long carried = peer.DrainAvailableBytes();
+
         // Assert
         outcome.Should().Be(SendOutcome.RetentionExhausted);
+        carried.Should().BeLessThan(retentionBytes,
+            "the ring is full of bytes the transport refused, not merely of bytes no peer has confirmed");
     }
 
     /// <summary>
@@ -308,6 +319,32 @@ public class StreamSessionRetentionFlushTests
             }
 
             return buffer;
+        }
+
+        /// <summary>
+        /// Reads and counts every byte the transport has already carried, stopping once a poll of
+        /// <paramref name="quietMilliseconds"/> finds nothing further — a count, not a payload, since
+        /// its only caller asks how much crossed rather than what. Deliberately keeps reading past the
+        /// first quiet moment's worth of data: draining reopens the receive window, so bytes still
+        /// queued in the far end's send buffer follow on their own, and those were handed to the
+        /// transport too.
+        /// </summary>
+        public long DrainAvailableBytes(int quietMilliseconds = 200)
+        {
+            byte[] scratch = new byte[64 * 1024];
+            long total = 0;
+            while (_socket.Poll(quietMilliseconds * 1000, SelectMode.SelectRead))
+            {
+                int read = _socket.Receive(scratch);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                total += read;
+            }
+
+            return total;
         }
 
         public void Dispose() => _socket.Dispose();

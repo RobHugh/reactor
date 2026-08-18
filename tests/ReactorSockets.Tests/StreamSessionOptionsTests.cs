@@ -20,6 +20,7 @@ public class StreamSessionOptionsTests
         int maxMessageSize = 4096,
         int retentionBytes = 4100,
         int? receiveBufferSize = null,
+        int? sendBufferSize = null,
         int? missedHeartbeats = null,
         int? arenaSize = null,
         TimeSpan? sendIdleInterval = null,
@@ -38,6 +39,7 @@ public class StreamSessionOptionsTests
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
             ReceiveBufferSize = receiveBufferSize,
+            SendBufferSize = sendBufferSize,
             MissedHeartbeats = missedHeartbeats,
             SendIdleInterval = sendIdleInterval ?? TimeSpan.FromSeconds(1),
             Linger = linger ?? TimeSpan.FromSeconds(1),
@@ -155,6 +157,36 @@ public class StreamSessionOptionsTests
 
         // Assert
         resolved.Should().Be(4100);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_SendBufferSizeBelowOne_ThrowsArgumentOutOfRangeException(int sendBufferSize)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(sendBufferSize: sendBufferSize);
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.SendBufferSize));
+    }
+
+    [Fact]
+    public void Constructor_SendBufferSizeFarBelowMaxMessageSize_DoesNotThrow()
+    {
+        // Arrange — deliberately smaller than one Message, unlike the receive buffer, which has a
+        // one-Message floor: a send buffer narrower than a Message is a slower connection, since a
+        // flush hands over what the kernel takes and keeps the rest retained, not a broken one.
+        StreamSessionOptions options = CreateOptions(maxMessageSize: 4096, retentionBytes: 4100, sendBufferSize: 1024);
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert
+        act.Should().NotThrow();
     }
 
     [Fact]

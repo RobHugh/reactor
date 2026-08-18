@@ -213,7 +213,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 $"This Reactor's capacity of {_options.Reactor.Capacity} Peers is fully occupied — close a Peer before dialling another.");
         }
 
-        TcpLink link = TcpLink.Dial(destination);
+        TcpLink link = TcpLink.Dial(destination, _options.SendBufferSize);
         PeerSlot slot = new()
         {
             Link = link,
@@ -553,7 +553,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private void AdmitOrRefuse(Socket acceptedSocket)
     {
-        TcpLink link = TcpLink.FromAccepted(acceptedSocket);
+        TcpLink link = TcpLink.FromAccepted(acceptedSocket, _options.SendBufferSize);
         if (!_peers.HasFreeSlot)
         {
             RefuseForCapacity(link);

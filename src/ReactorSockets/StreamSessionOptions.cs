@@ -132,6 +132,24 @@ public sealed class StreamSessionOptions
     public int? ReceiveBufferSize { get; init; }
 
     /// <summary>
+    /// <c>SO_SNDBUF</c> for every Peer socket this Reactor accepts or dials, or <see langword="null"/>
+    /// — the default — for the OS default and its own autotuning. This is the kernel's send queue, not
+    /// <see cref="RetentionBytes"/>: retention is what this end holds until the peer confirms receipt
+    /// (issue #113), while this bounds how much the kernel will absorb from a flush before a write
+    /// reports it would block and the bytes stay in retention, unsent. Unset, the two are unrelated in
+    /// practice on Linux, whose send autotuning will absorb megabytes against a peer that has stopped
+    /// reading; set, a consumer who needs transport backpressure to reach their own flow control at a
+    /// known point can put it there.
+    /// </summary>
+    /// <remarks>
+    /// A request, not an exact size — Linux doubles the value and holds it to its own <c>tcp_wmem</c>
+    /// floor, so nothing may depend on a precise resulting byte count. It also does not bound
+    /// correctness of anything this profile does: a Reactor sends whatever the socket accepts and keeps
+    /// the rest, whatever the buffer's size.
+    /// </remarks>
+    public int? SendBufferSize { get; init; }
+
+    /// <summary>
     /// How many consecutive heartbeat intervals may pass in silence before a Peer is declared gone.
     /// Defaults to 3, RFC 4271's hold-time multiple. Must be at least 2, because a count of 1 makes a
     /// single lost heartbeat fatal, and in .NET the stall that produces it is as ordinary as a
@@ -210,6 +228,17 @@ public sealed class StreamSessionOptions
                 $"a receive buffer of {receiveBuffer} bytes cannot hold one incomplete Message of {MaxMessageSize} bytes " +
                 $"plus its 4-byte length prefix — raise ReceiveBufferSize to at least {receiveBufferFloor}, or lower MaxMessageSize.",
                 nameof(ReceiveBufferSize));
+        }
+
+        // No floor beyond 1, and deliberately none tied to MaxMessageSize: a send buffer smaller than a
+        // Message is a slower connection, not a broken one — a flush hands over what the kernel accepts
+        // and keeps the rest in retention for the next one.
+        if (SendBufferSize is int sendBuffer && sendBuffer < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(SendBufferSize),
+                sendBuffer,
+                $"a send buffer of {sendBuffer} bytes carries nothing — it must be at least 1, or null for the OS default.");
         }
 
         int missedHeartbeats = ResolvedMissedHeartbeats;
