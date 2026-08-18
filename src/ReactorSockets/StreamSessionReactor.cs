@@ -153,8 +153,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// exactly once (<see cref="EmitDeliveryCounters"/>, issue #116/#25's second trigger), before every
     /// Peer's queued retention bytes are flushed exactly once
     /// (<see cref="FlushPendingRetentionWrites"/>, #90/3.6.2) regardless of how many <see cref="Send"/>
-    /// calls queued them. Throws <see cref="InvalidOperationException"/> if called from any thread other
-    /// than the one that constructed this Reactor, or from inside a Pump already in progress.
+    /// calls queued them. Finally, every established Peer that has written nothing to the wire —
+    /// including whatever this Frame's own flush just carried — for at least
+    /// <see cref="StreamSessionOptions.SendIdleInterval"/> sends the same delivery-counter record as a
+    /// heartbeat (<see cref="EmitSendIdleHeartbeats"/>, issue #114/#26's first idle timer), unconditionally
+    /// and regardless of whether anything was ever received from it. Throws
+    /// <see cref="InvalidOperationException"/> if called from any thread other than the one that
+    /// constructed this Reactor, or from inside a Pump already in progress.
     /// </summary>
     public void Pump()
     {
@@ -174,6 +179,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             _dispatcher.Pump();
             EmitDeliveryCounters();
             FlushPendingRetentionWrites();
+            EmitSendIdleHeartbeats();
             ProcessConnectingPeers();
             ReportDeclinedAdmissions();
         }
@@ -846,11 +852,20 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                     return;
 
                 case PendingRecordSendOutcome.ShortSend:
+                    // Mirrors SendDeliveryCounterOrArm's own remainder-shrinkage check: a ShortSend that
+                    // sent nothing (EWOULDBLOCK before anything was accepted) leaves remainder at its
+                    // full pre-call length and must not count as outbound activity.
+                    if (remainder.Length < pendingCounter.Length)
+                    {
+                        MarkSendActivity(slot);
+                    }
+
                     slot.PendingDeliveryCounterBytesToSend = remainder;
                     return;
 
                 case PendingRecordSendOutcome.Complete:
                     slot.PendingDeliveryCounterBytesToSend = null;
+                    MarkSendActivity(slot);
                     break;
             }
         }
@@ -1014,11 +1029,83 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 break;
 
             case PendingRecordSendOutcome.ShortSend:
+                // A short send only ever means bytes were withheld, not that zero went out (see
+                // SendPendingRecord/TcpLink.Send — an EWOULDBLOCK before anything is accepted is also a
+                // ShortSend, with a full-length remainder and nothing actually written): what changed on
+                // the wire is exactly remainder's own shrinkage from the record's full length, so this
+                // still counts as outbound activity whenever remainder is shorter than the record itself.
                 slot.PendingDeliveryCounterBytesToSend = remainder;
+                if (remainder.Length < slot.DeliveryCounterRecord.Length)
+                {
+                    MarkSendActivity(slot);
+                }
+
                 break;
 
             case PendingRecordSendOutcome.Complete:
+                MarkSendActivity(slot);
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Records that this end just wrote outbound bytes to <paramref name="slot"/>'s wire — a Message, a
+    /// Goodbye, or a delivery-counter record, whichever this end's own traffic happened to send last —
+    /// as the moment the send-idle timer (issue #114) next counts silence from. Every call site already
+    /// knows some positive number of bytes actually reached the socket before calling this; this method
+    /// only stamps <em>when</em>, not <em>how much</em>, since the timer cares about silence on the wire
+    /// and nothing about volume.
+    /// </summary>
+    private void MarkSendActivity(PeerSlot slot) =>
+        slot.LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+
+    /// <summary>
+    /// The send-idle timer (issue #114, #26's first idle timer): sends this end's delivery-counter
+    /// record as a heartbeat to every established Peer that has written nothing to the wire — Message,
+    /// Goodbye, or an earlier heartbeat alike (<see cref="MarkSendActivity"/>) — for at least
+    /// <see cref="StreamSessionOptions.SendIdleInterval"/>. Runs once per <see cref="Pump"/>, after
+    /// <see cref="FlushPendingRetentionWrites"/>, so that a Message or Goodbye this very Frame already
+    /// carried to the wire counts as the activity that resets the deadline rather than this method
+    /// racing that flush and firing a redundant heartbeat alongside traffic that already reset the
+    /// clock. Unconditional, by design and unlike <see cref="EmitDeliveryCounters"/>'s received-count
+    /// trigger: this one does not consult whether anything was received, and must not, because issue
+    /// #118 tests directly a Peer that only ever sends into a receiver that never confirms anything back
+    /// — the send-idle timer is what proves this end is still alive to that Peer regardless of whether
+    /// its own traffic is arriving. Never disableable: there is no option on
+    /// <see cref="StreamSessionOptions"/> to turn this off, because the heartbeat is never a wasted
+    /// packet — it is the delivery-counter record itself (issue #109), so one idle record proves
+    /// liveness, advances the peer's resume point and releases the peer's retention in one.
+    /// </summary>
+    /// <remarks>
+    /// Walks every occupied Slot by index (<see cref="ShareHolderTable{T}.OccupantAt"/>) rather than
+    /// riding an event-populated set the way <see cref="EmitDeliveryCounters"/> rides
+    /// <see cref="_peersWithAdvancedReceivedCount"/>: the trigger here is silence, which produces no
+    /// event of its own to enqueue a handle from — the only way to know a Peer has gone quiet is to ask
+    /// every established one, every Pump. The scan costs at most <see cref="ShareHolderTable{T}.Capacity"/>
+    /// array reads, all of it against already-allocated state; nothing here allocates.
+    /// </remarks>
+    private void EmitSendIdleHeartbeats()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            {
+                continue;
+            }
+
+            if (slot.LocalGoodbyeSent || slot.PendingCloseReasonAfterRetentionDrains is not null)
+            {
+                // Mirrors EmitDeliveryCounters' own gate: nothing belongs on the wire once a Goodbye has
+                // passed for this Peer in either direction (issue #106).
+                continue;
+            }
+
+            if (_options.Reactor.TimeProvider.GetElapsedTime(slot.LastSendTimestamp) < _options.SendIdleInterval)
+            {
+                continue;
+            }
+
+            SendDeliveryCounterOrArm(slot.Handle, slot);
         }
     }
 
@@ -1101,6 +1188,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         if (firstResult.BytesSent > 0)
         {
             _retention.MarkSent(handle.Index, firstResult.BytesSent);
+            MarkSendActivity(slot);
         }
 
         if (firstResult.BytesSent < first.Length)
@@ -1125,6 +1213,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         if (secondResult.BytesSent > 0)
         {
             _retention.MarkSent(handle.Index, secondResult.BytesSent);
+            MarkSendActivity(slot);
         }
 
         if (secondResult.BytesSent < second.Length)
@@ -1667,6 +1756,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         slot.EffectiveLinger = effectiveLinger;
         slot.State = HandshakeState.Established;
 
+        // The send-idle deadline (issue #114) starts counting from establishment, not from
+        // LastSendTimestamp's default(long) — which would read as an interval already elapsed and fire
+        // a heartbeat on the very next Pump regardless of how fresh the Session actually is.
+        slot.LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+
         PeerId peer = ToPeerId(handle);
         _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = peer });
 
@@ -1936,6 +2030,22 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// is on its way out, and the first reason recorded is the truest account of why.
         /// </summary>
         public DisconnectReason? PendingCloseReasonAfterRetentionDrains { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> value at this end's most recent outbound write to
+        /// this Peer's wire — a Message or Goodbye byte actually handed to the socket
+        /// (<see cref="FlushRetention"/>), or a delivery-counter record sent either as this end's
+        /// send-idle heartbeat (<see cref="EmitSendIdleHeartbeats"/>, issue #114) or the received-count
+        /// trigger (<see cref="SendDeliveryCounterOrArm"/>, issue #116) — whichever happened last.
+        /// Initialised the instant this Peer establishes (<see cref="OnHelloRecordReceived"/>), so the
+        /// send-idle deadline counts from establishment rather than from
+        /// <see langword="default"/>'s epoch, which would otherwise read as an already-elapsed interval
+        /// and fire a heartbeat the very first Pump after connecting. Deliberately named for what this
+        /// end wrote, not what it merely queued into retention: the send-idle timer measures silence on
+        /// the wire, not silence in the application (issue #114's own wording), so a <see cref="Send"/>
+        /// that queues a Message but is never followed by a <see cref="Pump"/> must not reset it.
+        /// </summary>
+        public long LastSendTimestamp { get; set; }
     }
 
     /// <summary>

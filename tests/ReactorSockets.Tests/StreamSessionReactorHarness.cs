@@ -21,6 +21,7 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         int? sendBufferSize = null,
         int? missedHeartbeats = null,
         int? arenaSize = null,
+        TimeSpan? sendIdleInterval = null,
         DiagnosticLevel minimumLevel = DiagnosticLevel.Trace,
         IReactorDiagnostics? sinkOverride = null,
         bool withoutDiagnostics = false,
@@ -28,6 +29,7 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         IReadOnlyList<IPEndPoint>? endpoints = null,
         RandomNumberGenerator? entropy = null)
     {
+        SendIdleInterval = sendIdleInterval ?? TimeSpan.FromSeconds(1);
         IReactorDiagnostics? installedSink = withoutDiagnostics ? null : sinkOverride ?? Sink;
         Entropy = entropy ?? RandomNumberGenerator.Create();
         Reactor = new StreamSessionReactor(new StreamSessionOptions
@@ -46,7 +48,7 @@ internal sealed class StreamSessionReactorHarness : IDisposable
             ReceiveBufferSize = receiveBufferSize,
             SendBufferSize = sendBufferSize,
             MissedHeartbeats = missedHeartbeats,
-            SendIdleInterval = TimeSpan.FromSeconds(1),
+            SendIdleInterval = SendIdleInterval,
             Linger = TimeSpan.FromSeconds(1),
             Endpoints = endpoints ?? (bindLoopback ? [new IPEndPoint(IPAddress.Loopback, 0)] : []),
             Entropy = Entropy,
@@ -55,6 +57,13 @@ internal sealed class StreamSessionReactorHarness : IDisposable
 
     /// <summary>The clock the Reactor was built with — advance it to exercise anything time-dependent.</summary>
     public FakeTimeProvider TimeProvider { get; } = new();
+
+    /// <summary>
+    /// The <see cref="StreamSessionOptions.SendIdleInterval"/> the Reactor was built with — 1 second
+    /// unless the constructor's <c>sendIdleInterval</c> parameter overrides it. Exposed so a test can
+    /// advance <see cref="TimeProvider"/> by exactly this much without duplicating the constant.
+    /// </summary>
+    public TimeSpan SendIdleInterval { get; }
 
     /// <summary>The recording Sink installed on the Reactor, unless the harness was told to override or omit it.</summary>
     public RecordingDiagnosticsSink Sink { get; } = new();
