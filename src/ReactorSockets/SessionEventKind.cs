@@ -40,4 +40,22 @@ public enum SessionEventKind
     /// closes it directly, with no zero-Frame Closing observable in between.
     /// </summary>
     PeerClosing = 4,
+
+    /// <summary>
+    /// The stream profile's transport for this Peer is gone, but the Peer itself is not: its
+    /// <see cref="PeerId"/> — including generation — stays live, <see cref="StreamSessionReactor.CountersOf"/>
+    /// keeps answering for it, and its undelivered inbound Messages and outbound retention ring are
+    /// held rather than discarded (issue #119, ADR 0010). Raised whenever an established Peer's
+    /// transport ends without a Goodbye first: an inbound FIN carrying nothing further, a reset, a
+    /// local write failure, or this end's own receive-idle deadline expiring (revising issue #117,
+    /// which closed the Peer outright before this kind existed). <b>Distinct from
+    /// <see cref="PeerClosing"/></b>: Closing means a Goodbye arrived and the Session is ending on
+    /// purpose, with <see cref="PeerClosed"/> to follow once both sides drain — nothing here is ever
+    /// resumable. Interrupted means the opposite — no Goodbye was ever seen, the Session is not
+    /// ending, and the Peer sits ready for a Resume (a later slice) for as long as Linger allows
+    /// (issue #121). A Peer that sent Goodbye and then a bare FIN reaches <see cref="PeerClosing"/> or
+    /// <see cref="PeerClosed"/>, never this. Carries only <see cref="SessionEvent.Peer"/> — there is no
+    /// <see cref="DisconnectReason"/> to report, because nothing has ended.
+    /// </summary>
+    PeerInterrupted = 5,
 }

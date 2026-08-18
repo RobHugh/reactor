@@ -6,19 +6,20 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.2.2 (issue #117, #26's second idle timer): over TCP only receiving is evidence a Peer's
-/// transport is still there — the kernel accepts written bytes into a buffer whether or not anything is
-/// at the far end. A Peer from which nothing at all has been received for
+/// Slice 4.2.2 (issue #117, #26's second idle timer), revised by issue #119: over TCP only receiving
+/// is evidence a Peer's transport is still there — the kernel accepts written bytes into a buffer
+/// whether or not anything is at the far end. A Peer from which nothing at all has been received for
 /// <see cref="PeerSlot.RemoteSendIdleInterval"/> x <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>
 /// — the interval the peer itself announced in its Hello, never this end's own
-/// <see cref="StreamSessionOptions.SendIdleInterval"/> — is closed as <see cref="DisconnectReason.TransportFailed"/>.
-/// Issue #119 later revises that closing to a move into an <c>Interrupted</c> state; this slice does not
-/// invent that state. Every test here drives a real <see cref="StreamSessionReactor"/> against a
-/// hand-built raw counterparty (<see cref="RawPeer"/>, mirroring
-/// <see cref="StreamSessionSendIdleHeartbeatTests"/>'s <c>HeartbeatPeer</c>) through the public L2
-/// surface only (tests/CLAUDE.md, ADR 0015), driven entirely by
-/// <see cref="StreamSessionReactorHarness.TimeProvider"/> — no test here sleeps to observe timer
-/// behaviour.
+/// <see cref="StreamSessionOptions.SendIdleInterval"/> — moves the Peer to
+/// <see cref="SessionEventKind.PeerInterrupted"/> rather than closing it: its transport is gone, but
+/// its identity and undelivered Messages are still worth holding for a Resume (ADR 0010), and a dead
+/// receive-idle timer is exactly as good a sign of that as a reset or a failed write. Every test here
+/// drives a real <see cref="StreamSessionReactor"/> against a hand-built raw counterparty
+/// (<see cref="RawPeer"/>, mirroring <see cref="StreamSessionSendIdleHeartbeatTests"/>'s
+/// <c>HeartbeatPeer</c>) through the public L2 surface only (tests/CLAUDE.md, ADR 0015), driven
+/// entirely by <see cref="StreamSessionReactorHarness.TimeProvider"/> — no test here sleeps to observe
+/// timer behaviour.
 /// </summary>
 public class StreamSessionReceiveIdleDeadlineTests
 {
@@ -59,13 +60,13 @@ public class StreamSessionReceiveIdleDeadlineTests
     // =========================================================================================
 
     [Fact]
-    public void Pump_PeerThatStopsRespondingEntirely_IsClosedAsTransportFailedOnceTheReceiveIdleDeadlineElapsesAndNotBefore()
+    public void Pump_PeerThatStopsRespondingEntirely_IsInterruptedOnceTheReceiveIdleDeadlineElapsesAndNotBefore()
     {
         // Arrange — default MissedHeartbeats (3) x the peer's own 1-second announced interval, so the
         // deadline is 3 seconds.
         using StreamSessionReactorHarness accepter = new();
         using RawPeer peer = new(accepter.Endpoint);
-        EstablishSession(accepter, peer);
+        PeerId id = EstablishSession(accepter, peer);
         TimeSpan deadline = TimeSpan.FromMilliseconds(DefaultPeerSendIdleMs * 3);
 
         // Act — one Pump short of the deadline: the peer must still be alive.
@@ -74,17 +75,21 @@ public class StreamSessionReceiveIdleDeadlineTests
 
         // Assert
         accepter.DrainToList().Should().NotContain(
-            e => e.Kind == SessionEventKind.PeerClosed,
+            e => e.Kind == SessionEventKind.PeerClosed || e.Kind == SessionEventKind.PeerInterrupted,
             "the receive-idle deadline has not fully elapsed yet");
 
         // Act — the last millisecond closes the deadline.
         accepter.TimeProvider.Advance(TimeSpan.FromMilliseconds(1));
         accepter.Reactor.Pump();
 
-        // Assert — closed as a transport failure (this ticket's landing note — #119 later revises this
-        // to an Interrupted state instead).
-        accepter.DrainToList().Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
-            .Which.Reason.Should().Be(DisconnectReason.TransportFailed);
+        // Assert — moved to Interrupted, not closed (issue #119): the transport is gone, but the Peer
+        // itself is held for a Resume, and CountersOf still answers for it.
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted)
+            .Which.Peer.Should().Be(id);
+        drained.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+        Action countersOf = () => accepter.Reactor.CountersOf(id);
+        countersOf.Should().NotThrow("the Peer is Interrupted, not gone — CountersOf must still answer for it");
     }
 
     // =========================================================================================
@@ -93,17 +98,17 @@ public class StreamSessionReceiveIdleDeadlineTests
     // =========================================================================================
 
     [Fact]
-    public void Pump_PeerAnnouncingAShortIntervalWhileThisEndsOwnIntervalIsLong_IsClosedOffThePeersOwnInterval()
+    public void Pump_PeerAnnouncingAShortIntervalWhileThisEndsOwnIntervalIsLong_IsInterruptedOffThePeersOwnInterval()
     {
         // Arrange — this end's own SendIdleInterval is 10 seconds, far longer than the deadline below.
         // If the receive-idle deadline were (wrongly) computed from this end's own SendIdleInterval
-        // instead of the peer's announced one, nothing would close for another ~9.4 seconds — so closing
-        // within the first 600 milliseconds can only mean the peer's own 200-millisecond interval drove
-        // the deadline.
+        // instead of the peer's announced one, nothing would move to Interrupted for another ~9.4
+        // seconds — so a move within the first 600 milliseconds can only mean the peer's own
+        // 200-millisecond interval drove the deadline.
         using StreamSessionReactorHarness accepter = new(sendIdleInterval: TimeSpan.FromSeconds(10));
         using RawPeer peer = new(accepter.Endpoint);
         const ulong peerSendIdleMs = 200;
-        EstablishSession(accepter, peer, peerSendIdleMs);
+        PeerId id = EstablishSession(accepter, peer, peerSendIdleMs);
         TimeSpan deadline = TimeSpan.FromMilliseconds(peerSendIdleMs * 3);
 
         // Act — one Pump short of the peer-derived deadline.
@@ -112,17 +117,18 @@ public class StreamSessionReceiveIdleDeadlineTests
 
         // Assert
         accepter.DrainToList().Should().NotContain(
-            e => e.Kind == SessionEventKind.PeerClosed,
+            e => e.Kind == SessionEventKind.PeerClosed || e.Kind == SessionEventKind.PeerInterrupted,
             "the peer-derived deadline has not fully elapsed yet");
 
         // Act — the last millisecond closes the peer-derived deadline.
         accepter.TimeProvider.Advance(TimeSpan.FromMilliseconds(1));
         accepter.Reactor.Pump();
 
-        // Assert — closed well before this end's own 10-second SendIdleInterval could ever be the cause.
-        accepter.DrainToList().Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
-            .Which.Reason.Should().Be(DisconnectReason.TransportFailed,
-                "the deadline must be driven by the peer's own announced interval, not this end's SendIdleInterval");
+        // Assert — Interrupted well before this end's own 10-second SendIdleInterval could ever be the
+        // cause.
+        accepter.DrainToList().Should().ContainSingle(
+            e => e.Kind == SessionEventKind.PeerInterrupted && e.Peer == id,
+            "the deadline must be driven by the peer's own announced interval, not this end's SendIdleInterval");
     }
 
     // =========================================================================================
@@ -136,7 +142,7 @@ public class StreamSessionReceiveIdleDeadlineTests
         // Arrange
         using StreamSessionReactorHarness accepter = new();
         using RawPeer peer = new(accepter.Endpoint);
-        EstablishSession(accepter, peer);
+        PeerId id = EstablishSession(accepter, peer);
         TimeSpan deadline = TimeSpan.FromMilliseconds(DefaultPeerSendIdleMs * 3);
 
         // Act — well before the deadline, the peer sends nothing but a bare delivery-counter record —
@@ -144,26 +150,26 @@ public class StreamSessionReceiveIdleDeadlineTests
         accepter.TimeProvider.Advance(deadline - TimeSpan.FromSeconds(1));
         peer.Send(StreamSessionTestRecords.BuildDeliveryCounterRecord(0));
         accepter.Reactor.Pump();
-        accepter.DrainToList().Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind == SessionEventKind.PeerClosed || e.Kind == SessionEventKind.PeerInterrupted);
 
         // Act — advance to one millisecond short of a full deadline measured from that bare heartbeat.
         // Measured from establishment instead, this point is already past the original deadline, so a
-        // Reactor that failed to reset on the bare heartbeat would already have closed the Peer here.
+        // Reactor that failed to reset on the bare heartbeat would already have interrupted the Peer here.
         accepter.TimeProvider.Advance(deadline - TimeSpan.FromMilliseconds(1));
         accepter.Reactor.Pump();
 
         // Assert — still alive: the deadline is measured from the bare heartbeat, not from establishment.
         accepter.DrainToList().Should().NotContain(
-            e => e.Kind == SessionEventKind.PeerClosed,
+            e => e.Kind == SessionEventKind.PeerClosed || e.Kind == SessionEventKind.PeerInterrupted,
             "the bare heartbeat reset the deadline, so a full interval has not yet passed since it arrived");
 
         // Act — the last millisecond closes the deadline measured from the bare heartbeat.
         accepter.TimeProvider.Advance(TimeSpan.FromMilliseconds(1));
         accepter.Reactor.Pump();
 
-        // Assert
-        accepter.DrainToList().Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
-            .Which.Reason.Should().Be(DisconnectReason.TransportFailed);
+        // Assert — Interrupted, not closed (issue #119).
+        accepter.DrainToList().Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted && e.Peer == id);
     }
 
     // =========================================================================================
@@ -177,7 +183,7 @@ public class StreamSessionReceiveIdleDeadlineTests
         // the peer's announced 1-second interval rather than three times it.
         using StreamSessionReactorHarness accepter = new(missedHeartbeats: 5);
         using RawPeer peer = new(accepter.Endpoint);
-        EstablishSession(accepter, peer);
+        PeerId id = EstablishSession(accepter, peer);
         TimeSpan deadline = TimeSpan.FromMilliseconds(DefaultPeerSendIdleMs * 5);
 
         // Act — one Pump short of the proportionally longer deadline: the default-count deadline (3
@@ -188,16 +194,15 @@ public class StreamSessionReceiveIdleDeadlineTests
 
         // Assert
         accepter.DrainToList().Should().NotContain(
-            e => e.Kind == SessionEventKind.PeerClosed,
+            e => e.Kind == SessionEventKind.PeerClosed || e.Kind == SessionEventKind.PeerInterrupted,
             "the deadline scales with the configured MissedHeartbeats count, not the default");
 
         // Act — the last millisecond closes the proportionally longer deadline.
         accepter.TimeProvider.Advance(TimeSpan.FromMilliseconds(1));
         accepter.Reactor.Pump();
 
-        // Assert
-        accepter.DrainToList().Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
-            .Which.Reason.Should().Be(DisconnectReason.TransportFailed);
+        // Assert — Interrupted, not closed (issue #119).
+        accepter.DrainToList().Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted && e.Peer == id);
     }
 
     // =========================================================================================
@@ -210,13 +215,14 @@ public class StreamSessionReceiveIdleDeadlineTests
         // Arrange
         string[] names = Enum.GetNames<DiagnosticId>();
 
-        // Assert — the receive-idle-to-close transition is already an Event
-        // (SessionEventKind.PeerClosed carrying DisconnectReason.TransportFailed); Info is reserved for
-        // lifecycle that never became one (ADR 0013), so this ticket adds no DiagnosticId member for it.
+        // Assert — the receive-idle-to-Interrupted transition (issue #117, revised by #119) is already
+        // an Event (SessionEventKind.PeerInterrupted); Info is reserved for lifecycle that never became
+        // one (ADR 0013), so this ticket adds no DiagnosticId member for it.
         names.Should().NotContain(
             n => n.Contains("ReceiveIdle", StringComparison.OrdinalIgnoreCase)
-                || n.Contains("MissedHeartbeat", StringComparison.OrdinalIgnoreCase),
-            "the receive-idle deadline (issue #117) is surfaced only through PeerClosed/TransportFailed, never a DiagnosticId");
+                || n.Contains("MissedHeartbeat", StringComparison.OrdinalIgnoreCase)
+                || n.Contains("Interrupted", StringComparison.OrdinalIgnoreCase),
+            "the receive-idle deadline (issue #117) and Interrupted (issue #119) are surfaced only through SessionEventKind, never a DiagnosticId");
     }
 
     /// <summary>

@@ -156,7 +156,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// calls queued them. Finally, every established Peer's two independent idle timers (#26) are
     /// enforced in one scan (<see cref="EnforceIdleTimers"/>): a Peer from which nothing has been
     /// received for <see cref="PeerSlot.RemoteSendIdleInterval"/> × <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>
-    /// is closed as a transport failure (issue #117), and every surviving Peer that has written nothing
+    /// moves to <see cref="SessionEventKind.PeerInterrupted"/> (issue #117, revised by issue #119), an
+    /// already-Interrupted Peer instead closes with <see cref="DisconnectReason.LingerExpired"/> once
+    /// its effective Linger has elapsed since the interruption (issue #121), and every surviving Peer
+    /// that has written nothing
     /// to the wire — including whatever this Frame's own flush just carried — for at least
     /// <see cref="StreamSessionOptions.SendIdleInterval"/> sends the same delivery-counter record as a
     /// heartbeat (issue #114/#26's first idle timer), unconditionally and regardless of whether anything
@@ -392,6 +395,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// — since a Message queued after a Goodbye is not one the far end has any business receiving
     /// (issue #23).
     /// </summary>
+    /// <remarks>
+    /// <see cref="PeerSlot.IsInterrupted"/> is deliberately not one of the refusal conditions above
+    /// (issue #120, ADR 0010's backpressure rule): a Send against an Interrupted Peer is exactly as
+    /// welcome as one against a live Peer, because holding retention across the interruption for a
+    /// possible Resume is the entire point of not closing the Peer in the first place. The append
+    /// behaves identically either way — the difference is only downstream, in
+    /// <see cref="FlushRetention"/>'s own <c>IsInterrupted</c> guard, which leaves these bytes queued
+    /// rather than attempting a dead socket. Once the ring genuinely has no room,
+    /// <see cref="RetentionOutcome.Exhausted"/> reports the same way it would for a live Peer — the
+    /// ring does not know or care why nothing has drained it — so an interruption that outlasts the
+    /// send rate reaches <see cref="SendOutcome.RetentionExhausted"/> exactly like a single oversized
+    /// Message or a sustained rate would, the third of the three paths ADR 0010 names to it.
+    /// </remarks>
     /// <param name="peer">The Peer to send to. Throws if not open, matching <see cref="CountersOf"/>.</param>
     /// <param name="message">
     /// The Message payload, unframed. Throws if longer than <see cref="StreamSessionOptions.MaxMessageSize"/> —
@@ -497,6 +513,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             SessionEventKind.MessageReceived => SessionEvent.ForMessageReceived(
                 pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
             SessionEventKind.PeerClosing => SessionEvent.ForPeerClosing(pending.Peer),
+            SessionEventKind.PeerInterrupted => SessionEvent.ForPeerInterrupted(pending.Peer),
             _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind."),
         };
     }
@@ -851,7 +868,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             switch (SendPendingRecord(slot.Link, pendingCounter, out ReadOnlyMemory<byte> remainder))
             {
                 case PendingRecordSendOutcome.Failed:
-                    ClosePeer(handle, DisconnectReason.TransportFailed);
+                    InterruptOrCloseOnTransportFailure(handle, slot);
                     return;
 
                 case PendingRecordSendOutcome.ShortSend:
@@ -985,7 +1002,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         {
             if (_peers.TryResolve(handle) is not PeerSlot slot
                 || slot.LocalGoodbyeSent
-                || slot.PendingCloseReasonAfterRetentionDrains is not null)
+                || slot.PendingCloseReasonAfterRetentionDrains is not null
+                || slot.IsInterrupted)
             {
                 // A Goodbye has passed for this Peer — this end's own (LocalGoodbyeSent) or the far
                 // end's, recorded the instant DeliverCompleteMessages classifies GoodbyeReceived even
@@ -995,6 +1013,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 // advance the received count and land this handle in the set above; skipping it here
                 // rather than in the populating site keeps that one recording site simple and puts the
                 // "is it still safe to write" question where every other outbound gate already asks it.
+                // IsInterrupted (issue #119) guards the same way against a Peer whose read advanced this
+                // count and whose socket then failed a write in the very same Frame's dispatcher pass —
+                // its transport is already gone, so there is nowhere left to send this record.
                 continue;
             }
 
@@ -1028,7 +1049,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         switch (SendPendingRecord(slot.Link, slot.DeliveryCounterRecord, out ReadOnlyMemory<byte> remainder))
         {
             case PendingRecordSendOutcome.Failed:
-                ClosePeer(handle, DisconnectReason.TransportFailed);
+                InterruptOrCloseOnTransportFailure(handle, slot);
                 break;
 
             case PendingRecordSendOutcome.ShortSend:
@@ -1092,6 +1113,18 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             >= slot.RemoteSendIdleInterval * _options.ResolvedMissedHeartbeats;
 
     /// <summary>
+    /// Whether an <see cref="PeerSlot.IsInterrupted"/> Peer's effective Linger
+    /// (<see cref="PeerSlot.EffectiveLinger"/>, negotiated at handshake and already reported via
+    /// <c>LingerNegotiated</c>) has run out since <see cref="PeerSlot.InterruptedTimestamp"/> (issue
+    /// #121). Linger is what closes an Interrupted Peer, not the transport loss that produced it — the
+    /// loss already happened, potentially long before this check ever runs, so the deadline is measured
+    /// from the moment this end stopped waiting on that transport rather than from anything about the
+    /// transport itself.
+    /// </summary>
+    private bool HasExceededLinger(PeerSlot slot) =>
+        _options.Reactor.TimeProvider.GetElapsedTime(slot.InterruptedTimestamp) >= slot.EffectiveLinger;
+
+    /// <summary>
     /// Reactor's two independent idle timers (#26): runs once per <see cref="Pump"/>, after
     /// <see cref="FlushPendingRetentionWrites"/>, over a single scan of every occupied Slot
     /// (<see cref="ShareHolderTable{T}.OccupantAt"/>) rather than two, since neither timer's trigger
@@ -1107,13 +1140,20 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// unconditional on what was received).
     /// </summary>
     /// <remarks>
-    /// Receive-idle expiry (#117) is checked first, ahead of the Goodbye gate below: a Peer whose
-    /// transport has actually died is closed as <see cref="DisconnectReason.TransportFailed"/>
-    /// regardless of whichever side's Goodbye may or may not be pending, and once
-    /// <see cref="ClosePeer"/> has removed it there is nothing left in this Slot for the send-idle check
-    /// to act on, so the loop moves to the next index. Landing note (issue #117): this closes the Peer
-    /// outright; issue #119 later revises this branch to move the Peer to an <c>Interrupted</c> state
-    /// instead, once that state exists.
+    /// Receive-idle expiry (#117, revised by #119) is checked first, ahead of the Goodbye gate below:
+    /// a Peer whose transport has actually died moves to <c>Interrupted</c>
+    /// (<see cref="InterruptOrCloseOnTransportFailure"/>) regardless of whichever side's Goodbye may or
+    /// may not be pending — or closes outright if a Goodbye had already decided this Peer's fate, that
+    /// helper's own job — and once it acts there is nothing left in this Slot for the send-idle check
+    /// to act on, so the loop moves to the next index. An already-Interrupted Peer skips both of those
+    /// timers — its socket is gone, so neither has anything left to measure or write to — and is
+    /// instead checked against its own Linger deadline (<see cref="HasExceededLinger"/>, issue #121):
+    /// once that elapses this Peer closes with <see cref="DisconnectReason.LingerExpired"/>, which is
+    /// also what ends the limbo a <see cref="Close"/> against an Interrupted Peer would otherwise leave
+    /// forever pending (issue #92) — <see cref="ClosePeer"/> is called directly here rather than through
+    /// <see cref="InterruptOrCloseOnTransportFailure"/>, since that helper answers "a live Peer's
+    /// transport just failed" and this is "an already-Interrupted Peer's Linger ran out", a different
+    /// question with an already-known answer.
     /// </remarks>
     private void EnforceIdleTimers()
     {
@@ -1124,9 +1164,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
+            if (slot.IsInterrupted)
+            {
+                if (HasExceededLinger(slot))
+                {
+                    ClosePeer(slot.Handle, DisconnectReason.LingerExpired);
+                }
+
+                continue;
+            }
+
             if (HasExceededReceiveIdleDeadline(slot))
             {
-                ClosePeer(slot.Handle, DisconnectReason.TransportFailed);
+                InterruptOrCloseOnTransportFailure(slot.Handle, slot);
                 continue;
             }
 
@@ -1200,14 +1250,31 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// socket a second time.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <see cref="RetentionArena.GetUnsent"/> can return two wrap segments. A short write partway
     /// through <paramref name="first"/> stops here and re-arms without touching <c>second</c> at all —
     /// marking sent only what was actually accepted keeps the ring's sent total honest with what the
     /// socket has truly taken. Only once <c>first</c> is entirely on the wire is <c>second</c>
     /// attempted, with the same short-write re-arm applied to it in turn.
+    /// </para>
+    /// <para>
+    /// A no-op for a Peer already <see cref="PeerSlot.IsInterrupted"/> (issue #119): its socket is
+    /// disposed, so there is nowhere for these bytes to go until a Resume — landing a write on that
+    /// socket is not merely wasted work, it is a use of a disposed <see cref="Socket"/>. Reachable even
+    /// though <see cref="InterruptPeer"/> already removes this handle from
+    /// <see cref="_peersWithPendingRetentionWrites"/>: a <see cref="Close"/> called against an
+    /// Interrupted Peer re-adds it via <see cref="AppendGoodbyeOrDefer"/>, which knows nothing about
+    /// transport state. What becomes of that owed Goodbye is #120/#121's concern, not this guard's —
+    /// this only keeps the attempt from touching a dead socket.
+    /// </para>
     /// </remarks>
     private void FlushRetention(SlotHandle handle, PeerSlot slot)
     {
+        if (slot.IsInterrupted)
+        {
+            return;
+        }
+
         (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) = _retention.GetUnsent(handle.Index);
         if (first.Length == 0)
         {
@@ -1218,7 +1285,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         TcpLinkSendResult firstResult = slot.Link.Send(first.Span);
         if (!firstResult.IsSuccess)
         {
-            ClosePeer(handle, DisconnectReason.TransportFailed);
+            InterruptOrCloseOnTransportFailure(handle, slot);
             return;
         }
 
@@ -1243,7 +1310,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         TcpLinkSendResult secondResult = slot.Link.Send(second.Span);
         if (!secondResult.IsSuccess)
         {
-            ClosePeer(handle, DisconnectReason.TransportFailed);
+            InterruptOrCloseOnTransportFailure(handle, slot);
             return;
         }
 
@@ -1411,12 +1478,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <remarks>
     /// <see cref="TcpLinkReceiveOutcome.EndOfStream"/> and <see cref="TcpLinkReceiveOutcome.Failed"/>
     /// are deliberately not folded into one branch here, unlike the handshake path above: a pending
-    /// socket error (<c>Failed</c>) is always <see cref="DisconnectReason.TransportFailed"/>, the
-    /// malformed-framing table's transport-failure row, arriving through this same read path exactly
-    /// as PR #73's readiness dispatcher promises and needing nothing extra to detect. A graceful end of
-    /// stream (<c>EndOfStream</c>) is classified by <see cref="ClassifyEndOfStream"/> instead, because
-    /// whether it is ordinary or a truncation depends on what this Peer's receive buffer was still
-    /// holding.
+    /// socket error (<c>Failed</c>) — a reset — moves this Peer to <c>Interrupted</c>
+    /// (<see cref="InterruptOrCloseOnTransportFailure"/>, issue #119), arriving through this same read
+    /// path exactly as PR #73's readiness dispatcher promises and needing nothing extra to detect. A
+    /// graceful end of stream (<c>EndOfStream</c>) is classified by <see cref="ClassifyEndOfStream"/>
+    /// instead, because whether it is ordinary or a truncation depends on what this Peer's receive
+    /// buffer was still holding — a mid-Message truncation is still a genuine
+    /// <see cref="DisconnectReason.ProtocolViolation"/> close, never merely an interruption, but a
+    /// clean FIN with nothing buffered and no Goodbye already accounted for is exactly the "FIN is not
+    /// a Goodbye" case ADR 0010 names: Interrupted, not closed, and never raised at all once a Goodbye
+    /// already decided this Peer's ending (<see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/>).
     /// </remarks>
     private void OnEstablishedPeerReadable(SlotHandle handle, PeerSlot slot)
     {
@@ -1439,10 +1510,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 {
                     ClosePeer(handle, reason);
                 }
+                else if (slot.PendingCloseReasonAfterRetentionDrains is null)
+                {
+                    InterruptPeer(handle, slot);
+                }
 
                 break;
             case TcpLinkReceiveOutcome.Failed:
-                ClosePeer(handle, DisconnectReason.TransportFailed);
+                InterruptOrCloseOnTransportFailure(handle, slot);
                 break;
         }
     }
@@ -1694,9 +1769,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// instant its four bytes arrive, so nonzero leftover bytes here are always a mid-prefix or
     /// mid-Message truncation — <see cref="DisconnectReason.ProtocolViolation"/>, the malformed-framing
     /// table's other two rows. Nothing buffered means no Message was in flight when it ended — but a
-    /// FIN is not a Goodbye (issue #23): without one, an otherwise-ordinary transport ending is not an
-    /// ending this library reports at all, so the Peer stays open for whatever's still on the wire
-    /// ahead of it or a Goodbye yet to arrive.
+    /// FIN is not a Goodbye (issue #23): without one, an otherwise-ordinary transport ending is not a
+    /// close this library reports at all, so <see langword="null"/> here sends the caller to
+    /// <see cref="InterruptPeer"/> instead (issue #119) rather than ending the Session outright.
     /// </summary>
     private static DisconnectReason? ClassifyEndOfStream(PeerSlot slot) =>
         slot.ReceiveBytesFilled == 0 ? null : DisconnectReason.ProtocolViolation;
@@ -1858,6 +1933,71 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         {
             _diagnostics.Log(DiagnosticRecord.ForAdmissionCapReached(_admissionCap, _capDeferralsThisFrame));
         }
+    }
+
+    /// <summary>
+    /// Moves an established Peer to Interrupted (issue #119): unregisters and disposes its dead
+    /// socket, then stops — unlike <see cref="ClosePeer"/>, the Slot is never removed from
+    /// <see cref="_peers"/>, so <see cref="PeerId"/> (generation included) stays live,
+    /// <see cref="CountersOf"/> keeps answering for it, and its retention ring and any inbound
+    /// Messages still buffered are held exactly as they were rather than reset or discarded. Only the
+    /// pending-retention-write marker is cleared, and only from the bookkeeping set that would
+    /// otherwise hand <see cref="FlushPendingRetentionWrites"/> a disposed socket on this Frame — a
+    /// consumer's own <see cref="Send"/> queuing more retention afterwards is #120's concern, not this
+    /// one's. Also stamps <see cref="PeerSlot.InterruptedTimestamp"/>, which is what starts this Peer's
+    /// effective Linger counting down (issue #121) — closing it is <see cref="EnforceIdleTimers"/>'s
+    /// job on a later Pump, not this method's. A no-op if this Peer is already Interrupted, since every
+    /// call site that reaches here can race a receive-idle expiry against a socket-level failure
+    /// discovered the same Frame.
+    /// </summary>
+    private void InterruptPeer(SlotHandle handle, PeerSlot slot)
+    {
+        if (slot.IsInterrupted)
+        {
+            return;
+        }
+
+        _dispatcher.Unregister(slot.Link.Socket);
+        slot.Link.Dispose();
+        slot.IsInterrupted = true;
+        slot.InterruptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+        _peersWithPendingRetentionWrites.Remove(handle);
+
+        _pendingEvents.Add(new PendingEvent
+        {
+            Kind = SessionEventKind.PeerInterrupted,
+            Peer = ToPeerId(handle),
+        });
+    }
+
+    /// <summary>
+    /// The shared decision behind every established-Peer transport failure this Reactor discovers on
+    /// its own side — a reset or failed read, a failed write, or the receive-idle deadline (issue
+    /// #119): <see cref="InterruptPeer"/> normally, except when a Goodbye already decided this Peer's
+    /// fate (<see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/> already set), in which case
+    /// the dead transport simply completes that ending — a write or read failing after this end's own
+    /// Goodbye or the far end's was already recorded is not a fresh interruption, it is that ending's
+    /// own socket finally giving out, and Closing must never be followed by Interrupted for the same
+    /// Peer (issue #119's acceptance criterion). Pre-establishment failures — a handshake still in
+    /// flight — never reach here at all: nothing was ever reported as connected, so there is no
+    /// established Peer for a consumer to see interrupted, and those keep the plain
+    /// <see cref="ClosePeer"/> behaviour this method exists to leave unchanged.
+    /// </summary>
+    private void InterruptOrCloseOnTransportFailure(SlotHandle handle, PeerSlot slot)
+    {
+        if (slot.State != HandshakeState.Established)
+        {
+            ClosePeer(handle, DisconnectReason.TransportFailed);
+            return;
+        }
+
+        if (slot.PendingCloseReasonAfterRetentionDrains is DisconnectReason reason)
+        {
+            ClosePeer(handle, reason);
+            return;
+        }
+
+        InterruptPeer(handle, slot);
     }
 
     private void ClosePeer(SlotHandle handle, DisconnectReason reason)
@@ -2101,6 +2241,27 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// and declare the Peer lost the very first Pump after connecting.
         /// </summary>
         public long LastReceiveTimestamp { get; set; }
+
+        /// <summary>
+        /// Set by <see cref="InterruptPeer"/> the instant this Peer's transport is gone (issue #119):
+        /// its socket has already been unregistered and disposed, but the Slot itself, this end's
+        /// counters, retention ring and any undelivered inbound Messages all stay exactly as they
+        /// were, so <see cref="EnforceIdleTimers"/> and <see cref="FlushPendingRetentionWrites"/> must
+        /// never touch <see cref="Link"/> again for a Peer with this set. Cleared only by a later
+        /// Resume (a later slice) or by <see cref="ClosePeer"/> removing the Slot outright — Linger
+        /// expiry (issue #121) is what eventually calls that.
+        /// </summary>
+        public bool IsInterrupted { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> value at the instant <see cref="InterruptPeer"/>
+        /// set <see cref="IsInterrupted"/> (issue #121) — the moment this Peer's effective Linger began
+        /// counting down. Meaningless while <see cref="IsInterrupted"/> is <see langword="false"/>; a
+        /// later Resume re-establishing <see cref="Link"/> would rearm this alongside clearing
+        /// <see cref="IsInterrupted"/> rather than leave a stale value for a Linger deadline that no
+        /// longer applies, though Resume itself is a later slice and does not exist yet.
+        /// </summary>
+        public long InterruptedTimestamp { get; set; }
     }
 
     /// <summary>

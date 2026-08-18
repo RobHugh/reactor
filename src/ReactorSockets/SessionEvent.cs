@@ -61,4 +61,11 @@ public readonly ref struct SessionEvent
     /// </summary>
     internal static SessionEvent ForPeerClosing(PeerId peer) =>
         new(SessionEventKind.PeerClosing, peer, default, default);
+
+    /// <summary>
+    /// Builds a <see cref="SessionEventKind.PeerInterrupted"/> event. Carries only <see cref="Peer"/> —
+    /// nothing has ended, so there is no <see cref="DisconnectReason"/> to report.
+    /// </summary>
+    internal static SessionEvent ForPeerInterrupted(PeerId peer) =>
+        new(SessionEventKind.PeerInterrupted, peer, default, default);
 }

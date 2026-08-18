@@ -43,7 +43,11 @@ public enum DisconnectReason
     /// The underlying transport failed or ended before or during the handshake: a reset, a dial that
     /// could not connect, or a stream that closed before a full handshake record arrived. Distinct
     /// from every other member here because nothing about the protocol was at fault — the byte stream
-    /// itself did not survive to carry it.
+    /// itself did not survive to carry it. Since issue #119, the same kind of failure on an
+    /// <em>established</em> Peer no longer produces this reason at all — it moves the Peer to
+    /// <see cref="SessionEventKind.PeerInterrupted"/> instead, because its identity and undelivered
+    /// Messages are still worth holding for a Resume. This member now fires only for a Peer that never
+    /// finished becoming one.
     /// </summary>
     TransportFailed = 3,
 
@@ -67,4 +71,23 @@ public enum DisconnectReason
     /// (<see cref="SessionEventKind.PeerClosing"/>) has drained.
     /// </summary>
     PeerGoodbye = 5,
+
+    /// <summary>
+    /// An <see cref="SessionEventKind.PeerInterrupted"/> Peer's effective Linger — the value
+    /// <c>LingerNegotiated</c> already reported at handshake (ADR 0011), the minimum of the two ends'
+    /// announced Lingers — elapsed before the transport came back (issue #121). Linger, not the loss of
+    /// the transport, is what closes an Interrupted Peer: the loss itself only produced
+    /// <see cref="SessionEventKind.PeerInterrupted"/> (issue #119) and held the Peer's identity,
+    /// counters and undelivered Messages open for a Resume. This member fires once that wait has run
+    /// out, and is also what bounds a <see cref="StreamSessionReactor.Close"/> whose Goodbye can never
+    /// reach a wire that no longer exists — without it, that Peer's retention would sit pending forever
+    /// (issue #92). Distinct from <see cref="TransportFailed"/>, which means the byte stream never
+    /// survived long enough to say anything at all — this means it survived, said nothing further
+    /// within the time this end had promised to wait, and this end gave up on its own clock rather than
+    /// being told to. Distinct from <see cref="PeerGoodbye"/>, which is an ending the remote announced
+    /// on purpose while its transport still worked — this is an ending this end declares unilaterally,
+    /// after silence, with no announcement possible because the transport that would have carried one
+    /// is already gone.
+    /// </summary>
+    LingerExpired = 6,
 }
