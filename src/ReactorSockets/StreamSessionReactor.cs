@@ -156,8 +156,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// calls queued them. Finally, every established Peer's two independent idle timers (#26) are
     /// enforced in one scan (<see cref="EnforceIdleTimers"/>): a Peer from which nothing has been
     /// received for <see cref="PeerSlot.RemoteSendIdleInterval"/> × <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>
-    /// moves to <see cref="SessionEventKind.PeerInterrupted"/> (issue #117, revised by issue #119), and
-    /// every surviving Peer that has written nothing
+    /// moves to <see cref="SessionEventKind.PeerInterrupted"/> (issue #117, revised by issue #119), an
+    /// already-Interrupted Peer instead closes with <see cref="DisconnectReason.LingerExpired"/> once
+    /// its effective Linger has elapsed since the interruption (issue #121), and every surviving Peer
+    /// that has written nothing
     /// to the wire — including whatever this Frame's own flush just carried — for at least
     /// <see cref="StreamSessionOptions.SendIdleInterval"/> sends the same delivery-counter record as a
     /// heartbeat (issue #114/#26's first idle timer), unconditionally and regardless of whether anything
@@ -1111,6 +1113,18 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             >= slot.RemoteSendIdleInterval * _options.ResolvedMissedHeartbeats;
 
     /// <summary>
+    /// Whether an <see cref="PeerSlot.IsInterrupted"/> Peer's effective Linger
+    /// (<see cref="PeerSlot.EffectiveLinger"/>, negotiated at handshake and already reported via
+    /// <c>LingerNegotiated</c>) has run out since <see cref="PeerSlot.InterruptedTimestamp"/> (issue
+    /// #121). Linger is what closes an Interrupted Peer, not the transport loss that produced it — the
+    /// loss already happened, potentially long before this check ever runs, so the deadline is measured
+    /// from the moment this end stopped waiting on that transport rather than from anything about the
+    /// transport itself.
+    /// </summary>
+    private bool HasExceededLinger(PeerSlot slot) =>
+        _options.Reactor.TimeProvider.GetElapsedTime(slot.InterruptedTimestamp) >= slot.EffectiveLinger;
+
+    /// <summary>
     /// Reactor's two independent idle timers (#26): runs once per <see cref="Pump"/>, after
     /// <see cref="FlushPendingRetentionWrites"/>, over a single scan of every occupied Slot
     /// (<see cref="ShareHolderTable{T}.OccupantAt"/>) rather than two, since neither timer's trigger
@@ -1131,17 +1145,32 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// (<see cref="InterruptOrCloseOnTransportFailure"/>) regardless of whichever side's Goodbye may or
     /// may not be pending — or closes outright if a Goodbye had already decided this Peer's fate, that
     /// helper's own job — and once it acts there is nothing left in this Slot for the send-idle check
-    /// to act on, so the loop moves to the next index. An already-Interrupted Peer is skipped entirely:
-    /// its socket is gone, so neither timer has anything left to measure or write to.
+    /// to act on, so the loop moves to the next index. An already-Interrupted Peer skips both of those
+    /// timers — its socket is gone, so neither has anything left to measure or write to — and is
+    /// instead checked against its own Linger deadline (<see cref="HasExceededLinger"/>, issue #121):
+    /// once that elapses this Peer closes with <see cref="DisconnectReason.LingerExpired"/>, which is
+    /// also what ends the limbo a <see cref="Close"/> against an Interrupted Peer would otherwise leave
+    /// forever pending (issue #92) — <see cref="ClosePeer"/> is called directly here rather than through
+    /// <see cref="InterruptOrCloseOnTransportFailure"/>, since that helper answers "a live Peer's
+    /// transport just failed" and this is "an already-Interrupted Peer's Linger ran out", a different
+    /// question with an already-known answer.
     /// </remarks>
     private void EnforceIdleTimers()
     {
         for (int index = 0; index < _peers.Capacity; index++)
         {
-            if (_peers.OccupantAt(index) is not PeerSlot slot
-                || slot.State != HandshakeState.Established
-                || slot.IsInterrupted)
+            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
             {
+                continue;
+            }
+
+            if (slot.IsInterrupted)
+            {
+                if (HasExceededLinger(slot))
+                {
+                    ClosePeer(slot.Handle, DisconnectReason.LingerExpired);
+                }
+
                 continue;
             }
 
@@ -1915,8 +1944,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// pending-retention-write marker is cleared, and only from the bookkeeping set that would
     /// otherwise hand <see cref="FlushPendingRetentionWrites"/> a disposed socket on this Frame — a
     /// consumer's own <see cref="Send"/> queuing more retention afterwards is #120's concern, not this
-    /// one's. A no-op if this Peer is already Interrupted, since every call site that reaches here can
-    /// race a receive-idle expiry against a socket-level failure discovered the same Frame.
+    /// one's. Also stamps <see cref="PeerSlot.InterruptedTimestamp"/>, which is what starts this Peer's
+    /// effective Linger counting down (issue #121) — closing it is <see cref="EnforceIdleTimers"/>'s
+    /// job on a later Pump, not this method's. A no-op if this Peer is already Interrupted, since every
+    /// call site that reaches here can race a receive-idle expiry against a socket-level failure
+    /// discovered the same Frame.
     /// </summary>
     private void InterruptPeer(SlotHandle handle, PeerSlot slot)
     {
@@ -1928,6 +1960,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _dispatcher.Unregister(slot.Link.Socket);
         slot.Link.Dispose();
         slot.IsInterrupted = true;
+        slot.InterruptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
         _peersWithPendingRetentionWrites.Remove(handle);
 
         _pendingEvents.Add(new PendingEvent
@@ -2216,9 +2249,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// were, so <see cref="EnforceIdleTimers"/> and <see cref="FlushPendingRetentionWrites"/> must
         /// never touch <see cref="Link"/> again for a Peer with this set. Cleared only by a later
         /// Resume (a later slice) or by <see cref="ClosePeer"/> removing the Slot outright — Linger
-        /// expiry (issue #121) is what eventually calls that, not this ticket.
+        /// expiry (issue #121) is what eventually calls that.
         /// </summary>
         public bool IsInterrupted { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> value at the instant <see cref="InterruptPeer"/>
+        /// set <see cref="IsInterrupted"/> (issue #121) — the moment this Peer's effective Linger began
+        /// counting down. Meaningless while <see cref="IsInterrupted"/> is <see langword="false"/>; a
+        /// later Resume re-establishing <see cref="Link"/> would rearm this alongside clearing
+        /// <see cref="IsInterrupted"/> rather than leave a stale value for a Linger deadline that no
+        /// longer applies, though Resume itself is a later slice and does not exist yet.
+        /// </summary>
+        public long InterruptedTimestamp { get; set; }
     }
 
     /// <summary>
