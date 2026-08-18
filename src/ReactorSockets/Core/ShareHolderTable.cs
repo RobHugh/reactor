@@ -152,6 +152,17 @@ internal sealed class ShareHolderTable<T>
     }
 
     /// <summary>
+    /// The occupant currently in Slot <paramref name="index"/>, or <see langword="null"/> if that Slot
+    /// is empty, addressed directly by index rather than by <see cref="SlotHandle"/> — the mechanism a
+    /// per-Pump scan over every Slot needs (the stream Session profile's send-idle timer, issue #114, is
+    /// the first caller) when there is no event to have queued a handle from in the first place. Never
+    /// throws: an out-of-range <paramref name="index"/> is a caller error against <see cref="Capacity"/>,
+    /// which the caller's own loop bound already guards.
+    /// </summary>
+    /// <param name="index">A Slot index in <c>[0, Capacity)</c>.</param>
+    public T? OccupantAt(int index) => _slots[index];
+
+    /// <summary>
     /// Empties every Slot and returns what they held, so a caller tearing the table down can release
     /// each occupant. Every emptied Slot's generation advances exactly as <see cref="Remove"/> would,
     /// leaving the table reusable and every outstanding handle stale.
