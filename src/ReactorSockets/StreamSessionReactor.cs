@@ -1812,10 +1812,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Dispatches a Peer's now-complete handshake record by its message type: a Hello, the ordinary
-    /// case, or a Refusal — the shape the far end's reply takes when it declines instead of
-    /// establishing (subtask 3.3). A record naming neither is malformed and closes the Peer, per the
-    /// house rule that a discard arm refuses rather than guesses.
+    /// case, a Refusal — the shape the far end's reply takes when it declines instead of establishing
+    /// (subtask 3.3) — or a Resume, a re-dialling end's claim on a Session this end may still be
+    /// holding (subtask 4.4). A record naming none of the three is malformed and closes the Peer, per
+    /// the house rule that a discard arm refuses rather than guesses.
     /// </summary>
+    /// <remarks>
+    /// A Resume closes the Peer here for now: the record's wire format exists (issue #115) but the
+    /// matching that gives it meaning is issue #123, so a well-formed Resume is refused rather than
+    /// guessed at, exactly as an unrecognised type is. This arm is where #123 lands.
+    /// </remarks>
     private void OnHandshakeRecordFilled(SlotHandle handle, PeerSlot slot)
     {
         if (!StreamHandshakeCodec.TryReadMessageType(slot.HandshakeBuffer, out StreamHandshakeMessageType type))
@@ -1832,6 +1838,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             case StreamHandshakeMessageType.Refusal:
                 OnRefusalRecordReceived(handle, slot);
                 break;
+            case StreamHandshakeMessageType.Resume:
             default:
                 ClosePeer(handle, DisconnectReason.TransportFailed);
                 break;
