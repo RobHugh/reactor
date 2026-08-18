@@ -13,11 +13,14 @@ namespace ReactorSockets.Tests;
 /// </summary>
 internal static class StreamSessionTestRecords
 {
-    /// <summary>1 type byte + 40-byte Hello payload. A Refusal is padded to the same size.</summary>
+    /// <summary>1 type byte + 40-byte Hello payload. A Refusal and a Resume are padded to the same size.</summary>
     public const int HandshakeRecordSize = 41;
 
     /// <summary>The wire type byte a Hello record's first byte carries.</summary>
     public const byte HelloRecordType = 1;
+
+    /// <summary>The wire type byte a Resume record's first byte carries (issue #115).</summary>
+    public const byte ResumeRecordType = 3;
 
     /// <summary>The protocol version this test suite's hand-built Hello records offer by default.</summary>
     public const uint ProtocolVersion = 1;
@@ -35,6 +38,27 @@ internal static class StreamSessionTestRecords
         BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), sendIdleMs);
         offset += 8;
         BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), lingerMs);
+        return record;
+    }
+
+    /// <summary>
+    /// Builds a <see cref="HandshakeRecordSize"/>-byte Resume record: the type byte, the 16-byte resume
+    /// secret, the 8-byte big-endian delivery counter, and zero padding out to the size a Hello occupies
+    /// (issue #115). Hand-rolled independently of the internal <c>StreamHandshakeCodec</c> that owns this
+    /// encoding in production, for the same L0/L1 untested-through reason every other builder here is.
+    /// </summary>
+    public static byte[] BuildResume(byte[]? resumeSecret = null, ulong deliveryCount = 0)
+    {
+        byte[] secret = resumeSecret ?? new byte[16];
+        if (secret.Length != 16)
+        {
+            throw new ArgumentException("A resume secret is exactly 16 bytes on the wire.", nameof(resumeSecret));
+        }
+
+        byte[] record = new byte[HandshakeRecordSize];
+        record[0] = ResumeRecordType;
+        secret.CopyTo(record.AsSpan(1, 16));
+        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(17, 8), deliveryCount);
         return record;
     }
 

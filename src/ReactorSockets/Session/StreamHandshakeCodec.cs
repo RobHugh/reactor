@@ -3,9 +3,10 @@ using System.Buffers.Binary;
 namespace ReactorSockets.Session;
 
 /// <summary>
-/// Which of the two records a stream handshake message on the wire carries. A one-byte tag prefixing
+/// Which of the three records a stream handshake message on the wire carries. A one-byte tag prefixing
 /// every record, so a Peer already waiting for a plain Hello can also recognise the in-protocol
-/// Refusal that takes its place when the far end declines (subtask 3.3).
+/// Refusal that takes its place when the far end declines (subtask 3.3), or the Resume a re-dialling
+/// end sends in its place to claim a Session the far end may still be holding (subtask 4.4).
 /// </summary>
 internal enum StreamHandshakeMessageType : byte
 {
@@ -14,6 +15,12 @@ internal enum StreamHandshakeMessageType : byte
 
     /// <summary>An in-protocol decline, carrying a <see cref="RefusalReason"/> and up to two values.</summary>
     Refusal = 2,
+
+    /// <summary>
+    /// A re-dialling end's claim on a Session the far end may still be holding, carrying only the
+    /// resume secret and this end's delivery counter.
+    /// </summary>
+    Resume = 3,
 }
 
 /// <summary>
@@ -32,10 +39,10 @@ internal enum StreamHandshakeMessageType : byte
 /// format never depends on a platform's tick resolution.
 /// </para>
 /// <para>
-/// A Refusal is deliberately the same <see cref="RecordSize"/> as a Hello, padded with zero bytes past
-/// its own shorter payload, so a Peer waiting on a fixed-size handshake record never needs to know
-/// which kind is coming before it has read the whole thing — only <see cref="TryReadMessageType"/>'s
-/// first byte tells it apart.
+/// A Refusal and a Resume are deliberately the same <see cref="RecordSize"/> as a Hello, padded with
+/// zero bytes past their own shorter payloads, so a Peer waiting on a fixed-size handshake record never
+/// needs to know which kind is coming before it has read the whole thing — only
+/// <see cref="TryReadMessageType"/>'s first byte tells them apart.
 /// </para>
 /// </remarks>
 internal static class StreamHandshakeCodec
@@ -52,14 +59,19 @@ internal static class StreamHandshakeCodec
         + sizeof(uint) // value0
         + sizeof(uint); // value1
 
+    private const int ResumePayloadSize =
+        StreamSessionProtocol.ResumeSecretLength
+        + sizeof(ulong); // deliveryCount
+
     /// <summary>
-    /// The exact size in bytes of one handshake record on the wire, whether it carries a Hello or a
-    /// Refusal — one message-type byte plus the larger of the two payloads.
+    /// The exact size in bytes of one handshake record on the wire, whichever kind it carries — one
+    /// message-type byte plus the largest of the three payloads, which is a Hello's.
     /// </summary>
     public const int RecordSize = sizeof(byte) + HelloPayloadSize;
 
     /// <summary>
-    /// Reads the one byte that tells a Hello from a Refusal, without interpreting anything else. Fails
+    /// Reads the one byte that tells a Hello, a Refusal and a Resume apart, without interpreting
+    /// anything else. Fails
     /// when <paramref name="record"/> is not exactly <see cref="RecordSize"/> bytes or its first byte
     /// names no member of <see cref="StreamHandshakeMessageType"/> — the discard arm refuses.
     /// </summary>
@@ -72,7 +84,9 @@ internal static class StreamHandshakeCodec
         }
 
         type = (StreamHandshakeMessageType)record[0];
-        return type is StreamHandshakeMessageType.Hello or StreamHandshakeMessageType.Refusal;
+        return type is StreamHandshakeMessageType.Hello
+            or StreamHandshakeMessageType.Refusal
+            or StreamHandshakeMessageType.Resume;
     }
 
     /// <summary>
@@ -186,6 +200,65 @@ internal static class StreamHandshakeCodec
         reason = (RefusalReason)record[1];
         value0 = BinaryPrimitives.ReadUInt32BigEndian(record[2..]);
         value1 = BinaryPrimitives.ReadUInt32BigEndian(record[6..]);
+        return true;
+    }
+
+    /// <summary>
+    /// Writes one Resume record: the resume secret the far end issued for this Session, and this end's
+    /// cumulative delivery counter, padded with zero bytes to <see cref="RecordSize"/> so it occupies
+    /// exactly the same span a Hello would.
+    /// </summary>
+    /// <remarks>
+    /// There is deliberately no field for version, <c>MaxMessageSize</c>, the send-idle interval or
+    /// Linger. Those are announced once in a Hello and are immutable for the Session's lifetime, so a
+    /// Resume has nothing to re-announce: only a process still holding the Session's state can present
+    /// a valid secret, since the secret, the retention ring and the counter all live in memory and die
+    /// with it. A process that restarted dials fresh and negotiates fresh, which is how a Session's
+    /// parameters change. The secret authorises a match; it never selects one, so it is not a routing
+    /// field.
+    /// </remarks>
+    public static void WriteResume(Span<byte> destination, ReadOnlySpan<byte> resumeSecret, ulong deliveryCount)
+    {
+        if (destination.Length != RecordSize)
+        {
+            throw new ArgumentException($"A handshake record buffer must be exactly {RecordSize} bytes.", nameof(destination));
+        }
+
+        if (resumeSecret.Length != StreamSessionProtocol.ResumeSecretLength)
+        {
+            throw new ArgumentException(
+                $"Must be exactly {StreamSessionProtocol.ResumeSecretLength} bytes.", nameof(resumeSecret));
+        }
+
+        destination[0] = (byte)StreamHandshakeMessageType.Resume;
+        int offset = 1;
+        resumeSecret.CopyTo(destination.Slice(offset, StreamSessionProtocol.ResumeSecretLength));
+        offset += StreamSessionProtocol.ResumeSecretLength;
+        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], deliveryCount);
+        destination[(1 + ResumePayloadSize)..].Clear();
+    }
+
+    /// <summary>
+    /// Reads one Resume record's payload. Fails when <paramref name="record"/> is not exactly
+    /// <see cref="RecordSize"/> bytes, its message type is not
+    /// <see cref="StreamHandshakeMessageType.Resume"/>, or <paramref name="resumeSecret"/> is not
+    /// exactly its wire length, since a caller that cannot hold a full secret could not use one
+    /// correctly regardless of what the record contains.
+    /// </summary>
+    public static bool TryReadResume(ReadOnlySpan<byte> record, Span<byte> resumeSecret, out ulong deliveryCount)
+    {
+        if (record.Length != RecordSize
+            || resumeSecret.Length != StreamSessionProtocol.ResumeSecretLength
+            || record[0] != (byte)StreamHandshakeMessageType.Resume)
+        {
+            deliveryCount = default;
+            return false;
+        }
+
+        int offset = 1;
+        record.Slice(offset, StreamSessionProtocol.ResumeSecretLength).CopyTo(resumeSecret);
+        offset += StreamSessionProtocol.ResumeSecretLength;
+        deliveryCount = BinaryPrimitives.ReadUInt64BigEndian(record[offset..]);
         return true;
     }
 }
