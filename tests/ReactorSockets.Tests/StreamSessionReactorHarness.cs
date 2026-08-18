@@ -170,7 +170,9 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// <see cref="Endpoint"/>, one at a time, pumping each to a completed handshake before dialing the
     /// next. Returns each held Peer's id paired with the raw counterparty socket occupying its Slot, so
     /// a follow-on test can interrupt, Goodbye, or reset any one of them — the caller owns disposing
-    /// every counterparty this returns.
+    /// every counterparty this returns — along with the resume secret this Reactor announced to each,
+    /// read out of the Hello it replied with, which is what a later Resume has to present to be
+    /// matched back onto that Peer's Slot (issue #123).
     /// </summary>
     public List<HeldPeer> FillToCapacity()
     {
@@ -179,8 +181,8 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         {
             RawStreamPeer counterparty = new(Endpoint);
             PeerId id = StreamSessionTestRecords.EstablishSession(this, counterparty.Send);
-            counterparty.Receive(StreamSessionTestRecords.HandshakeRecordSize);
-            held.Add(new HeldPeer(id, counterparty));
+            byte[] hello = counterparty.Receive(StreamSessionTestRecords.HandshakeRecordSize);
+            held.Add(new HeldPeer(id, counterparty, StreamSessionTestRecords.ReadResumeSecretFromHello(hello)));
         }
 
         return held;
@@ -279,7 +281,12 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// <see cref="Counterparty"/> to exercise what happens to a held Slot; the other entries
     /// <see cref="FillToCapacity"/> returns alongside it just keep occupying theirs.
     /// </summary>
-    public sealed record HeldPeer(PeerId Peer, RawStreamPeer Counterparty);
+    /// <param name="ResumeSecret">
+    /// The 16-byte secret this Reactor announced in the Hello it replied to this Peer with — the one a
+    /// Resume must present to be matched back onto this Peer's reserved Slot (issue #123). Read off the
+    /// wire, never out of the Reactor: how the secret is stored is not something a test may assert on.
+    /// </param>
+    public sealed record HeldPeer(PeerId Peer, RawStreamPeer Counterparty, byte[] ResumeSecret);
 
     /// <summary>
     /// The fate of a fresh inbound connection <see cref="AttemptFreshConnection"/> made against this
