@@ -229,27 +229,34 @@ public class StreamSessionMalformedFramingTests
     }
 
     // =========================================================================================
-    // Transport failure stays distinct
+    // Transport failure stays distinct — and, since issue #119, is no longer a close at all
     // =========================================================================================
 
     [Fact]
-    public void OnEstablishedPeerReadable_APendingSocketErrorOnRead_ClosesWithTransportFailedNotProtocolViolation()
+    public void OnEstablishedPeerReadable_APendingSocketErrorOnRead_MovesToInterruptedNotProtocolViolationOrClosed()
     {
         // Arrange — a peer whose close is forced to send an immediate RST rather than a graceful FIN
         // surfaces a pending socket error on the next read, exactly the path PR #73's readiness
         // dispatcher promises: the error set is scanned every Pump and dispatched to the same read
-        // callback this parser sits behind.
+        // callback this parser sits behind. Issue #119 revises what an established Peer's transport
+        // failure produces: Interrupted, distinct from both every ProtocolViolation case above and from
+        // a close outright — the Peer's identity and undelivered Messages are still held for a Resume.
         using StreamSessionReactorHarness accepter = new();
         using MalformedPeer peer = new(accepter.Endpoint);
         EstablishSession(accepter, peer);
 
         // Act
         peer.ResetAbruptly();
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> drained = PumpUntilClosed(accepter);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> drained = [];
+        for (int i = 0; i < 20 && !drained.Any(e => e.Kind == SessionEventKind.PeerInterrupted); i++)
+        {
+            accepter.Reactor.Pump();
+            drained.AddRange(accepter.DrainToListWithPayload());
+        }
 
-        // Assert — TransportFailed, distinct from every ProtocolViolation case above.
-        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
-            .Which.Reason.Should().Be(DisconnectReason.TransportFailed);
+        // Assert — Interrupted, never closed.
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted);
+        drained.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
     }
 
     /// <summary>

@@ -142,7 +142,7 @@ public class StreamSessionIdleTimerIndependenceTests
     }
 
     [Fact]
-    public void Pump_PeerStallingPastPeerSendIdleTimesMissedHeartbeats_IsDeclaredDead()
+    public void Pump_PeerStallingPastPeerSendIdleTimesMissedHeartbeats_IsInterrupted()
     {
         // Arrange — pairs with the test above: proves the tolerance has an actual ceiling rather than
         // the deadline being unreachable in practice.
@@ -155,9 +155,9 @@ public class StreamSessionIdleTimerIndependenceTests
         accepter.TimeProvider.Advance(deadline);
         accepter.Reactor.Pump();
 
-        // Assert — declared dead once the stall exceeds peerSendIdle x MissedHeartbeats.
-        accepter.DrainToList().Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
-            .Which.Reason.Should().Be(DisconnectReason.TransportFailed);
+        // Assert — moved to Interrupted once the stall exceeds peerSendIdle x MissedHeartbeats (issue
+        // #119 revises this from the close issue #117 originally landed).
+        accepter.DrainToList().Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted);
     }
 
     /// <summary>Mirrors <see cref="StreamSessionReceiveIdleDeadlineTests"/>'s own <c>EstablishSession</c>.</summary>

@@ -43,7 +43,11 @@ public enum DisconnectReason
     /// The underlying transport failed or ended before or during the handshake: a reset, a dial that
     /// could not connect, or a stream that closed before a full handshake record arrived. Distinct
     /// from every other member here because nothing about the protocol was at fault — the byte stream
-    /// itself did not survive to carry it.
+    /// itself did not survive to carry it. Since issue #119, the same kind of failure on an
+    /// <em>established</em> Peer no longer produces this reason at all — it moves the Peer to
+    /// <see cref="SessionEventKind.PeerInterrupted"/> instead, because its identity and undelivered
+    /// Messages are still worth holding for a Resume. This member now fires only for a Peer that never
+    /// finished becoming one.
     /// </summary>
     TransportFailed = 3,
 
