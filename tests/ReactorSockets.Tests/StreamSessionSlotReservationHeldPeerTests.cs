@@ -15,24 +15,8 @@ namespace ReactorSockets.Tests;
 /// </summary>
 public class StreamSessionSlotReservationHeldPeerTests
 {
-    /// <summary>
-    /// Fills a one-capacity Reactor, interrupts its sole held Peer with an abrupt reset, and drains
-    /// until the resulting <see cref="SessionEventKind.PeerInterrupted"/> is observed.
-    /// </summary>
-    private static PeerId FillAndInterruptSolePeer(StreamSessionReactorHarness accepter, StreamSessionReactorHarness.HeldPeer held)
-    {
-        held.Counterparty.ResetAbruptly();
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
-        for (int i = 0; i < 20 && !drained.Any(e => e.Kind == SessionEventKind.PeerInterrupted); i++)
-        {
-            accepter.Reactor.Pump();
-            drained.AddRange(accepter.DrainToList());
-        }
-
-        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted)
-            .Which.Peer.Should().Be(held.Peer);
-        return held.Peer;
-    }
+    /// <summary>The negotiated minimum Linger (ADR 0011) under the harness's and Hello's matching 1-second defaults.</summary>
+    private static readonly TimeSpan _effectiveLinger = TimeSpan.FromSeconds(1);
 
     // =========================================================================================
     // A capacity refusal raises no event against the held Peer, and does not close it
@@ -45,7 +29,8 @@ public class StreamSessionSlotReservationHeldPeerTests
         // has left to refuse against.
         using StreamSessionReactorHarness accepter = new(capacity: 1);
         List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
-        PeerId id = FillAndInterruptSolePeer(accepter, held[0]);
+        PeerId id = held[0].Peer;
+        accepter.InterruptHeldPeer(held[0]);
 
         // Act
         using StreamSessionReactorHarness.InboundAttemptResult outcome = accepter.AttemptFreshConnection();
@@ -71,7 +56,7 @@ public class StreamSessionSlotReservationHeldPeerTests
         using StreamSessionReactorHarness accepter = new(capacity: 1);
         List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
         PeerId originalId = held[0].Peer;
-        FillAndInterruptSolePeer(accepter, held[0]);
+        accepter.InterruptHeldPeer(held[0]);
 
         // Act — refuse a fresh connection against the reserved Slot.
         using StreamSessionReactorHarness.InboundAttemptResult outcome = accepter.AttemptFreshConnection();
@@ -101,7 +86,8 @@ public class StreamSessionSlotReservationHeldPeerTests
         held[0].Counterparty.Send(StreamSessionTestRecords.BuildFrame(message));
         accepter.PumpUntil(() => accepter.Reactor.CountersOf(held[0].Peer).MessagesReceived == 1);
         accepter.DrainToList();
-        PeerId id = FillAndInterruptSolePeer(accepter, held[0]);
+        PeerId id = held[0].Peer;
+        accepter.InterruptHeldPeer(held[0]);
         ulong messagesReceivedBeforeRefusal = accepter.Reactor.CountersOf(id).MessagesReceived;
 
         // Act
@@ -126,7 +112,8 @@ public class StreamSessionSlotReservationHeldPeerTests
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 1);
         List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
-        PeerId id = FillAndInterruptSolePeer(accepter, held[0]);
+        PeerId id = held[0].Peer;
+        accepter.InterruptHeldPeer(held[0]);
 
         // Act
         using StreamSessionReactorHarness.InboundAttemptResult outcome = accepter.AttemptFreshConnection();
@@ -152,22 +139,67 @@ public class StreamSessionSlotReservationHeldPeerTests
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 1);
         List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
-        PeerId id = FillAndInterruptSolePeer(accepter, held[0]);
+        PeerId id = held[0].Peer;
+        accepter.InterruptHeldPeer(held[0]);
         ulong messagesReceivedBeforeRefusals = accepter.Reactor.CountersOf(id).MessagesReceived;
 
-        // Act — three fresh connections in a row, each refused against the same reserved Slot.
+        // Act — three fresh connections in a row, each refused against the same reserved Slot; collect
+        // each attempt's outcome, drained events, and the held Peer's counters as they stand right after.
+        List<bool> admittedPerAttempt = [];
+        List<List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>> drainedPerAttempt = [];
+        List<ulong> messagesReceivedPerAttempt = [];
         for (int attempt = 0; attempt < 3; attempt++)
         {
             using StreamSessionReactorHarness.InboundAttemptResult outcome = accepter.AttemptFreshConnection();
-            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
-
-            // Assert — every one of the three refusals leaves the held Peer exactly as it was: same id,
-            // same counters, no event raised against it.
-            outcome.Admitted.Should().BeFalse($"attempt {attempt} should be refused for capacity");
-            drained.Should().NotContain(e => e.Peer == id, $"attempt {attempt} must raise no event against the held Peer");
-            accepter.Reactor.CountersOf(id).MessagesReceived.Should().Be(messagesReceivedBeforeRefusals,
-                $"attempt {attempt} must not disturb the held Peer's counters");
+            admittedPerAttempt.Add(outcome.Admitted);
+            drainedPerAttempt.Add(accepter.DrainToList());
+            messagesReceivedPerAttempt.Add(accepter.Reactor.CountersOf(id).MessagesReceived);
         }
+
+        // Assert — every one of the three refusals left the held Peer exactly as it was: refused for
+        // capacity, no event raised against it, and its counters undisturbed.
+        admittedPerAttempt.Should().AllSatisfy(admitted => admitted.Should().BeFalse());
+        drainedPerAttempt.Should().AllSatisfy(drained => drained.Should().NotContain(e => e.Peer == id));
+        messagesReceivedPerAttempt.Should().AllSatisfy(
+            messagesReceived => messagesReceived.Should().Be(messagesReceivedBeforeRefusals));
+
+        held[0].Counterparty.Dispose();
+    }
+
+    // =========================================================================================
+    // A capacity refusal leaves the held Peer's Linger deadline intact — it still closes naming
+    // Linger expiry rather than staying open forever or having already been torn down
+    // =========================================================================================
+
+    /// <summary>
+    /// Issue #140's criterion is that the held Peer "is still Interrupted" across a capacity refusal,
+    /// not merely that it has not yet been closed. A held Peer that stayed open (established or
+    /// resumed) or one whose Slot leaked forever would both still pass a bare "no PeerClosed drained"
+    /// assertion. Advancing time past its effective Linger and Pumping is the proof that distinguishes
+    /// them: only a Peer genuinely still Interrupted closes at that instant, naming
+    /// <see cref="DisconnectReason.LingerExpired"/> (see <see cref="StreamSessionLingerExpiryTests"/>).
+    /// </summary>
+    [Fact]
+    public void AttemptFreshConnection_RefusedByAnInterruptedPeersReservation_LeavesItsLingerDeadlineIntact()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = new(capacity: 1);
+        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
+        PeerId id = held[0].Peer;
+        accepter.InterruptHeldPeer(held[0]);
+
+        // Act — the refusal itself, then the effective Linger elapsing on the still-Interrupted Peer.
+        using StreamSessionReactorHarness.InboundAttemptResult outcome = accepter.AttemptFreshConnection();
+        accepter.DrainToList();
+        accepter.TimeProvider.Advance(_effectiveLinger);
+        accepter.Reactor.Pump();
+
+        // Assert — refused for capacity, and the held Peer's Linger deadline still lands exactly where
+        // it would have without the refusal, closing it and naming Linger expiry.
+        outcome.Admitted.Should().BeFalse();
+        accepter.DrainToList().Should().ContainSingle(
+            e => e.Kind == SessionEventKind.PeerClosed && e.Reason == DisconnectReason.LingerExpired
+                && e.Peer == id);
 
         held[0].Counterparty.Dispose();
     }
