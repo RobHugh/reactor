@@ -89,4 +89,37 @@ public class StreamSessionSlotReservationTests
             heldPeer.Counterparty.Dispose();
         }
     }
+
+    // =========================================================================================
+    // A reservation-driven refusal touches neither admission counter (issue #107, reading (b))
+    // =========================================================================================
+
+    [Fact]
+    public void Connect_RefusedBecauseAnInterruptedPeerReservesTheLastSlot_TouchesNeitherAdmissionCounter()
+    {
+        // Arrange — the only Slot occupied, then the Peer holding it is interrupted, so the Slot is
+        // reserved for the length of Linger rather than free.
+        using StreamSessionReactorHarness accepter = new(capacity: 1);
+        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
+        accepter.InterruptHeldPeer(held[0]);
+
+        ulong deferralsBefore = accepter.Reactor.Counters.AdmissionDeferrals;
+        ulong discardsBefore = accepter.Reactor.Counters.AdmissionDiscards;
+
+        // Act
+        using StreamSessionReactorHarness.InboundAttemptResult outcome = accepter.AttemptFreshConnection();
+
+        // Assert — the refusal happened, and the reservation is what caused it.
+        outcome.Admitted.Should().BeFalse();
+        outcome.RefusalReason.Should().Be(RefusalReasonCapacity);
+
+        // Assert — a reserved Slot changes nothing about how the refusal is counted. Issue #107 settled
+        // that a stream-profile capacity refusal is neither a Deferral (work left where a later Pump can
+        // take it) nor a Discard (work the Reactor was holding and let go): it is answered on the wire
+        // and the connection ends, so nothing waits and nothing is silently dropped. A reservation-driven
+        // refusal takes that same RefuseForCapacity path and inherits the same rule. What an operator
+        // reads for it is the PeerRefused Diagnostic, which names the remote, not a counter tick.
+        accepter.Reactor.Counters.AdmissionDeferrals.Should().Be(deferralsBefore);
+        accepter.Reactor.Counters.AdmissionDiscards.Should().Be(discardsBefore);
+    }
 }

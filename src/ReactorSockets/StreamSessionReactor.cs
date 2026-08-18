@@ -614,6 +614,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// closed. Never counted as an Admission Deferral or Discard — a refusal says something on the wire
     /// and ends the connection, which is a different outcome from silently leaving declined work for a
     /// later Pump.
+    /// <para>
+    /// A Slot an Interrupted Peer is reserving for the length of its Linger (ADR 0010) counts as
+    /// occupied here, so a fresh dial arriving against a reservation is refused down this same path and
+    /// is counted the same way: neither admission counter moves (issue #107). The capacity figure the
+    /// Refusal names is this Reactor's configured capacity either way, so a dialler cannot tell a
+    /// reserved Slot apart from one holding an established Peer — it learns "full", never "gone".
+    /// </para>
     /// </summary>
     private void RefuseForCapacity(TcpLink link)
     {
@@ -1915,7 +1922,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Reports the Frame's declined Admissions once, at its end, rather than once per declining. A
     /// capacity refusal is not reported here: it is an in-protocol Refusal that ends the connection,
     /// never a Deferral left for a later Pump, and the two counters this method feeds must stay
-    /// untouched by it (see <see cref="RefuseForCapacity"/>).
+    /// untouched by it (see <see cref="RefuseForCapacity"/>). That holds whether the Slot the dial was
+    /// refused for holds an established Peer or is reserved by an Interrupted one — a reservation
+    /// changes which dials are refused, never how a refusal is counted (issue #107).
     /// </summary>
     private void ReportDeclinedAdmissions()
     {
