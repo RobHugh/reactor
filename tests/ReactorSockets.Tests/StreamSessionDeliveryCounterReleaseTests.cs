@@ -88,7 +88,7 @@ public class StreamSessionDeliveryCounterReleaseTests
     // =========================================================================================
 
     [Fact]
-    public void ReleaseThroughMessageCount_ARepeatedOrLowerCount_FreesNothingFurtherAndIsNotAnError()
+    public void ReleaseThroughMessageCount_ARepeatedOrLowerCount_FreesNothingFurtherAndNeverUnReleasesWhatWasFreed()
     {
         // Arrange — same 60-byte/three-Message setup as the AC1 test above.
         const int maxMessageSize = 16;
@@ -107,37 +107,42 @@ public class StreamSessionDeliveryCounterReleaseTests
         accepter.Reactor.Pump();
         peer.Receive(BuildFrame(first).Length + BuildFrame(second).Length + BuildFrame(third).Length);
 
-        // Act — confirm through Message 2, then fill the freed 40 bytes exactly, leaving the ring full
-        // again (Message 3 still unconfirmed, plus two brand-new Messages).
+        // Act — confirm through Message 2, freeing exactly 40 bytes, and leave those bytes free. The
+        // lower count below has to be measured against room that exists: from a full ring, a released
+        // total that held still and one that moved backwards look identical, since both leave the next
+        // Send exhausted.
         peer.SendDeliveryCounter(2);
         accepter.Reactor.Pump();
+
+        // Act — the peer then reports a count *lower* than the one it already confirmed.
+        peer.SendDeliveryCounter(1);
+        accepter.Reactor.Pump();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> afterLower = accepter.DrainToList();
+
+        // Assert — all 40 bytes are still free: two more maximum Messages fit, and a third does not.
+        // Had the released total moved back to Message 1's boundary, only one would have fit.
         byte[] fourth = PayloadOf(maxMessageSize, 14);
         byte[] fifth = PayloadOf(maxMessageSize, 15);
         accepter.Reactor.Send(id, fourth).Should().Be(SendOutcome.Sent);
-        accepter.Reactor.Send(id, fifth).Should().Be(SendOutcome.Sent);
+        accepter.Reactor.Send(id, fifth).Should().Be(SendOutcome.Sent,
+            "a lower count must not un-release the bytes Message 2's confirmation already freed");
+        accepter.Reactor.Send(id, [9]).Should().Be(SendOutcome.RetentionExhausted,
+            "and it must not free anything beyond them either");
+        afterLower.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed, "a lower count is not an error");
+
+        // Act — the ring is full again (Message 3 plus the two just queued). The peer now repeats its
+        // already-reported count of 2, exactly as a real peer does, since the same number rides both of
+        // #25's emission triggers.
         accepter.Reactor.Pump();
         peer.Receive(BuildFrame(fourth).Length + BuildFrame(fifth).Length);
-
-        // Act — the peer repeats its already-reported count of 2, exactly as a real peer does since
-        // the same number rides both of #25's emission triggers.
         peer.SendDeliveryCounter(2);
         accepter.Reactor.Pump();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> afterRepeat = accepter.DrainToList();
 
         // Assert — repeating frees nothing further: still no room for even one more byte.
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> afterRepeat = accepter.DrainToList();
         accepter.Reactor.Send(id, [9]).Should().Be(SendOutcome.RetentionExhausted,
             "a repeated count must not free anything further");
         afterRepeat.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed, "repeating a count is not an error");
-
-        // Act — the peer then reports a count *lower* than what it already confirmed.
-        peer.SendDeliveryCounter(1);
-        accepter.Reactor.Pump();
-
-        // Assert — the released total never moves backwards: still no room, and still no violation.
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> afterLower = accepter.DrainToList();
-        accepter.Reactor.Send(id, [9]).Should().Be(SendOutcome.RetentionExhausted,
-            "a lower count must not un-release bytes already released, freeing nothing further either");
-        afterLower.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed, "a lower count is not an error");
     }
 
     // =========================================================================================
