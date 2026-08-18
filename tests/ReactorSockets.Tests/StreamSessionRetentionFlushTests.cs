@@ -213,7 +213,7 @@ public class StreamSessionRetentionFlushTests
     {
         // Arrange — the real-socket counterpart to StreamSessionSendRetentionTests' pure ring-capacity
         // exhaustion test. The counterparty's receive buffer is shrunk before it connects — never on
-        // an already-established socket, per CreateCounterpartyListener's doc and commit 8426ff3 —
+        // an already-established socket, per CreateCounterpartyListener's doc and commit 8a5e0c2 —
         // and it never reads again once the handshake completes. Both ends of the transport are pinned
         // here, not just the counterparty's: shrinking its receive window bounds what it will accept,
         // while SendBufferSize bounds what this end's own kernel will absorb on its behalf, and issue
