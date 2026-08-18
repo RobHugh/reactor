@@ -196,7 +196,7 @@ apart reads the diagnostics, which is what diagnostics are for.
 | 302 | `MalformedFraming` | `Warn` | Peer | claimed length / — |
 | 303 | `DataAfterGoodbye` | `Warn` | Peer | — / — |
 | 304 | `ResumeMatched` | `Info` | Peer | bytes rewound / — |
-| 305 | `ResumeUnmatched` | `Warn` | Source | — / — |
+| 305 | `ResumeUnmatched` | `Warn` | Source | reservations checked / claim record type |
 | 306 | `RedialAttempted` | `Info` | Peer | attempt number / delay in ms |
 | 307 | `RedialFailed` | `Info` | Peer | `SocketError` / attempt number |
 | 308 | `DeliveryCounterRefused` | `Warn` | Peer | claimed count / appended count |
@@ -208,6 +208,14 @@ Resume and re-dial four therefore shift to **304–307**, and slice 4.1's `Deliv
 tickets that implement them. Explicit values are not optional here precisely because this happens: a
 value published in a closed permanent enum cannot be moved later, so this table follows the code once
 the code has shipped a value, never the other way round.
+
+**Amended (slice 4.4.4).** `ResumeUnmatched` shipped with both value slots used, where this table had
+drafted neither. It carries the number of reserved Slots the claim was checked against and the wire
+record type the claim arrived as, because the three ways a Resume is refused are otherwise one record
+to an operator: a wrong secret and a once-valid secret arriving after its Linger expired differ only
+in whether any reservation was there to check (the count is 0 for the latter), and a Hello announcing
+a secret a reservation is holding — refused as a protocol violation — differs only in the record type.
+Per the rule above, the table follows the shipped code.
 
 Sixteen members as first drafted. What the rules **removed** is the more useful half of the exercise:
 

@@ -177,6 +177,23 @@ public readonly record struct DiagnosticRecord
         new(DiagnosticId.DataAfterGoodbye, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, 0, 0);
 
     /// <summary>
+    /// Builds a <see cref="DiagnosticId.ResumeMatched"/> record for the Peer a valid resume secret was
+    /// matched back onto. <c>Value0</c> is the number of retained outbound bytes the match rewound;
+    /// <c>Value1</c> is unused.
+    /// </summary>
+    public static DiagnosticRecord ForResumeMatched(PeerId peer, long bytesRewound) =>
+        new(DiagnosticId.ResumeMatched, DiagnosticLevel.Info, DiagnosticSubjectKind.Peer, default, default, peer, bytesRewound, 0);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.ResumeUnmatched"/> record for the claimed Source of a
+    /// connection that claimed an existing Session and was refused rather than resumed.
+    /// <c>Value0</c> is the number of Interrupted Peers the claim was checked against;
+    /// <c>Value1</c> is the wire record type the claim arrived as.
+    /// </summary>
+    public static DiagnosticRecord ForResumeUnmatched(Source source, long candidatesChecked, long recordType) =>
+        new(DiagnosticId.ResumeUnmatched, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, candidatesChecked, recordType);
+
+    /// <summary>
     /// Builds a <see cref="DiagnosticId.DeliveryCounterRefused"/> record for the Peer whose
     /// delivery-counter record claimed more Messages than this end ever sent it. <c>Value0</c> is the
     /// claimed cumulative count; <c>Value1</c> is the count of Messages this end has actually appended
