@@ -107,8 +107,10 @@ public class StreamSessionGoodbyeSlotReleaseTests
         accepter.TimeProvider.Advance(TimeSpan.FromSeconds(5));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.PumpAndDrainAll(5);
 
-        // Assert — nothing further was ever raised for the Peer that left by Goodbye.
-        drained.Should().NotContain(e => e.Peer == id);
+        // Assert — no Linger deadline (or anything else) ever fired: nothing drained at all, not merely
+        // nothing naming this Peer's generation-bumped id, which a spurious deadline could never carry
+        // either way.
+        drained.Should().BeEmpty();
     }
 
     [Fact]
@@ -135,7 +137,9 @@ public class StreamSessionGoodbyeSlotReleaseTests
         accepter.TimeProvider.Advance(TimeSpan.FromSeconds(5));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.PumpAndDrainAll(5);
 
-        // Assert — nothing further was ever raised for the Peer that left by Goodbye.
-        drained.Should().NotContain(e => e.Peer == id);
+        // Assert — no Linger deadline (or anything else) ever fired: nothing drained at all, not merely
+        // nothing naming this Peer's generation-bumped id, which a spurious deadline could never carry
+        // either way.
+        drained.Should().BeEmpty();
     }
 }
