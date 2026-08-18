@@ -24,30 +24,6 @@ public class StreamSessionSlotReleaseOnLingerTests
     private const byte RefusalReasonCapacity = 2;
     private static readonly TimeSpan _effectiveLinger = TimeSpan.FromSeconds(1);
 
-    /// <summary>
-    /// Fills <paramref name="accepter"/> to capacity, then interrupts one held Peer by resetting its
-    /// counterparty abruptly and pumping until <see cref="SessionEventKind.PeerInterrupted"/> drains —
-    /// leaving the Reactor still at capacity, with one Slot held by an Interrupted Peer rather than an
-    /// established one.
-    /// </summary>
-    private static (List<StreamSessionReactorHarness.HeldPeer> Held, PeerId InterruptedPeer) FillToCapacityAndInterruptOne(
-        StreamSessionReactorHarness accepter)
-    {
-        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
-        StreamSessionReactorHarness.HeldPeer interrupted = held[0];
-        interrupted.Counterparty.ResetAbruptly();
-
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
-        for (int i = 0; i < 20 && !drained.Any(e => e.Kind == SessionEventKind.PeerInterrupted); i++)
-        {
-            accepter.Reactor.Pump();
-            drained.AddRange(accepter.DrainToList());
-        }
-
-        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted && e.Peer == interrupted.Peer);
-        return (held, interrupted.Peer);
-    }
-
     // =========================================================================================
     // Just before the effective Linger elapses, the reservation still holds the Slot: refused
     // =========================================================================================
@@ -57,7 +33,8 @@ public class StreamSessionSlotReleaseOnLingerTests
     {
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 1);
-        (List<StreamSessionReactorHarness.HeldPeer> held, PeerId _) = FillToCapacityAndInterruptOne(accepter);
+        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
+        accepter.InterruptHeldPeer(held[0]);
 
         try
         {
@@ -89,7 +66,9 @@ public class StreamSessionSlotReleaseOnLingerTests
     {
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 1);
-        (List<StreamSessionReactorHarness.HeldPeer> held, PeerId interruptedPeer) = FillToCapacityAndInterruptOne(accepter);
+        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
+        PeerId interruptedPeer = held[0].Peer;
+        accepter.InterruptHeldPeer(held[0]);
 
         try
         {
@@ -119,19 +98,21 @@ public class StreamSessionSlotReleaseOnLingerTests
     [Fact]
     public void AttemptFreshConnection_AfterLingerExpiryClosesTheInterruptedPeerReservingTheLastSlot_IsAdmittedAndBecomesAnEstablishedPeer()
     {
-        // Arrange
+        // Arrange — an Interrupted Peer reserving the last Slot, then the effective Linger elapses,
+        // releasing the reservation (#121 closes the Peer). Guard that the release precondition this
+        // test depends on actually took effect before driving the fresh connection under test.
         using StreamSessionReactorHarness accepter = new(capacity: 1);
-        (List<StreamSessionReactorHarness.HeldPeer> held, PeerId interruptedPeer) = FillToCapacityAndInterruptOne(accepter);
+        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
+        PeerId interruptedPeer = held[0].Peer;
+        accepter.InterruptHeldPeer(held[0]);
+        accepter.TimeProvider.Advance(_effectiveLinger);
+        accepter.Reactor.Pump();
+        accepter.DrainToList().Should().ContainSingle(
+            e => e.Kind == SessionEventKind.PeerClosed && e.Reason == DisconnectReason.LingerExpired
+                && e.Peer == interruptedPeer);
 
         try
         {
-            // Arrange — the effective Linger elapses, releasing the reserved Slot (#121 closes the Peer).
-            accepter.TimeProvider.Advance(_effectiveLinger);
-            accepter.Reactor.Pump();
-            accepter.DrainToList().Should().ContainSingle(
-                e => e.Kind == SessionEventKind.PeerClosed && e.Reason == DisconnectReason.LingerExpired
-                    && e.Peer == interruptedPeer);
-
             // Act — a fresh connection attempted after the release.
             using StreamSessionReactorHarness.InboundAttemptResult outcome = accepter.AttemptFreshConnection();
 
