@@ -153,13 +153,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// exactly once (<see cref="EmitDeliveryCounters"/>, issue #116/#25's second trigger), before every
     /// Peer's queued retention bytes are flushed exactly once
     /// (<see cref="FlushPendingRetentionWrites"/>, #90/3.6.2) regardless of how many <see cref="Send"/>
-    /// calls queued them. Finally, every established Peer that has written nothing to the wire —
-    /// including whatever this Frame's own flush just carried — for at least
+    /// calls queued them. Finally, every established Peer's two independent idle timers (#26) are
+    /// enforced in one scan (<see cref="EnforceIdleTimers"/>): a Peer from which nothing has been
+    /// received for <see cref="PeerSlot.RemoteSendIdleInterval"/> × <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>
+    /// is closed as a transport failure (issue #117), and every surviving Peer that has written nothing
+    /// to the wire — including whatever this Frame's own flush just carried — for at least
     /// <see cref="StreamSessionOptions.SendIdleInterval"/> sends the same delivery-counter record as a
-    /// heartbeat (<see cref="EmitSendIdleHeartbeats"/>, issue #114/#26's first idle timer), unconditionally
-    /// and regardless of whether anything was ever received from it. Throws
-    /// <see cref="InvalidOperationException"/> if called from any thread other than the one that
-    /// constructed this Reactor, or from inside a Pump already in progress.
+    /// heartbeat (issue #114/#26's first idle timer), unconditionally and regardless of whether anything
+    /// was ever received from it. Throws <see cref="InvalidOperationException"/> if called from any
+    /// thread other than the one that constructed this Reactor, or from inside a Pump already in
+    /// progress.
     /// </summary>
     public void Pump()
     {
@@ -179,7 +182,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             _dispatcher.Pump();
             EmitDeliveryCounters();
             FlushPendingRetentionWrites();
-            EmitSendIdleHeartbeats();
+            EnforceIdleTimers();
             ProcessConnectingPeers();
             ReportDeclinedAdmissions();
         }
@@ -1060,36 +1063,70 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         slot.LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
 
     /// <summary>
-    /// The send-idle timer (issue #114, #26's first idle timer): sends this end's delivery-counter
-    /// record as a heartbeat to every established Peer that has written nothing to the wire — Message,
-    /// Goodbye, or an earlier heartbeat alike (<see cref="MarkSendActivity"/>) — for at least
-    /// <see cref="StreamSessionOptions.SendIdleInterval"/>. Runs once per <see cref="Pump"/>, after
-    /// <see cref="FlushPendingRetentionWrites"/>, so that a Message or Goodbye this very Frame already
-    /// carried to the wire counts as the activity that resets the deadline rather than this method
-    /// racing that flush and firing a redundant heartbeat alongside traffic that already reset the
-    /// clock. Unconditional, by design and unlike <see cref="EmitDeliveryCounters"/>'s received-count
-    /// trigger: this one does not consult whether anything was received, and must not, because issue
-    /// #118 tests directly a Peer that only ever sends into a receiver that never confirms anything back
-    /// — the send-idle timer is what proves this end is still alive to that Peer regardless of whether
-    /// its own traffic is arriving. Never disableable: there is no option on
-    /// <see cref="StreamSessionOptions"/> to turn this off, because the heartbeat is never a wasted
-    /// packet — it is the delivery-counter record itself (issue #109), so one idle record proves
-    /// liveness, advances the peer's resume point and releases the peer's retention in one.
+    /// Records that a run of bytes just arrived from <paramref name="slot"/>'s wire — the only evidence
+    /// this end has that the peer's transport is still there (issue #117): over TCP, sending proves
+    /// nothing, since the kernel accepts written bytes into a buffer whether or not anything is at the
+    /// far end, but a byte the OS handed back on a read came from somewhere. Stamped on every
+    /// <see cref="TcpLinkReceiveOutcome.Delivered"/> read (<see cref="OnEstablishedPeerReadable"/>),
+    /// before framing even classifies what those bytes are — a bare heartbeat carrying no Messages
+    /// resets the receive-idle deadline exactly as a Message does, because both are bytes this end did
+    /// not have a moment ago.
+    /// </summary>
+    private void MarkReceiveActivity(PeerSlot slot) =>
+        slot.LastReceiveTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+
+    /// <summary>
+    /// Whether <paramref name="slot"/> has gone silent past this end's receive-idle deadline (issue
+    /// #117, #26's second idle timer): <see cref="PeerSlot.RemoteSendIdleInterval"/> — the interval the
+    /// peer itself announced in its Hello, never this end's own <see cref="StreamSessionOptions.SendIdleInterval"/>
+    /// — multiplied by <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>. A count only means
+    /// something relative to the peer's own emission interval, which is why this deadline is computed
+    /// rather than configured, and why no round-trip term is added to it (ADR 0010's figure would have
+    /// had to be invented, since this profile has no RTT estimator — a dimensionless count of 2 or more
+    /// satisfies "exceeds the send interval" by construction instead). Worked example: a peer announcing
+    /// a 10-second send-idle interval, at the default <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>
+    /// of 3, is declared lost after 30 seconds of silence from it — three of its own heartbeats missed.
+    /// </summary>
+    private bool HasExceededReceiveIdleDeadline(PeerSlot slot) =>
+        _options.Reactor.TimeProvider.GetElapsedTime(slot.LastReceiveTimestamp)
+            >= slot.RemoteSendIdleInterval * _options.ResolvedMissedHeartbeats;
+
+    /// <summary>
+    /// Reactor's two independent idle timers (#26): runs once per <see cref="Pump"/>, after
+    /// <see cref="FlushPendingRetentionWrites"/>, over a single scan of every occupied Slot
+    /// (<see cref="ShareHolderTable{T}.OccupantAt"/>) rather than two, since neither timer's trigger
+    /// produces an event of its own to enqueue a handle from the way <see cref="EmitDeliveryCounters"/>
+    /// rides <see cref="_peersWithAdvancedReceivedCount"/> — the only way to know a Peer has gone quiet,
+    /// on either timer, is to ask every established one, every Pump. The scan costs at most
+    /// <see cref="ShareHolderTable{T}.Capacity"/> array reads, all of it against already-allocated
+    /// state; nothing here allocates. Sharing the loop does not couple the two decisions: the
+    /// receive-idle check (issue #117) is evaluated and acted on, independently, before the send-idle
+    /// check (issue #114) ever runs for that same Slot, so a Peer that receives nothing yet keeps
+    /// sending fine is judged purely on <see cref="HasExceededReceiveIdleDeadline"/> — never on whether
+    /// it also happened to send something this Frame (issue #118's requirement that the send timer stay
+    /// unconditional on what was received).
     /// </summary>
     /// <remarks>
-    /// Walks every occupied Slot by index (<see cref="ShareHolderTable{T}.OccupantAt"/>) rather than
-    /// riding an event-populated set the way <see cref="EmitDeliveryCounters"/> rides
-    /// <see cref="_peersWithAdvancedReceivedCount"/>: the trigger here is silence, which produces no
-    /// event of its own to enqueue a handle from — the only way to know a Peer has gone quiet is to ask
-    /// every established one, every Pump. The scan costs at most <see cref="ShareHolderTable{T}.Capacity"/>
-    /// array reads, all of it against already-allocated state; nothing here allocates.
+    /// Receive-idle expiry (#117) is checked first, ahead of the Goodbye gate below: a Peer whose
+    /// transport has actually died is closed as <see cref="DisconnectReason.TransportFailed"/>
+    /// regardless of whichever side's Goodbye may or may not be pending, and once
+    /// <see cref="ClosePeer"/> has removed it there is nothing left in this Slot for the send-idle check
+    /// to act on, so the loop moves to the next index. Landing note (issue #117): this closes the Peer
+    /// outright; issue #119 later revises this branch to move the Peer to an <c>Interrupted</c> state
+    /// instead, once that state exists.
     /// </remarks>
-    private void EmitSendIdleHeartbeats()
+    private void EnforceIdleTimers()
     {
         for (int index = 0; index < _peers.Capacity; index++)
         {
             if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
             {
+                continue;
+            }
+
+            if (HasExceededReceiveIdleDeadline(slot))
+            {
+                ClosePeer(slot.Handle, DisconnectReason.TransportFailed);
                 continue;
             }
 
@@ -1394,6 +1431,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         {
             case TcpLinkReceiveOutcome.Delivered:
                 slot.ReceiveBytesFilled += result.Payload.Length;
+                MarkReceiveActivity(slot);
                 DeliverCompleteMessages(handle, slot);
                 break;
             case TcpLinkReceiveOutcome.EndOfStream:
@@ -1756,10 +1794,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         slot.EffectiveLinger = effectiveLinger;
         slot.State = HandshakeState.Established;
 
-        // The send-idle deadline (issue #114) starts counting from establishment, not from
-        // LastSendTimestamp's default(long) — which would read as an interval already elapsed and fire
-        // a heartbeat on the very next Pump regardless of how fresh the Session actually is.
-        slot.LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+        // Both idle deadlines (issues #114 and #117) start counting from establishment, not from
+        // default(long) — which would read as an interval already elapsed and either fire a heartbeat
+        // or declare the Peer lost on the very next Pump regardless of how fresh the Session actually
+        // is. The Hello that just arrived is itself received activity, so LastReceiveTimestamp is
+        // stamped here rather than left to wait for the first post-establishment read.
+        long now = _options.Reactor.TimeProvider.GetTimestamp();
+        slot.LastSendTimestamp = now;
+        slot.LastReceiveTimestamp = now;
 
         PeerId peer = ToPeerId(handle);
         _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = peer });
@@ -2035,7 +2077,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// The <see cref="TimeProvider.GetTimestamp"/> value at this end's most recent outbound write to
         /// this Peer's wire — a Message or Goodbye byte actually handed to the socket
         /// (<see cref="FlushRetention"/>), or a delivery-counter record sent either as this end's
-        /// send-idle heartbeat (<see cref="EmitSendIdleHeartbeats"/>, issue #114) or the received-count
+        /// send-idle heartbeat (<see cref="EnforceIdleTimers"/>, issue #114) or the received-count
         /// trigger (<see cref="SendDeliveryCounterOrArm"/>, issue #116) — whichever happened last.
         /// Initialised the instant this Peer establishes (<see cref="OnHelloRecordReceived"/>), so the
         /// send-idle deadline counts from establishment rather than from
@@ -2046,6 +2088,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// that queues a Message but is never followed by a <see cref="Pump"/> must not reset it.
         /// </summary>
         public long LastSendTimestamp { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> value at this end's most recent inbound bytes
+        /// from this Peer's wire (<see cref="MarkReceiveActivity"/>, issue #117) — any run of bytes the
+        /// OS handed back on a read, including a bare heartbeat's delivery-counter record carrying no
+        /// Messages, since over TCP only receiving is evidence the peer's transport is still there.
+        /// Initialised the instant this Peer establishes (<see cref="OnHelloRecordReceived"/>) from the
+        /// Hello record that just arrived, so the receive-idle deadline
+        /// (<see cref="HasExceededReceiveIdleDeadline"/>) counts from establishment rather than from
+        /// <see langword="default"/>'s epoch, which would otherwise read as an already-elapsed interval
+        /// and declare the Peer lost the very first Pump after connecting.
+        /// </summary>
+        public long LastReceiveTimestamp { get; set; }
     }
 
     /// <summary>

@@ -72,8 +72,13 @@ public class StreamSessionSendIdleHeartbeatTests
     [Fact]
     public void Pump_ContinuousOutboundTrafficWithinEveryInterval_NeverEmitsASendIdleHeartbeat()
     {
-        // Arrange
-        using StreamSessionReactorHarness accepter = new(maxMessageSize: 32, retentionBytes: 400);
+        // Arrange — missedHeartbeats is raised well past the default so this test's own receive-idle
+        // deadline (issue #117: RemoteSendIdleInterval x ResolvedMissedHeartbeats) cannot fire during
+        // the roughly five seconds of silence from HeartbeatPeer below, which never sends anything back;
+        // that silence is irrelevant to what this test is about — whether continuous outbound traffic
+        // suppresses the send-idle heartbeat — so the receive-idle timer is pushed out of the way rather
+        // than exercised here.
+        using StreamSessionReactorHarness accepter = new(maxMessageSize: 32, retentionBytes: 400, missedHeartbeats: 60);
         using HeartbeatPeer peer = new(accepter.Endpoint);
         PeerId id = EstablishSession(accepter, peer);
 
