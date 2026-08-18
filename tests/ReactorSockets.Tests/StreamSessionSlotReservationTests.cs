@@ -32,16 +32,7 @@ public class StreamSessionSlotReservationTests
         // interrupted by a reset rather than closed with a Goodbye (ADR 0010) — it keeps its Slot.
         using StreamSessionReactorHarness accepter = new(capacity: 2);
         List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
-        held[0].Counterparty.ResetAbruptly();
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
-        for (int i = 0; i < 20 && !drained.Any(e => e.Kind == SessionEventKind.PeerInterrupted); i++)
-        {
-            accepter.Reactor.Pump();
-            drained.AddRange(accepter.DrainToList());
-        }
-
-        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted)
-            .Which.Peer.Should().Be(held[0].Peer);
+        accepter.InterruptHeldPeer(held[0]);
 
         // Act — a fresh connection arrives while the Interrupted Peer is still held, well inside Linger.
         using StreamSessionReactorHarness.InboundAttemptResult outcome = accepter.AttemptFreshConnection();
@@ -75,13 +66,7 @@ public class StreamSessionSlotReservationTests
 
         using StreamSessionReactorHarness oneInterrupted = new(capacity: 2);
         List<StreamSessionReactorHarness.HeldPeer> interruptedHeld = oneInterrupted.FillToCapacity();
-        interruptedHeld[0].Counterparty.ResetAbruptly();
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
-        for (int i = 0; i < 20 && !drained.Any(e => e.Kind == SessionEventKind.PeerInterrupted); i++)
-        {
-            oneInterrupted.Reactor.Pump();
-            drained.AddRange(oneInterrupted.DrainToList());
-        }
+        oneInterrupted.InterruptHeldPeer(interruptedHeld[0]);
 
         // Act
         using StreamSessionReactorHarness.InboundAttemptResult establishedOutcome = allEstablished.AttemptFreshConnection();
