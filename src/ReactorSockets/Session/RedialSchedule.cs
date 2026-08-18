@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace ReactorSockets;
+namespace ReactorSockets.Session;
 
 /// <summary>
 /// The delays a dialling side waits between re-dial attempts after its transport is lost: it starts
@@ -22,20 +22,22 @@ namespace ReactorSockets;
 /// fixed fraction of it — is what spreads them.
 /// </para>
 /// <para>
-/// This type is public so the schedule can be pinned by a test without an <c>InternalsVisibleTo</c>
-/// (ADR 0015): the jitter source is a constructor parameter, and a test supplies a deterministic one
-/// by deriving from <see cref="RandomNumberGenerator"/>. It is a value the consumer never has to
-/// build — a Reactor constructs its own — and it holds no resource.
+/// The type is internal, so the consumer's surface stays as small as ADR 0003 and ADR 0011 leave it —
+/// the schedule is derived and cannot be set, and a public constructor would have been a permanent
+/// commitment to a value no consumer ever builds. The jitter source is a constructor parameter rather
+/// than a source this type creates, so a test substitutes a deterministic one through the options
+/// seam a Reactor draws it from, and the schedule is observed through the Reactor that re-dials on it
+/// (issue #125). Nothing here is reached past the seam and no <c>InternalsVisibleTo</c> exists
+/// (ADR 0015).
 /// </para>
 /// </remarks>
-public sealed class RedialSchedule
+internal sealed class RedialSchedule
 {
     /// <summary>
-    /// The jitter source, drawn from once per delay. Never disposed: a supplied generator belongs to
-    /// the caller, who may hand the same one to several schedules, and the default instance
-    /// <see cref="RandomNumberGenerator.Create()"/> returns holds no handle — it draws from the OS on
-    /// each call, so its <c>Dispose</c> has nothing to release. This is the argument
-    /// <see cref="StreamSessionOptions.Entropy"/> already makes.
+    /// The jitter source, drawn from once per delay. Never disposed: the generator belongs to the
+    /// consumer who supplied it, who may hand the same one to several Reactors — the rule
+    /// <see cref="StreamSessionOptions.Entropy"/> already states, and this schedule is handed that same
+    /// generator rather than creating one of its own.
     /// </summary>
     private readonly RandomNumberGenerator _jitter;
 
@@ -58,14 +60,14 @@ public sealed class RedialSchedule
     /// Linger.
     /// </param>
     /// <param name="jitter">
-    /// The source each delay is drawn from, or <see langword="null"/> for the platform CSPRNG. The
-    /// default is derived rather than guessed — the platform generator is the citable provenance, the
-    /// same argument <see cref="StreamSessionOptions.Entropy"/> makes.
+    /// The source each delay is drawn from. Required and never defaulted here: the caller is a
+    /// Reactor, which already holds the consumer's own generator, and a second default would be a
+    /// second answer to a question <see cref="StreamSessionOptions.Entropy"/> has already settled.
     /// </param>
     /// <exception cref="ArgumentOutOfRangeException">
     /// Either interval is zero or negative, neither of which describes a wait.
     /// </exception>
-    public RedialSchedule(TimeSpan pumpInterval, TimeSpan linger, RandomNumberGenerator? jitter = null)
+    internal RedialSchedule(TimeSpan pumpInterval, TimeSpan linger, RandomNumberGenerator jitter)
     {
         if (pumpInterval <= TimeSpan.Zero)
         {
@@ -83,7 +85,7 @@ public sealed class RedialSchedule
                 $"a Linger of {linger} leaves no window to re-dial in — it must be greater than zero.");
         }
 
-        _jitter = jitter ?? RandomNumberGenerator.Create();
+        _jitter = jitter;
         _ceilingTicks = linger.Ticks;
         _computedTicks = Math.Min(pumpInterval.Ticks, _ceilingTicks);
     }
@@ -94,7 +96,7 @@ public sealed class RedialSchedule
     /// effective Linger and stays there.
     /// </summary>
     /// <returns>How long to wait before the next re-dial attempt.</returns>
-    public TimeSpan NextDelay()
+    internal TimeSpan NextDelay()
     {
         long drawnTicks = Draw(_computedTicks);
 
