@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Reflection;
 using FluentAssertions;
 using Xunit;
 
@@ -203,6 +204,29 @@ public class StreamSessionDeliveryCounterFramingTests
             "DeliveryCounterRefused is a distinct diagnostic shape, not a reuse of MalformedFraming's claimed-length one");
     }
 
+    [Fact]
+    public void DeliverCompleteMessages_ACountUsingEveryByteOfTheBody_IsDecodedInFullRatherThanTruncated()
+    {
+        // Arrange — every one of the eight body bytes is distinct and nonzero, and the value sits far
+        // above uint.MaxValue. Every other count in this suite is small enough to live in the body's
+        // last byte alone, so nothing else here would notice a decoder that read four bytes instead of
+        // eight, or read them little-endian: both report a different number for this one.
+        const ulong count = 0x0102030405060708UL;
+        using StreamSessionReactorHarness accepter = new();
+        using CounterRecordPeer peer = new(accepter.Endpoint);
+        EstablishSession(accepter, peer);
+        accepter.Sink.Received.Clear();
+
+        // Act
+        peer.Send(BuildDeliveryCounterRecord(count));
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.DeliveryCounterRefused));
+
+        // Assert — refused, since this end never sent this Peer anything, and the refusal reports the
+        // whole u64 the record carried.
+        accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.DeliveryCounterRefused)
+            .Which.Value0.Should().Be((long)count, "the claimed count survives decoding whole");
+    }
+
     // =========================================================================================
     // Sentinel precedence over the oversized-prefix rule (mirrors #95's pinning of GoodbyeSentinel)
     // =========================================================================================
@@ -277,6 +301,46 @@ public class StreamSessionDeliveryCounterFramingTests
         // an ordinary DataAfterGoodbye violation, not as an awaited or accepted counter record.
         drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
             .Which.Reason.Should().Be(DisconnectReason.ProtocolViolation);
+    }
+
+    // =========================================================================================
+    // The sentinel's own value: distinct from Goodbye's, and unreachable by any legal Message
+    // length (issue #109)
+    // =========================================================================================
+
+    [Fact]
+    public void DeliveryCounterSentinel_AgainstMaxMessageSizesOwnBound_IsAboveEveryLengthALegalMessageCanAnnounce()
+    {
+        // Arrange — the bound is MaxMessageSize's own declared type rather than a number restated
+        // here: it is a signed int, so the largest length any configuration can announce is
+        // int.MaxValue. Read through reflection over the public options surface so this follows the
+        // type if it ever widens, instead of quietly keeping an assumption the options no longer hold.
+        PropertyInfo maxMessageSize = typeof(StreamSessionOptions)
+            .GetProperty(nameof(StreamSessionOptions.MaxMessageSize))!;
+
+        // Act
+        Type bound = maxMessageSize.PropertyType;
+
+        // Assert — no legal Message length reaches the sentinel, so no Message is ever misread as a
+        // delivery-counter record. That this file's mirrored copy of the value is the one production
+        // treats as the sentinel is pinned behaviourally by
+        // DeliverCompleteMessages_BareSentinelWithNoBodyYet_DoesNotCloseThePeer, which fails if the two
+        // drift apart.
+        bound.Should().Be<int>("MaxMessageSize is what bounds every announced length");
+        ((uint)int.MaxValue).Should().BeLessThan(StreamSessionTestRecords.DeliveryCounterSentinel,
+            "the largest length a legal Message can announce still falls short of the sentinel");
+    }
+
+    [Fact]
+    public void DeliveryCounterSentinel_ComparedWithTheGoodbyeSentinel_IsADistinctReservedValue()
+    {
+        // Arrange — Goodbye's sentinel, mirrored here exactly as StreamSessionGoodbyeTests mirrors it.
+        const uint goodbyeSentinel = uint.MaxValue;
+
+        // Assert — two reserved prefixes, two different values. Production draws the same distinction:
+        // a Goodbye closes cleanly with PeerGoodbye (StreamSessionGoodbyeTests) where a
+        // delivery-counter record never does.
+        StreamSessionTestRecords.DeliveryCounterSentinel.Should().NotBe(goodbyeSentinel);
     }
 
     /// <summary>
