@@ -187,6 +187,38 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     }
 
     /// <summary>
+    /// Interrupts one Peer <see cref="FillToCapacity"/> established by resetting its counterparty
+    /// socket abruptly. A transport loss without a Goodbye moves an established Peer to Interrupted
+    /// rather than closing it (ADR 0010), so the Peer goes on holding its capacity Slot until its
+    /// Linger expires. Pumps until this Reactor raises <see cref="SessionEventKind.PeerInterrupted"/>
+    /// for that Peer, and returns everything drained on the way so a caller can assert on it. Throws
+    /// if the interruption is not observed within <paramref name="maxPumps"/>.
+    /// </summary>
+    public List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> InterruptHeldPeer(
+        HeldPeer held,
+        int maxPumps = 20)
+    {
+        held.Counterparty.ResetAbruptly();
+
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
+        bool Interrupted() => drained.Any(e => e.Kind == SessionEventKind.PeerInterrupted && e.Peer == held.Peer);
+
+        for (int i = 0; i < maxPumps && !Interrupted(); i++)
+        {
+            Reactor.Pump();
+            drained.AddRange(DrainToList());
+        }
+
+        if (!Interrupted())
+        {
+            throw new InvalidOperationException(
+                "The held Peer never moved to Interrupted within the Pump budget.");
+        }
+
+        return drained;
+    }
+
+    /// <summary>
     /// Dials one fresh <see cref="RawStreamPeer"/> against <see cref="Endpoint"/>, sends a default
     /// Hello, and pumps until the Reactor's reply reveals whether the connection was admitted (a Hello
     /// record, and a drained <see cref="SessionEventKind.PeerConnected"/> if one arrives within budget)
@@ -268,11 +300,12 @@ internal sealed class StreamSessionReactorHarness : IDisposable
 
     /// <summary>
     /// A plain BCL TCP socket connected to a Reactor's bound endpoint, standing in for a counterparty
-    /// the Reactor has never seen. The shared shape that <c>StreamSessionInterruptedTests</c>'
-    /// <c>InterruptedPeer</c>, <c>StreamSessionLingerExpiryTests</c>' <c>LingerPeer</c>, and
-    /// <c>StreamSessionHandshakeGuardTests</c>' <c>RawTcpPeer</c> each rolled privately before this
-    /// existed (issue #138) — send, blocking receive, a bounded-timeout receive for polling a Reactor's
-    /// reply across Pump calls, an abrupt reset, and a graceful half-close.
+    /// the Reactor has never seen: send, blocking receive, a bounded-timeout receive for polling a
+    /// Reactor's reply across Pump calls, an abrupt reset, and a graceful half-close. Several stream
+    /// test files still carry their own private equivalent — <c>StreamSessionInterruptedTests</c>'
+    /// <c>InterruptedPeer</c>, <c>StreamSessionLingerExpiryTests</c>' <c>LingerPeer</c>,
+    /// <c>StreamSessionHandshakeGuardTests</c>' <c>RawTcpPeer</c>. This is the shared one a new test
+    /// should reach for, not a replacement those have been migrated onto.
     /// </summary>
     public sealed class RawStreamPeer : IDisposable
     {
