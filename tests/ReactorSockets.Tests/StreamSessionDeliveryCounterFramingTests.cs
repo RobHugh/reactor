@@ -353,9 +353,22 @@ public class StreamSessionDeliveryCounterFramingTests
     {
         private readonly Socket _socket;
 
+        /// <param name="destination">The Reactor's bound endpoint to connect to.</param>
+        /// <remarks>
+        /// <c>NoDelay</c> is set for the same reason <c>TcpLink</c> sets it on the Reactor's own accepted
+        /// socket, but for the opposite direction: without it, a small write issued while an earlier one
+        /// is still unacknowledged is held by Nagle until the far end's delayed ACK — up to roughly 40ms
+        /// on Linux — which is far longer than a sleepless Pump loop ever waits.
+        /// <see cref="DeliverCompleteMessages_BodySplitAcrossTwoWrites_StaysOpenThenClosesOnceTheRestArrives"/>
+        /// splits a record across exactly that pattern, and failed on Linux CI while passing on Windows
+        /// for this reason alone.
+        /// </remarks>
         public CounterRecordPeer(IPEndPoint destination)
         {
-            _socket = new Socket(destination.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            _socket = new Socket(destination.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+            {
+                NoDelay = true,
+            };
             _socket.Connect(destination);
         }
 
