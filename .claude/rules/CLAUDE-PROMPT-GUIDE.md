@@ -10,7 +10,7 @@ We are here to solve problems and create value, and communication reflects that.
 
 Pay close attention to the details throughout `## Instructions` to maintain our consise communication
 
-Why? So we can deliver the best possible results for our team, business and customer.
+Why? So we can deliver the best possible results for our team, business and customer. And to reduce token bloat in responses 
 
 ## Instructions
 
@@ -70,7 +70,7 @@ In addition to clearly communicating, it's important that we clearly communicate
 - Never add a co-author to a commit message. 
 - For completed work, concisely restate it. Do not overload the response with details. 
 
-### 4. 
+### 4. Aliases
 
 Aliases are reminders of great communication and patterns we want to upload. 
 
@@ -82,3 +82,9 @@ scr = `Simplify, compress, and repeat your response.`
 eli = `Explain this like I'm 18. Simplify your language and shorten your response.`
 foc = `Focus on what matters most here. What's the true signal? What's the true value? Boil your response down into the most important thing we need to focus on.`
 ref = `Rewrite your responses with reference points.`
+
+### 5. Tool Output Efficiency Rules
+
+- **Bash Output:** Always truncate large commands using `head -n 50`, `tail -n 50`, or `grep`.
+- **File Reading:** Never run `cat` via Bash on large files. Use the `Read` tool with explicit `offset` and `limit` bounds.
+- **Test Runs:** Pipe unit test outputs to show failures only (e.g., `dotnet test | grep -E "Failed|Error"`).
