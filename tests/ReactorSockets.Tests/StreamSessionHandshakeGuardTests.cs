@@ -171,26 +171,26 @@ public class StreamSessionHandshakeGuardTests
     [Fact]
     public void Connect_EveryCapacitySlotOccupied_IsRefusedWithReasonCapacityAndClosedCleanlyRatherThanReset()
     {
-        // Arrange — occupy the sole capacity Slot with a genuine established Peer first.
+        // Arrange — occupy every capacity Slot with genuine established Peers first (issue #138).
         using StreamSessionReactorHarness accepter = new(capacity: 1);
-        using StreamSessionReactorHarness firstDialler = new(bindLoopback: false);
-        firstDialler.Reactor.Connect(accepter.Endpoint);
-        StreamSessionReactorHarness.PumpBothUntil(firstDialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 10);
-        accepter.DrainToList();
+        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
 
         // Act
-        using RawTcpPeer peer = new(accepter.Endpoint);
-        peer.Send(StreamSessionTestRecords.BuildHello(ProtocolVersion));
-        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused));
-        byte[] reply = peer.Receive(RecordSize);
+        using StreamSessionReactorHarness.InboundAttemptResult outcome = accepter.AttemptFreshConnection();
 
-        // Assert — refused with a capacity reason.
-        reply[0].Should().Be(RefusalType);
-        ParseRefusal(reply).Reason.Should().Be(RefusalReasonCapacity);
+        // Assert — refused with a capacity reason naming this Reactor's capacity.
+        outcome.Admitted.Should().BeFalse();
+        outcome.RefusalReason.Should().Be(RefusalReasonCapacity);
+        outcome.RefusalCapacity.Should().Be((uint)accepter.Capacity);
 
         // Assert — closed cleanly: a further read reports a graceful end-of-stream, never a reset.
-        Action act = () => peer.ExpectGracefulClose();
+        Action act = () => outcome.Counterparty.ExpectGracefulClose();
         act.Should().NotThrow<SocketException>();
+
+        foreach (StreamSessionReactorHarness.HeldPeer heldPeer in held)
+        {
+            heldPeer.Counterparty.Dispose();
+        }
     }
 
     [Fact]
