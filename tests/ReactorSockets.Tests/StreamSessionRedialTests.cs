@@ -118,6 +118,43 @@ public class StreamSessionRedialTests
         redial.Dispose();
     }
 
+    [Fact]
+    public void Pump_InterruptedWithACadenceTooFastToMeasure_FloorsTheFirstDelayAtTheSmallestWaitNotTheLargest()
+    {
+        // Arrange — a loop pumping faster than its own clock resolves reports an observed interval of
+        // exactly zero. Zero is a cadence too fast to measure, not an absent one, so the floor derived
+        // from it is one tick: the next Pump is the floor (issue #112) and it has already arrived. The
+        // jitter is deterministic and maximal (0xFF draws the top of any range), so the first delay is
+        // exactly that one tick — where deferring to the effective Linger instead would have made it a
+        // full second, and no attempt would follow the single tick advanced below.
+        using StreamSessionReactorHarness dialer = new(entropy: new ConstantByteJitter(0xFF));
+        using RawStreamListener listener = new();
+        byte[] resumeSecret = StreamSessionTestRecords.PayloadOf(StreamSessionTestRecords.ResumeSecretLength, 11);
+        (PeerId peer, RawStreamListener.Accepted far) = EstablishDialledSession(dialer, listener, resumeSecret);
+
+        // Arrange — interrupt without advancing the clock at all, so the Pump that observes the reset
+        // reports a zero interval rather than the handshake's cadence.
+        far.ResetAbruptly();
+        bool interrupted = false;
+        for (int i = 0; i < 20 && !interrupted; i++)
+        {
+            dialer.Reactor.Pump();
+            interrupted = dialer.DrainToList().Any(e => e.Kind == SessionEventKind.PeerInterrupted && e.Peer == peer);
+        }
+
+        interrupted.Should().BeTrue("the reset must be observed as an interruption within the Pump budget");
+        far.Dispose();
+
+        // Act
+        dialer.TimeProvider.Advance(TimeSpan.FromTicks(1));
+        dialer.Reactor.Pump();
+
+        // Assert
+        listener.TryAccept(out RawStreamListener.Accepted redial, timeoutMs: 2000).Should().BeTrue(
+            "a cadence too fast to measure floors the first delay at one tick, not at the effective Linger");
+        redial.Dispose();
+    }
+
     // =========================================================================================
     // A re-dial that connects sends a Resume record naming the secret the far end issued, handing
     // off to the resume match on the listening side (#123) — never closes, and stops the schedule
@@ -186,17 +223,20 @@ public class StreamSessionRedialTests
             far.Dispose();
         }
 
-        // Act — the listener is gone (disposed, so nothing answers that port); several attempts across
-        // several Pumps must each resolve as a failed connect, never a close.
+        // Act — the listener is gone (disposed, so nothing answers that port), so the first attempt is
+        // waited out until it actually resolves as refused rather than merely left pending: a Peer that
+        // is still connecting proves nothing about what a *failed* attempt does to it.
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
-        for (int i = 0; i < 4; i++)
-        {
-            dialer.TimeProvider.Advance(TimeSpan.FromMilliseconds(200));
-            dialer.Reactor.Pump();
-            drained.AddRange(dialer.DrainToList());
-        }
+        dialer.TimeProvider.Advance(_cadence);
+        dialer.Reactor.Pump();
+        drained.AddRange(dialer.DrainToList());
+        PumpUntilAnotherRedialFailure(dialer, alreadyFailed: 0);
+        drained.AddRange(dialer.DrainToList());
 
-        // Assert
+        // Assert — the attempt genuinely failed, and the Peer is still there afterwards: Interrupted,
+        // not closed, with the Linger it was given still unspent.
+        dialer.Sink.Received.Should().Contain(r => r.Id == DiagnosticId.RedialFailed,
+            "the attempt must have resolved as refused for this test to be about a failed attempt at all");
         drained.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
         Action stillReadable = () => dialer.Reactor.CountersOf(peer);
         stillReadable.Should().NotThrow("a failed re-dial attempt leaves the Peer Interrupted, not closed");
@@ -431,12 +471,20 @@ public class StreamSessionRedialTests
     }
 
     [Fact]
-    public void Pump_ReDialAttemptsDelay_NeverExceedsTheEffectiveLinger()
+    public void Pump_ReDialDelay_IsHeldToTheEffectiveLingerRatherThanTheObservedCadence()
     {
-        // Arrange — the first attempt is left pending (no real-time wait spent on it here), which is
-        // enough to prove the bound: even a single reported delay must never exceed the effective
-        // Linger this schedule was built from.
-        using StreamSessionReactorHarness dialer = new();
+        // Arrange — a Linger shorter than the cadence this loop pumps at, so the ceiling bites on the
+        // very first computed delay, which is the only place it can be observed through a diagnostic:
+        // the ceiling *is* the effective Linger, so a Peer is always closed by Linger expiry before a
+        // doubling schedule could ever climb to it. (#111's
+        // NextDelay_AskedForFarMoreAttemptsThanTheCeilingAllows_NeverExceedsTheEffectiveLinger pins the
+        // many-attempt case on the schedule itself, where no Peer lifetime bounds it.) The jitter is
+        // deterministic so the comparison is exact rather than probabilistic: 0xC0 draws ~0.753 of any
+        // range, so the ceilinged 20ms yields ~15ms, which fits inside the 20ms Linger and fires — while
+        // the uncapped 50ms cadence would have yielded ~37ms, past the Linger, and no attempt could ever
+        // have been made at all.
+        TimeSpan linger = TimeSpan.FromMilliseconds(20);
+        using StreamSessionReactorHarness dialer = new(entropy: new ConstantByteJitter(0xC0), linger: linger);
         PeerId peer;
         RawStreamListener.Accepted far;
         using (RawStreamListener listener = new())
@@ -449,14 +497,17 @@ public class StreamSessionRedialTests
 
         dialer.Sink.Received.Clear();
 
-        // Act
-        dialer.TimeProvider.Advance(_cadence);
+        // Act — 16ms is past the ceilinged delay and short of the Linger, so the attempt is due and the
+        // Peer is still Interrupted when ProcessRedials runs.
+        dialer.TimeProvider.Advance(TimeSpan.FromMilliseconds(16));
         dialer.Reactor.Pump();
 
-        // Assert
-        List<DiagnosticRecord> attempts = [.. dialer.Sink.Received.Where(r => r.Id == DiagnosticId.RedialAttempted)];
-        attempts.Should().NotBeEmpty();
-        attempts.Should().AllSatisfy(r => r.Value1.Should().BeLessThanOrEqualTo((long)_harnessLinger.TotalMilliseconds));
+        // Assert — an attempt was made, and its delay is inside the Linger rather than the cadence the
+        // schedule would have used unceilinged.
+        DiagnosticRecord attempt = dialer.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.RedialAttempted).Subject;
+        attempt.Value1.Should().BeLessThanOrEqualTo((long)linger.TotalMilliseconds);
+        attempt.Value1.Should().BeLessThan((long)_cadence.TotalMilliseconds);
+        dialer.DrainToList().Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
     }
 
     [Fact]

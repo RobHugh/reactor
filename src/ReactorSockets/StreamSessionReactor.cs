@@ -2342,15 +2342,22 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// needs Peer-local entropy state. Called only from <see cref="InterruptPeer"/>, which has already
     /// checked <see cref="PeerSlot.DialedEndpoint"/> and both Goodbye flags.
     /// </summary>
+    /// <remarks>
+    /// An observed interval of exactly zero — a loop pumping faster than its own clock can resolve —
+    /// floors the schedule at one tick rather than at anything larger: the next Pump is the floor, and
+    /// that Pump has already arrived. It is the reading before any second Pump (<see cref="TimeSpan.MaxValue"/>,
+    /// see <see cref="PumpIntervalObserver.Interval"/>) that defers to the Linger ceiling instead.
+    /// </remarks>
     private void BeginRedialSchedule(SlotHandle handle, PeerSlot slot)
     {
-        // A zero interval is not a cadence either — the two consecutive Pumps that produced it prove
-        // nothing about how often this consumer's loop actually runs (most often two Pumps issued
-        // without the clock moving between them) — and RedialSchedule's own constructor refuses zero
-        // outright. Deferring to the effective Linger here is the same choice PumpIntervalObserver
-        // already made for "no cadence observed yet" (TimeSpan.MaxValue), extended to this one further
-        // case a real elapsed reading can also (rarely) produce.
-        TimeSpan pumpInterval = ObservedPumpInterval > TimeSpan.Zero ? ObservedPumpInterval : slot.EffectiveLinger;
+        // A zero interval is a cadence too fast to measure, not an absent one: two Pumps did happen and
+        // the clock could not separate them. So the floor derived from it is the smallest wait there
+        // is, never the largest. Issue #112's principle is that the next Pump is the floor, and for a
+        // loop pumping faster than its own clock's resolution the next Pump is already here. One tick
+        // is the smallest positive value RedialSchedule's constructor accepts, since it refuses zero
+        // outright. This is the opposite case to "no cadence observed yet" (TimeSpan.MaxValue), where
+        // no second Pump has happened at all and there is nothing yet to floor.
+        TimeSpan pumpInterval = ObservedPumpInterval > TimeSpan.Zero ? ObservedPumpInterval : TimeSpan.FromTicks(1);
         slot.RedialSchedule = new RedialSchedule(pumpInterval, slot.EffectiveLinger, _entropy);
         slot.RedialWaitStartTimestamp = slot.InterruptedTimestamp;
         slot.RedialDelay = slot.RedialSchedule.NextDelay();
