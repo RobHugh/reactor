@@ -62,7 +62,7 @@ public class StreamSessionResumeRecordTests
 
         // Act
         peer.Send(resume[(RecordSize - 1)..]);
-        accepter.PumpAndDrainAll(10);
+        accepter.PumpUntil(() => peer.HasPendingReadOrClose);
 
         // Assert — the record is complete, names no held Peer, and the connection ends.
         peer.ExpectGracefulClose();
@@ -93,7 +93,8 @@ public class StreamSessionResumeRecordTests
 
         // Act
         peer.Send(hello);
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.PumpAndDrainAll(10);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events =
+            accepter.PumpUntilDrained(e => e.Any(x => x.Kind == SessionEventKind.PeerConnected));
 
         // Assert
         events.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerConnected);
@@ -129,7 +130,7 @@ public class StreamSessionResumeRecordTests
 
         // Act
         peer.Send(StreamSessionTestRecords.BuildResume());
-        accepter.PumpAndDrainAll(10);
+        accepter.PumpUntil(() => peer.HasPendingReadOrClose);
 
         // Assert — never a silent success: a Resume matching nothing is ended, not admitted.
         peer.ExpectGracefulClose();
@@ -163,7 +164,7 @@ public class StreamSessionResumeRecordTests
 
         // Act
         peer.Send(record);
-        accepter.PumpAndDrainAll(10);
+        accepter.PumpUntil(() => peer.HasPendingReadOrClose);
 
         // Assert
         peer.ExpectGracefulClose();

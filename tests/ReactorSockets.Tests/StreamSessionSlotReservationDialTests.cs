@@ -100,7 +100,7 @@ public class StreamSessionSlotReservationDialTests
         // Act — the same dial, retried now that the Slot is free.
         PeerId dialled = reactor.Reactor.Connect(target.Endpoint);
         (List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> dialerEvents, _) =
-            StreamSessionReactorHarness.PumpBothUntil(reactor, target, () => false, maxRounds: 10);
+            StreamSessionReactorHarness.PumpBothUntilConnected(reactor, target);
 
         // Assert
         dialerEvents.Should().ContainSingle()

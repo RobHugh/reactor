@@ -35,10 +35,11 @@ public class StreamSessionReceiveIdleDeadlineTests
     /// customisation issue #117's AC2 needs and the shared helper does not offer.
     /// </summary>
     private static PeerId EstablishSession(
-        StreamSessionReactorHarness accepter, RawPeer peer, ulong peerSendIdleMs = DefaultPeerSendIdleMs, int maxPumps = 20)
+        StreamSessionReactorHarness accepter, RawPeer peer, ulong peerSendIdleMs = DefaultPeerSendIdleMs, TimeSpan? budget = null)
     {
         peer.Send(StreamSessionTestRecords.BuildHello(sendIdleMs: peerSendIdleMs));
-        for (int i = 0; i < maxPumps; i++)
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
         {
             accepter.Reactor.Pump();
             foreach ((SessionEventKind Kind, PeerId Peer, DisconnectReason Reason) evt in accepter.DrainToList())
@@ -49,9 +50,14 @@ public class StreamSessionReceiveIdleDeadlineTests
                     return evt.Peer;
                 }
             }
-        }
 
-        throw new InvalidOperationException("The Session never established within the Pump budget.");
+            if (deadline.Expired)
+            {
+                throw new InvalidOperationException("The Session never established within the Pump budget.");
+            }
+
+            PumpDeadline.Yield();
+        }
     }
 
     // =========================================================================================

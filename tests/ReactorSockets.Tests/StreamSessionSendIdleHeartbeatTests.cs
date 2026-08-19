@@ -28,9 +28,9 @@ public class StreamSessionSendIdleHeartbeatTests
     /// accepter's own Hello reply off the wire first — mirrors every other file in this suite that goes
     /// on to read further records off the same raw socket.
     /// </summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, HeartbeatPeer peer, int maxPumps = 20)
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, HeartbeatPeer peer, TimeSpan? budget = null)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
         peer.Receive(StreamSessionTestRecords.HandshakeRecordSize);
         return id;
     }

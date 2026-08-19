@@ -123,7 +123,7 @@ public class StreamSessionResumeIncrementPointTests
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held.ResumeSecret, deliveryCount: 0));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drainedOnResume =
-            accepter.PumpAndDrainAll(5);
+            accepter.PumpUntilDrained(events => events.Any(e => e.Kind == SessionEventKind.PeerResumed));
 
         drainedOnResume.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerResumed && e.Peer == held.Peer);
 
@@ -161,7 +161,7 @@ public class StreamSessionResumeIncrementPointTests
 
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held.ResumeSecret, deliveryCount: 0));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
         resumed.TryReceiveWithinTimeout(12, out byte[] counterRecord, timeoutMs: 2000).Should().BeTrue();
         StreamSessionTestRecords.TryReadDeliveryCounterRecord(counterRecord, out ulong reportedCount).Should().BeTrue();
         reportedCount.Should().Be(1, "nothing was left buffered at interruption, so the report matches exactly what was delivered");

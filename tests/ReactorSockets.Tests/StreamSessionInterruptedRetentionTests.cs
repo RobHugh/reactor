@@ -22,7 +22,7 @@ public class StreamSessionInterruptedRetentionTests
 
     private static PeerId EstablishAndInterrupt(StreamSessionReactorHarness accepter, InterruptedPeer peer)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps: 20);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send);
         peer.Receive(StreamSessionTestRecords.HandshakeRecordSize);
 
         peer.ResetAbruptly();
@@ -148,7 +148,7 @@ public class StreamSessionInterruptedRetentionTests
         accepter.Reactor.Send(interruptedId, new byte[MaxMessageSize]).Should().Be(SendOutcome.Sent);
 
         using InterruptedPeer closedPeer = new(accepter.Endpoint);
-        PeerId closedId = StreamSessionTestRecords.EstablishSession(accepter, closedPeer.Send, maxPumps: 20);
+        PeerId closedId = StreamSessionTestRecords.EstablishSession(accepter, closedPeer.Send);
         closedPeer.Receive(StreamSessionTestRecords.HandshakeRecordSize);
         accepter.Reactor.Close(closedId);
 

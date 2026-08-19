@@ -234,8 +234,8 @@ public class DatagramSessionRefusalTests
         // Assert — the capacity Slot the refused Hello never occupied is still free.
         using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
         PeerId dialled = dialler.Reactor.Connect(accepter.Endpoint);
-        (var diallerEvents, var accepterEvents) = DatagramSessionReactorHarness.PumpBothUntil(
-            dialler, accepter, () => false, maxRounds: 6);
+        (var diallerEvents, var accepterEvents) = DatagramSessionReactorHarness.PumpBothUntilConnected(
+            dialler, accepter);
 
         diallerEvents.Should().ContainSingle()
             .Which.Should().BeEquivalentTo((SessionEventKind.PeerConnected, dialled, default(DisconnectReason)));
@@ -285,7 +285,8 @@ public class DatagramSessionRefusalTests
         accepter.Receive(out _); // The dialler's HelloWithCookie — its content does not matter here.
 
         accepter.Send(diallerEndpoint, BuildRefusal(clientNonce, RefusalReasonVersion, versionOffered: 2, versionRequired: ProtocolVersion));
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = dialler.PumpAndDrainAll(1);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            dialler.PumpUntilDrained(e => e.Any(x => x.Kind == SessionEventKind.PeerClosed));
 
         // Assert
         drained.Should().ContainSingle()
@@ -456,7 +457,8 @@ public class DatagramSessionRefusalTests
         accepter.Receive(out _);
 
         accepter.Send(diallerEndpoint, BuildRefusal(clientNonce, RefusalReasonCapacity, versionOffered: 0, versionRequired: 0));
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = dialler.PumpAndDrainAll(1);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            dialler.PumpUntilDrained(e => e.Any(x => x.Kind == SessionEventKind.PeerClosed));
 
         // Assert
         drained.Should().ContainSingle()

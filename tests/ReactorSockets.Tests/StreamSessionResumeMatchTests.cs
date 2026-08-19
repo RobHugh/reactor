@@ -42,7 +42,7 @@ public class StreamSessionResumeMatchTests
         // this Reactor announced to it, then sends a Message over the resumed Session.
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
         resumed.Send(StreamSessionTestRecords.BuildFrame(StreamSessionTestRecords.PayloadOf(8, 42)));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> events =
             PumpUntilMessage(accepter);
@@ -67,7 +67,7 @@ public class StreamSessionResumeMatchTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
 
         // Assert — a matched Resume is answered by the Session continuing, never by the
         // HandshakeRecordSize-shaped Refusal a fresh dial at this same Reactor would have got: what
@@ -94,7 +94,7 @@ public class StreamSessionResumeMatchTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
         resumed.Send(StreamSessionTestRecords.BuildFrame(StreamSessionTestRecords.PayloadOf(4, 9)));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> events =
             PumpUntilMessage(accepter);
@@ -127,7 +127,7 @@ public class StreamSessionResumeMatchTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
 
         // Assert — the match adopted the Peer's state rather than starting one: a Slot that had been
         // emptied and refilled would answer from zero, and a retention ring that had been reset would
@@ -152,7 +152,7 @@ public class StreamSessionResumeMatchTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
         resumed.Send(StreamSessionTestRecords.BuildFrame(StreamSessionTestRecords.PayloadOf(4, 5)));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> events =
             PumpUntilMessage(accepter);
@@ -177,7 +177,7 @@ public class StreamSessionResumeMatchTests
         accepter.InterruptHeldPeer(held[0]);
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
 
         // Act — an ordinary dial, asking for a Slot this Reactor does not have.
         using StreamSessionReactorHarness.InboundAttemptResult outcome = accepter.AttemptFreshConnection();
@@ -206,12 +206,12 @@ public class StreamSessionResumeMatchTests
         using (StreamSessionReactorHarness.RawStreamPeer impostor = new(accepter.Endpoint))
         {
             impostor.Send(StreamSessionTestRecords.BuildResume(wrongSecret));
-            accepter.PumpAndDrainAll(5);
+            accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
         }
 
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
         resumed.Send(StreamSessionTestRecords.BuildFrame(StreamSessionTestRecords.PayloadOf(4, 6)));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> events =
             PumpUntilMessage(accepter);
@@ -234,7 +234,8 @@ public class StreamSessionResumeMatchTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer impostor = new(accepter.Endpoint);
         impostor.Send(StreamSessionTestRecords.BuildResume(wrongSecret));
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.PumpAndDrainAll(5);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events =
+            accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — a stranger's failed claim is not something the Peer it named is told about, and it
         // is certainly not something that closes it.
@@ -252,7 +253,7 @@ public class StreamSessionResumeMatchTests
         // Act — a second connection claims that live Session.
         using StreamSessionReactorHarness.RawStreamPeer impostor = new(accepter.Endpoint);
         impostor.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — a Resume reconnects a Session whose transport is gone; it does not move a live one
         // onto a different connection. The original transport is untouched and still delivering.
@@ -265,20 +266,25 @@ public class StreamSessionResumeMatchTests
 
     /// <summary>
     /// Pumps until at least one <see cref="SessionEventKind.MessageReceived"/> has drained, returning
-    /// everything drained on the way. Delivery is not synchronous with a send, so the number of Pumps
-    /// is bounded rather than exact.
+    /// everything drained on the way. Delivery is not synchronous with a send, so the wait is bounded
+    /// by a clock rather than a Pump count (<see cref="PumpDeadline"/>).
     /// </summary>
     private static List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> PumpUntilMessage(
         StreamSessionReactorHarness accepter,
-        int maxPumps = 20)
+        TimeSpan? budget = null)
     {
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> events = [];
-        for (int i = 0; i < maxPumps && !events.Any(e => e.Kind == SessionEventKind.MessageReceived); i++)
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
         {
             accepter.Reactor.Pump();
             events.AddRange(accepter.DrainToListWithPayload());
-        }
+            if (events.Any(e => e.Kind == SessionEventKind.MessageReceived) || deadline.Expired)
+            {
+                return events;
+            }
 
-        return events;
+            PumpDeadline.Yield();
+        }
     }
 }

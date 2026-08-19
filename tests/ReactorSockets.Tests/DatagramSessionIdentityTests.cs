@@ -142,7 +142,7 @@ public class DatagramSessionIdentityTests
 
         // Act
         PeerId dialled = dialler.Reactor.Connect(accepter.Endpoint);
-        (var diallerEvents, _) = DatagramSessionReactorHarness.PumpBothUntil(dialler, accepter, () => false, maxRounds: 6);
+        (var diallerEvents, _) = DatagramSessionReactorHarness.PumpBothUntilConnected(dialler, accepter);
 
         // Assert
         diallerEvents.Should().ContainSingle()
@@ -296,7 +296,7 @@ public class DatagramSessionIdentityTests
         // Act
         using RawPeer rebound = new();
         rebound.Send(accepter.Endpoint, BuildDataDatagram(assigned));
-        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0, maxPumps: 5);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
 
         // Assert
         accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(discardsBefore);

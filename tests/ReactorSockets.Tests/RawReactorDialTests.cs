@@ -37,7 +37,8 @@ public class RawReactorDialTests
 
         // Act
         LinkId dialLink = harness.Reactor.Connect(localEndPoint);
-        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpAndDrainAll(pumps: 3);
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained =
+            harness.PumpUntilDrained(e => e.Any(x => x.Kind == RawEventKind.Connected && x.Link == dialLink));
 
         // Assert
         drained.Should().ContainSingle(evt => evt.Kind == RawEventKind.Connected && evt.Link == dialLink);
@@ -231,7 +232,8 @@ public class RawReactorDialTests
         ];
 
         // Act
-        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpAndDrainAll(5);
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained =
+            harness.PumpUntilDrained(e => e.Count(x => x.Kind == RawEventKind.Connected) >= dialledInOrder.Length);
 
         // Assert
         drained.Where(evt => evt.Kind == RawEventKind.Connected).Select(evt => evt.Link)

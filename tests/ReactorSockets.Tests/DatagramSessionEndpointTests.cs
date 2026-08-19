@@ -140,7 +140,7 @@ public class DatagramSessionEndpointTests
         using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
         dialler.Reactor.Connect(accepter.Endpoint);
         DatagramSessionReactorHarness.PumpBothUntil(
-            dialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 6);
+            dialler, accepter, () => accepter.DrainToList().Count > 0);
 
         // Act
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> firstDrain = accepter.DrainToList();
@@ -159,7 +159,7 @@ public class DatagramSessionEndpointTests
         using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
         dialler.Reactor.Connect(accepter.Endpoint);
         DatagramSessionReactorHarness.PumpBothUntil(
-            dialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 6);
+            dialler, accepter, () => accepter.DrainToList().Count > 0);
         accepter.DrainToList().Should().ContainSingle();
 
         // Act — a further Pump with nothing waiting.
@@ -282,7 +282,7 @@ public class DatagramSessionEndpointTests
         using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
         dialler.Reactor.Connect(accepter.Endpoint);
         DatagramSessionReactorHarness.PumpBothUntil(
-            dialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 6);
+            dialler, accepter, () => accepter.DrainToList().Count > 0);
         accepter.DrainToList().Should().ContainSingle()
             .Which.Kind.Should().Be(SessionEventKind.PeerConnected);
 
@@ -310,8 +310,8 @@ public class DatagramSessionEndpointTests
 
         // Act
         dialler.Reactor.Connect(accepter.Endpoint);
-        (var diallerEvents, var accepterEvents) = DatagramSessionReactorHarness.PumpBothUntil(
-            dialler, accepter, () => false, maxRounds: 6);
+        (var diallerEvents, var accepterEvents) = DatagramSessionReactorHarness.PumpBothUntilConnected(
+            dialler, accepter);
 
         // Assert
         diallerEvents.Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerConnected);

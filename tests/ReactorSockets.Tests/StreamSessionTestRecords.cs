@@ -179,10 +179,14 @@ internal static class StreamSessionTestRecords
     /// own Hello reply off the wire do so themselves right after this returns — what that reply's
     /// bytes are read into varies by file, so it is not this method's job.
     /// </summary>
-    public static PeerId EstablishSession(StreamSessionReactorHarness accepter, Action<byte[]> sendHello, int maxPumps = 20)
+    public static PeerId EstablishSession(
+        StreamSessionReactorHarness accepter,
+        Action<byte[]> sendHello,
+        TimeSpan? budget = null)
     {
         sendHello(BuildHello());
-        for (int i = 0; i < maxPumps; i++)
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
         {
             accepter.Reactor.Pump();
             foreach ((SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload) evt in accepter.DrainToListWithPayload())
@@ -192,8 +196,13 @@ internal static class StreamSessionTestRecords
                     return evt.Peer;
                 }
             }
-        }
 
-        throw new InvalidOperationException("The Session never established within the Pump budget.");
+            if (deadline.Expired)
+            {
+                throw new InvalidOperationException("The Session never established within the Pump budget.");
+            }
+
+            PumpDeadline.Yield();
+        }
     }
 }

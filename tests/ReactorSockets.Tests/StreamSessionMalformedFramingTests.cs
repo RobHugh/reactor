@@ -19,21 +19,26 @@ public class StreamSessionMalformedFramingTests
     private static byte[] BuildPrefix(uint length) => StreamSessionTestRecords.BuildPrefix(length);
 
     /// <summary>Pumps <paramref name="accepter"/> until it has drained a <see cref="SessionEventKind.PeerConnected"/> event.</summary>
-    private static void EstablishSession(StreamSessionReactorHarness accepter, MalformedPeer peer, int maxPumps = 20) =>
-        StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
+    private static void EstablishSession(StreamSessionReactorHarness accepter, MalformedPeer peer, TimeSpan? budget = null) =>
+        StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
 
     /// <summary>Pumps until a <see cref="SessionEventKind.PeerClosed"/> drains, or the budget runs out.</summary>
     private static List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> PumpUntilClosed(
-        StreamSessionReactorHarness accepter, int maxPumps = 20)
+        StreamSessionReactorHarness accepter, TimeSpan? budget = null)
     {
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> drained = [];
-        for (int i = 0; i < maxPumps && !drained.Any(e => e.Kind == SessionEventKind.PeerClosed); i++)
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
         {
             accepter.Reactor.Pump();
             drained.AddRange(accepter.DrainToListWithPayload());
-        }
+            if (drained.Any(e => e.Kind == SessionEventKind.PeerClosed) || deadline.Expired)
+            {
+                return drained;
+            }
 
-        return drained;
+            PumpDeadline.Yield();
+        }
     }
 
     // =========================================================================================

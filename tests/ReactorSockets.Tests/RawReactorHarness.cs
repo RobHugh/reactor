@@ -270,15 +270,69 @@ internal sealed class RawReactorHarness : IDisposable
     }
 
     /// <summary>
-    /// Pumps up to <paramref name="maxPumps"/> times, stopping as soon as <paramref name="condition"/>
-    /// is satisfied. Used instead of a sleep for the one place UDP's own asynchrony (an ICMP-driven
-    /// error surfacing on a later receive) cannot be pinned to an exact Pump count.
+    /// Pumps until <paramref name="condition"/> is satisfied or <paramref name="budget"/> of real time
+    /// is spent. Used instead of a sleep wherever the platform's own asynchrony (an ICMP-driven error
+    /// surfacing on a later receive, a loopback connection not yet acceptable) cannot be pinned to an
+    /// exact Pump count — which is every such wait, since a Pump count buys no time at all
+    /// (<see cref="PumpDeadline"/>, issue #153).
     /// </summary>
-    public void PumpUntil(Func<bool> condition, int maxPumps = 20)
+    public void PumpUntil(Func<bool> condition, TimeSpan? budget = null)
     {
-        for (int i = 0; i < maxPumps && !condition(); i++)
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
         {
             Reactor.Pump();
+            if (condition() || deadline.Expired)
+            {
+                return;
+            }
+
+            PumpDeadline.Yield();
+        }
+    }
+
+    /// <summary>
+    /// Pumps until <paramref name="condition"/> holds over everything drained so far, or until
+    /// <paramref name="budget"/> of real time is spent. The waiting counterpart to
+    /// <see cref="PumpAndDrainAll"/>, which counts Pumps and so waits for essentially no time
+    /// (<see cref="PumpDeadline"/>).
+    /// </summary>
+    public List<(RawEventKind Kind, LinkId Link, byte[] Payload)> PumpUntilDrained(
+        Func<IReadOnlyList<(RawEventKind Kind, LinkId Link, byte[] Payload)>, bool> condition,
+        TimeSpan? budget = null)
+    {
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> all = [];
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
+        {
+            Reactor.Pump();
+            all.AddRange(DrainToList());
+            if (condition(all) || deadline.Expired)
+            {
+                return all;
+            }
+
+            PumpDeadline.Yield();
+        }
+    }
+
+    /// <summary>The <see cref="CloseReason"/>-carrying counterpart to <see cref="PumpUntilDrained"/>.</summary>
+    public List<(RawEventKind Kind, LinkId Link, CloseReason Reason)> PumpUntilDrainedReasons(
+        Func<IReadOnlyList<(RawEventKind Kind, LinkId Link, CloseReason Reason)>, bool> condition,
+        TimeSpan? budget = null)
+    {
+        List<(RawEventKind Kind, LinkId Link, CloseReason Reason)> all = [];
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
+        {
+            Reactor.Pump();
+            all.AddRange(DrainToReasonList());
+            if (condition(all) || deadline.Expired)
+            {
+                return all;
+            }
+
+            PumpDeadline.Yield();
         }
     }
 

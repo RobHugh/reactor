@@ -32,9 +32,9 @@ public class StreamSessionDeliveryCounterReleaseTests
     /// event, returning the established Peer's id, and reads the accepter's own Hello record off
     /// <paramref name="peer"/>'s socket first.
     /// </summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, ReleasePeer peer, int maxPumps = 20)
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, ReleasePeer peer, TimeSpan? budget = null)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
         peer.Receive(RecordSize);
         return id;
     }

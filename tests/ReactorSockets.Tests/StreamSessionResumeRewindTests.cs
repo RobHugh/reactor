@@ -50,7 +50,7 @@ public class StreamSessionResumeRewindTests
         // Act — the peer comes back claiming to have received nothing.
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 0));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
 
         // Assert — ResumeMatched's Value0 is exactly the framed size of the one Message never
         // confirmed, and that whole frame — nothing re-framed, nothing reconstructed — reaches the wire,
@@ -78,7 +78,7 @@ public class StreamSessionResumeRewindTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 1));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
 
         // Assert — a counter equal to everything sent rewinds nothing and resends nothing behind this
         // end's own reciprocal delivery-counter record (D3), which arrives regardless.
@@ -104,7 +104,7 @@ public class StreamSessionResumeRewindTests
         // Act — the peer claims to have received the first of the two.
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 1));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
 
         // Assert — Value0 is exactly the second Message's framed size, bytes below the reported counter
         // (the first Message) are never resent, and what does arrive is exactly the second frame.
@@ -144,7 +144,7 @@ public class StreamSessionResumeRewindTests
         accepter.InterruptHeldPeer(held[0]);
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 1));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
 
         // Act — a second Message, sized so it only fits if the first Message's released bytes are
         // still free: 12 framed bytes into 20 total room needs the 8 released bytes actually free.
@@ -173,7 +173,7 @@ public class StreamSessionResumeRewindTests
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 5));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
-            accepter.PumpAndDrainAll(5);
+            accepter.PumpUntilDrained(events => events.Any(e => e.Kind == SessionEventKind.PeerClosed));
 
         // Assert — closed rather than resumed: no PeerResumed, no ResumeMatched record, and the held
         // Peer's own Slot is closed instead (D1/D2), with a count this end never sent named as an
@@ -220,7 +220,7 @@ public class StreamSessionResumeRewindTests
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 0));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
-            accepter.PumpAndDrainAll(20);
+            accepter.PumpUntilDrained(events => events.Any(e => e.Kind == SessionEventKind.PeerClosed));
 
         // Assert — closed with the configuration-answer reason (issue #130), not resumed: no
         // PeerResumed event, no ResumeMatched record, and no Message delivered with a gap ahead of it.
@@ -257,7 +257,7 @@ public class StreamSessionResumeRewindTests
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 1));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
-            accepter.PumpAndDrainAll(20);
+            accepter.PumpUntilDrained(events => events.Any(e => e.Kind == SessionEventKind.PeerResumed));
 
         // Assert — resumed, not closed: PeerResumed fires with the same PeerId, ResumeMatched logs the
         // one unconfirmed frame's own byte length, and that whole frame reaches the wire.
@@ -297,7 +297,7 @@ public class StreamSessionResumeRewindTests
 
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 0));
-        accepter.PumpAndDrainAll(20);
+        accepter.PumpUntilDrained(e => e.Any(x => x.Kind == SessionEventKind.PeerClosed));
 
         // Assert — the snapshot taken while still held reads a non-zero high-water mark for the bytes
         // this end actually retained, and reading it did not itself throw despite the Peer being

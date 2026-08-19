@@ -85,15 +85,23 @@ internal sealed class WireObserver : IDisposable
     }
 
     /// <summary>
-    /// Pumps up to <paramref name="maxPumps"/> times, stopping as soon as <paramref name="condition"/>
-    /// is satisfied — the same bounded-poll shape <see cref="RawReactorHarness.PumpUntil"/> uses, for
-    /// the same reason: loopback delivery is real OS scheduling, not a decision this process controls.
+    /// Pumps until <paramref name="condition"/> is satisfied or <paramref name="budget"/> of real time
+    /// is spent — the same bounded-poll shape <see cref="RawReactorHarness.PumpUntil"/> uses, for the
+    /// same reason: loopback delivery is real OS scheduling, not a decision this process controls, so
+    /// the bound has to be a clock rather than a Pump count (<see cref="PumpDeadline"/>).
     /// </summary>
-    public void PumpUntil(Func<bool> condition, int maxPumps = 20)
+    public void PumpUntil(Func<bool> condition, TimeSpan? budget = null)
     {
-        for (int i = 0; i < maxPumps && !condition(); i++)
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
         {
             Pump();
+            if (condition() || deadline.Expired)
+            {
+                return;
+            }
+
+            PumpDeadline.Yield();
         }
     }
 

@@ -18,11 +18,11 @@ public class StreamSessionSendRetentionTests
     /// Connects a bare TCP peer, drives the handshake to completion, and returns the <see cref="PeerId"/>
     /// the accepter assigned it — the address every <c>Send</c> call in this file is made against.
     /// </summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, out HandshakePeer peer, int maxPumps = 20)
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, out HandshakePeer peer, TimeSpan? budget = null)
     {
         HandshakePeer newPeer = new(accepter.Endpoint);
         peer = newPeer;
-        return StreamSessionTestRecords.EstablishSession(accepter, newPeer.Send, maxPumps);
+        return StreamSessionTestRecords.EstablishSession(accepter, newPeer.Send, budget);
     }
 
     [Fact]

@@ -17,8 +17,8 @@ public class StreamSessionMessageFramingTests
     private static byte[] BuildFrame(byte[] payload) => StreamSessionTestRecords.BuildFrame(payload);
 
     /// <summary>Pumps <paramref name="accepter"/> until it has drained a <see cref="SessionEventKind.PeerConnected"/> event.</summary>
-    private static void EstablishSession(StreamSessionReactorHarness accepter, MessagePeer peer, int maxPumps = 20) =>
-        StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
+    private static void EstablishSession(StreamSessionReactorHarness accepter, MessagePeer peer, TimeSpan? budget = null) =>
+        StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
 
     [Fact]
     public void DeliverCompleteMessages_WholeFrameWrittenInOneSend_DrainsExactlyOneMessageReceivedWithThoseBytes()

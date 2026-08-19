@@ -164,7 +164,8 @@ public class StreamSessionNegotiatedLingerTests
         accepter.TimeProvider.Advance(negotiated - TimeSpan.FromMilliseconds(1));
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(secret, deliveryCount: 0));
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.PumpAndDrainAll(5);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            accepter.PumpUntilDrained(e => e.Any(x => x.Kind == SessionEventKind.PeerResumed));
 
         // Assert — the same Peer resumes rather than closing, even though the boundary is defined by
         // whichever of the two announced Linger figures is smaller, not by this Reactor's own.

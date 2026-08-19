@@ -36,7 +36,7 @@ public class StreamSessionResumedEventTests
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> resumeDrain =
-            accepter.PumpAndDrainAll(5);
+            accepter.PumpUntilDrained(events => events.Any(e => e.Kind == SessionEventKind.PeerResumed));
 
         // Assert — Interrupted arrived first (from the earlier drain), Resumed followed for the same
         // Peer, and nothing closed it in between.
@@ -61,7 +61,7 @@ public class StreamSessionResumedEventTests
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 5));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
-            accepter.PumpAndDrainAll(5);
+            accepter.PumpUntilDrained(events => events.Any(e => e.Kind == SessionEventKind.PeerClosed));
 
         // Assert — closed, never resumed.
         drained.Should().NotContain(e => e.Kind == SessionEventKind.PeerResumed);
@@ -84,7 +84,7 @@ public class StreamSessionResumedEventTests
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
-            accepter.PumpAndDrainAll(5);
+            accepter.PumpUntilDrained(events => events.Any(e => e.Kind == SessionEventKind.PeerResumed));
 
         // Assert — every field compared by value, not reference: PeerId is a record struct, so a
         // reference comparison is not even available; this proves the fields themselves, one at a
@@ -117,7 +117,7 @@ public class StreamSessionResumedEventTests
 
             StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
             resumed.Send(StreamSessionTestRecords.BuildResume(current.ResumeSecret));
-            accepter.PumpAndDrainAll(5);
+            accepter.PumpUntilDrained(_ => accepter.Sink.Received.Count(r => r.Id == DiagnosticId.ResumeMatched) > i);
 
             // The transport this iteration just interrupted is finished with. Disposing it before the
             // reassignment keeps the loop from stranding a real socket per cycle, which would otherwise
@@ -162,7 +162,7 @@ public class StreamSessionResumedEventTests
 
             StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
             resumed.Send(StreamSessionTestRecords.BuildResume(current.ResumeSecret));
-            accepter.PumpAndDrainAll(5);
+            accepter.PumpUntilDrained(_ => accepter.Sink.Received.Count(r => r.Id == DiagnosticId.ResumeMatched) > i);
 
             // As above: the interrupted transport is finished with, so it is disposed rather than
             // stranded by the reassignment (issue #153).
@@ -204,7 +204,7 @@ public class StreamSessionResumedEventTests
         // rewind resends on its own is what the counterparty reads.
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 0));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
 
         // Assert — the un-confirmed Message arrives on the resumed transport, framed exactly as it was
         // originally sent, with no re-send call in this test to have produced it.

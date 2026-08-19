@@ -28,7 +28,7 @@ public class StreamSessionLingerExpiryTests
     /// </summary>
     private static PeerId EstablishAndInterrupt(StreamSessionReactorHarness accepter, LingerPeer peer)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps: 20);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send);
         peer.Receive(StreamSessionTestRecords.HandshakeRecordSize);
 
         peer.ResetAbruptly();

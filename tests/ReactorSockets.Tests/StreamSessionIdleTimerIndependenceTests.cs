@@ -161,10 +161,11 @@ public class StreamSessionIdleTimerIndependenceTests
     }
 
     /// <summary>Mirrors <see cref="StreamSessionReceiveIdleDeadlineTests"/>'s own <c>EstablishSession</c>.</summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, RawPeer peer, int maxPumps = 20)
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, RawPeer peer, TimeSpan? budget = null)
     {
         peer.Send(StreamSessionTestRecords.BuildHello());
-        for (int i = 0; i < maxPumps; i++)
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
         {
             accepter.Reactor.Pump();
             foreach ((SessionEventKind Kind, PeerId Peer, DisconnectReason Reason) evt in accepter.DrainToList())
@@ -175,9 +176,14 @@ public class StreamSessionIdleTimerIndependenceTests
                     return evt.Peer;
                 }
             }
-        }
 
-        throw new InvalidOperationException("The Session never established within the Pump budget.");
+            if (deadline.Expired)
+            {
+                throw new InvalidOperationException("The Session never established within the Pump budget.");
+            }
+
+            PumpDeadline.Yield();
+        }
     }
 
     /// <summary>

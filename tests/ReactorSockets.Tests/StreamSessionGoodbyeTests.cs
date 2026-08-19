@@ -32,9 +32,9 @@ public class StreamSessionGoodbyeTests
     /// event, returning the established Peer's id, and reads the accepter's own Hello record off
     /// <paramref name="peer"/>'s socket first, so later reads see only what this ticket's flush writes.
     /// </summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, GoodbyePeer peer, int maxPumps = 20)
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, GoodbyePeer peer, TimeSpan? budget = null)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
         peer.Receive(RecordSize);
         return id;
     }

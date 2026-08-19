@@ -50,7 +50,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
 
         // Assert — one record, and it names the Peer that was interrupted: the same PeerId, generation
         // included, since nothing about an identity is renewed by a Resume.
@@ -70,7 +70,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
 
         // Assert — a match by definition found a Peer, so there is one to name.
         accepter.Sink.Received.Single(r => r.Id == DiagnosticId.ResumeMatched)
@@ -88,7 +88,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
 
         // Assert — a reconnection is the outcome reserving a Slot exists to produce, not a condition a
         // consumer has to act on.
@@ -107,7 +107,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 0));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
 
         // Assert — Value0 carries bytes rewound (issue #127). A delivery count of 0 resolves to the
         // released head, and nothing had been sent to this Peer before the interruption, so the sent
@@ -133,7 +133,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer impostor = new(accepter.Endpoint);
         impostor.Send(StreamSessionTestRecords.BuildResume(wrongSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — the party that sent it is not a Peer and never became one, so the record names the
         // origin it claimed rather than any Peer.
@@ -153,7 +153,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer impostor = new(accepter.Endpoint);
         impostor.Send(StreamSessionTestRecords.BuildResume(WrongSecretFor(held[0])));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — the Peer slot is left at its default rather than filled with the Peer the claim
         // aimed at, which would read as that Peer having done something.
@@ -172,7 +172,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer impostor = new(accepter.Endpoint);
         impostor.Send(StreamSessionTestRecords.BuildResume(WrongSecretFor(held[0])));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — Warn, not the Info a version mismatch or a capacity refusal carries: those are
         // routine outcomes of running this profile and a wrong secret is not.
@@ -191,7 +191,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer impostor = new(accepter.Endpoint);
         impostor.Send(StreamSessionTestRecords.BuildResume(WrongSecretFor(held[0])));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — Value0 says a reservation was there and the secret was wrong for it, which is what
         // tells this apart from the expired-Linger path where there is nothing left to check against.
@@ -210,7 +210,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer impostor = new(accepter.Endpoint);
         impostor.Send(StreamSessionTestRecords.BuildResume(WrongSecretFor(held[0])));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — Value1 separates a wrong secret in the record allowed to carry one from the Hello
         // path below, which ends the connection the same way for a different reason.
@@ -230,7 +230,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer impostor = new(accepter.Endpoint);
         impostor.Send(StreamSessionTestRecords.BuildResume(WrongSecretFor(held[0])));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — a stranger's failed claim is not something the Peer it aimed at is charged with. The
         // held Peer goes on being held, which #123's own tests pin by resuming it afterwards.
@@ -255,7 +255,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer late = new(accepter.Endpoint);
         late.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — zero candidates: nothing was being held at all. That is the figure that tells an
         // operator this was a late reconnection rather than a wrong secret, which are the same refusal
@@ -318,7 +318,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer late = new(accepter.Endpoint);
         late.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — the secret was once real, which is exactly why it must not be honoured now: the
         // state it authorised access to no longer exists.
@@ -343,7 +343,8 @@ public class StreamSessionResumeDiagnosticsTests
         // carrying the secret that only a Resume may present.
         using StreamSessionReactorHarness.RawStreamPeer claimant = new(accepter.Endpoint);
         claimant.Send(StreamSessionTestRecords.BuildHello(resumeSecret: held.ResumeSecret));
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.PumpAndDrainAll(5);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events =
+            accepter.PumpUntilDrained(_ => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — a Resume has no field for parameters by construction (issue #115), and re-announcing
         // them would break the retention ring underneath the Session, so this is a protocol violation
@@ -362,7 +363,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer claimant = new(accepter.Endpoint);
         claimant.Send(StreamSessionTestRecords.BuildHello(resumeSecret: held.ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — no Hello establishing it and no Refusal either: the wire RefusalReason roster names
         // in-protocol declines a well-behaved dialler can act on, and a protocol violation is not one.
@@ -380,7 +381,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer claimant = new(accepter.Endpoint);
         claimant.Send(StreamSessionTestRecords.BuildHello(resumeSecret: held.ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — refused, and not silently. The claimant never became a Peer, so what the record can
         // name is the origin it claimed.
@@ -400,7 +401,7 @@ public class StreamSessionResumeDiagnosticsTests
         // Act
         using StreamSessionReactorHarness.RawStreamPeer claimant = new(accepter.Endpoint);
         claimant.Send(StreamSessionTestRecords.BuildHello(resumeSecret: held.ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
 
         // Assert — Value1 is what separates this path from an ordinary wrong secret, since both end the
         // connection the same way and only this one is a protocol violation.
@@ -418,14 +419,14 @@ public class StreamSessionResumeDiagnosticsTests
         using (StreamSessionReactorHarness.RawStreamPeer claimant = new(accepter.Endpoint))
         {
             claimant.Send(StreamSessionTestRecords.BuildHello(resumeSecret: held.ResumeSecret));
-            accepter.PumpAndDrainAll(5);
+            accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
         }
 
         // Act — the party that can actually resume comes back, presenting the same secret in the record
         // that is allowed to carry it.
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held.ResumeSecret));
-        accepter.PumpAndDrainAll(5);
+        accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
 
         // Assert — refusing the violation took nothing from the reservation it aimed at: the Slot, the
         // state and the secret are all still there for the record that may present it.
