@@ -97,7 +97,7 @@ public class StreamSessionResumeDiagnosticsTests
     }
 
     [Fact]
-    public void Handshake_AResumeMatchedBeforeTheRewindExists_ReportsZeroBytesRewound()
+    public void Handshake_AResumeMatchedWithNothingSentYet_ReportsZeroBytesRewound()
     {
         // Arrange
         using StreamSessionReactorHarness accepter = new(capacity: 1);
@@ -109,9 +109,10 @@ public class StreamSessionResumeDiagnosticsTests
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 0));
         accepter.PumpAndDrainAll(5);
 
-        // Assert — Value0 carries bytes rewound, and this slice matches the Resume and reads the
-        // counter it reports without acting on it. Issue #127 supplies the rewind and the figure with
-        // it; until then 0 is what the match can honestly report.
+        // Assert — Value0 carries bytes rewound (issue #127). A delivery count of 0 resolves to the
+        // released head, and nothing had been sent to this Peer before the interruption, so the sent
+        // cursor has nowhere to move back from: zero bytes rewound is the honest figure here, not a
+        // stand-in for a rewind that doesn't exist yet.
         accepter.Sink.Received.Single(r => r.Id == DiagnosticId.ResumeMatched)
             .Value0.Should().Be(0);
     }

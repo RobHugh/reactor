@@ -31,11 +31,13 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         bool bindLoopback = true,
         IReadOnlyList<IPEndPoint>? endpoints = null,
         RandomNumberGenerator? entropy = null,
-        TimeSpan? linger = null)
+        TimeSpan? linger = null,
+        FakeTimeProvider? timeProvider = null)
     {
         Capacity = capacity;
         SendIdleInterval = sendIdleInterval ?? TimeSpan.FromSeconds(1);
         Linger = linger ?? TimeSpan.FromSeconds(1);
+        TimeProvider = timeProvider ?? new FakeTimeProvider();
         IReactorDiagnostics? installedSink = withoutDiagnostics ? null : sinkOverride ?? Sink;
         Entropy = entropy ?? RandomNumberGenerator.Create();
         Reactor = new StreamSessionReactor(new StreamSessionOptions
@@ -64,8 +66,14 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// <summary>The capacity this Reactor was built with — the number of Slots <see cref="FillToCapacity"/> occupies.</summary>
     public int Capacity { get; }
 
-    /// <summary>The clock the Reactor was built with — advance it to exercise anything time-dependent.</summary>
-    public FakeTimeProvider TimeProvider { get; } = new();
+    /// <summary>
+    /// The clock the Reactor was built with — advance it to exercise anything time-dependent. A fresh
+    /// <see cref="FakeTimeProvider"/> unless the constructor's <c>timeProvider</c> parameter supplies
+    /// one shared with another harness, which two loopback-connected Reactors need whenever a test's
+    /// assertion depends on both ends acting at the same instant (issue #131) — a Reactor's own clock is
+    /// otherwise private to it, exactly like a real one's.
+    /// </summary>
+    public FakeTimeProvider TimeProvider { get; }
 
     /// <summary>
     /// The <see cref="StreamSessionOptions.SendIdleInterval"/> the Reactor was built with — 1 second

@@ -672,6 +672,47 @@ internal sealed class RawStreamListener : IDisposable
         }
 
         /// <summary>
+        /// Reads <paramref name="count"/> bytes within <paramref name="timeoutMs"/>, answering whether
+        /// it succeeded rather than throwing or blocking indefinitely — the mirror of
+        /// <see cref="StreamSessionReactorHarness.RawStreamPeer.TryReceiveWithinTimeout"/>, needed here
+        /// because this class stands in for the far end of a dialled Session (issue #127's rewind
+        /// tests: proving nothing is resent before this end's own delivery-counter record answers, and
+        /// that only the un-confirmed bytes are once it does).
+        /// </summary>
+        public bool TryReceiveWithinTimeout(int count, out byte[] record, int timeoutMs = 100)
+        {
+            _socket.ReceiveTimeout = timeoutMs;
+            byte[] buffer = new byte[count];
+            int totalRead = 0;
+            try
+            {
+                while (totalRead < count)
+                {
+                    int read = _socket.Receive(buffer.AsSpan(totalRead));
+                    if (read == 0)
+                    {
+                        record = [];
+                        return false;
+                    }
+
+                    totalRead += read;
+                }
+            }
+            catch (SocketException)
+            {
+                record = [];
+                return false;
+            }
+            finally
+            {
+                _socket.ReceiveTimeout = 5000;
+            }
+
+            record = buffer;
+            return true;
+        }
+
+        /// <summary>
         /// Kills the connection abruptly: <c>SO_LINGER</c> set to zero, then closed, which forces the OS
         /// to send a reset instead of an ordinary FIN — what interrupts the dialling Reactor's Peer.
         /// </summary>
