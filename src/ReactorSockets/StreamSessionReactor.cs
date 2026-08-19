@@ -46,6 +46,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly RetentionArena _retention;
     private readonly ShareHolderTable<PeerSlot> _peers;
     private readonly RandomNumberGenerator _entropy;
+    private readonly PumpIntervalObserver _pumpIntervalObserver;
     private readonly List<TcpListenLink> _listenLinks = [];
     private readonly List<SlotHandle> _connectingPeers = [];
     private readonly List<PendingEvent> _pendingEvents = [];
@@ -56,6 +57,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly HashSet<SlotHandle> _peersWithGoodbyeOwed = [];
     private readonly HashSet<SlotHandle> _peersWithAdvancedReceivedCount = [];
     private readonly HashSet<SlotHandle> _peersPendingClose = [];
+    private readonly HashSet<SlotHandle> _peersWithRedialScheduled = [];
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
     private int _capDeferralsThisFrame;
@@ -93,6 +95,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity);
         _entropy = options.Entropy;
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
+        _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
 
         try
         {
@@ -140,11 +143,23 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
     }
 
+    /// <summary>
+    /// The interval this Reactor's own Pump calls are currently observed to arrive at
+    /// (<see cref="PumpIntervalObserver"/>), read fresh from every Pump. This is the derived floor
+    /// the re-dial schedule (<see cref="RedialSchedule"/>, issue #125) starts its first delay at: a
+    /// retry sooner than the next Pump cannot happen. Internal because a consumer never constructs a
+    /// <see cref="RedialSchedule"/> themselves — this Reactor does, on their behalf, once a re-dial is
+    /// needed.
+    /// </summary>
+    internal TimeSpan ObservedPumpInterval => _pumpIntervalObserver.Interval;
+
     /// <inheritdoc cref="ISessionEventSource.PendingEventCount"/>
     int ISessionEventSource.PendingEventCount => _pendingEvents.Count;
 
     /// <summary>
-    /// One synchronous advance: wipes the previous Frame's events — which is also the moment a Peer
+    /// One synchronous advance: records this call's arrival against the last one
+    /// (<see cref="ObservedPumpInterval"/>, issue #112) before anything else, then wipes the previous
+    /// Frame's events — which is also the moment a Peer
     /// still <see cref="SessionEventKind.PeerClosing"/> only because the last Frame's Messages had not
     /// been drained past yet becomes eligible to close (<see cref="RetryPeersPendingClose"/>) — then
     /// admits ready connections, advances every in-flight dial and reads whatever bound socket is
@@ -164,9 +179,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// to the wire — including whatever this Frame's own flush just carried — for at least
     /// <see cref="StreamSessionOptions.SendIdleInterval"/> sends the same delivery-counter record as a
     /// heartbeat (issue #114/#26's first idle timer), unconditionally and regardless of whether anything
-    /// was ever received from it. Throws <see cref="InvalidOperationException"/> if called from any
-    /// thread other than the one that constructed this Reactor, or from inside a Pump already in
-    /// progress.
+    /// was ever received from it. Once idle timers may have closed an Interrupted Peer on Linger expiry
+    /// (issue #121), every Interrupted Peer this Reactor itself dialled is given its re-dial attempt for
+    /// this Frame (<see cref="ProcessRedials"/>, issue #125) — a schedule derived from the observed Pump
+    /// interval just recorded above and the effective Linger, never a separate attempt-count knob, so a
+    /// Peer whose Linger closed it this same Frame is never also given one. Throws
+    /// <see cref="InvalidOperationException"/> if called from any thread other than the one that
+    /// constructed this Reactor, or from inside a Pump already in progress.
     /// </summary>
     public void Pump()
     {
@@ -176,6 +195,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _lifecycle.InPump = true;
         try
         {
+            _pumpIntervalObserver.Observe();
             _pendingEvents.Clear();
             _arena.Reset();
             _admissionsThisFrame = 0;
@@ -188,6 +208,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             FlushPendingRetentionWrites();
             EnforceIdleTimers();
             ProcessConnectingPeers();
+            ProcessRedials();
             ReportDeclinedAdmissions();
         }
         finally
@@ -234,6 +255,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             State = HandshakeState.Connecting,
             ReceiveBuffer = new byte[_options.ResolvedReceiveBufferSize],
             DeliveryCounterRecord = new byte[MessageFramingCodec.DeliveryCounterRecordSize],
+            DialedEndpoint = destination,
         };
 
         // `HasFreeSlot` was just checked and this Reactor is single-threaded (ADR 0002), so `TryAdd`
@@ -2298,11 +2320,180 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         slot.InterruptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
         _peersWithPendingRetentionWrites.Remove(handle);
 
+        if (slot.DialedEndpoint is not null && !slot.LocalGoodbyeSent && !slot.RemoteGoodbyeReceived)
+        {
+            BeginRedialSchedule(handle, slot);
+        }
+
         _pendingEvents.Add(new PendingEvent
         {
             Kind = SessionEventKind.PeerInterrupted,
             Peer = ToPeerId(handle),
         });
+    }
+
+    /// <summary>
+    /// Derives this Peer's re-dial schedule (<see cref="RedialSchedule"/>, issue #111) from the Pump
+    /// interval just observed this Frame (<see cref="ObservedPumpInterval"/>, issue #112) and this
+    /// Peer's own effective Linger, draws the first delay, and tracks the Peer for
+    /// <see cref="ProcessRedials"/> to act on once that delay elapses. The jitter source is this
+    /// Reactor's own <c>_entropy</c> generator — the same one <see cref="NextResumeSecret"/> already
+    /// draws from — rather than a fresh one per Peer, since nothing about the schedule's own contract
+    /// needs Peer-local entropy state. Called only from <see cref="InterruptPeer"/>, which has already
+    /// checked <see cref="PeerSlot.DialedEndpoint"/> and both Goodbye flags.
+    /// </summary>
+    /// <remarks>
+    /// An observed interval of exactly zero — a loop pumping faster than its own clock can resolve —
+    /// floors the schedule at one tick rather than at anything larger: the next Pump is the floor, and
+    /// that Pump has already arrived. It is the reading before any second Pump (<see cref="TimeSpan.MaxValue"/>,
+    /// see <see cref="PumpIntervalObserver.Interval"/>) that defers to the Linger ceiling instead.
+    /// </remarks>
+    private void BeginRedialSchedule(SlotHandle handle, PeerSlot slot)
+    {
+        // A zero interval is a cadence too fast to measure, not an absent one: two Pumps did happen and
+        // the clock could not separate them. So the floor derived from it is the smallest wait there
+        // is, never the largest. Issue #112's principle is that the next Pump is the floor, and for a
+        // loop pumping faster than its own clock's resolution the next Pump is already here. One tick
+        // is the smallest positive value RedialSchedule's constructor accepts, since it refuses zero
+        // outright. This is the opposite case to "no cadence observed yet" (TimeSpan.MaxValue), where
+        // no second Pump has happened at all and there is nothing yet to floor.
+        TimeSpan pumpInterval = ObservedPumpInterval > TimeSpan.Zero ? ObservedPumpInterval : TimeSpan.FromTicks(1);
+        slot.RedialSchedule = new RedialSchedule(pumpInterval, slot.EffectiveLinger, _entropy);
+        slot.RedialWaitStartTimestamp = slot.InterruptedTimestamp;
+        slot.RedialDelay = slot.RedialSchedule.NextDelay();
+        slot.RedialAttemptCount = 0;
+        _peersWithRedialScheduled.Add(handle);
+    }
+
+    /// <summary>
+    /// Gives every Interrupted Peer this Reactor is re-dialling (<c>_peersWithRedialScheduled</c>, issue
+    /// #125) its turn this Frame: a Peer with an attempt already in flight has that attempt polled
+    /// (<see cref="PollRedialAttempt"/>); one waiting out its current delay begins a fresh dial the
+    /// instant that delay has elapsed, to the same <see cref="PeerSlot.DialedEndpoint"/> this Reactor
+    /// originally dialled — there is no rebinding and no address discovery. A Peer no longer tracked
+    /// here at all — closed by <see cref="EnforceIdleTimers"/>'s Linger check earlier this same Pump, or
+    /// already resumed — is dropped from the set rather than acted on, which is what makes Linger the
+    /// only ceiling on this activity: there is no separate attempt-count limit anywhere in this method.
+    /// </summary>
+    private void ProcessRedials()
+    {
+        if (_peersWithRedialScheduled.Count == 0)
+        {
+            return;
+        }
+
+        SlotHandle[] scheduled = [.. _peersWithRedialScheduled];
+        foreach (SlotHandle handle in scheduled)
+        {
+            if (_peers.TryResolve(handle) is not PeerSlot slot || !slot.IsInterrupted || slot.RedialSchedule is null)
+            {
+                _peersWithRedialScheduled.Remove(handle);
+                continue;
+            }
+
+            if (slot.RedialLink is TcpLink link)
+            {
+                PollRedialAttempt(handle, slot, link);
+                continue;
+            }
+
+            if (_options.Reactor.TimeProvider.GetElapsedTime(slot.RedialWaitStartTimestamp) < slot.RedialDelay)
+            {
+                continue;
+            }
+
+            // DialedEndpoint is guaranteed non-null here: only BeginRedialSchedule adds a handle to
+            // _peersWithRedialScheduled, and it does so only after InterruptPeer has already checked it.
+            slot.RedialLink = TcpLink.Dial(slot.DialedEndpoint!, _options.SendBufferSize);
+            slot.RedialAttemptCount++;
+
+            if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForRedialAttempted(
+                    ToPeerId(handle), slot.RedialAttemptCount, (long)slot.RedialDelay.TotalMilliseconds));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Polls one Peer's in-flight re-dial attempt (<see cref="TcpLink.PollConnect"/>). A resolved
+    /// connect hands the transport off to the resume match on the listening side
+    /// (<see cref="ResumeDialledPeer"/>) — this end's Resume record is what actually makes that claim,
+    /// sent the instant the transport exists. A resolved failure — the platform <see cref="SocketError"/>
+    /// this attempt's <see cref="TcpConnectPollResult.Error"/> carries — never closes this Peer
+    /// (<see cref="FailRedialAttempt"/>): it stays Interrupted and simply waits out the schedule's next
+    /// delay, which is what leaves Linger, not an attempt count, as the only thing that ever closes it.
+    /// </summary>
+    private void PollRedialAttempt(SlotHandle handle, PeerSlot slot, TcpLink link)
+    {
+        TcpConnectPollResult result = link.PollConnect();
+        switch (result.Outcome)
+        {
+            case TcpConnectPollOutcome.Pending:
+                break;
+
+            case TcpConnectPollOutcome.Connected:
+                ResumeDialledPeer(handle, slot, link);
+                break;
+
+            case TcpConnectPollOutcome.Failed:
+                FailRedialAttempt(handle, slot, result.Error);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Retires one failed re-dial attempt's transport and draws the schedule's next delay
+    /// (<see cref="RedialSchedule.NextDelay"/>), timed from this failure rather than from the attempt
+    /// that preceded it — the doubling schedule counts attempts, not wall-clock windows. The Peer stays
+    /// Interrupted and tracked in <c>_peersWithRedialScheduled</c>; only <see cref="EnforceIdleTimers"/>'s
+    /// Linger check ever closes it from here.
+    /// </summary>
+    private void FailRedialAttempt(SlotHandle handle, PeerSlot slot, SocketError error)
+    {
+        slot.RedialLink?.Dispose();
+        slot.RedialLink = null;
+        slot.RedialWaitStartTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+        slot.RedialDelay = slot.RedialSchedule!.NextDelay();
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForRedialFailed(ToPeerId(handle), error, slot.RedialAttemptCount));
+        }
+    }
+
+    /// <summary>
+    /// Puts a re-dial's freshly connected transport under the Peer it belongs to and immediately claims
+    /// the Session with a Resume record — this end's own resume secret is not what the far end needs;
+    /// <see cref="PeerSlot.RemoteResumeSecret"/> is, since that is the secret the far end issued and will
+    /// require back (<see cref="StreamHandshakeCodec.WriteResume"/>, issue #115). No reply record is
+    /// expected: a Resume has no acknowledgement in this protocol, exactly as <see cref="ResumeHeldPeer"/>
+    /// sends nothing back to a matched Resume on the listening side, so this Peer is considered resumed
+    /// — <see cref="PeerSlot.IsInterrupted"/> cleared, both idle timers restarted from now — the moment
+    /// the record is queued rather than waiting on anything further from the wire.
+    /// </summary>
+    private void ResumeDialledPeer(SlotHandle handle, PeerSlot slot, TcpLink link)
+    {
+        slot.Link = link;
+        slot.RedialLink = null;
+        slot.RedialSchedule = null;
+        _peersWithRedialScheduled.Remove(handle);
+        slot.IsInterrupted = false;
+        slot.InterruptedTimestamp = 0;
+
+        long now = _options.Reactor.TimeProvider.GetTimestamp();
+        slot.LastSendTimestamp = now;
+        slot.LastReceiveTimestamp = now;
+
+        RegisterPeerTransport(handle, slot);
+        if (slot.HasPendingRetentionWrite)
+        {
+            _peersWithPendingRetentionWrites.Add(handle);
+        }
+
+        byte[] resume = new byte[StreamHandshakeCodec.RecordSize];
+        StreamHandshakeCodec.WriteResume(resume, slot.RemoteResumeSecret, slot.Counters.MessagesReceived);
+        SendRecordOrArm(handle, slot, resume, closeReasonAfterSend: null);
     }
 
     /// <summary>
@@ -2344,11 +2535,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         _dispatcher.Unregister(slot.Link.Socket);
         slot.Link.Dispose();
+        slot.RedialLink?.Dispose();
         _peersWithBufferedMessages.Remove(handle);
         _peersWithPendingRetentionWrites.Remove(handle);
         _peersPendingClose.Remove(handle);
         _peersWithGoodbyeOwed.Remove(handle);
         _peersWithAdvancedReceivedCount.Remove(handle);
+        _peersWithRedialScheduled.Remove(handle);
         _retention.ResetShareHolder(handle.Index);
         _pendingEvents.Add(new PendingEvent
         {
@@ -2603,6 +2796,63 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// Linger deadline that no longer applies.
         /// </summary>
         public long InterruptedTimestamp { get; set; }
+
+        /// <summary>
+        /// The endpoint <see cref="Connect"/> dialled to open this Session, or <see langword="null"/>
+        /// for a Peer this Reactor accepted instead. Set once, at construction, and never cleared or
+        /// replaced by a later Resume — it is what makes issue #125's re-dial possible at all: only the
+        /// side that dialled has an address to retry, so <see cref="InterruptPeer"/> reads this to decide
+        /// whether this Peer's transport loss is even eligible for one. A re-dial always targets exactly
+        /// this endpoint — there is no rebinding and no address discovery.
+        /// </summary>
+        public IPEndPoint? DialedEndpoint { get; init; }
+
+        /// <summary>
+        /// This Peer's re-dial schedule (<see cref="ReactorSockets.RedialSchedule"/>, issue #111), or
+        /// <see langword="null"/> while this Peer is not currently being re-dialled — either it has
+        /// never been Interrupted, its transport loss was ineligible (issue #125:
+        /// <see cref="DialedEndpoint"/> unset or a Goodbye had passed), or a Resume already matched and
+        /// cleared it. Constructed once per interruption by <see cref="BeginRedialSchedule"/>, from the
+        /// Pump interval observed at that moment and this Peer's own effective Linger, and consulted only
+        /// by <see cref="ProcessRedials"/> and <see cref="FailRedialAttempt"/>.
+        /// </summary>
+        public RedialSchedule? RedialSchedule { get; set; }
+
+        /// <summary>
+        /// The transport of a re-dial attempt currently in flight — connecting, not yet resolved — or
+        /// <see langword="null"/> while this Peer is between attempts, waiting out
+        /// <see cref="RedialDelay"/>. Distinct from <see cref="Link"/>, which stays the disposed socket
+        /// from the transport loss until a re-dial actually resolves (<see cref="ResumeDialledPeer"/>):
+        /// an attempt that fails must never disturb <see cref="Link"/>, since nothing about a failed
+        /// attempt changes what this Peer is holding.
+        /// </summary>
+        public TcpLink? RedialLink { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> value <see cref="RedialDelay"/> is measured from
+        /// — either the moment this Peer became Interrupted (its first delay,
+        /// <see cref="BeginRedialSchedule"/>) or the moment its most recent attempt resolved as failed
+        /// (<see cref="FailRedialAttempt"/>). <see cref="ProcessRedials"/> begins the next attempt once
+        /// <see cref="TimeProvider.GetElapsedTime(long)"/> against this reaches <see cref="RedialDelay"/>.
+        /// </summary>
+        public long RedialWaitStartTimestamp { get; set; }
+
+        /// <summary>
+        /// How long this Peer's re-dial schedule says to wait, from <see cref="RedialWaitStartTimestamp"/>,
+        /// before its next attempt — the delay <see cref="ReactorSockets.RedialSchedule.NextDelay"/> most
+        /// recently drew, already jittered.
+        /// </summary>
+        public TimeSpan RedialDelay { get; set; }
+
+        /// <summary>
+        /// How many re-dial attempts have begun since this Peer's schedule was last started
+        /// (<see cref="BeginRedialSchedule"/>, which resets it to 0). Incremented by
+        /// <see cref="ProcessRedials"/> immediately before each dial, and reported as
+        /// <see cref="DiagnosticId.RedialAttempted"/>'s and <see cref="DiagnosticId.RedialFailed"/>'s
+        /// attempt number. This is a diagnostics-only count — nothing reads it to decide whether to try
+        /// again, and it must never become one: Linger alone bounds re-dialling (ADR 0011).
+        /// </summary>
+        public long RedialAttemptCount { get; set; }
     }
 
     /// <summary>

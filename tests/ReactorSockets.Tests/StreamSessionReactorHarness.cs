@@ -30,10 +30,12 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         bool withoutDiagnostics = false,
         bool bindLoopback = true,
         IReadOnlyList<IPEndPoint>? endpoints = null,
-        RandomNumberGenerator? entropy = null)
+        RandomNumberGenerator? entropy = null,
+        TimeSpan? linger = null)
     {
         Capacity = capacity;
         SendIdleInterval = sendIdleInterval ?? TimeSpan.FromSeconds(1);
+        Linger = linger ?? TimeSpan.FromSeconds(1);
         IReactorDiagnostics? installedSink = withoutDiagnostics ? null : sinkOverride ?? Sink;
         Entropy = entropy ?? RandomNumberGenerator.Create();
         Reactor = new StreamSessionReactor(new StreamSessionOptions
@@ -53,7 +55,7 @@ internal sealed class StreamSessionReactorHarness : IDisposable
             SendBufferSize = sendBufferSize,
             MissedHeartbeats = missedHeartbeats,
             SendIdleInterval = SendIdleInterval,
-            Linger = TimeSpan.FromSeconds(1),
+            Linger = Linger,
             Endpoints = endpoints ?? (bindLoopback ? [new IPEndPoint(IPAddress.Loopback, 0)] : []),
             Entropy = Entropy,
         });
@@ -71,6 +73,13 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// advance <see cref="TimeProvider"/> by exactly this much without duplicating the constant.
     /// </summary>
     public TimeSpan SendIdleInterval { get; }
+
+    /// <summary>
+    /// The <see cref="StreamSessionOptions.Linger"/> the Reactor was built with — 1 second unless the
+    /// constructor's <c>linger</c> parameter overrides it. A test that needs the re-dial schedule's
+    /// ceiling to bite sets it below the cadence it pumps at, since that ceiling is the Linger.
+    /// </summary>
+    public TimeSpan Linger { get; }
 
     /// <summary>The recording Sink installed on the Reactor, unless the harness was told to override or omit it.</summary>
     public RecordingDiagnosticsSink Sink { get; } = new();
