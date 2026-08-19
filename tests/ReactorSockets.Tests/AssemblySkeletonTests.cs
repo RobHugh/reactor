@@ -62,7 +62,8 @@ public class AssemblySkeletonTests
             nameof(PeerCounters),
             nameof(DisconnectReason),
             nameof(SendOutcome),
-            nameof(RedialSchedule));
+            nameof(RedialSchedule),
+            nameof(PumpIntervalObserver));
     }
 
     [Fact]

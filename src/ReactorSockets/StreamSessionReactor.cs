@@ -46,6 +46,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly RetentionArena _retention;
     private readonly ShareHolderTable<PeerSlot> _peers;
     private readonly RandomNumberGenerator _entropy;
+    private readonly PumpIntervalObserver _pumpIntervalObserver;
     private readonly List<TcpListenLink> _listenLinks = [];
     private readonly List<SlotHandle> _connectingPeers = [];
     private readonly List<PendingEvent> _pendingEvents = [];
@@ -93,6 +94,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity);
         _entropy = options.Entropy;
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
+        _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
 
         try
         {
@@ -140,11 +142,23 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
     }
 
+    /// <summary>
+    /// The interval this Reactor's own Pump calls are currently observed to arrive at
+    /// (<see cref="PumpIntervalObserver"/>), read fresh from every Pump. This is the derived floor
+    /// the re-dial schedule (<see cref="RedialSchedule"/>, issue #125) starts its first delay at: a
+    /// retry sooner than the next Pump cannot happen. Internal because a consumer never constructs a
+    /// <see cref="RedialSchedule"/> themselves — this Reactor does, on their behalf, once a re-dial is
+    /// needed.
+    /// </summary>
+    internal TimeSpan ObservedPumpInterval => _pumpIntervalObserver.Interval;
+
     /// <inheritdoc cref="ISessionEventSource.PendingEventCount"/>
     int ISessionEventSource.PendingEventCount => _pendingEvents.Count;
 
     /// <summary>
-    /// One synchronous advance: wipes the previous Frame's events — which is also the moment a Peer
+    /// One synchronous advance: records this call's arrival against the last one
+    /// (<see cref="ObservedPumpInterval"/>, issue #112) before anything else, then wipes the previous
+    /// Frame's events — which is also the moment a Peer
     /// still <see cref="SessionEventKind.PeerClosing"/> only because the last Frame's Messages had not
     /// been drained past yet becomes eligible to close (<see cref="RetryPeersPendingClose"/>) — then
     /// admits ready connections, advances every in-flight dial and reads whatever bound socket is
@@ -176,6 +190,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _lifecycle.InPump = true;
         try
         {
+            _pumpIntervalObserver.Observe();
             _pendingEvents.Clear();
             _arena.Reset();
             _admissionsThisFrame = 0;
