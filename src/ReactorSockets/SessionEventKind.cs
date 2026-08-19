@@ -58,4 +58,22 @@ public enum SessionEventKind
     /// <see cref="DisconnectReason"/> to report, because nothing has ended.
     /// </summary>
     PeerInterrupted = 5,
+
+    /// <summary>
+    /// A Session held <see cref="PeerInterrupted"/> reclaimed its transport and is delivering again
+    /// (issue #128, closing out #30's Resume). Raised on whichever side completes the match — the
+    /// listening side's <c>ResumeHeldPeer</c> once the peer's Resume record checks out, the dialling
+    /// side's <c>ResumeDialledPeer</c> once its re-dial resolves — and only on that success path: a
+    /// resume refused for a retention gap or any other reason closes the Peer instead
+    /// (<see cref="DisconnectReason.ProtocolViolation"/> until #130 gives it its own reason) and never
+    /// reaches here. <see cref="SessionEvent.Peer"/>'s <see cref="PeerId"/>, generation included, is
+    /// exactly the one <see cref="PeerInterrupted"/> carried — a Resume is the same Peer's transport
+    /// coming back, never a new one — and no <see cref="PeerClosed"/> is ever observed between the two.
+    /// The consumer is asked for no reconciliation: Messages sent before the interruption arrive
+    /// without being re-sent, since the rewind that makes this event possible (issue #127) already put
+    /// this end's outbound retention back to the peer's last confirmed point before this event is
+    /// raised. Carries only <see cref="SessionEvent.Peer"/>, the same as <see cref="PeerInterrupted"/> —
+    /// nothing has ended, so there is no <see cref="DisconnectReason"/> to report.
+    /// </summary>
+    PeerResumed = 6,
 }

@@ -544,6 +544,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
             SessionEventKind.PeerClosing => SessionEvent.ForPeerClosing(pending.Peer),
             SessionEventKind.PeerInterrupted => SessionEvent.ForPeerInterrupted(pending.Peer),
+            SessionEventKind.PeerResumed => SessionEvent.ForPeerResumed(pending.Peer),
             _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind."),
         };
     }
@@ -963,6 +964,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         // it just presented had no field for that. SendDeliveryCounterOrArm's own short-send remainder
         // guard makes this safe to call unconditionally rather than gating it on _peersWithAdvancedReceivedCount.
         SendDeliveryCounterOrArm(slot.Handle, slot);
+
+        // Issue #128: the rewind above is what makes this end's Resume complete, so PeerResumed and the
+        // Resumes counter are raised here rather than any earlier point in the match — a rewind refused
+        // above closed the Peer instead and never reaches this line.
+        slot.Counters.RecordResume();
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = ToPeerId(slot.Handle) });
 
         if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
         {
@@ -2099,6 +2106,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                             slot.HasPendingRetentionWrite = true;
                             _peersWithPendingRetentionWrites.Add(handle);
                         }
+
+                        // Issue #128: this is where the dialling side's resume actually completes — the
+                        // Rewound outcome above is the first point this end knows its reciprocal rewind
+                        // succeeded, so it is also the first point PeerResumed can be raised without a
+                        // risk of a still-pending refusal (D5) retracting it. ResumeDialledPeer itself
+                        // cleared IsInterrupted and re-established the transport earlier, but Resumed —
+                        // and the Resumes counter — waits for this confirmation, the same way ResumeHeldPeer
+                        // gates its own PeerResumed on RewindSentToMessageCount returning Rewound.
+                        slot.Counters.RecordResume();
+                        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = ToPeerId(handle) });
                     }
 
                     continue;
@@ -2571,11 +2588,20 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// the record is queued rather than waiting on anything further from the wire.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Sets <see cref="PeerSlot.AwaitingResumeCounter"/> (issue #127, D3): this Resume record carries
     /// only this end's own claim, never the far end's read position, so this end does not yet know
     /// where its own rewind would start from. <see cref="FlushRetention"/>'s own guard on that flag
     /// keeps this Peer from resending anything until the far end's first post-resume delivery-counter
     /// record answers that (<see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm).
+    /// </para>
+    /// <para>
+    /// <see cref="SessionEventKind.PeerResumed"/> and the <see cref="PeerCounters.Resumes"/> counter are
+    /// <b>not</b> raised here (issue #128): this method re-establishes the transport but cannot yet rule
+    /// out a refusal (D5) — that only resolves once the reciprocal rewind above runs. Both are raised
+    /// from the same <c>DeliveryCounterReceived</c> arm, the first point this end knows the resume is
+    /// good.
+    /// </para>
     /// </remarks>
     private void ResumeDialledPeer(SlotHandle handle, PeerSlot slot, TcpLink link)
     {
