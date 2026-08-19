@@ -13,18 +13,40 @@ namespace ReactorSockets.Tests;
 /// </summary>
 internal static class StreamSessionTestRecords
 {
-    /// <summary>1 type byte + 40-byte Hello payload. A Refusal is padded to the same size.</summary>
+    /// <summary>1 type byte + 40-byte Hello payload. A Refusal and a Resume are padded to the same size.</summary>
     public const int HandshakeRecordSize = 41;
 
     /// <summary>The wire type byte a Hello record's first byte carries.</summary>
     public const byte HelloRecordType = 1;
 
+    /// <summary>The wire type byte a Resume record's first byte carries (issue #115).</summary>
+    public const byte ResumeRecordType = 3;
+
+    /// <summary>The length in bytes of a resume secret on the wire, in a Hello's tail and in a Resume.</summary>
+    public const int ResumeSecretLength = 16;
+
     /// <summary>The protocol version this test suite's hand-built Hello records offer by default.</summary>
     public const uint ProtocolVersion = 1;
 
-    /// <summary>Builds a <see cref="HandshakeRecordSize"/>-byte Hello record. The trailing 16-byte resume secret is left zeroed.</summary>
-    public static byte[] BuildHello(uint version = ProtocolVersion, uint maxMessageSize = 4096, ulong sendIdleMs = 1000, ulong lingerMs = 1000)
+    /// <summary>
+    /// Builds a <see cref="HandshakeRecordSize"/>-byte Hello record. The trailing 16-byte resume secret
+    /// is left zeroed unless <paramref name="resumeSecret"/> names one — a real dialler announces the
+    /// secret it minted for the Session it is opening, so a test only passes one here when it means to
+    /// send a Hello announcing a secret it did not mint (issue #124's third refusal path).
+    /// </summary>
+    public static byte[] BuildHello(
+        uint version = ProtocolVersion,
+        uint maxMessageSize = 4096,
+        ulong sendIdleMs = 1000,
+        ulong lingerMs = 1000,
+        byte[]? resumeSecret = null)
     {
+        if (resumeSecret is not null && resumeSecret.Length != ResumeSecretLength)
+        {
+            throw new ArgumentException(
+                $"A resume secret is exactly {ResumeSecretLength} bytes on the wire.", nameof(resumeSecret));
+        }
+
         byte[] record = new byte[HandshakeRecordSize];
         record[0] = HelloRecordType;
         int offset = 1;
@@ -35,6 +57,49 @@ internal static class StreamSessionTestRecords
         BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), sendIdleMs);
         offset += 8;
         BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(offset, 8), lingerMs);
+        offset += 8;
+        resumeSecret?.CopyTo(record.AsSpan(offset, ResumeSecretLength));
+        return record;
+    }
+
+    /// <summary>
+    /// Reads the 16-byte resume secret out of a whole Hello record a Reactor sent — its tail, after the
+    /// type byte, the version, <c>MaxMessageSize</c>, the send-idle interval and Linger. The only way a
+    /// test learns the secret a Reactor will require before it resumes a Session (issue #123): it comes
+    /// off the wire exactly as the far end would read it, never out of the Reactor, since how the secret
+    /// is stored is not something a test may assert on (tests/CLAUDE.md, ADR 0015).
+    /// </summary>
+    public static byte[] ReadResumeSecretFromHello(byte[] hello)
+    {
+        if (hello.Length != HandshakeRecordSize || hello[0] != HelloRecordType)
+        {
+            throw new ArgumentException(
+                $"Not a whole {HandshakeRecordSize}-byte Hello record.", nameof(hello));
+        }
+
+        const int secretOffset = 1 + 4 + 4 + 8 + 8;
+        return hello[secretOffset..];
+    }
+
+    /// <summary>
+    /// Builds a <see cref="HandshakeRecordSize"/>-byte Resume record: the type byte, the 16-byte resume
+    /// secret, the 8-byte big-endian delivery counter, and zero padding out to the size a Hello occupies
+    /// (issue #115). Hand-rolled independently of the internal <c>StreamHandshakeCodec</c> that owns this
+    /// encoding in production, for the same L0/L1 untested-through reason every other builder here is.
+    /// </summary>
+    public static byte[] BuildResume(byte[]? resumeSecret = null, ulong deliveryCount = 0)
+    {
+        byte[] secret = resumeSecret ?? new byte[ResumeSecretLength];
+        if (secret.Length != ResumeSecretLength)
+        {
+            throw new ArgumentException(
+                $"A resume secret is exactly {ResumeSecretLength} bytes on the wire.", nameof(resumeSecret));
+        }
+
+        byte[] record = new byte[HandshakeRecordSize];
+        record[0] = ResumeRecordType;
+        secret.CopyTo(record.AsSpan(1, ResumeSecretLength));
+        BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(1 + ResumeSecretLength, 8), deliveryCount);
         return record;
     }
 
@@ -114,10 +179,14 @@ internal static class StreamSessionTestRecords
     /// own Hello reply off the wire do so themselves right after this returns — what that reply's
     /// bytes are read into varies by file, so it is not this method's job.
     /// </summary>
-    public static PeerId EstablishSession(StreamSessionReactorHarness accepter, Action<byte[]> sendHello, int maxPumps = 20)
+    public static PeerId EstablishSession(
+        StreamSessionReactorHarness accepter,
+        Action<byte[]> sendHello,
+        TimeSpan? budget = null)
     {
         sendHello(BuildHello());
-        for (int i = 0; i < maxPumps; i++)
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
         {
             accepter.Reactor.Pump();
             foreach ((SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload) evt in accepter.DrainToListWithPayload())
@@ -127,8 +196,13 @@ internal static class StreamSessionTestRecords
                     return evt.Peer;
                 }
             }
-        }
 
-        throw new InvalidOperationException("The Session never established within the Pump budget.");
+            if (deadline.Expired)
+            {
+                throw new InvalidOperationException("The Session never established within the Pump budget.");
+            }
+
+            PumpDeadline.Yield();
+        }
     }
 }

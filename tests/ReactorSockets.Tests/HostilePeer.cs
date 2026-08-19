@@ -61,14 +61,15 @@ internal sealed class HostilePeer : IDisposable
     /// <paramref name="payload"/> exactly as given — no framing of any kind. Returns the connected
     /// <see cref="LinkId"/> so the caller can keep writing further hostile bytes on the same
     /// connection, or close it themselves to provoke a mid-stream reset. Throws if the dial does not
-    /// resolve within <paramref name="maxPumps"/> Pumps, or resolves to a failure, since a hostile peer
-    /// that cannot even connect has nothing to be hostile with.
+    /// resolve within <paramref name="budget"/>, or resolves to a failure, since a hostile peer that
+    /// cannot even connect has nothing to be hostile with.
     /// </summary>
-    public LinkId ConnectAndSend(IPEndPoint destination, ReadOnlySpan<byte> payload, int maxPumps = 20)
+    public LinkId ConnectAndSend(IPEndPoint destination, ReadOnlySpan<byte> payload, TimeSpan? budget = null)
     {
         LinkId link = _reactor.Connect(destination);
         bool connected = false;
-        for (int i = 0; i < maxPumps && !connected; i++)
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (!connected)
         {
             _reactor.Pump();
             foreach (RawEvent evt in _reactor.Drain())
@@ -82,11 +83,18 @@ internal sealed class HostilePeer : IDisposable
                     throw new InvalidOperationException($"HostilePeer's dial to {destination} closed with {evt.Reason} before connecting.");
                 }
             }
-        }
 
-        if (!connected)
-        {
-            throw new InvalidOperationException($"HostilePeer's dial to {destination} did not resolve within {maxPumps} Pumps.");
+            if (connected)
+            {
+                break;
+            }
+
+            if (deadline.Expired)
+            {
+                throw new InvalidOperationException($"HostilePeer's dial to {destination} did not resolve within its Pump budget.");
+            }
+
+            PumpDeadline.Yield();
         }
 
         SendResult sendResult = _reactor.Send(link, payload);

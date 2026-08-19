@@ -34,16 +34,23 @@ public class StreamSessionWriteBatchingTests
     /// — every assertion a caller makes afterwards is about bytes this ticket's flush step put on the
     /// wire, not about the handshake that preceded it.
     /// </summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness dialler, WireObserver observer, int maxPumps = 20)
+    private static PeerId EstablishSession(StreamSessionReactorHarness dialler, WireObserver observer, TimeSpan? budget = null)
     {
         IPEndPoint target = observer.ListenTcp(new IPEndPoint(IPAddress.Loopback, 0));
         dialler.Reactor.Connect(target);
 
-        for (int round = 0; round < maxPumps && observer.ReceivedSegments.Count == 0; round++)
+        PumpDeadline segmentDeadline = PumpDeadline.Start(budget);
+        while (observer.ReceivedSegments.Count == 0)
         {
             dialler.Reactor.Pump();
             dialler.DrainToList();
             observer.Pump();
+            if (observer.ReceivedSegments.Count > 0 || segmentDeadline.Expired)
+            {
+                break;
+            }
+
+            PumpDeadline.Yield();
         }
 
         observer.AcceptedLinks.Should().HaveCount(1, "the dialler's Connect should have reached the observer's listener");
@@ -55,7 +62,8 @@ public class StreamSessionWriteBatchingTests
 
         observer.SendOnAcceptedLink(observer.AcceptedLinks[0], StreamSessionTestRecords.BuildHello());
 
-        for (int round = 0; round < maxPumps; round++)
+        PumpDeadline connectedDeadline = PumpDeadline.Start(budget);
+        while (true)
         {
             dialler.Reactor.Pump();
             foreach ((SessionEventKind Kind, PeerId Peer, DisconnectReason Reason) evt in dialler.DrainToList())
@@ -65,9 +73,14 @@ public class StreamSessionWriteBatchingTests
                     return evt.Peer;
                 }
             }
-        }
 
-        throw new InvalidOperationException("The Session never established within the Pump budget.");
+            if (connectedDeadline.Expired)
+            {
+                throw new InvalidOperationException("The Session never established within the Pump budget.");
+            }
+
+            PumpDeadline.Yield();
+        }
     }
 
     /// <summary>
@@ -75,9 +88,9 @@ public class StreamSessionWriteBatchingTests
     /// <c>StreamSessionRetentionFlushTests.EstablishSession</c> for the same reason: this file's
     /// backpressure test needs the Reactor as the accepting side, not the dialling side.
     /// </summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, SlowReaderPeer peer, int maxPumps = 20)
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, SlowReaderPeer peer, TimeSpan? budget = null)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
         peer.Receive(RecordSize);
         return id;
     }

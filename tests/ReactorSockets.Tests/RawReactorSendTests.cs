@@ -174,7 +174,8 @@ public class RawReactorSendTests
             links.Add(harness.Reactor.Connect(serverEndPoint));
         }
 
-        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> establishing = harness.PumpAndDrainAll(pumps: 10);
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> establishing =
+            harness.PumpUntilDrained(e => e.Count(x => x.Kind == RawEventKind.Connected) >= 64);
         establishing.Count(evt => evt.Kind == RawEventKind.Connected).Should().Be(64);
 
         // Act
@@ -222,7 +223,8 @@ public class RawReactorSendTests
         counterparty.Send(payload);
 
         // Act
-        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpAndDrainAll(pumps: 3);
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained =
+            harness.PumpUntilDrained(e => e.Any(x => x.Kind == RawEventKind.SegmentReceived && x.Link == acceptedLink));
 
         // Assert
         drained.Should().ContainSingle(evt => evt.Kind == RawEventKind.SegmentReceived && evt.Link == acceptedLink)

@@ -30,10 +30,14 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         bool withoutDiagnostics = false,
         bool bindLoopback = true,
         IReadOnlyList<IPEndPoint>? endpoints = null,
-        RandomNumberGenerator? entropy = null)
+        RandomNumberGenerator? entropy = null,
+        TimeSpan? linger = null,
+        FakeTimeProvider? timeProvider = null)
     {
         Capacity = capacity;
         SendIdleInterval = sendIdleInterval ?? TimeSpan.FromSeconds(1);
+        Linger = linger ?? TimeSpan.FromSeconds(1);
+        TimeProvider = timeProvider ?? new FakeTimeProvider();
         IReactorDiagnostics? installedSink = withoutDiagnostics ? null : sinkOverride ?? Sink;
         Entropy = entropy ?? RandomNumberGenerator.Create();
         Reactor = new StreamSessionReactor(new StreamSessionOptions
@@ -53,7 +57,7 @@ internal sealed class StreamSessionReactorHarness : IDisposable
             SendBufferSize = sendBufferSize,
             MissedHeartbeats = missedHeartbeats,
             SendIdleInterval = SendIdleInterval,
-            Linger = TimeSpan.FromSeconds(1),
+            Linger = Linger,
             Endpoints = endpoints ?? (bindLoopback ? [new IPEndPoint(IPAddress.Loopback, 0)] : []),
             Entropy = Entropy,
         });
@@ -62,8 +66,14 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// <summary>The capacity this Reactor was built with — the number of Slots <see cref="FillToCapacity"/> occupies.</summary>
     public int Capacity { get; }
 
-    /// <summary>The clock the Reactor was built with — advance it to exercise anything time-dependent.</summary>
-    public FakeTimeProvider TimeProvider { get; } = new();
+    /// <summary>
+    /// The clock the Reactor was built with — advance it to exercise anything time-dependent. A fresh
+    /// <see cref="FakeTimeProvider"/> unless the constructor's <c>timeProvider</c> parameter supplies
+    /// one shared with another harness, which two loopback-connected Reactors need whenever a test's
+    /// assertion depends on both ends acting at the same instant (issue #131) — a Reactor's own clock is
+    /// otherwise private to it, exactly like a real one's.
+    /// </summary>
+    public FakeTimeProvider TimeProvider { get; }
 
     /// <summary>
     /// The <see cref="StreamSessionOptions.SendIdleInterval"/> the Reactor was built with — 1 second
@@ -71,6 +81,13 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// advance <see cref="TimeProvider"/> by exactly this much without duplicating the constant.
     /// </summary>
     public TimeSpan SendIdleInterval { get; }
+
+    /// <summary>
+    /// The <see cref="StreamSessionOptions.Linger"/> the Reactor was built with — 1 second unless the
+    /// constructor's <c>linger</c> parameter overrides it. A test that needs the re-dial schedule's
+    /// ceiling to bite sets it below the cadence it pumps at, since that ceiling is the Linger.
+    /// </summary>
+    public TimeSpan Linger { get; }
 
     /// <summary>The recording Sink installed on the Reactor, unless the harness was told to override or omit it.</summary>
     public RecordingDiagnosticsSink Sink { get; } = new();
@@ -113,7 +130,12 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         return drained;
     }
 
-    /// <summary>Pumps exactly <paramref name="pumps"/> times, accumulating everything drained.</summary>
+    /// <summary>
+    /// Pumps exactly <paramref name="pumps"/> times, accumulating everything drained. For asserting
+    /// that something does <em>not</em> happen: a fixed count of Pumps bounds syscalls, not time, so
+    /// it is not a way to wait for something to arrive — see <see cref="PumpDeadline"/> and use
+    /// <see cref="PumpUntilDrained"/> for that.
+    /// </summary>
     public List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> PumpAndDrainAll(int pumps)
     {
         List<(SessionEventKind, PeerId, DisconnectReason)> all = [];
@@ -127,10 +149,40 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     }
 
     /// <summary>
-    /// Pumps both ends alternately until <paramref name="condition"/> holds or
-    /// <paramref name="maxRounds"/> is spent, accumulating what each end drains. A TCP handshake needs
-    /// several round trips of the connect and the record exchange to settle, and delivery is not
-    /// synchronous with a send, so the number of rounds is bounded rather than exact.
+    /// Pumps until <paramref name="condition"/> holds over everything drained so far, or until
+    /// <paramref name="budget"/> of real time is spent, and returns everything drained either way.
+    /// This is how a test waits for an event to arrive; <see cref="PumpAndDrainAll"/> counts Pumps
+    /// and so waits for essentially no time at all (<see cref="PumpDeadline"/>, issue #153).
+    /// </summary>
+    /// <remarks>
+    /// The condition decides only when to stop waiting, never what passes: a test still asserts on
+    /// the returned events exactly as it did against a fixed count, so a real regression still fails
+    /// — after the budget rather than immediately.
+    /// </remarks>
+    public List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> PumpUntilDrained(
+        Func<IReadOnlyList<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>, bool> condition,
+        TimeSpan? budget = null)
+    {
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> all = [];
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
+        {
+            Reactor.Pump();
+            all.AddRange(DrainToList());
+            if (condition(all) || deadline.Expired)
+            {
+                return all;
+            }
+
+            PumpDeadline.Yield();
+        }
+    }
+
+    /// <summary>
+    /// Pumps both ends alternately until <paramref name="condition"/> holds or <paramref name="budget"/>
+    /// of real time is spent, accumulating what each end drains. A TCP handshake needs several round
+    /// trips of the connect and the record exchange to settle, and delivery is not synchronous with a
+    /// send, so the wait is bounded by a clock rather than a round count (<see cref="PumpDeadline"/>).
     /// </summary>
     public static (
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Dialler,
@@ -139,12 +191,105 @@ internal sealed class StreamSessionReactorHarness : IDisposable
             StreamSessionReactorHarness dialler,
             StreamSessionReactorHarness accepter,
             Func<bool> condition,
-            int maxRounds = 20)
+            TimeSpan? budget = null)
     {
         List<(SessionEventKind, PeerId, DisconnectReason)> diallerEvents = [];
         List<(SessionEventKind, PeerId, DisconnectReason)> accepterEvents = [];
 
-        for (int round = 0; round < maxRounds && !condition(); round++)
+        // The condition is asked once per round, after both ends have pumped, never before: several
+        // callers phrase it as a DrainToList call, which consumes what it counts, so asking twice in a
+        // round would swallow the very events the round produced.
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
+        {
+            dialler.Reactor.Pump();
+            diallerEvents.AddRange(dialler.DrainToList());
+            accepter.Reactor.Pump();
+            accepterEvents.AddRange(accepter.DrainToList());
+            if (condition() || deadline.Expired)
+            {
+                return (diallerEvents, accepterEvents);
+            }
+
+            PumpDeadline.Yield();
+        }
+    }
+
+    /// <summary>
+    /// Pumps both ends alternately until <paramref name="condition"/> holds over what each has drained
+    /// so far, or until <paramref name="budget"/> of real time is spent. The two-Reactor counterpart to
+    /// <see cref="PumpUntilDrained"/>, and what a test asserting on a completed handshake wants:
+    /// <see cref="PumpBothRounds"/> counts rounds and so waits for essentially no time at all
+    /// (<see cref="PumpDeadline"/>, issue #153).
+    /// </summary>
+    public static (
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Dialler,
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Accepter)
+        PumpBothUntilDrained(
+            StreamSessionReactorHarness dialler,
+            StreamSessionReactorHarness accepter,
+            Func<
+                IReadOnlyList<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>,
+                IReadOnlyList<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>,
+                bool> condition,
+            TimeSpan? budget = null)
+    {
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerEvents = [];
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> accepterEvents = [];
+
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
+        {
+            dialler.Reactor.Pump();
+            diallerEvents.AddRange(dialler.DrainToList());
+            accepter.Reactor.Pump();
+            accepterEvents.AddRange(accepter.DrainToList());
+            if (condition(diallerEvents, accepterEvents) || deadline.Expired)
+            {
+                return (diallerEvents, accepterEvents);
+            }
+
+            PumpDeadline.Yield();
+        }
+    }
+
+    /// <summary>
+    /// Pumps both ends alternately until each has raised <see cref="SessionEventKind.PeerConnected"/>,
+    /// which is what almost every two-Reactor test needs before it can assert anything: the handshake
+    /// has completed on both sides and both ends' events are in hand.
+    /// </summary>
+    public static (
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Dialler,
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Accepter)
+        PumpBothUntilConnected(
+            StreamSessionReactorHarness dialler,
+            StreamSessionReactorHarness accepter,
+            TimeSpan? budget = null) =>
+        PumpBothUntilDrained(
+            dialler,
+            accepter,
+            (diallerEvents, accepterEvents) =>
+                diallerEvents.Any(e => e.Kind == SessionEventKind.PeerConnected)
+                && accepterEvents.Any(e => e.Kind == SessionEventKind.PeerConnected),
+            budget);
+
+    /// <summary>
+    /// Pumps both ends alternately exactly <paramref name="rounds"/> times, accumulating what each
+    /// drains. For asserting that something does <em>not</em> happen; to wait for something that
+    /// should, use <see cref="PumpBothUntilDrained"/>.
+    /// </summary>
+    public static (
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Dialler,
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Accepter)
+        PumpBothRounds(
+            StreamSessionReactorHarness dialler,
+            StreamSessionReactorHarness accepter,
+            int rounds)
+    {
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerEvents = [];
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> accepterEvents = [];
+
+        for (int round = 0; round < rounds; round++)
         {
             dialler.Reactor.Pump();
             diallerEvents.AddRange(dialler.DrainToList());
@@ -155,12 +300,23 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         return (diallerEvents, accepterEvents);
     }
 
-    /// <summary>Pumps up to <paramref name="maxPumps"/> times, stopping as soon as <paramref name="condition"/> holds.</summary>
-    public void PumpUntil(Func<bool> condition, int maxPumps = 20)
+    /// <summary>
+    /// Pumps until <paramref name="condition"/> holds or <paramref name="budget"/> of real time is
+    /// spent. For a condition read off something other than the drained events — a Sink, a counter —
+    /// where <see cref="PumpUntilDrained"/> has nothing to hand the caller (<see cref="PumpDeadline"/>).
+    /// </summary>
+    public void PumpUntil(Func<bool> condition, TimeSpan? budget = null)
     {
-        for (int i = 0; i < maxPumps && !condition(); i++)
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
         {
             Reactor.Pump();
+            if (condition() || deadline.Expired)
+            {
+                return;
+            }
+
+            PumpDeadline.Yield();
         }
     }
 
@@ -170,20 +326,34 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// <see cref="Endpoint"/>, one at a time, pumping each to a completed handshake before dialing the
     /// next. Returns each held Peer's id paired with the raw counterparty socket occupying its Slot, so
     /// a follow-on test can interrupt, Goodbye, or reset any one of them — the caller owns disposing
-    /// every counterparty this returns.
+    /// every counterparty this returns — along with the resume secret this Reactor announced to each,
+    /// read out of the Hello it replied with, which is what a later Resume has to present to be
+    /// matched back onto that Peer's Slot (issue #123).
     /// </summary>
     public List<HeldPeer> FillToCapacity()
     {
         List<HeldPeer> held = [];
         for (int i = 0; i < Capacity; i++)
         {
-            RawStreamPeer counterparty = new(Endpoint);
-            PeerId id = StreamSessionTestRecords.EstablishSession(this, counterparty.Send);
-            counterparty.Receive(StreamSessionTestRecords.HandshakeRecordSize);
-            held.Add(new HeldPeer(id, counterparty));
+            held.Add(EstablishOnePeer());
         }
 
         return held;
+    }
+
+    /// <summary>
+    /// Establishes one Peer against <see cref="Endpoint"/> and returns it paired with the raw
+    /// counterparty holding its Slot and the resume secret this Reactor announced to it — the single
+    /// step <see cref="FillToCapacity"/> repeats per Slot, for tests that want a Slot left free so a
+    /// refusal cannot be mistaken for a capacity refusal (issue #124). The caller owns disposing the
+    /// counterparty, exactly as with <see cref="FillToCapacity"/>.
+    /// </summary>
+    public HeldPeer EstablishOnePeer()
+    {
+        RawStreamPeer counterparty = new(Endpoint);
+        PeerId id = StreamSessionTestRecords.EstablishSession(this, counterparty.Send);
+        byte[] hello = counterparty.Receive(StreamSessionTestRecords.HandshakeRecordSize);
+        return new HeldPeer(id, counterparty, StreamSessionTestRecords.ReadResumeSecretFromHello(hello));
     }
 
     /// <summary>
@@ -192,24 +362,19 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// rather than closing it (ADR 0010), so the Peer goes on holding its capacity Slot until its
     /// Linger expires. Pumps until this Reactor raises <see cref="SessionEventKind.PeerInterrupted"/>
     /// for that Peer, and returns everything drained on the way so a caller can assert on it. Throws
-    /// if the interruption is not observed within <paramref name="maxPumps"/>.
+    /// if the interruption is not observed within <paramref name="budget"/>.
     /// </summary>
     public List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> InterruptHeldPeer(
         HeldPeer held,
-        int maxPumps = 20)
+        TimeSpan? budget = null)
     {
         held.Counterparty.ResetAbruptly();
 
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
-        bool Interrupted() => drained.Any(e => e.Kind == SessionEventKind.PeerInterrupted && e.Peer == held.Peer);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = PumpUntilDrained(
+            events => events.Any(e => e.Kind == SessionEventKind.PeerInterrupted && e.Peer == held.Peer),
+            budget);
 
-        for (int i = 0; i < maxPumps && !Interrupted(); i++)
-        {
-            Reactor.Pump();
-            drained.AddRange(DrainToList());
-        }
-
-        if (!Interrupted())
+        if (!drained.Any(e => e.Kind == SessionEventKind.PeerInterrupted && e.Peer == held.Peer))
         {
             throw new InvalidOperationException(
                 "The held Peer never moved to Interrupted within the Pump budget.");
@@ -226,11 +391,22 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// <c>StreamSessionReactor.RefuseForCapacity</c>). The returned <see cref="InboundAttemptResult"/>
     /// owns the raw counterparty; dispose it once a test is done inspecting the connection's own fate.
     /// </summary>
-    public InboundAttemptResult AttemptFreshConnection(int maxPumps = 20, int perPumpTimeoutMs = 100)
+    /// <param name="resumeSecret">
+    /// The secret the dial announces in its Hello, for the tests that need a late reconnection to
+    /// carry a once-valid secret rather than the zeroed default (issue #124's second refusal path).
+    /// Left null, the Hello announces a zeroed secret, which matches no reservation.
+    /// </param>
+    public InboundAttemptResult AttemptFreshConnection(
+        int maxPumps = 20,
+        int perPumpTimeoutMs = 100,
+        byte[]? resumeSecret = null)
     {
         RawStreamPeer counterparty = new(Endpoint);
-        counterparty.Send(StreamSessionTestRecords.BuildHello());
+        counterparty.Send(StreamSessionTestRecords.BuildHello(resumeSecret: resumeSecret));
 
+        // Unlike the loops above, this one already waits on a clock rather than only on a Pump count:
+        // each round blocks up to perPumpTimeoutMs for the reply, so the budget is maxPumps × that
+        // rather than the microseconds a bare Pump count buys (PumpDeadline, issue #153).
         byte[]? reply = null;
         PeerId? connectedPeer = null;
         for (int i = 0; i < maxPumps && (reply is null || (reply[0] == StreamSessionTestRecords.HelloRecordType && connectedPeer is null)); i++)
@@ -279,7 +455,12 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// <see cref="Counterparty"/> to exercise what happens to a held Slot; the other entries
     /// <see cref="FillToCapacity"/> returns alongside it just keep occupying theirs.
     /// </summary>
-    public sealed record HeldPeer(PeerId Peer, RawStreamPeer Counterparty);
+    /// <param name="ResumeSecret">
+    /// The 16-byte secret this Reactor announced in the Hello it replied to this Peer with — the one a
+    /// Resume must present to be matched back onto this Peer's reserved Slot (issue #123). Read off the
+    /// wire, never out of the Reactor: how the secret is stored is not something a test may assert on.
+    /// </param>
+    public sealed record HeldPeer(PeerId Peer, RawStreamPeer Counterparty, byte[] ResumeSecret);
 
     /// <summary>
     /// The fate of a fresh inbound connection <see cref="AttemptFreshConnection"/> made against this
@@ -380,6 +561,14 @@ internal sealed class StreamSessionReactorHarness : IDisposable
             record = buffer;
             return true;
         }
+
+        /// <summary>
+        /// Whether this socket has something to read — bytes, or the end-of-stream a graceful close
+        /// leaves behind. A non-blocking poll, so a test can Pump until the Reactor has actually closed
+        /// the connection rather than guessing at a Pump count that might be short of it (issue #153,
+        /// <see cref="PumpDeadline"/>).
+        /// </summary>
+        public bool HasPendingReadOrClose => _socket.Poll(0, SelectMode.SelectRead);
 
         /// <summary>Expects the remote to have closed gracefully: a further read reports end-of-stream, never a reset.</summary>
         public void ExpectGracefulClose()

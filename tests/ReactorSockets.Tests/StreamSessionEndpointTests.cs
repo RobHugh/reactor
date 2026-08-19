@@ -70,8 +70,8 @@ public class StreamSessionEndpointTests
 
         // Act
         PeerId dialled = dialler.Reactor.Connect(accepter.Endpoint);
-        (var diallerEvents, var accepterEvents) = StreamSessionReactorHarness.PumpBothUntil(
-            dialler, accepter, () => false, maxRounds: 10);
+        (var diallerEvents, var accepterEvents) = StreamSessionReactorHarness.PumpBothUntilConnected(
+            dialler, accepter);
 
         // Assert
         diallerEvents.Should().ContainSingle().Which.Should().BeEquivalentTo(
@@ -105,8 +105,8 @@ public class StreamSessionEndpointTests
 
         // Act
         dialler.Reactor.Connect(accepter.Endpoint);
-        (var diallerEvents, var accepterEvents) = StreamSessionReactorHarness.PumpBothUntil(
-            dialler, accepter, () => false, maxRounds: 10);
+        (var diallerEvents, var accepterEvents) = StreamSessionReactorHarness.PumpBothUntilConnected(
+            dialler, accepter);
 
         // Assert
         diallerEvents.Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerConnected);
@@ -122,7 +122,7 @@ public class StreamSessionEndpointTests
 
         // Act
         PeerId dialled = dialler.Reactor.Connect(accepter.Endpoint);
-        (var diallerEvents, _) = StreamSessionReactorHarness.PumpBothUntil(dialler, accepter, () => false, maxRounds: 10);
+        (var diallerEvents, _) = StreamSessionReactorHarness.PumpBothUntilConnected(dialler, accepter);
 
         // Assert
         diallerEvents.Should().ContainSingle()
@@ -139,12 +139,12 @@ public class StreamSessionEndpointTests
 
         // Act
         firstDialler.Reactor.Connect(accepter.Endpoint);
-        StreamSessionReactorHarness.PumpBothUntil(firstDialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 10);
+        StreamSessionReactorHarness.PumpBothUntil(firstDialler, accepter, () => accepter.DrainToList().Count > 0);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> firstAccepted = accepter.DrainToList();
         accepter.Reactor.Pump(); // Ends the Frame the first PeerConnected belongs to, so the second wait below sees only the second.
 
         secondDialler.Reactor.Connect(accepter.Endpoint);
-        StreamSessionReactorHarness.PumpBothUntil(secondDialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 10);
+        StreamSessionReactorHarness.PumpBothUntil(secondDialler, accepter, () => accepter.DrainToList().Count > 0);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> secondAccepted = accepter.DrainToList();
 
         // Assert
@@ -288,7 +288,7 @@ public class StreamSessionEndpointTests
         using StreamSessionReactorHarness accepter = new();
         using StreamSessionReactorHarness dialler = new(bindLoopback: false);
         dialler.Reactor.Connect(accepter.Endpoint);
-        StreamSessionReactorHarness.PumpBothUntil(dialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 10);
+        StreamSessionReactorHarness.PumpBothUntil(dialler, accepter, () => accepter.DrainToList().Count > 0);
         accepter.DrainToList().Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerConnected);
 
         // Act
@@ -325,7 +325,7 @@ public class StreamSessionEndpointTests
         using StreamSessionReactorHarness secondDialler = new(bindLoopback: false, capacity: 1);
 
         firstDialler.Reactor.Connect(accepter.Endpoint);
-        StreamSessionReactorHarness.PumpBothUntil(firstDialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 10);
+        StreamSessionReactorHarness.PumpBothUntil(firstDialler, accepter, () => accepter.DrainToList().Count > 0);
         PeerId staleId = accepter.DrainToList().Should().ContainSingle().Which.Peer;
         accepter.Reactor.Pump(); // Ends the Frame the PeerConnected belongs to, so the drain below sees only the close.
         accepter.Reactor.Close(staleId);
@@ -334,7 +334,7 @@ public class StreamSessionEndpointTests
         accepter.Reactor.Pump(); // Ends the Frame the close belongs to, so the second wait below sees only the new Peer.
 
         secondDialler.Reactor.Connect(accepter.Endpoint);
-        StreamSessionReactorHarness.PumpBothUntil(secondDialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 10);
+        StreamSessionReactorHarness.PumpBothUntil(secondDialler, accepter, () => accepter.DrainToList().Count > 0);
         accepter.DrainToList().Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerConnected);
         accepter.Reactor.Pump(); // Ends the Frame the second PeerConnected belongs to, so the drain below sees only the stale Close's (non-)effect.
 
@@ -352,7 +352,7 @@ public class StreamSessionEndpointTests
         using StreamSessionReactorHarness accepter = new();
         using StreamSessionReactorHarness dialler = new(bindLoopback: false);
         dialler.Reactor.Connect(accepter.Endpoint);
-        StreamSessionReactorHarness.PumpBothUntil(dialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 10);
+        StreamSessionReactorHarness.PumpBothUntil(dialler, accepter, () => accepter.DrainToList().Count > 0);
         PeerId established = accepter.DrainToList().Should().ContainSingle().Which.Peer;
         accepter.Reactor.Pump(); // Ends the Frame the PeerConnected belongs to, so the drain below sees only the close.
 
@@ -375,13 +375,13 @@ public class StreamSessionEndpointTests
         using StreamSessionReactorHarness secondDialler = new(bindLoopback: false, capacity: 1);
 
         firstDialler.Reactor.Connect(accepter.Endpoint);
-        StreamSessionReactorHarness.PumpBothUntil(firstDialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 10);
+        StreamSessionReactorHarness.PumpBothUntil(firstDialler, accepter, () => accepter.DrainToList().Count > 0);
         accepter.DrainToList().Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerConnected);
         accepter.Reactor.Pump(); // Ends the Frame the PeerConnected belongs to, so the Slot is settled before the second dial.
 
         // Act
         PeerId dialled = secondDialler.Reactor.Connect(accepter.Endpoint);
-        StreamSessionReactorHarness.PumpBothUntil(secondDialler, accepter, () => secondDialler.DrainToList().Count > 0, maxRounds: 10);
+        StreamSessionReactorHarness.PumpBothUntil(secondDialler, accepter, () => secondDialler.DrainToList().Count > 0);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = secondDialler.DrainToList();
 
         // Assert

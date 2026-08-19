@@ -22,14 +22,15 @@ public class StreamSessionReadShareTests
     private static byte[] PayloadOf(int length, byte marker) => StreamSessionTestRecords.PayloadOf(length, marker);
 
     /// <summary>Pumps <paramref name="accepter"/> until it has drained a <see cref="SessionEventKind.PeerConnected"/> event, returning the established Peer's id.</summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, SharePeer peer, int maxPumps = 20) =>
-        StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, SharePeer peer, TimeSpan? budget = null) =>
+        StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
 
     /// <summary>Pumps until at least one event drains, returning what that first non-empty Pump produced.</summary>
     private static List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> PumpUntilNonEmpty(
-        StreamSessionReactorHarness accepter, int maxPumps = 20)
+        StreamSessionReactorHarness accepter, TimeSpan? budget = null)
     {
-        for (int i = 0; i < maxPumps; i++)
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
         {
             accepter.Reactor.Pump();
             var drained = accepter.DrainToListWithPayload();
@@ -37,9 +38,14 @@ public class StreamSessionReadShareTests
             {
                 return drained;
             }
-        }
 
-        return [];
+            if (deadline.Expired)
+            {
+                return [];
+            }
+
+            PumpDeadline.Yield();
+        }
     }
 
     [Fact]

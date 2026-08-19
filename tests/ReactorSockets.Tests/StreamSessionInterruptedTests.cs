@@ -25,9 +25,9 @@ public class StreamSessionInterruptedTests
 
     private static byte[] BuildGoodbye() => StreamSessionTestRecords.BuildPrefix(uint.MaxValue);
 
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, InterruptedPeer peer, int maxPumps = 20)
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, InterruptedPeer peer, TimeSpan? budget = null)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
         peer.Receive(StreamSessionTestRecords.HandshakeRecordSize);
         return id;
     }

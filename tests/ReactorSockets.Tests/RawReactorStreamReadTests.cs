@@ -28,7 +28,8 @@ public class RawReactorStreamReadTests
         counterparty.Send(payload);
 
         // Act
-        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpAndDrainAll(pumps: 5);
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained =
+            harness.PumpUntilDrained(e => e.Where(x => x.Kind == RawEventKind.SegmentReceived && x.Link == acceptedLink).Sum(x => x.Payload.Length) >= payload.Length);
 
         // Assert
         byte[] received = drained
@@ -264,7 +265,8 @@ public class RawReactorStreamReadTests
         counterpartyAccepted.Send(payload);
 
         // Act
-        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpAndDrainAll(pumps: 3);
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained =
+            harness.PumpUntilDrained(e => e.Where(x => x.Kind == RawEventKind.SegmentReceived && x.Link == dialLink).Sum(x => x.Payload.Length) >= payload.Length);
 
         // Assert
         byte[] received = drained

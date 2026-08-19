@@ -31,10 +31,30 @@ internal sealed class PeerCounterSet
     public ulong MessagesReceived { get; private set; }
 
     /// <summary>
+    /// Records that this Peer's transport was successfully resumed after an Interruption (issue #128).
+    /// Called exactly once per <see cref="SessionEventKind.PeerResumed"/> raised — on the listening
+    /// side's <c>ResumeHeldPeer</c> once its rewind succeeds, and on the dialling side's
+    /// <c>DeliverCompleteMessages</c> once its own reciprocal rewind succeeds — never on a resume
+    /// refused for a retention gap or any other reason. Never called by anything that resets a Peer's
+    /// other counters: <see cref="RetentionArena.ResetShareHolder"/> is reachable only from
+    /// <c>ClosePeer</c>, never from a resume path, so this and every counter beside it keep accumulating
+    /// across as many resumes as a Peer lives through (ADR 0013).
+    /// </summary>
+    public void RecordResume() => Resumes++;
+
+    /// <summary>
+    /// The live count of successful resumes so far — the same figure <see cref="Snapshot"/> exposes as
+    /// <see cref="PeerCounters.Resumes"/>. Monotonic and never reset, exactly like
+    /// <see cref="MessagesReceived"/>: a resume history worth a whole Session's lifetime is the point,
+    /// not a per-transport figure that a reconnect would erase.
+    /// </summary>
+    public ulong Resumes { get; private set; }
+
+    /// <summary>
     /// Takes a point-in-time snapshot of every counter belonging to this Peer.
     /// <paramref name="retentionHighWaterBytes"/> is pulled fresh from <see cref="RetentionArena"/> by
     /// the caller (ADR 0005 — Counters are pulled, not pushed) rather than held here, since this set
     /// holds only what a Peer increments on its own hot path.
     /// </summary>
-    public PeerCounters Snapshot(ulong retentionHighWaterBytes) => new(MessagesReceived, retentionHighWaterBytes);
+    public PeerCounters Snapshot(ulong retentionHighWaterBytes) => new(MessagesReceived, retentionHighWaterBytes, Resumes);
 }

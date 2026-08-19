@@ -265,7 +265,8 @@ public class DatagramSessionMalformedInputTests
         }
 
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
-            accepter.PumpAndDrainAll(10);
+            accepter.PumpUntilDrained(
+                _ => accepter.Sink.Received.Count(r => r.Id == DiagnosticId.DatagramMalformed) >= batch.Count);
 
         // Assert
         drained.Should().BeEmpty();
@@ -311,8 +312,8 @@ public class DatagramSessionMalformedInputTests
         // The Reactor is still usable afterwards: a legitimate handshake still completes.
         using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
         PeerId dialled = dialler.Reactor.Connect(accepter.Endpoint);
-        (var diallerEvents, var accepterEvents) = DatagramSessionReactorHarness.PumpBothUntil(
-            dialler, accepter, () => false, maxRounds: 6);
+        (var diallerEvents, var accepterEvents) = DatagramSessionReactorHarness.PumpBothUntilConnected(
+            dialler, accepter);
 
         diallerEvents.Should().ContainSingle()
             .Which.Should().BeEquivalentTo((SessionEventKind.PeerConnected, dialled, default(DisconnectReason)));

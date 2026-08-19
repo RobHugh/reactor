@@ -90,4 +90,21 @@ public enum DisconnectReason
     /// is already gone.
     /// </summary>
     LingerExpired = 6,
+
+    /// <summary>
+    /// A Resume's reported delivery counter named a Message position below this end's retention ring —
+    /// the peer confirmed nothing further, but by the time it reconnected the bytes at its reported
+    /// position had already been released to make room for newer ones (<see cref="SendOutcome.RetentionExhausted"/>
+    /// during the interruption, issue #120). Resuming anyway would deliver a stream with a hole in it,
+    /// so this end closes instead (issue #130). Distinct from <see cref="LingerExpired"/> and
+    /// <see cref="TransportFailed"/> because both of those are silent about *why* the Session ended —
+    /// nothing was wrong with what either side said, only with how long the transport stayed reachable —
+    /// while this one is a direct statement about what the peer said: its retention window was too small
+    /// for the outage it just had. That makes the remedy actionable and specific — raise this end's
+    /// retention capacity or its Linger, or both — in a way neither of those two members is. The mirror
+    /// case, a Resume counter naming a Message this end never sent at all, is not this member: that is a
+    /// protocol violation (<see cref="ProtocolViolation"/>), not a capacity question, because no amount
+    /// of retention would have made a fabricated counter valid.
+    /// </summary>
+    RetentionGap = 7,
 }

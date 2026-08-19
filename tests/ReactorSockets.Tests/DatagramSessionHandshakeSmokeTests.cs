@@ -16,8 +16,8 @@ public class DatagramSessionHandshakeSmokeTests
 
         // Act
         PeerId dialled = dialler.Reactor.Connect(destination);
-        (var diallerEvents, var accepterEvents) = DatagramSessionReactorHarness.PumpBothUntil(
-            dialler, accepter, () => false, maxRounds: 6);
+        (var diallerEvents, var accepterEvents) = DatagramSessionReactorHarness.PumpBothUntilConnected(
+            dialler, accepter);
 
         // Assert
         diallerEvents.Should().ContainSingle()

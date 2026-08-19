@@ -34,9 +34,9 @@ public class StreamSessionRetentionFlushTests
     /// <paramref name="peer"/>'s socket, so the bytes this ticket's flush later writes are the only
     /// thing left for <see cref="FlushPeer.Receive"/> to see.
     /// </summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, FlushPeer peer, int maxPumps = 20)
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, FlushPeer peer, TimeSpan? budget = null)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
         peer.Receive(RecordSize);
         return id;
     }

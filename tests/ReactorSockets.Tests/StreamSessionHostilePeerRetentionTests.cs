@@ -25,8 +25,8 @@ public class StreamSessionHostilePeerRetentionTests
     {
         using StreamSessionReactorHarness dialler = new(bindLoopback: false);
         dialler.Reactor.Connect(accepter.Endpoint);
-        (var diallerEvents, _) = StreamSessionReactorHarness.PumpBothUntil(
-            dialler, accepter, () => false, maxRounds: 10);
+        (var diallerEvents, _) = StreamSessionReactorHarness.PumpBothUntilConnected(
+            dialler, accepter);
 
         diallerEvents.Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerConnected);
     }
@@ -99,7 +99,7 @@ public class StreamSessionHostilePeerRetentionTests
         Action act = () =>
         {
             hostile.ConnectAndSend(accepter.Endpoint, garbage);
-            accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused), maxPumps: 10);
+            accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused));
             accepter.PumpAndDrainAll(3);
         };
 
@@ -142,7 +142,7 @@ public class StreamSessionHostilePeerRetentionTests
         using (HostilePeer garbageVersion = new())
         {
             garbageVersion.ConnectAndSend(accepter.Endpoint, StreamSessionTestRecords.BuildHello(version: 0xDEAD_BEEF));
-            accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused), maxPumps: 10);
+            accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused));
             accepter.PumpAndDrainAll(3);
         }
 

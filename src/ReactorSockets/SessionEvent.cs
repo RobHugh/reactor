@@ -68,4 +68,12 @@ public readonly ref struct SessionEvent
     /// </summary>
     internal static SessionEvent ForPeerInterrupted(PeerId peer) =>
         new(SessionEventKind.PeerInterrupted, peer, default, default);
+
+    /// <summary>
+    /// Builds a <see cref="SessionEventKind.PeerResumed"/> event. Carries only <see cref="Peer"/> —
+    /// nothing has ended, so there is no <see cref="DisconnectReason"/> to report, exactly as
+    /// <see cref="ForPeerInterrupted"/>.
+    /// </summary>
+    internal static SessionEvent ForPeerResumed(PeerId peer) =>
+        new(SessionEventKind.PeerResumed, peer, default, default);
 }

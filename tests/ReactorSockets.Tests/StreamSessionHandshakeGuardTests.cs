@@ -84,7 +84,8 @@ public class StreamSessionHandshakeGuardTests
 
         // Act
         peer.Send(StreamSessionTestRecords.BuildHello(version: 2));
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.PumpAndDrainAll(10);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events =
+            accepter.PumpUntilDrained(e => e.Any(x => x.Kind == SessionEventKind.PeerClosed));
 
         // Assert
         events.Should().ContainSingle()
@@ -136,7 +137,8 @@ public class StreamSessionHandshakeGuardTests
                 peer.Send(StreamSessionTestRecords.BuildHello(version: 2));
             }
 
-            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.PumpAndDrainAll(30);
+            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events =
+                accepter.PumpUntilDrained(e => e.Count(x => x.Kind == SessionEventKind.PeerClosed) >= peerCount);
 
             // Assert — every connection sees exactly one clean version-mismatch close, and the Refusal
             // each received off the wire is byte-correct: a short-sent Hello's remainder was never
@@ -200,7 +202,7 @@ public class StreamSessionHandshakeGuardTests
         using StreamSessionReactorHarness accepter = new(capacity: 1);
         using StreamSessionReactorHarness firstDialler = new(bindLoopback: false);
         firstDialler.Reactor.Connect(accepter.Endpoint);
-        StreamSessionReactorHarness.PumpBothUntil(firstDialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 10);
+        StreamSessionReactorHarness.PumpBothUntil(firstDialler, accepter, () => accepter.DrainToList().Count > 0);
         accepter.DrainToList();
         ulong deferralsBefore = accepter.Reactor.Counters.AdmissionDeferrals;
         ulong discardsBefore = accepter.Reactor.Counters.AdmissionDiscards;
@@ -223,7 +225,7 @@ public class StreamSessionHandshakeGuardTests
         using StreamSessionReactorHarness accepter = new(capacity: 1);
         using StreamSessionReactorHarness firstDialler = new(bindLoopback: false);
         firstDialler.Reactor.Connect(accepter.Endpoint);
-        StreamSessionReactorHarness.PumpBothUntil(firstDialler, accepter, () => accepter.DrainToList().Count > 0, maxRounds: 10);
+        StreamSessionReactorHarness.PumpBothUntil(firstDialler, accepter, () => accepter.DrainToList().Count > 0);
         accepter.DrainToList();
 
         // Act
@@ -300,9 +302,18 @@ public class StreamSessionHandshakeGuardTests
         List<RawTcpPeer> peers = [.. Enumerable.Range(0, 7).Select(_ => new RawTcpPeer(accepter.Endpoint))];
         try
         {
-            // Act — every connection lands in the backlog before the Reactor is Pumped even once; a
-            // short sleep gives loopback time to complete every three-way handshake before that one
-            // Pump call reads the listening socket.
+            // Act — every connection lands in the backlog, and every Hello with it, before the Reactor
+            // is Pumped even once; a short sleep gives loopback time to complete every three-way
+            // handshake and carry every Hello across before that one Pump call reads the listening
+            // socket. The Hellos are what make the reply below possible at all: this end answers a
+            // connection only once it has read the record saying whether it is a fresh dial or a Resume
+            // claiming a Slot it already owns (issue #123), so a peer that connects and says nothing is
+            // held, silently, until it does.
+            foreach (RawTcpPeer peer in peers)
+            {
+                peer.Send(StreamSessionTestRecords.BuildHello());
+            }
+
             Thread.Sleep(20);
             accepter.Reactor.Pump();
 
@@ -371,7 +382,7 @@ public class StreamSessionHandshakeGuardTests
         act.Should().NotThrow();
         using StreamSessionReactorHarness dialler = new(bindLoopback: false);
         dialler.Reactor.Connect(accepter.Endpoint);
-        (var diallerEvents, _) = StreamSessionReactorHarness.PumpBothUntil(dialler, accepter, () => false, maxRounds: 10);
+        (var diallerEvents, _) = StreamSessionReactorHarness.PumpBothUntilConnected(dialler, accepter);
         diallerEvents.Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerConnected);
     }
 
@@ -396,7 +407,7 @@ public class StreamSessionHandshakeGuardTests
         act.Should().NotThrow();
         using StreamSessionReactorHarness dialler = new(bindLoopback: false);
         dialler.Reactor.Connect(accepter.Endpoint);
-        (var diallerEvents, _) = StreamSessionReactorHarness.PumpBothUntil(dialler, accepter, () => false, maxRounds: 10);
+        (var diallerEvents, _) = StreamSessionReactorHarness.PumpBothUntilConnected(dialler, accepter);
         diallerEvents.Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerConnected);
     }
 
@@ -412,14 +423,14 @@ public class StreamSessionHandshakeGuardTests
         Action act = () =>
         {
             hostile.ConnectAndSend(accepter.Endpoint, garbage);
-            accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused), maxPumps: 10);
+            accepter.PumpUntil(() => accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused));
         };
 
         // Assert
         act.Should().NotThrow();
         using StreamSessionReactorHarness dialler = new(bindLoopback: false);
         dialler.Reactor.Connect(accepter.Endpoint);
-        (var diallerEvents, _) = StreamSessionReactorHarness.PumpBothUntil(dialler, accepter, () => false, maxRounds: 10);
+        (var diallerEvents, _) = StreamSessionReactorHarness.PumpBothUntilConnected(dialler, accepter);
         diallerEvents.Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerConnected);
     }
 

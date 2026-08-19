@@ -27,9 +27,9 @@ public class StreamSessionNoDelayTests
     /// event, returning the established Peer's id. Also reads the accepter's own Hello record off
     /// <paramref name="peer"/>'s socket, so nothing but this test's own Messages is left on the wire.
     /// </summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, NoDelayPeer peer, int maxPumps = 20)
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, NoDelayPeer peer, TimeSpan? budget = null)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
         peer.Receive(RecordSize);
         return id;
     }

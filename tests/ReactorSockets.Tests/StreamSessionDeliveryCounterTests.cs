@@ -20,8 +20,8 @@ public class StreamSessionDeliveryCounterTests
 
     private static byte[] PayloadOf(int length, byte marker) => StreamSessionTestRecords.PayloadOf(length, marker);
 
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, CounterPeer peer, int maxPumps = 20) =>
-        StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, CounterPeer peer, TimeSpan? budget = null) =>
+        StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
 
     [Fact]
     public void CountersOf_AfterThreeDeliveredMessages_MessagesReceivedReadsThree()

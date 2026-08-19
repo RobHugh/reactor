@@ -317,8 +317,10 @@ public class RawReactorTests
 
     /// <summary>
     /// Sends to a port nothing is listening on and Pumps until the resulting ICMP port-unreachable
-    /// comes back as a record, returning everything drained along the way. Bounded at twenty Pumps so
-    /// a platform that never reports it fails the assertion rather than hanging.
+    /// comes back as a record, returning everything drained along the way. Bounded by a real-time
+    /// deadline rather than a Pump count (issue #153, <see cref="PumpDeadline"/>): an ICMP reply is
+    /// delivered on the OS clock, not on how many times this process asks for it, so a platform that
+    /// never reports it fails the assertion rather than hanging.
     /// </summary>
     private static List<(RawEventKind Kind, LinkId Link, byte[] Payload)> SendToAClosedPortAndPumpUntilReported(
         RawReactorHarness harness)
@@ -338,13 +340,6 @@ public class RawReactorTests
         Source destination = Source.FromIPEndPoint(new IPEndPoint(IPAddress.Loopback, closedPort));
         harness.Reactor.SendTo(link, destination, [1, 2, 3]).IsSuccess.Should().BeTrue();
 
-        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = [];
-        for (int i = 0; i < 20 && harness.Sink.Received.Count == 0; i++)
-        {
-            harness.Reactor.Pump();
-            drained.AddRange(harness.DrainToList());
-        }
-
-        return drained;
+        return harness.PumpUntilDrained(_ => harness.Sink.Received.Count > 0);
     }
 }

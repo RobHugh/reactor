@@ -31,9 +31,9 @@ public class StreamSessionDeliveryCounterEmissionTests
     /// <see cref="StreamSessionDeliveryCounterReleaseTests"/>'s local <c>EstablishSession</c>, the house
     /// pattern for a raw counterparty that goes on to read further records off the same socket.
     /// </summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, EmissionPeer peer, int maxPumps = 20)
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, EmissionPeer peer, TimeSpan? budget = null)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, maxPumps);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
         peer.Receive(StreamSessionTestRecords.HandshakeRecordSize);
         return id;
     }
@@ -62,7 +62,7 @@ public class StreamSessionDeliveryCounterEmissionTests
 
         (List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> senderEvents,
             List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> receiverEvents) =
-            StreamSessionReactorHarness.PumpBothUntil(sender, receiver, () => false, maxRounds: 10);
+            StreamSessionReactorHarness.PumpBothUntilConnected(sender, receiver);
 
         PeerId senderSidePeer = senderEvents.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerConnected).Which.Peer;
         PeerId receiverSidePeer = receiverEvents.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerConnected).Which.Peer;

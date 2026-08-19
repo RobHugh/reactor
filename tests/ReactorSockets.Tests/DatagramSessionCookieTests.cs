@@ -258,7 +258,7 @@ public class DatagramSessionCookieTests
         using DatagramSessionReactorHarness dialler = new(capacity: 4);
         dialler.Reactor.Connect(accepter.Endpoint);
         (List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerEvents, _) =
-            DatagramSessionReactorHarness.PumpBothUntil(dialler, accepter, () => false, maxRounds: 20);
+            DatagramSessionReactorHarness.PumpBothUntilConnected(dialler, accepter);
 
         // Assert — proving all four capacity Slots were still free: the flood allocated no Peer state.
         diallerEvents.Should().Contain(evt => evt.Kind == SessionEventKind.PeerConnected);

@@ -87,7 +87,12 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
         return drained;
     }
 
-    /// <summary>Pumps exactly <paramref name="pumps"/> times, accumulating everything drained.</summary>
+    /// <summary>
+    /// Pumps exactly <paramref name="pumps"/> times, accumulating everything drained. For asserting
+    /// that something does <em>not</em> happen: a fixed count of Pumps bounds syscalls, not time, so
+    /// it is not a way to wait for something to arrive — see <see cref="PumpDeadline"/> and use
+    /// <see cref="PumpUntilDrained"/> for that.
+    /// </summary>
     public List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> PumpAndDrainAll(int pumps)
     {
         List<(SessionEventKind, PeerId, DisconnectReason)> all = [];
@@ -101,10 +106,35 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
     }
 
     /// <summary>
-    /// Pumps both ends alternately until <paramref name="condition"/> holds or
-    /// <paramref name="maxRounds"/> is spent, accumulating what each end drains. A handshake is four
-    /// flights across two Reactors, and loopback delivery is not synchronous with the send, so the
-    /// number of rounds is bounded rather than exact.
+    /// Pumps until <paramref name="condition"/> holds over everything drained so far, or until
+    /// <paramref name="budget"/> of real time is spent. This is how a test waits for an event to
+    /// arrive; <see cref="PumpAndDrainAll"/> counts Pumps and so waits for essentially no time at all
+    /// (<see cref="PumpDeadline"/>, issue #153).
+    /// </summary>
+    public List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> PumpUntilDrained(
+        Func<IReadOnlyList<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>, bool> condition,
+        TimeSpan? budget = null)
+    {
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> all = [];
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
+        {
+            Reactor.Pump();
+            all.AddRange(DrainToList());
+            if (condition(all) || deadline.Expired)
+            {
+                return all;
+            }
+
+            PumpDeadline.Yield();
+        }
+    }
+
+    /// <summary>
+    /// Pumps both ends alternately until <paramref name="condition"/> holds or <paramref name="budget"/>
+    /// of real time is spent, accumulating what each end drains. A handshake is four flights across two
+    /// Reactors, and loopback delivery is not synchronous with the send, so the wait is bounded by a
+    /// clock rather than a round count (<see cref="PumpDeadline"/>).
     /// </summary>
     public static (
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Dialler,
@@ -113,12 +143,105 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
             DatagramSessionReactorHarness dialler,
             DatagramSessionReactorHarness accepter,
             Func<bool> condition,
-            int maxRounds = 20)
+            TimeSpan? budget = null)
     {
         List<(SessionEventKind, PeerId, DisconnectReason)> diallerEvents = [];
         List<(SessionEventKind, PeerId, DisconnectReason)> accepterEvents = [];
 
-        for (int round = 0; round < maxRounds && !condition(); round++)
+        // The condition is asked once per round, after both ends have pumped, never before: several
+        // callers phrase it as a DrainToList call, which consumes what it counts, so asking twice in a
+        // round would swallow the very events the round produced.
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
+        {
+            accepter.Reactor.Pump();
+            accepterEvents.AddRange(accepter.DrainToList());
+            dialler.Reactor.Pump();
+            diallerEvents.AddRange(dialler.DrainToList());
+            if (condition() || deadline.Expired)
+            {
+                return (diallerEvents, accepterEvents);
+            }
+
+            PumpDeadline.Yield();
+        }
+    }
+
+    /// <summary>
+    /// Pumps both ends alternately until <paramref name="condition"/> holds over what each has drained
+    /// so far, or until <paramref name="budget"/> of real time is spent. The two-Reactor counterpart to
+    /// <see cref="PumpUntilDrained"/>, and what a test asserting on a completed handshake wants:
+    /// <see cref="PumpBothRounds"/> counts rounds and so waits for essentially no time at all
+    /// (<see cref="PumpDeadline"/>, issue #153).
+    /// </summary>
+    public static (
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Dialler,
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Accepter)
+        PumpBothUntilDrained(
+            DatagramSessionReactorHarness dialler,
+            DatagramSessionReactorHarness accepter,
+            Func<
+                IReadOnlyList<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>,
+                IReadOnlyList<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>,
+                bool> condition,
+            TimeSpan? budget = null)
+    {
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerEvents = [];
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> accepterEvents = [];
+
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
+        {
+            accepter.Reactor.Pump();
+            accepterEvents.AddRange(accepter.DrainToList());
+            dialler.Reactor.Pump();
+            diallerEvents.AddRange(dialler.DrainToList());
+            if (condition(diallerEvents, accepterEvents) || deadline.Expired)
+            {
+                return (diallerEvents, accepterEvents);
+            }
+
+            PumpDeadline.Yield();
+        }
+    }
+
+    /// <summary>
+    /// Pumps both ends alternately until each has raised <see cref="SessionEventKind.PeerConnected"/>,
+    /// which is what almost every two-Reactor test needs before it can assert anything: the handshake
+    /// has completed on both sides and both ends' events are in hand.
+    /// </summary>
+    public static (
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Dialler,
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Accepter)
+        PumpBothUntilConnected(
+            DatagramSessionReactorHarness dialler,
+            DatagramSessionReactorHarness accepter,
+            TimeSpan? budget = null) =>
+        PumpBothUntilDrained(
+            dialler,
+            accepter,
+            (diallerEvents, accepterEvents) =>
+                diallerEvents.Any(e => e.Kind == SessionEventKind.PeerConnected)
+                && accepterEvents.Any(e => e.Kind == SessionEventKind.PeerConnected),
+            budget);
+
+    /// <summary>
+    /// Pumps both ends alternately exactly <paramref name="rounds"/> times, accumulating what each
+    /// drains. For asserting that something does <em>not</em> happen; to wait for something that
+    /// should, use <see cref="PumpBothUntilDrained"/>.
+    /// </summary>
+    public static (
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Dialler,
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> Accepter)
+        PumpBothRounds(
+            DatagramSessionReactorHarness dialler,
+            DatagramSessionReactorHarness accepter,
+            int rounds)
+    {
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerEvents = [];
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> accepterEvents = [];
+
+        for (int round = 0; round < rounds; round++)
         {
             accepter.Reactor.Pump();
             accepterEvents.AddRange(accepter.DrainToList());
@@ -129,12 +252,23 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
         return (diallerEvents, accepterEvents);
     }
 
-    /// <summary>Pumps up to <paramref name="maxPumps"/> times, stopping as soon as <paramref name="condition"/> holds.</summary>
-    public void PumpUntil(Func<bool> condition, int maxPumps = 20)
+    /// <summary>
+    /// Pumps until <paramref name="condition"/> holds or <paramref name="budget"/> of real time is
+    /// spent. For a condition read off something other than the drained events — a Sink, a counter —
+    /// where <see cref="PumpUntilDrained"/> has nothing to hand the caller (<see cref="PumpDeadline"/>).
+    /// </summary>
+    public void PumpUntil(Func<bool> condition, TimeSpan? budget = null)
     {
-        for (int i = 0; i < maxPumps && !condition(); i++)
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (true)
         {
             Reactor.Pump();
+            if (condition() || deadline.Expired)
+            {
+                return;
+            }
+
+            PumpDeadline.Yield();
         }
     }
 
