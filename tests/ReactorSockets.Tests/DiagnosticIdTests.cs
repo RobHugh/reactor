@@ -21,6 +21,8 @@ public class DiagnosticIdTests
     [InlineData(DiagnosticId.DataAfterGoodbye, 303)]
     [InlineData(DiagnosticId.ResumeMatched, 304)]
     [InlineData(DiagnosticId.ResumeUnmatched, 305)]
+    [InlineData(DiagnosticId.RedialAttempted, 306)]
+    [InlineData(DiagnosticId.RedialFailed, 307)]
     [InlineData(DiagnosticId.DeliveryCounterRefused, 308)]
     public void Values_EveryMember_MatchesItsReservedBlockNumber(DiagnosticId id, int expected)
     {

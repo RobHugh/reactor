@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using FluentAssertions;
 using Xunit;
 
@@ -318,6 +320,220 @@ public class StreamSessionRedialTests
 
         listener.TryAccept(out _, timeoutMs: 200).Should().BeFalse(
             "a Peer this end already said Goodbye to must never be re-dialled, even though the append itself was still deferred");
+    }
+
+    // =========================================================================================
+    // Slice 4.5.4 (issue #126): RedialAttempted (306) and RedialFailed (307). Every delay assertion
+    // below is a bound — [0, 2ⁿ × the observed cadence] — never an exact figure, except the one test
+    // that substitutes a deterministic jitter source (ADR 0011): a test asserting an exact jittered
+    // delay would pass locally and flake in CI. RedialSchedule's own doubling and ceiling arithmetic,
+    // in isolation, already has its exact-sequence and far-attempts-never-exceed-Linger coverage in
+    // RedialScheduleTests.cs (issue #111); what these tests add is that the Reactor reports what that
+    // schedule actually drew.
+    //
+    // A genuinely refused loopback connect resolves on this platform's own connect-refused timer, not
+    // on the fake clock — real seconds regardless of how far TimeProvider is advanced, since it is the
+    // OS deciding nobody answered, not anything this schedule owns. PumpUntilAnotherRedialFailure below
+    // is a bounded real-time spin for exactly that resolution, the same category of wait
+    // TryAccept/TryReceiveWithinTimeout already use elsewhere in this file for genuine socket
+    // readiness; every schedule-timing assertion still advances only TimeProvider.
+    // =========================================================================================
+
+    /// <summary>
+    /// A jitter source that returns the same byte for every draw (mirrors <c>RedialScheduleTests</c>'
+    /// own), used here for the one test allowed to assert an exact delay: <c>0xFF</c> draws the top of
+    /// every range, so each attempt's delay equals the schedule's computed delay before jitter, and the
+    /// doubling itself is what the sequence pins.
+    /// </summary>
+    private sealed class ConstantByteJitter(byte value) : RandomNumberGenerator
+    {
+        public override void GetBytes(byte[] data) => GetBytes(data.AsSpan());
+
+        public override void GetBytes(Span<byte> data) => data.Fill(value);
+    }
+
+    /// <summary>
+    /// Spins Pump calls, with no further TimeProvider advance, until one more
+    /// <see cref="DiagnosticId.RedialFailed"/> has been logged beyond <paramref name="alreadyFailed"/>
+    /// or <paramref name="timeoutMs"/> of real wall-clock time has passed. Bounded by a
+    /// <see cref="Stopwatch"/> rather than a Pump count: a refused loopback connect on this platform
+    /// resolves on the OS's own timer, independent of how fast this loop can call Pump.
+    /// </summary>
+    private static void PumpUntilAnotherRedialFailure(StreamSessionReactorHarness dialer, int alreadyFailed, int timeoutMs = 5000)
+    {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        while (dialer.Sink.Received.Count(r => r.Id == DiagnosticId.RedialFailed) <= alreadyFailed
+            && stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            dialer.Reactor.Pump();
+        }
+    }
+
+    [Fact]
+    public void Pump_AReDialAttempt_LogsRedialAttemptedAtInfoNamingThePeerItBelongsTo()
+    {
+        // Arrange
+        using StreamSessionReactorHarness dialer = new();
+        using RawStreamListener listener = new();
+        byte[] resumeSecret = StreamSessionTestRecords.PayloadOf(StreamSessionTestRecords.ResumeSecretLength, 23);
+        (PeerId peer, RawStreamListener.Accepted far) = EstablishDialledSession(dialer, listener, resumeSecret);
+        InterruptDialledPeer(dialer, far, peer);
+        far.Dispose();
+        dialer.Sink.Received.Clear();
+
+        // Act
+        dialer.TimeProvider.Advance(_cadence);
+        dialer.Reactor.Pump();
+
+        // Assert — a re-dial is the ordinary behaviour of a dialling Peer that lost its transport, not
+        // a condition a consumer needs to act on. Value0 is 1: this is the first attempt since the
+        // schedule started, and Value1 lies within the bound the first delay can never exceed.
+        DiagnosticRecord record = dialer.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.RedialAttempted).Subject;
+        record.Level.Should().Be(DiagnosticLevel.Info);
+        record.SubjectKind.Should().Be(DiagnosticSubjectKind.Peer);
+        record.Peer.Should().Be(peer);
+        record.Value0.Should().Be(1);
+        record.Value1.Should().BeInRange(0, (long)_cadence.TotalMilliseconds);
+    }
+
+    [Fact]
+    public void Pump_ASecondReDialAttemptAfterTheFirstFails_LogsRedialAttemptedWithARisingAttemptNumberAndABoundedDelay()
+    {
+        // Arrange — real entropy (the harness default), so the jitter is genuinely non-deterministic and
+        // only a bound may be asserted on the delay. The listener stays disposed, so the first attempt
+        // fails and a second is due.
+        using StreamSessionReactorHarness dialer = new();
+        PeerId peer;
+        RawStreamListener.Accepted far;
+        using (RawStreamListener listener = new())
+        {
+            byte[] resumeSecret = StreamSessionTestRecords.PayloadOf(StreamSessionTestRecords.ResumeSecretLength, 25);
+            (peer, far) = EstablishDialledSession(dialer, listener, resumeSecret);
+            InterruptDialledPeer(dialer, far, peer);
+            far.Dispose();
+        }
+
+        dialer.Sink.Received.Clear();
+
+        // Act — the first attempt begins, is waited out for a real refusal, and then the second attempt
+        // is due once its own delay elapses on the fake clock.
+        dialer.TimeProvider.Advance(_cadence);
+        dialer.Reactor.Pump();
+        PumpUntilAnotherRedialFailure(dialer, alreadyFailed: 0);
+        dialer.TimeProvider.Advance(_cadence * 2);
+        dialer.Reactor.Pump();
+
+        // Assert — attempt 2, and its delay never exceeds twice the observed cadence — the bound the
+        // schedule's doubling can never cross for the second draw.
+        List<DiagnosticRecord> attempts = [.. dialer.Sink.Received.Where(r => r.Id == DiagnosticId.RedialAttempted)];
+        attempts.Select(r => r.Value0).Should().Equal(1, 2);
+        attempts[1].Value1.Should().BeInRange(0, (long)(_cadence.TotalMilliseconds * 2));
+    }
+
+    [Fact]
+    public void Pump_ReDialAttemptsDelay_NeverExceedsTheEffectiveLinger()
+    {
+        // Arrange — the first attempt is left pending (no real-time wait spent on it here), which is
+        // enough to prove the bound: even a single reported delay must never exceed the effective
+        // Linger this schedule was built from.
+        using StreamSessionReactorHarness dialer = new();
+        PeerId peer;
+        RawStreamListener.Accepted far;
+        using (RawStreamListener listener = new())
+        {
+            byte[] resumeSecret = StreamSessionTestRecords.PayloadOf(StreamSessionTestRecords.ResumeSecretLength, 27);
+            (peer, far) = EstablishDialledSession(dialer, listener, resumeSecret);
+            InterruptDialledPeer(dialer, far, peer);
+            far.Dispose();
+        }
+
+        dialer.Sink.Received.Clear();
+
+        // Act
+        dialer.TimeProvider.Advance(_cadence);
+        dialer.Reactor.Pump();
+
+        // Assert
+        List<DiagnosticRecord> attempts = [.. dialer.Sink.Received.Where(r => r.Id == DiagnosticId.RedialAttempted)];
+        attempts.Should().NotBeEmpty();
+        attempts.Should().AllSatisfy(r => r.Value1.Should().BeLessThanOrEqualTo((long)_harnessLinger.TotalMilliseconds));
+    }
+
+    [Fact]
+    public void Pump_ReDialAttemptThatFails_LogsRedialFailedCarryingThePlatformErrorTheAttemptNumberAtInfoNamingThePeer()
+    {
+        // Arrange — nothing listens at the endpoint any more, so the one attempt made must fail.
+        using StreamSessionReactorHarness dialer = new();
+        PeerId peer;
+        RawStreamListener.Accepted far;
+        using (RawStreamListener listener = new())
+        {
+            byte[] resumeSecret = StreamSessionTestRecords.PayloadOf(StreamSessionTestRecords.ResumeSecretLength, 29);
+            (peer, far) = EstablishDialledSession(dialer, listener, resumeSecret);
+            InterruptDialledPeer(dialer, far, peer);
+            far.Dispose();
+        }
+
+        dialer.Sink.Received.Clear();
+
+        // Act
+        dialer.TimeProvider.Advance(_cadence);
+        dialer.Reactor.Pump();
+        PumpUntilAnotherRedialFailure(dialer, alreadyFailed: 0);
+
+        // Assert — the platform error is a real failure code, not the zero-valued Success a connect
+        // that actually worked would leave behind; the attempt number is the one that failed; Info, not
+        // Warn, because under this profile's premise a failed reconnection attempt is an ordinary,
+        // expected outcome, and raising it to Warn would train a consumer to ignore Warn.
+        DiagnosticRecord record = dialer.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.RedialFailed).Subject;
+        ((SocketError)record.Value0).Should().NotBe(SocketError.Success);
+        record.Value1.Should().Be(1);
+        record.Level.Should().Be(DiagnosticLevel.Info);
+        record.SubjectKind.Should().Be(DiagnosticSubjectKind.Peer);
+        record.Peer.Should().Be(peer);
+
+        // Assert — never closes: the Peer stays Interrupted and simply waits out the schedule's next
+        // delay.
+        dialer.DrainToList().Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+    }
+
+    [Fact]
+    public void Pump_ReDialAttempts_UnderADeterministicJitterSource_PinTheExactDoublingSequence()
+    {
+        // Arrange — MaximumJitter (0xFF) draws the top of every range, so each attempt's reported delay
+        // equals the schedule's computed delay exactly rather than something jittered below it. This is
+        // the one test in this file allowed to assert an exact delay (ADR 0011), because the jitter
+        // itself is no longer non-deterministic. The endpoint stays unreachable throughout, so the first
+        // two attempts fail and the schedule doubles: 50ms, then 100ms, from the 50ms cadence this Pump
+        // budget observes.
+        using StreamSessionReactorHarness dialer = new(entropy: new ConstantByteJitter(0xFF));
+        PeerId peer;
+        RawStreamListener.Accepted far;
+        using (RawStreamListener listener = new())
+        {
+            byte[] resumeSecret = StreamSessionTestRecords.PayloadOf(StreamSessionTestRecords.ResumeSecretLength, 33);
+            (peer, far) = EstablishDialledSession(dialer, listener, resumeSecret);
+            InterruptDialledPeer(dialer, far, peer);
+            far.Dispose();
+        }
+
+        dialer.Sink.Received.Clear();
+
+        // Act — attempt 1 begins, is waited out for a real refusal, then attempt 2 begins once its own
+        // delay elapses on the fake clock, and is waited out too so attempt 3 can begin.
+        dialer.TimeProvider.Advance(_cadence);
+        dialer.Reactor.Pump();
+        PumpUntilAnotherRedialFailure(dialer, alreadyFailed: 0);
+        dialer.TimeProvider.Advance(_cadence * 2);
+        dialer.Reactor.Pump();
+        PumpUntilAnotherRedialFailure(dialer, alreadyFailed: 1);
+        dialer.TimeProvider.Advance(_cadence * 4);
+        dialer.Reactor.Pump();
+
+        // Assert — the observed 50ms cadence doubling twice, exactly: 50ms, 100ms, 200ms.
+        dialer.Sink.Received.Where(r => r.Id == DiagnosticId.RedialAttempted)
+            .Select(r => r.Value1)
+            .Should().Equal(50, 100, 200);
     }
 }
 

@@ -203,6 +203,33 @@ public enum DiagnosticId
     ResumeUnmatched = 305,
 
     /// <summary>
+    /// A dialling-side Peer began a fresh re-dial attempt after its transport was lost (issue #125,
+    /// ADR 0011). Subject is the Peer. <c>Value0</c> is the attempt number, starting at 1 and rising by
+    /// one per attempt; <c>Value1</c> is the delay in milliseconds this attempt actually waited before
+    /// dialling — the jittered figure <see cref="ReactorSockets.RedialSchedule.NextDelay"/> drew, so
+    /// what actually elapsed is observable rather than only the computed figure before jitter.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Info"/>: a re-dial is the ordinary behaviour of a dialling Peer that
+    /// lost its transport, not a condition a consumer needs to act on.
+    /// </remarks>
+    RedialAttempted = 306,
+
+    /// <summary>
+    /// A re-dial attempt could not connect (issue #125, ADR 0011). Subject is the Peer, which this
+    /// never closes — it stays Interrupted and waits out the schedule's next delay, leaving Linger,
+    /// not an attempt count, the only thing that ever closes it. <c>Value0</c> carries the platform
+    /// <see cref="System.Net.Sockets.SocketError"/> as its underlying integer value; <c>Value1</c> is
+    /// the attempt number that failed.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Info"/> rather than <see cref="DiagnosticLevel.Warn"/>: under this
+    /// profile's premise a failed reconnection attempt is an ordinary, expected outcome, and raising it
+    /// to Warn would train a consumer to ignore Warn.
+    /// </remarks>
+    RedialFailed = 307,
+
+    /// <summary>
     /// An established Peer's delivery-counter record (issue #109) claimed to have received more
     /// Messages than this end has ever sent it, and the Session was closed with
     /// <see cref="DisconnectReason.ProtocolViolation"/> (issue #113) — the peer is confirming Messages

@@ -2354,6 +2354,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         slot.RedialSchedule = new RedialSchedule(pumpInterval, slot.EffectiveLinger, _entropy);
         slot.RedialWaitStartTimestamp = slot.InterruptedTimestamp;
         slot.RedialDelay = slot.RedialSchedule.NextDelay();
+        slot.RedialAttemptCount = 0;
         _peersWithRedialScheduled.Add(handle);
     }
 
@@ -2397,6 +2398,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             // DialedEndpoint is guaranteed non-null here: only BeginRedialSchedule adds a handle to
             // _peersWithRedialScheduled, and it does so only after InterruptPeer has already checked it.
             slot.RedialLink = TcpLink.Dial(slot.DialedEndpoint!, _options.SendBufferSize);
+            slot.RedialAttemptCount++;
+
+            if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForRedialAttempted(
+                    ToPeerId(handle), slot.RedialAttemptCount, (long)slot.RedialDelay.TotalMilliseconds));
+            }
         }
     }
 
@@ -2422,7 +2430,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 break;
 
             case TcpConnectPollOutcome.Failed:
-                FailRedialAttempt(slot);
+                FailRedialAttempt(handle, slot, result.Error);
                 break;
         }
     }
@@ -2434,12 +2442,17 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Interrupted and tracked in <c>_peersWithRedialScheduled</c>; only <see cref="EnforceIdleTimers"/>'s
     /// Linger check ever closes it from here.
     /// </summary>
-    private void FailRedialAttempt(PeerSlot slot)
+    private void FailRedialAttempt(SlotHandle handle, PeerSlot slot, SocketError error)
     {
         slot.RedialLink?.Dispose();
         slot.RedialLink = null;
         slot.RedialWaitStartTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
         slot.RedialDelay = slot.RedialSchedule!.NextDelay();
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForRedialFailed(ToPeerId(handle), error, slot.RedialAttemptCount));
+        }
     }
 
     /// <summary>
@@ -2823,6 +2836,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// recently drew, already jittered.
         /// </summary>
         public TimeSpan RedialDelay { get; set; }
+
+        /// <summary>
+        /// How many re-dial attempts have begun since this Peer's schedule was last started
+        /// (<see cref="BeginRedialSchedule"/>, which resets it to 0). Incremented by
+        /// <see cref="ProcessRedials"/> immediately before each dial, and reported as
+        /// <see cref="DiagnosticId.RedialAttempted"/>'s and <see cref="DiagnosticId.RedialFailed"/>'s
+        /// attempt number. This is a diagnostics-only count — nothing reads it to decide whether to try
+        /// again, and it must never become one: Linger alone bounds re-dialling (ADR 0011).
+        /// </summary>
+        public long RedialAttemptCount { get; set; }
     }
 
     /// <summary>
