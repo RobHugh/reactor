@@ -118,6 +118,11 @@ public class StreamSessionResumedEventTests
             StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
             resumed.Send(StreamSessionTestRecords.BuildResume(current.ResumeSecret));
             accepter.PumpAndDrainAll(5);
+
+            // The transport this iteration just interrupted is finished with. Disposing it before the
+            // reassignment keeps the loop from stranding a real socket per cycle, which would otherwise
+            // add loopback pressure for whatever test runs next (issue #153).
+            current.Counterparty.Dispose();
             current = current with { Counterparty = resumed };
         }
 
@@ -158,6 +163,10 @@ public class StreamSessionResumedEventTests
             StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
             resumed.Send(StreamSessionTestRecords.BuildResume(current.ResumeSecret));
             accepter.PumpAndDrainAll(5);
+
+            // As above: the interrupted transport is finished with, so it is disposed rather than
+            // stranded by the reassignment (issue #153).
+            current.Counterparty.Dispose();
             current = current with { Counterparty = resumed };
 
             // Assert — nor does the resume itself.
