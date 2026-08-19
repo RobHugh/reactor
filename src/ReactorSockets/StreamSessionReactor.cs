@@ -801,14 +801,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// so to an operator as <see cref="DiagnosticId.ResumeUnmatched"/> and to the party as a close.
     /// </summary>
     /// <remarks>
-    /// The delivery counter the record carries is read but not acted on here. Rewinding this end's
-    /// retention to it, and the <c>Resumed</c> event the consumer sees, are issue #127 and its
-    /// siblings; this delivers the match itself.
+    /// The delivery counter the record carries drives the rewind (issue #127); the <c>Resumed</c> event
+    /// the consumer sees is issue #128.
     /// </remarks>
     private bool TryResumeHeldPeer(PendingAdmission pending)
     {
         Span<byte> presentedSecret = stackalloc byte[StreamSessionProtocol.ResumeSecretLength];
-        if (!StreamHandshakeCodec.TryReadResume(pending.Record, presentedSecret, out _))
+        if (!StreamHandshakeCodec.TryReadResume(pending.Record, presentedSecret, out ulong deliveryCount))
         {
             return false;
         }
@@ -819,7 +818,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return false;
         }
 
-        ResumeHeldPeer(matched, ReleasePendingAdmission(pending));
+        ResumeHeldPeer(matched, ReleasePendingAdmission(pending), deliveryCount);
         return true;
     }
 
@@ -879,6 +878,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// premise of a Resume — nothing here is renewed, and nothing is discarded.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Only what described the transport that died is cleared: the half-read handshake buffer and any
     /// record remainders that were still draining to a socket which no longer exists, and
     /// <see cref="PeerSlot.InterruptedTimestamp"/>, whose Linger deadline no longer applies. Both idle
@@ -888,10 +888,50 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// back on <see cref="_peersWithPendingRetentionWrites"/>, which <see cref="InterruptPeer"/> cleared
     /// only because it would have handed <see cref="FlushPendingRetentionWrites"/> a disposed socket;
     /// there is a live one again now.
+    /// </para>
+    /// <para>
+    /// <b>The rewind (issue #127).</b> <paramref name="deliveryCount"/> — the Resume record's own
+    /// delivery counter — is where the peer says it actually got to, so this end's outbound retention
+    /// rewinds its sent cursor back to that Message boundary via
+    /// <see cref="RetentionArena.RewindSentToMessageCount"/> before anything else here runs. Anything
+    /// but <see cref="RetentionRewindOutcome.Rewound"/> means the peer's own counter names a position
+    /// this end cannot honour — ahead of what it ever sent, or behind what it has already released — so
+    /// this Peer is closed instead of resumed: no <see cref="SessionEventKind.PeerResumed"/> event, no
+    /// <see cref="DiagnosticId.ResumeMatched"/> record. A non-zero rewind marks this Peer's pending-write
+    /// bit so the next <see cref="FlushPendingRetentionWrites"/> resends exactly the bytes the rewind
+    /// un-sent — the same one flush path every other retention write already rides, never a bespoke one.
+    /// <see cref="RetentionArena.ReleaseThroughMessageCount"/> is also applied for
+    /// <paramref name="deliveryCount"/>: the peer's reported counter is a delivery confirmation like any
+    /// other, and releasing on it can only ever match or trail what the rewind's own guard already
+    /// verified, so it is safe to apply unconditionally here.
+    /// </para>
+    /// <para>
+    /// <b>The reciprocal rewind (issue #127, D3).</b> A Resume record is one-way — it carries only what
+    /// the dialling side reports, never what this end reports back — so the dialling side has no way to
+    /// learn where <em>this</em> end's own read position actually is except by asking. This end asks
+    /// immediately, riding the same <see cref="SendDeliveryCounterOrArm"/> a received-count advance
+    /// already uses (issue #116), rather than inventing a second wire shape for the same fact.
+    /// </para>
     /// </remarks>
-    private void ResumeHeldPeer(PeerSlot slot, TcpLink link)
+    /// <param name="slot">The Interrupted Peer the match found.</param>
+    /// <param name="link">The freshly accepted transport presenting the Resume.</param>
+    /// <param name="deliveryCount">
+    /// The Resume record's own delivery counter — the peer's claim of how many of this end's Messages
+    /// it had already received before the transport was lost.
+    /// </param>
+    private void ResumeHeldPeer(PeerSlot slot, TcpLink link, ulong deliveryCount)
     {
         slot.Link = link;
+
+        RetentionRewindOutcome rewindOutcome =
+            _retention.RewindSentToMessageCount(slot.Handle.Index, deliveryCount, out ulong bytesRewound);
+        if (rewindOutcome != RetentionRewindOutcome.Rewound)
+        {
+            // #130 will give this its own reason; ProtocolViolation stands in until then.
+            ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
+            return;
+        }
+
         slot.IsInterrupted = false;
         slot.InterruptedTimestamp = 0;
         slot.HandshakeBytesFilled = 0;
@@ -905,17 +945,28 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         slot.LastReceiveTimestamp = now;
 
         RegisterPeerTransport(slot.Handle, slot);
-        if (slot.HasPendingRetentionWrite)
+
+        // The peer's own reported counter is a delivery confirmation exactly like any other. The
+        // rewind's own AheadOfAppended guard above already ruled out a count this end never sent, so
+        // this can only ever release through a Message this share-holder truly appended — it can only
+        // return Released, and it never moves the released total backwards, so it cannot undo anything
+        // the rewind above needs preserved (issue #127's own "released stays released" guarantee).
+        _retention.ReleaseThroughMessageCount(slot.Handle.Index, deliveryCount);
+
+        if (slot.HasPendingRetentionWrite || bytesRewound > 0)
         {
+            slot.HasPendingRetentionWrite = true;
             _peersWithPendingRetentionWrites.Add(slot.Handle);
         }
 
+        // D3: tells the dialling side where this end's own read position is, since the Resume record
+        // it just presented had no field for that. SendDeliveryCounterOrArm's own short-send remainder
+        // guard makes this safe to call unconditionally rather than gating it on _peersWithAdvancedReceivedCount.
+        SendDeliveryCounterOrArm(slot.Handle, slot);
+
         if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
         {
-            // Zero bytes rewound: this slice matches the Resume and reads the counter it reports
-            // without acting on it, so the rewind issue #127 delivers has not happened and 0 is what
-            // the match can honestly report for the field.
-            _diagnostics.Log(DiagnosticRecord.ForResumeMatched(ToPeerId(slot.Handle), bytesRewound: 0));
+            _diagnostics.Log(DiagnosticRecord.ForResumeMatched(ToPeerId(slot.Handle), bytesRewound: (long)bytesRewound));
         }
     }
 
@@ -1611,10 +1662,18 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// transport state. What becomes of that owed Goodbye is #120/#121's concern, not this guard's —
     /// this only keeps the attempt from touching a dead socket.
     /// </para>
+    /// <para>
+    /// Also a no-op while <see cref="PeerSlot.AwaitingResumeCounter"/> (issue #127, D3): the dialling
+    /// side of a Resume considers itself resumed the moment its own Resume record is queued, but a
+    /// Resume carries no field for what the far end's read position is, so this end does not yet know
+    /// where a rewind would even start from. Resending before that arrives risks resending bytes the
+    /// far end already has. <see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm
+    /// clears the flag the moment the far end's own first post-resume counter answers that question.
+    /// </para>
     /// </remarks>
     private void FlushRetention(SlotHandle handle, PeerSlot slot)
     {
-        if (slot.IsInterrupted)
+        if (slot.IsInterrupted || slot.AwaitingResumeCounter)
         {
             return;
         }
@@ -2016,6 +2075,32 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                         return;
                     }
 
+                    // The dialling side's reciprocal rewind (issue #127, D3): a Resume record carries
+                    // only what the dialling side reports, so this end's own read position reaches the
+                    // dialling side for the first time on whichever delivery-counter record follows the
+                    // resume — this one, if AwaitingResumeCounter is still set. Rewinding here, rather
+                    // than waiting for a Resume of its own, is what lets the dialling side resend only
+                    // what this end never actually received.
+                    if (slot.AwaitingResumeCounter)
+                    {
+                        RetentionRewindOutcome rewindOutcome = _retention.RewindSentToMessageCount(
+                            handle.Index, confirmedThroughMessage, out ulong bytesRewound);
+                        slot.AwaitingResumeCounter = false;
+
+                        if (rewindOutcome != RetentionRewindOutcome.Rewound)
+                        {
+                            // #130 will give this its own reason; ProtocolViolation stands in until then.
+                            ClosePeer(handle, DisconnectReason.ProtocolViolation);
+                            return;
+                        }
+
+                        if (bytesRewound > 0)
+                        {
+                            slot.HasPendingRetentionWrite = true;
+                            _peersWithPendingRetentionWrites.Add(handle);
+                        }
+                    }
+
                     continue;
                 }
 
@@ -2318,6 +2403,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         slot.Link.Dispose();
         slot.IsInterrupted = true;
         slot.InterruptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+
+        // D4 (issue #127): drop whatever un-counted inbound bytes were sitting in this Peer's receive
+        // buffer — a partial length prefix, a partial Message body, a partial delivery-counter body, or
+        // a whole Message the frame arena had no room to reserve yet (_peersWithBufferedMessages). None
+        // of that has reached PeerCounterSet.MessagesReceived, since only a Message actually handed to
+        // the frame arena counts (DeliverCompleteMessages' Ready arm) — so none of it is anything the
+        // peer's own delivery counter could ever have claimed as received, and the peer will resend all
+        // of it from its own rewind point once this Peer resumes. Keeping it here would double-deliver
+        // it instead. A Message already reserved into the frame arena — counted, queued as
+        // MessageReceived, merely still undrained — is untouched: issue #119's own promise that
+        // undelivered inbound Messages survive an interruption unchanged.
+        slot.ReceiveBytesFilled = 0;
+        _peersWithBufferedMessages.Remove(handle);
         _peersWithPendingRetentionWrites.Remove(handle);
 
         if (slot.DialedEndpoint is not null && !slot.LocalGoodbyeSent && !slot.RemoteGoodbyeReceived)
@@ -2472,6 +2570,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// — <see cref="PeerSlot.IsInterrupted"/> cleared, both idle timers restarted from now — the moment
     /// the record is queued rather than waiting on anything further from the wire.
     /// </summary>
+    /// <remarks>
+    /// Sets <see cref="PeerSlot.AwaitingResumeCounter"/> (issue #127, D3): this Resume record carries
+    /// only this end's own claim, never the far end's read position, so this end does not yet know
+    /// where its own rewind would start from. <see cref="FlushRetention"/>'s own guard on that flag
+    /// keeps this Peer from resending anything until the far end's first post-resume delivery-counter
+    /// record answers that (<see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm).
+    /// </remarks>
     private void ResumeDialledPeer(SlotHandle handle, PeerSlot slot, TcpLink link)
     {
         slot.Link = link;
@@ -2480,6 +2585,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _peersWithRedialScheduled.Remove(handle);
         slot.IsInterrupted = false;
         slot.InterruptedTimestamp = 0;
+        slot.AwaitingResumeCounter = true;
 
         long now = _options.Reactor.TimeProvider.GetTimestamp();
         slot.LastSendTimestamp = now;
@@ -2786,6 +2892,18 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// eventually calls that when no Resume arrives first.
         /// </summary>
         public bool IsInterrupted { get; set; }
+
+        /// <summary>
+        /// Set by <see cref="ResumeDialledPeer"/> the moment the dialling side's own Resume record is
+        /// queued (issue #127, D3): that record carries only this end's own claim, never the far end's
+        /// read position, so this end does not yet know where its own rewind would even start from.
+        /// While set, <see cref="FlushRetention"/>'s own guard on this flag refuses to resend anything
+        /// for this Peer — resending blind could hand the far end bytes it already has. Cleared by
+        /// <see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm the moment the far
+        /// end's first post-resume delivery-counter record answers that question, which is also what
+        /// drives this end's own reciprocal rewind.
+        /// </summary>
+        public bool AwaitingResumeCounter { get; set; }
 
         /// <summary>
         /// The <see cref="TimeProvider.GetTimestamp"/> value at the instant <see cref="InterruptPeer"/>

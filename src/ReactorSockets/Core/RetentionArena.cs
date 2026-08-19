@@ -394,6 +394,95 @@ internal sealed class RetentionArena
     }
 
     /// <summary>
+    /// Moves <paramref name="shareHolderId"/>'s sent total back to the byte boundary of its
+    /// <paramref name="messageCount"/>th appended Message — the rewind a Resume needs (issue #127):
+    /// the peer's reported delivery counter names how far it actually got, not what this end's own
+    /// socket merely accepted, and TCP's own acknowledgement can run ahead of that by everything still
+    /// sitting in a send buffer the far application never saw. Once rewound, the bytes between the new
+    /// sent total and the old one are exactly what <see cref="GetUnsent"/> hands to a replacement
+    /// transport next — already framed, nothing reconstructed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two refusals, both leaving the arena untouched and reporting <paramref name="bytesRewound"/> as
+    /// 0. A <paramref name="messageCount"/> above <see cref="AppendedMessageCount"/> is
+    /// <see cref="RetentionRewindOutcome.AheadOfAppended"/> — the peer claims a position this end never
+    /// sent to. A <paramref name="messageCount"/> below the share-holder's released-Message total is
+    /// <see cref="RetentionRewindOutcome.BelowReleasedHead"/> — the peer's own confirmation already
+    /// freed those bytes, so honouring a resume point behind them would resume into a hole this ring no
+    /// longer has (issue #130's gap case). Neither ever touches <see cref="_releasedTotal"/>,
+    /// <see cref="_writtenTotal"/>, <see cref="_highWaterBytes"/>, or either Message count: a rewind
+    /// moves only where this end reads from next, never what the peer has already confirmed or what
+    /// this end has ever appended.
+    /// </para>
+    /// <para>
+    /// Otherwise <see cref="RetentionRewindOutcome.Rewound"/>: <paramref name="messageCount"/> resolves
+    /// to a byte boundary exactly as <see cref="ReleaseThroughMessageCount"/> resolves one — 0 names the
+    /// share-holder's own released total, the head the peer has confirmed nothing beyond — and the sent
+    /// total moves back to it only if it is strictly behind that boundary. A boundary at or ahead of the
+    /// current sent total leaves it alone rather than pushing it forward: a rewind only ever un-sends
+    /// bytes this end already believed delivered, never advances past what this end has actually handed
+    /// its own transport.
+    /// </para>
+    /// </remarks>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    /// <param name="messageCount">
+    /// The peer's reported delivery counter: the cumulative count of Messages, 1-based from this
+    /// share-holder's first ever appended Message, the peer claims to have already received.
+    /// </param>
+    /// <param name="bytesRewound">
+    /// How many bytes the sent total moved back by — the figure a caller reports as a Resume's own
+    /// <c>bytesRewound</c> (issue #124). 0 on either refusal, and 0 on a legitimate
+    /// <see cref="RetentionRewindOutcome.Rewound"/> whose boundary was already at or behind the sent
+    /// total — the peer's counter matched or trailed what this end had not yet even sent, so there is
+    /// nothing to un-send.
+    /// </param>
+    public RetentionRewindOutcome RewindSentToMessageCount(int shareHolderId, ulong messageCount, out ulong bytesRewound)
+    {
+        ValidateShareHolderId(shareHolderId);
+
+        if (messageCount > _appendedMessageCount[shareHolderId])
+        {
+            bytesRewound = 0;
+            return RetentionRewindOutcome.AheadOfAppended;
+        }
+
+        if (messageCount < _releasedMessageCount[shareHolderId])
+        {
+            bytesRewound = 0;
+            return RetentionRewindOutcome.BelowReleasedHead;
+        }
+
+        ulong boundaryBytes;
+        if (messageCount == 0)
+        {
+            boundaryBytes = _releasedTotal[shareHolderId];
+        }
+        else
+        {
+            // Reconstructs the boundary's full ulong position exactly as ReleaseThroughMessageCount
+            // does — see that method's own remarks for why the 32-bit wraparound subtraction is
+            // unambiguous here.
+            int boundaryIndex = BoundaryIndex(shareHolderId, messageCount);
+            ulong writtenTotal = _writtenTotal[shareHolderId];
+            uint delta = unchecked((uint)writtenTotal - _messageBoundaryLow32[boundaryIndex]);
+            boundaryBytes = writtenTotal - delta;
+        }
+
+        if (boundaryBytes < _sentTotal[shareHolderId])
+        {
+            bytesRewound = _sentTotal[shareHolderId] - boundaryBytes;
+            _sentTotal[shareHolderId] = boundaryBytes;
+        }
+        else
+        {
+            bytesRewound = 0;
+        }
+
+        return RetentionRewindOutcome.Rewound;
+    }
+
+    /// <summary>
     /// The cumulative count of Messages <paramref name="shareHolderId"/> has ever had accepted by
     /// <see cref="TryAppend"/>, since construction or its last <see cref="ResetShareHolder"/> — the
     /// upper bound <see cref="ReleaseThroughMessageCount"/> refuses above.

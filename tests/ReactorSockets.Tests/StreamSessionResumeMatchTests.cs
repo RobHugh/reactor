@@ -69,9 +69,12 @@ public class StreamSessionResumeMatchTests
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret));
         accepter.PumpAndDrainAll(5);
 
-        // Assert — nothing came back: a matched Resume is answered by the Session continuing, never by
-        // the Refusal a fresh dial at this same Reactor would have got.
-        resumed.TryReceiveWithinTimeout(1, out _).Should().BeFalse();
+        // Assert — a matched Resume is answered by the Session continuing, never by the
+        // HandshakeRecordSize-shaped Refusal a fresh dial at this same Reactor would have got: what
+        // actually arrives is the accepter's own reciprocal delivery-counter record (issue #127, D3),
+        // a different and much shorter shape, so a read sized for a Refusal never completes.
+        resumed.TryReceiveWithinTimeout(StreamSessionTestRecords.HandshakeRecordSize, out _, timeoutMs: 200)
+            .Should().BeFalse();
 
         held[1].Counterparty.Dispose();
     }
