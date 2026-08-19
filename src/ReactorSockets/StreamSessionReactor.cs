@@ -928,8 +928,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             _retention.RewindSentToMessageCount(slot.Handle.Index, deliveryCount, out ulong bytesRewound);
         if (rewindOutcome != RetentionRewindOutcome.Rewound)
         {
-            // #130 will give this its own reason; ProtocolViolation stands in until then.
-            ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
+            ClosePeer(slot.Handle, DisconnectReasonForRewindRefusal(rewindOutcome));
             return;
         }
 
@@ -976,6 +975,32 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             _diagnostics.Log(DiagnosticRecord.ForResumeMatched(ToPeerId(slot.Handle), bytesRewound: (long)bytesRewound));
         }
     }
+
+    /// <summary>
+    /// Maps a <see cref="RetentionRewindOutcome"/> other than <see cref="RetentionRewindOutcome.Rewound"/>
+    /// onto the <see cref="DisconnectReason"/> a refused rewind closes the Peer with (issue #130). Shared
+    /// by both rewind call sites — <see cref="ResumeHeldPeer"/>'s own rewind off the Resume record's
+    /// counter, and <see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm's
+    /// reciprocal rewind — so the two refusal paths cannot drift onto different reasons for the same
+    /// outcome. States the mapping as its own table with a discard arm that refuses rather than permits
+    /// (the <c>RawLinkLegality</c> house rule <see cref="DisconnectReason"/>'s own remarks describe):
+    /// <see cref="RetentionRewindOutcome.BelowReleasedHead"/> is this ticket's gap case — the peer's
+    /// counter names bytes this end's ring already released — and maps to
+    /// <see cref="DisconnectReason.RetentionGap"/> because the fix is a configuration one, more
+    /// retention or more Linger. <see cref="RetentionRewindOutcome.AheadOfAppended"/> maps to
+    /// <see cref="DisconnectReason.ProtocolViolation"/> instead: the peer is claiming Messages this end
+    /// never sent at all, which no amount of retention capacity would have made valid, so it belongs
+    /// with the other protocol-level refusals rather than this member. Any future
+    /// <see cref="RetentionRewindOutcome"/> this switch does not name falls into the same
+    /// <see cref="DisconnectReason.ProtocolViolation"/> arm rather than being read as a rewind that
+    /// somehow succeeded.
+    /// </summary>
+    private static DisconnectReason DisconnectReasonForRewindRefusal(RetentionRewindOutcome outcome) => outcome switch
+    {
+        RetentionRewindOutcome.BelowReleasedHead => DisconnectReason.RetentionGap,
+        RetentionRewindOutcome.AheadOfAppended => DisconnectReason.ProtocolViolation,
+        _ => DisconnectReason.ProtocolViolation,
+    };
 
     /// <summary>
     /// Takes a held connection out of <see cref="_pendingAdmissions"/> and off the dispatcher, handing
@@ -2096,8 +2121,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
                         if (rewindOutcome != RetentionRewindOutcome.Rewound)
                         {
-                            // #130 will give this its own reason; ProtocolViolation stands in until then.
-                            ClosePeer(handle, DisconnectReason.ProtocolViolation);
+                            ClosePeer(handle, DisconnectReasonForRewindRefusal(rewindOutcome));
                             return;
                         }
 

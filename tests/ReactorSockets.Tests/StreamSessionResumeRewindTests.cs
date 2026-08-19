@@ -176,10 +176,133 @@ public class StreamSessionResumeRewindTests
             accepter.PumpAndDrainAll(5);
 
         // Assert — closed rather than resumed: no PeerResumed, no ResumeMatched record, and the held
-        // Peer's own Slot is closed instead (D1/D2, the #130 placeholder reason).
+        // Peer's own Slot is closed instead (D1/D2), with a count this end never sent named as an
+        // outright protocol violation rather than a configuration answer (issue #130's own D5 split).
         accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ResumeMatched);
         drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed && e.Peer == held[0].Peer)
             .Which.Reason.Should().Be(DisconnectReason.ProtocolViolation);
+    }
+
+    // =========================================================================================
+    // Issue #130 — a Resume counter below the ring's released head closes rather than resuming
+    // with a gap, and the boundary at the head itself still resumes normally
+    // =========================================================================================
+
+    private const int RetentionGapMaxMessageSize = 64;
+    private const int RetentionGapRetentionBytes = RetentionGapMaxMessageSize + 4;
+
+    [Fact]
+    public void Handshake_AResumeReportingOneMessageBelowTheReleasedHead_ClosesWithRetentionGapAndRaisesNoResumedEvent()
+    {
+        // Arrange — a ring sized to fit exactly one maximum-size frame. The first Message fills it,
+        // is actually read and confirmed by the counterparty, and is released — the head now sits at
+        // Message count 1. While Interrupted, a second Message re-fills the freed room, and then
+        // RetentionExhausted (issue #120) is what a third Send returns, exactly the AC1 setup: the ring
+        // has genuinely overflowed during the outage before the peer ever resumes.
+        using StreamSessionReactorHarness accepter =
+            new(capacity: 1, maxMessageSize: RetentionGapMaxMessageSize, retentionBytes: RetentionGapRetentionBytes);
+        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
+        byte[] payloadA = new byte[RetentionGapMaxMessageSize];
+        byte[] frameA = StreamSessionTestRecords.BuildFrame(payloadA);
+        accepter.Reactor.Send(held[0].Peer, payloadA).Should().Be(SendOutcome.Sent);
+        accepter.Reactor.Pump();
+        held[0].Counterparty.Receive(frameA.Length);
+        held[0].Counterparty.Send(StreamSessionTestRecords.BuildDeliveryCounterRecord(1));
+        accepter.Reactor.Pump();
+
+        accepter.InterruptHeldPeer(held[0]);
+        accepter.Reactor.Send(held[0].Peer, new byte[RetentionGapMaxMessageSize]).Should().Be(SendOutcome.Sent);
+        accepter.Reactor.Send(held[0].Peer, [1]).Should().Be(SendOutcome.RetentionExhausted);
+
+        // Act — the peer resumes claiming to have received nothing at all: one Message below the
+        // released head of 1 (RetentionRewindOutcome.BelowReleasedHead, D1) — the gap case this ticket
+        // is named for, since bytes at count 0 are bytes this end no longer retains.
+        using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
+        resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 0));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            accepter.PumpAndDrainAll(20);
+
+        // Assert — closed with the configuration-answer reason (issue #130), not resumed: no
+        // PeerResumed event, no ResumeMatched record, and no Message delivered with a gap ahead of it.
+        accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ResumeMatched);
+        drained.Should().NotContain(e => e.Kind == SessionEventKind.PeerResumed);
+        drained.Should().NotContain(e => e.Kind == SessionEventKind.MessageReceived);
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed && e.Peer == held[0].Peer)
+            .Which.Reason.Should().Be(DisconnectReason.RetentionGap);
+    }
+
+    [Fact]
+    public void Handshake_AResumeReportingExactlyTheReleasedHead_ResumesNormallyRatherThanClosing()
+    {
+        // Arrange — the same shape as the gap case immediately above, except the Resume names the head
+        // itself rather than one below it: Message count 1, exactly what this end already released.
+        using StreamSessionReactorHarness accepter = new(capacity: 1, retentionBytes: 4100);
+        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
+        byte[] payloadA = StreamSessionTestRecords.PayloadOf(8, 43);
+        byte[] frameA = StreamSessionTestRecords.BuildFrame(payloadA);
+        accepter.Reactor.Send(held[0].Peer, payloadA).Should().Be(SendOutcome.Sent);
+        accepter.Reactor.Pump();
+        held[0].Counterparty.Receive(frameA.Length);
+        held[0].Counterparty.Send(StreamSessionTestRecords.BuildDeliveryCounterRecord(1));
+        accepter.Reactor.Pump();
+
+        byte[] payloadB = StreamSessionTestRecords.PayloadOf(8, 44);
+        byte[] frameB = StreamSessionTestRecords.BuildFrame(payloadB);
+        accepter.Reactor.Send(held[0].Peer, payloadB).Should().Be(SendOutcome.Sent);
+        accepter.Reactor.Pump();
+        accepter.InterruptHeldPeer(held[0]);
+
+        // Act — the boundary itself: naming the released head exactly rewinds to it (RetentionRewindOutcome.Rewound)
+        // rather than refusing, and resends the one Message the peer never actually confirmed.
+        using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
+        resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 1));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            accepter.PumpAndDrainAll(20);
+
+        // Assert — resumed, not closed: PeerResumed fires with the same PeerId, ResumeMatched logs the
+        // one unconfirmed frame's own byte length, and that whole frame reaches the wire.
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerResumed && e.Peer == held[0].Peer);
+        drained.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+        accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.ResumeMatched)
+            .Which.Value0.Should().Be(frameB.Length);
+
+        ReadOwnDeliveryCounterRecord(resumed);
+        resumed.TryReceiveWithinTimeout(frameB.Length, out byte[] received, timeoutMs: 2000).Should().BeTrue();
+        received.Should().Equal(frameB);
+    }
+
+    [Fact]
+    public void CountersOf_ForAHeldPeerAboutToBeRefusedForARetentionGap_RemainsReadableUpToTheClose()
+    {
+        // Arrange — the same gap-producing shape as the close test above: a released head at Message
+        // count 1, one further Message left unconfirmed, then interrupted.
+        using StreamSessionReactorHarness accepter = new(capacity: 1, retentionBytes: 4100);
+        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
+        byte[] payloadA = StreamSessionTestRecords.PayloadOf(8, 45);
+        byte[] frameA = StreamSessionTestRecords.BuildFrame(payloadA);
+        accepter.Reactor.Send(held[0].Peer, payloadA).Should().Be(SendOutcome.Sent);
+        accepter.Reactor.Pump();
+        held[0].Counterparty.Receive(frameA.Length);
+        held[0].Counterparty.Send(StreamSessionTestRecords.BuildDeliveryCounterRecord(1));
+        accepter.Reactor.Pump();
+
+        byte[] payloadB = StreamSessionTestRecords.PayloadOf(8, 46);
+        accepter.Reactor.Send(held[0].Peer, payloadB).Should().Be(SendOutcome.Sent);
+        accepter.Reactor.Pump();
+        accepter.InterruptHeldPeer(held[0]);
+
+        // Act — the counters are read one Pump before the gap resume closes the Slot, the last moment
+        // this ticket's own acceptance criteria requires them to still answer.
+        PeerCounters beforeClose = accepter.Reactor.CountersOf(held[0].Peer);
+
+        using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
+        resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 0));
+        accepter.PumpAndDrainAll(20);
+
+        // Assert — the snapshot taken while still held reads a non-zero high-water mark for the bytes
+        // this end actually retained, and reading it did not itself throw despite the Peer being
+        // Interrupted rather than Established.
+        beforeClose.RetentionHighWaterBytes.Should().BeGreaterThan(0);
     }
 
     // =========================================================================================
