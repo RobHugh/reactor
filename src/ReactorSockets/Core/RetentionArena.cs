@@ -46,9 +46,9 @@ namespace ReactorSockets.Core;
 /// retained bytes can never exceed <see cref="BoundPerShareHolder"/>. This type still carries no
 /// framing knowledge of its own — no length-prefix size, no wire format — it is only ever *told* the
 /// smallest write it must plan room for, the same way it is already told
-/// <paramref name="boundPerShareHolder"/> and <paramref name="capacity"/>: a caller that understates
+/// <c>boundPerShareHolder</c> and <c>capacity</c>: a caller that understates
 /// it breaks the bound the ring is sized on, exactly as a caller that understated
-/// <paramref name="boundPerShareHolder"/> would break <see cref="TryAppend"/>'s exhaustion check.
+/// <c>boundPerShareHolder</c> would break <see cref="TryAppend"/>'s exhaustion check.
 /// </para>
 /// <para>
 /// <b>The Goodbye sentinel needs no reconciling against a peer's Message count (issue #113).</b>
@@ -58,7 +58,7 @@ namespace ReactorSockets.Core;
 /// no offset: a caller only ever appends its Goodbye once every Message it will ever send has already
 /// been appended (a Session profile refuses further Sends the moment its own Goodbye is queued), so
 /// the Goodbye's boundary entry always sits strictly after every Message's — a legitimate
-/// <paramref name="messageCount"/>, which counts only Messages, can never reach it, and every count
+/// <c>messageCount</c>, which counts only Messages, can never reach it, and every count
 /// below it resolves to exactly the Message it names. The Goodbye's own bytes are freed by
 /// <see cref="MarkSent"/> instead, the moment this end has handed them to its transport — see the
 /// cursor split above.
@@ -260,7 +260,7 @@ internal sealed class RetentionArena
     /// <summary>
     /// Returns <paramref name="shareHolderId"/>'s unsent bytes — from its sent total to its written
     /// total — as one or two contiguous memory segments over the backing array, for a caller about to
-    /// hand them to its own transport. <paramref name="second"/> is <see langword="default"/> unless
+    /// hand them to its own transport. <c>second</c> is <see langword="default"/> unless
     /// the unsent range wraps past the region's end boundary, in which case it holds the wrapped
     /// remainder. Deliberately independent of what the peer has confirmed
     /// (<see cref="ReleaseThroughMessageCount"/>): see the class remarks on the two cursors past the

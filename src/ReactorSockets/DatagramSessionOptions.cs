@@ -160,7 +160,7 @@ public sealed class DatagramSessionOptions
     /// Nothing disposes this, and nothing should. A supplied generator belongs to the consumer, who
     /// may hand the same one to several Reactors; a Reactor that disposed it would be disposing a
     /// resource it does not own. The default instance is not a leak either — on .NET the generator
-    /// <see cref="RandomNumberGenerator.Create"/> returns holds no handle, drawing from the OS on
+    /// <see cref="RandomNumberGenerator.Create()"/> returns holds no handle, drawing from the OS on
     /// each call, so its <c>Dispose</c> has nothing to release.
     /// </remarks>
     public RandomNumberGenerator Entropy { get; init; } = RandomNumberGenerator.Create();

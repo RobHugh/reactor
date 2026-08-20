@@ -1679,7 +1679,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <remarks>
     /// <para>
     /// <see cref="RetentionArena.GetUnsent"/> can return two wrap segments. A short write partway
-    /// through <paramref name="first"/> stops here and re-arms without touching <c>second</c> at all —
+    /// through <c>first</c> stops here and re-arms without touching <c>second</c> at all —
     /// marking sent only what was actually accepted keeps the ring's sent total honest with what the
     /// socket has truly taken. Only once <c>first</c> is entirely on the wire is <c>second</c>
     /// attempted, with the same short-write re-arm applied to it in turn.
@@ -2976,7 +2976,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         public IPEndPoint? DialedEndpoint { get; init; }
 
         /// <summary>
-        /// This Peer's re-dial schedule (<see cref="ReactorSockets.RedialSchedule"/>, issue #111), or
+        /// This Peer's re-dial schedule (<see cref="Session.RedialSchedule"/>, issue #111), or
         /// <see langword="null"/> while this Peer is not currently being re-dialled — either it has
         /// never been Interrupted, its transport loss was ineligible (issue #125:
         /// <see cref="DialedEndpoint"/> unset or a Goodbye had passed), or a Resume already matched and
@@ -3007,7 +3007,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>
         /// How long this Peer's re-dial schedule says to wait, from <see cref="RedialWaitStartTimestamp"/>,
-        /// before its next attempt — the delay <see cref="ReactorSockets.RedialSchedule.NextDelay"/> most
+        /// before its next attempt — the delay <see cref="Session.RedialSchedule.NextDelay"/> most
         /// recently drew, already jittered.
         /// </summary>
         public TimeSpan RedialDelay { get; set; }

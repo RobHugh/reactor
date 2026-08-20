@@ -4,7 +4,7 @@ namespace ReactorSockets.Session;
 
 /// <summary>
 /// The single place the pre-Session control datagram wire format (ADR 0009) is encoded and decoded.
-/// Every other piece of the handshake reasons about a <see cref="Hello"/>, a <see cref="Cookie"/> and
+/// Every other piece of the handshake reasons about a <see cref="DatagramControlType.Hello"/>, a <see cref="DatagramControlType.Cookie"/> and
 /// so on as fields; only this class knows where those fields live inside the 256 bytes on the wire, so
 /// a layout change touches one file instead of every caller that peeks at an offset.
 /// </summary>

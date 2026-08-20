@@ -7,6 +7,9 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/main/Dotnet.gitignore
 
+# Visual Studio IDE state
+.vs/
+
 # Build results
 [Dd]ebug/
 [Dd]ebugPublic/
@@ -61,3 +64,7 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# docfx
+docs/.reference/
+docs/api/docfx/**/*.map

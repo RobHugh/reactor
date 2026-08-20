@@ -136,7 +136,7 @@ public enum DiagnosticId
     /// <summary>
     /// An established Peer sent Message bytes after its own Goodbye had already been received, and
     /// the Session was closed with <see cref="DisconnectReason.ProtocolViolation"/> (issue #93).
-    /// Subject is the Peer. Carries no claimed length — <see cref="MessageFramingLegality"/> reaches
+    /// Subject is the Peer. Carries no claimed length — <see cref="Session.MessageFramingLegality"/> reaches
     /// this outcome before ever reading a prefix, so there is nothing to report but the contradiction
     /// itself. <c>Value0</c> and <c>Value1</c> are unused.
     /// </summary>
@@ -206,7 +206,7 @@ public enum DiagnosticId
     /// A dialling-side Peer began a fresh re-dial attempt after its transport was lost (issue #125,
     /// ADR 0011). Subject is the Peer. <c>Value0</c> is the attempt number, starting at 1 and rising by
     /// one per attempt; <c>Value1</c> is the delay in milliseconds this attempt actually waited before
-    /// dialling — the jittered figure <see cref="ReactorSockets.RedialSchedule.NextDelay"/> drew, so
+    /// dialling — the jittered figure <see cref="Session.RedialSchedule.NextDelay"/> drew, so
     /// what actually elapsed is observable rather than only the computed figure before jitter.
     /// </summary>
     /// <remarks>

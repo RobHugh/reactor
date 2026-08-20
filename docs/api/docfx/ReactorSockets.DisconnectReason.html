@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Enum DisconnectReason | ReactorSockets API reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Enum DisconnectReason | ReactorSockets API reference ">
+      
+      <meta name="description" content="Why a Peer&#39;s Session ended, defined and kept stable by this library rather than borrowed from a platform enumeration. Deliberately not shared with the Raw profile&#39;s  (ADR 0008): most of the members a Session needs are protocol vocabulary Raw can never produce, and a single shared enumeration would leave one profile documenting members it cannot emit.">
+      <link rel="icon" href="favicon.ico">
+      <link rel="stylesheet" href="public/docfx.min.css">
+      <link rel="stylesheet" href="public/main.css">
+      <meta name="docfx:navrel" content="toc.html">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      <meta name="docfx:rel" content="">
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_DisconnectReason.md&amp;value=---%0Auid%3A%20ReactorSockets.DisconnectReason%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="index.html">
+            <img id="logo" class="svg" src="logo.svg" alt="ReactorSockets">
+            ReactorSockets
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+              <form class="search" role="search" id="search">
+                <i class="bi bi-search"></i>
+                <input class="form-control" id="search-query" type="search" disabled placeholder="Search" autocomplete="off" aria-label="Search">
+              </form>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+
+      <div class="content">
+        <div class="actionbar">
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="ReactorSockets.DisconnectReason">
+
+
+
+
+  <h1 id="ReactorSockets_DisconnectReason" data-uid="ReactorSockets.DisconnectReason" class="text-break">
+Enum DisconnectReason  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DisconnectReason.cs/#L23"><i class="bi bi-code-slash"></i></a>
+  </h1>
+
+  <div class="facts text-secondary">
+    <dl><dt>Namespace</dt><dd><a class="xref" href="ReactorSockets.html">ReactorSockets</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>ReactorSockets.dll</dd></dl>
+  </div>
+
+  <div class="markdown summary"><p>Why a Peer's Session ended, defined and kept stable by this library rather than borrowed from a
+platform enumeration. Deliberately not shared with the Raw profile's <a class="xref" href="ReactorSockets.CloseReason.html">CloseReason</a>
+(ADR 0008): most of the members a Session needs are protocol vocabulary Raw can never produce, and
+a single shared enumeration would leave one profile documenting members it cannot emit.</p>
+</div>
+  <div class="markdown conceptual"></div>
+
+  <div class="codewrapper">
+    <pre><code class="lang-csharp hljs">public enum DisconnectReason</code></pre>
+  </div>
+
+
+
+
+
+
+
+
+
+  <h2 id="fields">Fields
+</h2>
+  <dl class="parameters">
+    <dt id="ReactorSockets_DisconnectReason_LocalClose"><code>LocalClose = 0</code></dt>
+  
+  <dd><p>The consumer called <code>Close</code> on this Peer.</p>
+</dd>
+    <dt id="ReactorSockets_DisconnectReason_VersionMismatch"><code>VersionMismatch = 1</code></dt>
+  
+  <dd><p>The two ends do not speak the same protocol version. The version match is exact — there is no
+negotiation, no lowest-common-version rule and no compatibility range — so this is produced
+both by the end that refused and by the end whose Hello was refused.</p>
+</dd>
+    <dt id="ReactorSockets_DisconnectReason_RemoteAtCapacity"><code>RemoteAtCapacity = 2</code></dt>
+  
+  <dd><p>The remote end had no capacity Slot free for this Session and said so. Distinct from silence:
+a Reactor at capacity answers a Hello it received rather than dropping it, so the dialler learns
+the difference between &quot;full&quot; and &quot;gone&quot;.</p>
+</dd>
+    <dt id="ReactorSockets_DisconnectReason_TransportFailed"><code>TransportFailed = 3</code></dt>
+  
+  <dd><p>The underlying transport failed or ended before or during the handshake: a reset, a dial that
+could not connect, or a stream that closed before a full handshake record arrived. Distinct
+from every other member here because nothing about the protocol was at fault — the byte stream
+itself did not survive to carry it. Since issue #119, the same kind of failure on an
+<em>established</em> Peer no longer produces this reason at all — it moves the Peer to
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerInterrupted">PeerInterrupted</a> instead, because its identity and undelivered
+Messages are still worth holding for a Resume. This member now fires only for a Peer that never
+finished becoming one.</p>
+</dd>
+    <dt id="ReactorSockets_DisconnectReason_ProtocolViolation"><code>ProtocolViolation = 4</code></dt>
+  
+  <dd><p>An established Peer's Message framing broke this profile's rules: a length prefix exceeding
+the announced <code>MaxMessageSize</code>, a length prefix of zero, a stream that ended before a
+length prefix or the Message body it named had fully arrived, or bytes arriving behind a
+Goodbye already received from that Peer (issue #93) — a Peer that announced it was leaving and
+then kept sending is contradicting its own announcement, so it is disconnected rather than
+believed. Distinct from <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_TransportFailed">TransportFailed</a>: the byte stream itself survived long
+enough to carry the violation, and what is wrong is the bytes it carried rather than the
+transport underneath it. Distinct from <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_PeerGoodbye">PeerGoodbye</a>, which is reserved for an
+ending that stayed clean to the last byte.</p>
+</dd>
+    <dt id="ReactorSockets_DisconnectReason_PeerGoodbye"><code>PeerGoodbye = 5</code></dt>
+  
+  <dd><p>The remote Peer sent a Goodbye: it is ending the Session on purpose rather than failing (issue
+#23). Produced once whatever this end still held for it has finished flushing — immediately, if
+nothing was outstanding when the Goodbye arrived, or after the <code>Closing</code> Session it entered
+(<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosing">PeerClosing</a>) has drained.</p>
+</dd>
+    <dt id="ReactorSockets_DisconnectReason_LingerExpired"><code>LingerExpired = 6</code></dt>
+  
+  <dd><p>An <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerInterrupted">PeerInterrupted</a> Peer's effective Linger — the value
+<code>LingerNegotiated</code> already reported at handshake (ADR 0011), the minimum of the two ends'
+announced Lingers — elapsed before the transport came back (issue #121). Linger, not the loss of
+the transport, is what closes an Interrupted Peer: the loss itself only produced
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerInterrupted">PeerInterrupted</a> (issue #119) and held the Peer's identity,
+counters and undelivered Messages open for a Resume. This member fires once that wait has run
+out, and is also what bounds a <a class="xref" href="ReactorSockets.StreamSessionReactor.Close.html#ReactorSockets_StreamSessionReactor_Close_ReactorSockets_PeerId_">Close(PeerId)</a> whose Goodbye can never
+reach a wire that no longer exists — without it, that Peer's retention would sit pending forever
+(issue #92). Distinct from <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_TransportFailed">TransportFailed</a>, which means the byte stream never
+survived long enough to say anything at all — this means it survived, said nothing further
+within the time this end had promised to wait, and this end gave up on its own clock rather than
+being told to. Distinct from <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_PeerGoodbye">PeerGoodbye</a>, which is an ending the remote announced
+on purpose while its transport still worked — this is an ending this end declares unilaterally,
+after silence, with no announcement possible because the transport that would have carried one
+is already gone.</p>
+</dd>
+    <dt id="ReactorSockets_DisconnectReason_RetentionGap"><code>RetentionGap = 7</code></dt>
+  
+  <dd><p>A Resume's reported delivery counter named a Message position below this end's retention ring —
+the peer confirmed nothing further, but by the time it reconnected the bytes at its reported
+position had already been released to make room for newer ones (<a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RetentionExhausted">RetentionExhausted</a>
+during the interruption, issue #120). Resuming anyway would deliver a stream with a hole in it,
+so this end closes instead (issue #130). Distinct from <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_LingerExpired">LingerExpired</a> and
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_TransportFailed">TransportFailed</a> because both of those are silent about <em>why</em> the Session ended —
+nothing was wrong with what either side said, only with how long the transport stayed reachable —
+while this one is a direct statement about what the peer said: its retention window was too small
+for the outage it just had. That makes the remedy actionable and specific — raise this end's
+retention capacity or its Linger, or both — in a way neither of those two members is. The mirror
+case, a Resume counter naming a Message this end never sent at all, is not this member: that is a
+protocol violation (<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_ProtocolViolation">ProtocolViolation</a>), not a capacity question, because no amount
+of retention would have made a fabricated counter valid.</p>
+</dd>
+  </dl>
+
+
+  <h2 id="ReactorSockets_DisconnectReason_remarks">Remarks</h2>
+  <div class="markdown level0 remarks"><p>
+Explicit values throughout, house style since <code>RawLinkLegality</code> (PR #70): a member is added at
+the end with the next free number, never inserted, so a value a consumer has already persisted
+keeps its meaning across a library upgrade.
+</p>
+<p>
+Every place this library maps something else onto a <a class="xref" href="ReactorSockets.DisconnectReason.html">DisconnectReason</a> — a wire
+<span class="xref">ReactorSockets.Session.RefusalReason</span>, a malformed-framing outcome, a Goodbye control record — states
+that mapping as its own table with a discard arm that refuses rather than permits, the same house
+rule <code>RawLinkLegality</code> follows: an input this library does not recognise fails closed instead
+of being guessed at.
+</p>
+</div>
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+    <div class="container-xxl search-results" id="search-results"></div>
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          <span>Made with <a href="https://dotnet.github.io/docfx">docfx</a></span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

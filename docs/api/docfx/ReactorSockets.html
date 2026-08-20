@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Namespace ReactorSockets | ReactorSockets API reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Namespace ReactorSockets | ReactorSockets API reference ">
+      
+      
+      <link rel="icon" href="favicon.ico">
+      <link rel="stylesheet" href="public/docfx.min.css">
+      <link rel="stylesheet" href="public/main.css">
+      <meta name="docfx:navrel" content="toc.html">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      <meta name="docfx:rel" content="">
+      
+      
+      
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="index.html">
+            <img id="logo" class="svg" src="logo.svg" alt="ReactorSockets">
+            ReactorSockets
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+              <form class="search" role="search" id="search">
+                <i class="bi bi-search"></i>
+                <input class="form-control" id="search-query" type="search" disabled placeholder="Search" autocomplete="off" aria-label="Search">
+              </form>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+
+      <div class="content">
+        <div class="actionbar">
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="ReactorSockets">
+
+  <h1 id="ReactorSockets" data-uid="ReactorSockets" class="text-break">Namespace ReactorSockets</h1>
+  <div class="markdown level0 summary"></div>
+  <div class="markdown level0 conceptual"></div>
+  <div class="markdown level0 remarks"></div>
+
+    <h3 id="classes">
+Classes
+</h3>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.html">DatagramSessionOptions</a></dt>
+      <dd><p>The construction surface of a <a class="xref" href="ReactorSockets.DatagramSessionReactor.html">DatagramSessionReactor</a> (ADR 0012): the shared L0
+budget composed in as <a class="xref" href="ReactorSockets.DatagramSessionOptions.Reactor.html#ReactorSockets_DatagramSessionOptions_Reactor">Reactor</a>, plus the knobs this profile alone has. Composed
+rather than inherited, so that nothing protocol-specific here can ever leak into
+<a class="xref" href="ReactorSockets.ReactorOptions.html">ReactorOptions</a> and turn it into the base class ADR 0011 refused.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.DatagramSessionReactor.html">DatagramSessionReactor</a></dt>
+      <dd><p>The datagram Session profile (ADR 0009): Sessions established over UDP, addressed as Peers, driven
+by a single synchronous <a class="xref" href="ReactorSockets.DatagramSessionReactor.Pump.html#ReactorSockets_DatagramSessionReactor_Pump">Pump()</a> from the consumer's own loop. This slice builds the
+handshake and everything that guards it — the stateless cookie, the amplification bound, version
+and capacity refusals, session identity and demultiplexing. It does not yet carry data; the packet
+records, the four sequence Spaces, fragmentation and the acknowledgement machinery land in the
+slices that follow, and <a class="xref" href="ReactorSockets.SessionEventKind.html">SessionEventKind</a> grows with them.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.PumpIntervalObserver.html">PumpIntervalObserver</a></dt>
+      <dd><p>Measures the interval between consecutive <a class="xref" href="ReactorSockets.StreamSessionReactor.Pump.html#ReactorSockets_StreamSessionReactor_Pump">Pump()</a> calls from
+monotonic <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.timeprovider">TimeProvider</a> timestamps. This is what makes the re-dial schedule's initial
+delay (<span class="xref">ReactorSockets.Session.RedialSchedule</span>) derived rather than invented: a retry sooner than the next
+Pump cannot happen, so the next Pump is the floor, and the only way to know that floor is to watch
+how often Pump is actually called.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.RawReactor.html">RawReactor</a></dt>
+      <dd><p>The escape hatch (ADR 0007): a consumer registers UDP sockets at runtime, gets a <a class="xref" href="ReactorSockets.LinkId.html">LinkId</a>
+back for each, and advances everything with a single synchronous <a class="xref" href="ReactorSockets.RawReactor.Pump.html#ReactorSockets_RawReactor_Pump">Pump()</a> call from their
+own loop. Nothing is delivered except in response to a call the consumer made, on the thread that
+constructed this Reactor. TCP joins the datagram surface here: a listening Link and the connections
+it accepts are registered and admitted the same way, and a stream Link's reads drain as
+<a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_SegmentReceived">SegmentReceived</a> and <a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_EndOfStream">EndOfStream</a> exactly like a
+datagram Link's. A stream Link's <a class="xref" href="ReactorSockets.RawReactor.Send.html#ReactorSockets_RawReactor_Send_ReactorSockets_LinkId_System_ReadOnlySpan_System_Byte__">Send(LinkId, ReadOnlySpan&lt;byte&gt;)</a> takes what the socket will take and reports the
+count, arming exactly one <a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_Writable">Writable</a> when it took fewer bytes than
+offered; <a class="xref" href="ReactorSockets.RawReactor.Shutdown.html#ReactorSockets_RawReactor_Shutdown_ReactorSockets_LinkId_">Shutdown(LinkId)</a> sends this Link's own FIN while it stays open for reading.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.ReactorOptions.html">ReactorOptions</a></dt>
+      <dd><p>The budget L0 spends inside a Pump, shared by every profile. Composed as a member into each
+profile's options type rather than inherited from a base (ADR 0012) — nothing protocol-specific
+may ever enter this type, since a knob two of three profiles need is exactly what would turn it
+into the base class ADR 0011 refused.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.html">StreamSessionOptions</a></dt>
+      <dd><p>The construction surface of a <a class="xref" href="ReactorSockets.StreamSessionReactor.html">StreamSessionReactor</a> (ADR 0011): the shared L0 budget
+composed in as <a class="xref" href="ReactorSockets.StreamSessionOptions.Reactor.html#ReactorSockets_StreamSessionOptions_Reactor">Reactor</a>, plus the knobs this profile alone has. Composed rather than
+inherited, so that nothing protocol-specific here can ever leak into <a class="xref" href="ReactorSockets.ReactorOptions.html">ReactorOptions</a>
+and turn it into the base class ADR 0011 refused.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.StreamSessionReactor.html">StreamSessionReactor</a></dt>
+      <dd><p>The stream Session profile (ADR 0010): Sessions established over TCP, addressed as Peers,
+delivering <code>u32</code> length-prefixed Messages rather than the byte runs the transport gives.
+Slices 3.1-3.3 validate <a class="xref" href="ReactorSockets.StreamSessionOptions.html">StreamSessionOptions</a> and its allocation bill at
+construction, bind the declared endpoint set, and carry a Peer through the handshake to an
+established Session. Slice 3.4 adds the data plane: each established Peer reassembles Messages in
+its own persistent receive buffer and delivers each whole one as a
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_MessageReceived">MessageReceived</a> event copied into the shared frame arena. Retention,
+write batching and the Goodbye exchange are not yet built and land in the sub-issues that follow.</p>
+</dd>
+    </dl>
+    <h3 id="structs">
+Structs
+</h3>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.html">DiagnosticRecord</a></dt>
+      <dd><p>A single diagnostic emitted to an <a class="xref" href="ReactorSockets.IReactorDiagnostics.html">IReactorDiagnostics</a> Sink: a closed
+<a class="xref" href="ReactorSockets.DiagnosticId.html">DiagnosticId</a>, its fixed <a class="xref" href="ReactorSockets.DiagnosticLevel.html">DiagnosticLevel</a>, a tagged subject — none,
+Link, Source or Peer (ADR 0013) — and two numeric slots whose meaning is documented per
+<a class="xref" href="ReactorSockets.DiagnosticId.html">DiagnosticId</a> member. No strings, no <code>object[]</code>, no closures — everything here
+lives on the stack and is built only after <a class="xref" href="ReactorSockets.IReactorDiagnostics.IsEnabled.html#ReactorSockets_IReactorDiagnostics_IsEnabled_ReactorSockets_DiagnosticLevel_">IsEnabled(DiagnosticLevel)</a> passes.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.LinkCounters.html">LinkCounters</a></dt>
+      <dd><p>A point-in-time snapshot of one Link's counters (ADR 0013): monotonic figures running from that
+Link's registration, with no reset, fetched by value and keyed by <a class="xref" href="ReactorSockets.LinkId.html">LinkId</a> — there is
+no accessor that enumerates every Link's counters in one call.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.LinkId.html">LinkId</a></dt>
+      <dd><p>A Link's identity: the Reactor that issued it, a zero-based slot index, and a generation counter
+that increments when the slot is reused, so a stale <a class="xref" href="ReactorSockets.LinkId.html">LinkId</a> held past a Link's close
+compares unequal to whatever now occupies that slot (ADR 0014) rather than aliasing it.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.PeerCounters.html">PeerCounters</a></dt>
+      <dd><p>A point-in-time snapshot of one Peer's counters (ADR 0013): monotonic figures running from that
+Peer's establishment, with no reset, fetched by value and keyed by <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> — mirrors
+<a class="xref" href="ReactorSockets.LinkCounters.html">LinkCounters</a>'s Raw-profile shape and the same &quot;no accessor enumerates every Peer's
+counters in one call&quot; rule.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.PeerId.html">PeerId</a></dt>
+      <dd><p>A Peer's identity inside this process: the Reactor that issued it, a zero-based Slot index, and a
+generation counter that increments when the Slot is reused, so a stale <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> held
+past a Peer's close compares unequal to whatever now occupies that Slot (ADR 0007) rather than
+aliasing it. Shared by both Session profiles (ADR 0010), exactly as <a class="xref" href="ReactorSockets.LinkId.html">LinkId</a> is the
+Raw profile's.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.RawEvent.html">RawEvent</a></dt>
+      <dd><p>One event drained from a <a class="xref" href="ReactorSockets.RawReactor.html">RawReactor</a>. A <code>ref struct</code> because
+<a class="xref" href="ReactorSockets.RawEvent.Payload.html#ReactorSockets_RawEvent_Payload">Payload</a> aliases the frame arena directly and must never outlive the Frame it was
+drained in (ADR 0008). <a class="xref" href="ReactorSockets.RawEvent.Kind.html#ReactorSockets_RawEvent_Kind">Kind</a> determines exactly which other fields are populated —
+this slice implements <a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_DatagramReceived">DatagramReceived</a>, <a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_Closed">Closed</a>,
+<a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_Accepted">Accepted</a>, <a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_Connected">Connected</a>,
+<a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_SegmentReceived">SegmentReceived</a>, <a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_EndOfStream">EndOfStream</a> and
+<a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_Writable">Writable</a> — the complete Raw profile roster.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.RawEventEnumerator.html">RawEventEnumerator</a></dt>
+      <dd><p>The zero-allocation enumerator <a class="xref" href="ReactorSockets.RawReactor.Drain.html#ReactorSockets_RawReactor_Drain">Drain()</a> returns. A <code>ref struct</code>
+so that a <code>foreach</code> over it can yield <a class="xref" href="ReactorSockets.RawEvent.html">RawEvent</a> — itself a <code>ref struct</code>
+— without a heap-allocated <code>IEnumerator&lt;T&gt;</code>, following the same pattern as
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.span-1">Span&lt;T&gt;</a>'s own enumerator.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.ReactorCounters.html">ReactorCounters</a></dt>
+      <dd><p>A point-in-time snapshot of the Reactor-scope counters (ADR 0013): monotonic figures running
+from construction, with no reset. Fetched by value so nothing lets a consumer hold a pointer
+into live state across a Pump; diffing two snapshots gives everything a reset would, from state
+the consumer already owns.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.Result.html">Result</a></dt>
+      <dd><p>The outcome of an operation whose failures are the caller's to check rather than the runtime's to
+throw — a wrong-kind call on a Link (<code>Send</code> on a datagram Link) or a send the remote end or
+the network refused. <a class="xref" href="ReactorSockets.Result.Error.html#ReactorSockets_Result_Error">Error</a> names the illegality or the platform failure in prose; there
+is no error code enumeration here because, unlike <a class="xref" href="ReactorSockets.CloseReason.html">CloseReason</a>, nothing about this
+failure needs to survive as permanent public API — a consumer branches on <a class="xref" href="ReactorSockets.Result.IsSuccess.html#ReactorSockets_Result_IsSuccess">IsSuccess</a>
+and logs or surfaces <a class="xref" href="ReactorSockets.Result.Error.html#ReactorSockets_Result_Error">Error</a> as-is.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.SendResult.html">SendResult</a></dt>
+      <dd><p>The outcome of one <a class="xref" href="ReactorSockets.RawReactor.Send.html#ReactorSockets_RawReactor_Send_ReactorSockets_LinkId_System_ReadOnlySpan_System_Byte__">Send(LinkId, ReadOnlySpan&lt;byte&gt;)</a> call. Unlike <a class="xref" href="ReactorSockets.Result.html">Result</a>, a stream send
+has a quantity worth reporting even on success: the Reactor holds no outbound bytes (ADR 0008), so
+<code>Send</code> takes what the socket will take right now and hands back the count — the caller keeps
+whatever was not taken, and <a class="xref" href="ReactorSockets.SendResult.BytesSent.html#ReactorSockets_SendResult_BytesSent">BytesSent</a> is how it learns how much that is.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.SessionEvent.html">SessionEvent</a></dt>
+      <dd><p>One event drained from a Session Reactor. A <code>ref struct</code> because
+<a class="xref" href="ReactorSockets.SessionEvent.Payload.html#ReactorSockets_SessionEvent_Payload">Payload</a> aliases the frame arena directly, and must never outlive the Frame it was
+drained in (ADR 0008). <a class="xref" href="ReactorSockets.SessionEvent.Kind.html#ReactorSockets_SessionEvent_Kind">Kind</a> determines exactly which other fields are populated.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.SessionEventEnumerator.html">SessionEventEnumerator</a></dt>
+      <dd><p>The zero-allocation enumerator every Session Reactor's <code>Drain</code> returns (ADR 0010), shared by
+both profiles via <span class="xref">ReactorSockets.ISessionEventSource</span> rather than duplicated per profile. A
+<code>ref struct</code> so that a <code>foreach</code> over it can yield <a class="xref" href="ReactorSockets.SessionEvent.html">SessionEvent</a> —
+itself a <code>ref struct</code> — without a heap-allocated <code>IEnumerator&lt;T&gt;</code>,
+following the same pattern as <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.span-1">Span&lt;T&gt;</a>'s own enumerator.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.Source.html">Source</a></dt>
+      <dd><p>Who a datagram claims to be from — an unauthenticated hint about origin, never an identity
+(ADR 0014). Carried on the record path as a value type: <code>{ family, 16 address bytes, scope id,
+port }</code>, roughly 56 bytes, so a Diagnostic or an Event never allocates to name a Source.</p>
+</dd>
+    </dl>
+    <h3 id="interfaces">
+Interfaces
+</h3>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.IReactorDiagnostics.html">IReactorDiagnostics</a></dt>
+      <dd><p>The Diagnostic Sink contract. Implementations are called synchronously, on the consumer's
+thread, inside <code>Pump</code> — a Sink that stalls stalls the Frame, and a Sink that throws is
+caught, counted as <code>SinkFaulted</code>, and disabled for the life of the Reactor (ADR 0005).
+Calling back into the Reactor from a Sink is a programmer error and throws.</p>
+</dd>
+    </dl>
+    <h3 id="enums">
+Enums
+</h3>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.CloseReason.html">CloseReason</a></dt>
+      <dd><p>Why a Link closed, defined and kept stable by this library rather than borrowed from a platform
+enumeration (ADR 0008): a consumer's permanent logic switches on this instead of a
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> that differs between Windows and Unix. The exact
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> travels in the <a class="xref" href="ReactorSockets.DiagnosticRecord.html">DiagnosticRecord</a> emitted
+at the same moment, linked to this only by the Link and the Pump it happened in.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.DiagnosticId.html">DiagnosticId</a></dt>
+      <dd><p>A closed, permanent enumeration of diagnostic causes with explicit values in reserved blocks —
+common 1-99, Raw 100-199, datagram session 200-299, stream session 300-399 (ADR 0013) — so a
+future insertion cannot silently renumber an id a consumer has persisted. There is no
+<code>None</code> or <code>Unknown</code> member and zero is never used: every <a class="xref" href="ReactorSockets.DiagnosticRecord.html">DiagnosticRecord</a>
+has a cause by construction.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.DiagnosticLevel.html">DiagnosticLevel</a></dt>
+      <dd><p>The minimum severity a <a class="xref" href="ReactorSockets.IReactorDiagnostics.html">IReactorDiagnostics</a> Sink was installed to receive.
+Ordered by ascending severity so that a level is enabled when it is at least as severe
+as the installed <code>MinimumLevel</code>.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.DiagnosticSubjectKind.html">DiagnosticSubjectKind</a></dt>
+      <dd><p>Which field of a <a class="xref" href="ReactorSockets.DiagnosticRecord.html">DiagnosticRecord</a>'s tagged subject is populated (ADR 0013). A
+record has exactly one subject, so a Sink or formatter switches on this rather than checking
+several optional fields for which one is set.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.DisconnectReason.html">DisconnectReason</a></dt>
+      <dd><p>Why a Peer's Session ended, defined and kept stable by this library rather than borrowed from a
+platform enumeration. Deliberately not shared with the Raw profile's <a class="xref" href="ReactorSockets.CloseReason.html">CloseReason</a>
+(ADR 0008): most of the members a Session needs are protocol vocabulary Raw can never produce, and
+a single shared enumeration would leave one profile documenting members it cannot emit.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.RawEventKind.html">RawEventKind</a></dt>
+      <dd><p>Which kind of <a class="xref" href="ReactorSockets.RawEvent.html">RawEvent</a> a drained event is. This slice adds the stream-relevant kinds
+to the datagram-only roster shipped earlier (ADR 0008); <a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_Accepted">Accepted</a> lands with the
+listening-Link work, <a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_Connected">Connected</a> with dialling, <a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_SegmentReceived">SegmentReceived</a> and
+<a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_EndOfStream">EndOfStream</a> with stream reads, and <a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_Writable">Writable</a> with partial sends.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.SendOutcome.html">SendOutcome</a></dt>
+      <dd><p>The outcome of one <a class="xref" href="ReactorSockets.StreamSessionReactor.Send.html#ReactorSockets_StreamSessionReactor_Send_ReactorSockets_PeerId_System_ReadOnlySpan_System_Byte__">Send(PeerId, ReadOnlySpan&lt;byte&gt;)</a> call. A bare
+enum rather than a result struct (unlike <a class="xref" href="ReactorSockets.SendResult.html">SendResult</a>): a Session-level send has no
+partial-completion quantity worth reporting back — the framed Message either fit in the Peer's
+retention region whole, or it did not, so the outcome is the whole story.</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.SessionEventKind.html">SessionEventKind</a></dt>
+      <dd><p>Which kind of <a class="xref" href="ReactorSockets.SessionEvent.html">SessionEvent</a> was drained, and therefore which of its fields carry
+meaning. Shared by both Session profiles (ADR 0010).</p>
+</dd>
+    </dl>
+    <dl class="jumplist">
+      <dt><a class="xref" href="ReactorSockets.SourceFamily.html">SourceFamily</a></dt>
+      <dd><p>The address family of a <a class="xref" href="ReactorSockets.Source.html">Source</a>, carried as an explicit tag rather than inferred
+from the address bytes (ADR 0014). With <code>DualMode</code> never set, nothing in a 16-byte field
+distinguishes a zero-padded IPv4 address from an IPv6 one.</p>
+</dd>
+    </dl>
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+    <div class="container-xxl search-results" id="search-results"></div>
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          <span>Made with <a href="https://dotnet.github.io/docfx">docfx</a></span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

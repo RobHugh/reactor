@@ -7,6 +7,7 @@
     <RootNamespace>ReactorSockets</RootNamespace>
     <AssemblyName>ReactorSockets</AssemblyName>
     <LangVersion>latest</LangVersion>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <PropertyGroup>

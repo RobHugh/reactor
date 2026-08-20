@@ -519,7 +519,7 @@ public sealed class RawReactor : IDisposable
     }
 
     /// <summary>
-    /// Queues exactly one <see cref="RawEventKind.Writable"/> for the stream Link at <paramref name="index"/>.
+    /// Queues exactly one <see cref="RawEventKind.Writable"/> for the stream Link at <paramref name="handle"/>.
     /// Called only by the dispatcher, and only for a socket it just found writable while armed
     /// (<see cref="Core.ReadinessDispatcher.ArmWritable"/>) — the dispatcher itself disarms before
     /// invoking this, so nothing here needs to re-check that the mark was still set.

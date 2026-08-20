@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Class StreamSessionOptions | ReactorSockets API reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Class StreamSessionOptions | ReactorSockets API reference ">
+      
+      <meta name="description" content="The construction surface of a  (ADR 0011): the shared L0 budget composed in as , plus the knobs this profile alone has. Composed rather than inherited, so that nothing protocol-specific here can ever leak into  and turn it into the base class ADR 0011 refused.">
+      <link rel="icon" href="favicon.ico">
+      <link rel="stylesheet" href="public/docfx.min.css">
+      <link rel="stylesheet" href="public/main.css">
+      <meta name="docfx:navrel" content="toc.html">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      <meta name="docfx:rel" content="">
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_StreamSessionOptions.md&amp;value=---%0Auid%3A%20ReactorSockets.StreamSessionOptions%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="index.html">
+            <img id="logo" class="svg" src="logo.svg" alt="ReactorSockets">
+            ReactorSockets
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+              <form class="search" role="search" id="search">
+                <i class="bi bi-search"></i>
+                <input class="form-control" id="search-query" type="search" disabled placeholder="Search" autocomplete="off" aria-label="Search">
+              </form>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+
+      <div class="content">
+        <div class="actionbar">
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="ReactorSockets.StreamSessionOptions">
+
+
+
+  <h1 id="ReactorSockets_StreamSessionOptions" data-uid="ReactorSockets.StreamSessionOptions" class="text-break">
+Class StreamSessionOptions  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/StreamSessionOptions.cs/#L50"><i class="bi bi-code-slash"></i></a>
+  </h1>
+
+  <div class="facts text-secondary">
+    <dl><dt>Namespace</dt><dd><a class="xref" href="ReactorSockets.html">ReactorSockets</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>ReactorSockets.dll</dd></dl>
+  </div>
+
+  <div class="markdown summary"><p>The construction surface of a <a class="xref" href="ReactorSockets.StreamSessionReactor.html">StreamSessionReactor</a> (ADR 0011): the shared L0 budget
+composed in as <a class="xref" href="ReactorSockets.StreamSessionOptions.Reactor.html#ReactorSockets_StreamSessionOptions_Reactor">Reactor</a>, plus the knobs this profile alone has. Composed rather than
+inherited, so that nothing protocol-specific here can ever leak into <a class="xref" href="ReactorSockets.ReactorOptions.html">ReactorOptions</a>
+and turn it into the base class ADR 0011 refused.</p>
+</div>
+  <div class="markdown conceptual"></div>
+
+  <div class="codewrapper">
+    <pre><code class="lang-csharp hljs">public sealed class StreamSessionOptions</code></pre>
+  </div>
+
+
+
+
+  <dl class="typelist inheritance">
+    <dt>Inheritance</dt>
+    <dd>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object">object</a></div>
+      <div><span class="xref">StreamSessionOptions</span></div>
+    </dd>
+  </dl>
+
+
+
+  <dl class="typelist inheritedMembers">
+    <dt>Inherited Members</dt>
+    <dd>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object)">object.Equals(object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object-system-object)">object.Equals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gethashcode">object.GetHashCode()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gettype">object.GetType()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.referenceequals">object.ReferenceEquals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.tostring">object.ToString()</a>
+    </div>
+  </dd></dl>
+
+
+
+
+  <h2 id="ReactorSockets_StreamSessionOptions_remarks">Remarks</h2>
+  <div class="markdown level0 remarks"><p>
+A knob carries a default only when that default is <em>derived</em> — from machinery this library
+owns, from another knob, or from a citable standard. A value that trades the consumer's own
+resources against their own traffic, and that nothing in this library can derive, is required with
+no default: <a class="xref" href="ReactorSockets.StreamSessionOptions.MaxMessageSize.html#ReactorSockets_StreamSessionOptions_MaxMessageSize">MaxMessageSize</a>, <a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a>,
+<a class="xref" href="ReactorSockets.StreamSessionOptions.SendIdleInterval.html#ReactorSockets_StreamSessionOptions_SendIdleInterval">SendIdleInterval</a> and <a class="xref" href="ReactorSockets.StreamSessionOptions.Linger.html#ReactorSockets_StreamSessionOptions_Linger">Linger</a> are all of that kind, and so is
+<a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a>. Guessing any of them would be guessing at the consumer's
+application.
+</p>
+<p>
+There is no cookie, no ack, no sequence space, no fragment and no RTO here: TCP already provides
+what those were built for, so a knob to configure one would have nothing under it.
+</p>
+<p>
+<b>The memory bill.</b> A Reactor built from these options preallocates
+<code>Capacity × (RetentionBytes + receive buffer + Message-boundary ring)</code> bytes, all of it per
+Peer and none of it shared, so a <code>Send</code> on a healthy Peer never fails because of somebody
+else's traffic. The retention line is buffered <em>twice</em> over — once in our retention, once
+again in the kernel's own send buffer for the socket — so a stream Peer's real footprint is this
+bound plus whatever the OS is holding, and the OS's half is not fully ours to control. The third
+line (issue #110) is what lets retention be released by what the peer has confirmed receiving
+rather than by what the local kernel merely accepted — the point of slice 4 — and is driven by
+<a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a> too: one <code>uint</code> per Message that could be outstanding in a Peer's
+retention region at once, which this profile's four-byte length prefix bounds at roughly one entry
+per four retained bytes, so it costs about as much as retention itself.
+</p>
+<p>
+<a class="xref" href="ReactorSockets.StreamSessionOptions.MaxMessageSize.html#ReactorSockets_StreamSessionOptions_MaxMessageSize">MaxMessageSize</a> appears in three places at once: announced to the remote as a receive
+limit, flooring the receive buffer, and flooring <a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a>. It is therefore the
+one knob whose careless enlargement multiplies memory in two directions rather than one.
+</p>
+<p>
+Every check below is deterministic and entirely the caller's, so failures throw at construction —
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.argumentoutofrangeexception">ArgumentOutOfRangeException</a> for a single bad value and <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.argumentexception">ArgumentException</a>
+for a combination that cannot work — rather than being reported through a <code>Result</code>.
+</p>
+</div>
+
+  <h2 class="section" id="properties">Properties
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.BoundaryRingBudgetBytes.html#ReactorSockets_StreamSessionOptions_BoundaryRingBudgetBytes">BoundaryRingBudgetBytes</a></dt>
+    <dd><p>The Message-boundary ring line of the memory bill in bytes (issue #110): one <code>uint</code> (4
+bytes) per entry in <span class="xref">ReactorSockets.StreamSessionOptions.BoundaryRingEntriesPerPeer</span>, across every Peer, reported the
+same way as the other two lines. This is what makes releasing retention by what the peer
+confirmed receiving possible at all — see the class remarks.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.Endpoints.html#ReactorSockets_StreamSessionOptions_Endpoints">Endpoints</a></dt>
+    <dd><p>The endpoints to bind at construction, in the order supplied; possibly empty. Declared once
+and never rebound (ADR 0014) — a Session's addresses are part of what it is, not something it
+acquires later. A consumer addresses Peers, never the sockets this profile binds, so binding
+returns no identity: an empty set means dial-only, a meaningful configuration rather than a
+hole, and there is no rebind — a Reactor that must listen elsewhere is a new Reactor.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.Entropy.html#ReactorSockets_StreamSessionOptions_Entropy">Entropy</a></dt>
+    <dd><p>The entropy the resume secret is drawn from. A construction knob in ADR 0011's sense — the
+consumer's own resource, and a consumer with a hardware source or a policy about which
+generator may be used is entitled to supply it. It carries a default only because that default
+is derived rather than guessed: the platform's own CSPRNG is the citable provenance.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.Linger.html#ReactorSockets_StreamSessionOptions_Linger">Linger</a></dt>
+    <dd><p>How long a closing Session stays alive to retransmit its Goodbye and absorb what is still in
+flight. Required, for the same reason as <a class="xref" href="ReactorSockets.StreamSessionOptions.SendIdleInterval.html#ReactorSockets_StreamSessionOptions_SendIdleInterval">SendIdleInterval</a>: it trades a prompt
+teardown against a clean one.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.MaxMessageSize.html#ReactorSockets_StreamSessionOptions_MaxMessageSize">MaxMessageSize</a></dt>
+    <dd><p>The largest Message, in bytes, this Reactor will accept or deliver. Required: it is a
+statement about the consumer's own protocol that nothing here can derive. It is also
+announced to the remote as a receive limit, and floors both the receive buffer and
+<a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a> — an arena that cannot hold one maximum Message could never
+deliver one.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.MissedHeartbeats.html#ReactorSockets_StreamSessionOptions_MissedHeartbeats">MissedHeartbeats</a></dt>
+    <dd><p>How many consecutive heartbeat intervals may pass in silence before a Peer is declared gone.
+Defaults to 3, RFC 4271's hold-time multiple. Must be at least 2, because a count of 1 makes a
+single lost heartbeat fatal, and in .NET the stall that produces it is as ordinary as a
+collection pause.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.Reactor.html#ReactorSockets_StreamSessionOptions_Reactor">Reactor</a></dt>
+    <dd><p>The shared L0 budget: capacity, admission cap, arena size, time source and Diagnostic Sink.
+Required — a Reactor cannot be built without one, and its <a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a>
+has no default of its own.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.ReceiveBudgetBytes.html#ReactorSockets_StreamSessionOptions_ReceiveBudgetBytes">ReceiveBudgetBytes</a></dt>
+    <dd><p>The receive line of the memory bill in bytes, as a <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/integral-numeric-types">long</a> so that a
+combination too large to allocate is a value this can report rather than an overflow it
+silently wraps through.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.ReceiveBufferFloor.html#ReactorSockets_StreamSessionOptions_ReceiveBufferFloor">ReceiveBufferFloor</a></dt>
+    <dd><p>The floor both <a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a> and the receive buffer are held to: one maximum Message plus its length prefix.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.ReceiveBufferSize.html#ReactorSockets_StreamSessionOptions_ReceiveBufferSize">ReceiveBufferSize</a></dt>
+    <dd><p>The bytes held per Peer for an incoming, not-yet-complete Message. Defaults to
+<a class="xref" href="ReactorSockets.StreamSessionOptions.MaxMessageSize.html#ReactorSockets_StreamSessionOptions_MaxMessageSize">MaxMessageSize</a> plus the 4-byte length prefix — its own floor, since that is
+exactly one incomplete maximum Message and nothing narrower could ever hold one.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.ResolvedMissedHeartbeats.html#ReactorSockets_StreamSessionOptions_ResolvedMissedHeartbeats">ResolvedMissedHeartbeats</a></dt>
+    <dd><p>The resolved missed-heartbeat count: <a class="xref" href="ReactorSockets.StreamSessionOptions.MissedHeartbeats.html#ReactorSockets_StreamSessionOptions_MissedHeartbeats">MissedHeartbeats</a> if set, otherwise 3.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.ResolvedReceiveBufferSize.html#ReactorSockets_StreamSessionOptions_ResolvedReceiveBufferSize">ResolvedReceiveBufferSize</a></dt>
+    <dd><p>The resolved receive buffer: <a class="xref" href="ReactorSockets.StreamSessionOptions.ReceiveBufferSize.html#ReactorSockets_StreamSessionOptions_ReceiveBufferSize">ReceiveBufferSize</a> if set, otherwise <a class="xref" href="ReactorSockets.StreamSessionOptions.ReceiveBufferFloor.html#ReactorSockets_StreamSessionOptions_ReceiveBufferFloor">ReceiveBufferFloor</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a></dt>
+    <dd><p>The bytes retained per Peer for the send path — retention <em>is</em> the send path (ADR 0011):
+a <code>Send</code> frames the Message once and appends it to this Peer's ring, and what reaches the
+socket is a copy from it. Required: this is the consumer trading their memory against their
+tolerance for a stalled Peer, and the right answer depends on their traffic, not on anything
+here. Must be at least <a class="xref" href="ReactorSockets.StreamSessionOptions.MaxMessageSize.html#ReactorSockets_StreamSessionOptions_MaxMessageSize">MaxMessageSize</a> plus the 4-byte length prefix, or a single
+maximum Message could never be retained.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.SendBudgetBytes.html#ReactorSockets_StreamSessionOptions_SendBudgetBytes">SendBudgetBytes</a></dt>
+    <dd><p>The send line of the memory bill in bytes, reported the same way.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.SendBufferSize.html#ReactorSockets_StreamSessionOptions_SendBufferSize">SendBufferSize</a></dt>
+    <dd><p><code>SO_SNDBUF</code> for every Peer socket this Reactor accepts or dials, or <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/null">null</a>
+— the default — for the OS default and its own autotuning. This is the kernel's send queue, not
+<a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a>: retention is what this end holds until the peer confirms receipt
+(issue #113), while this bounds how much the kernel will absorb from a flush before a write
+reports it would block and the bytes stay in retention, unsent. Unset, the two are unrelated in
+practice on Linux, whose send autotuning will absorb megabytes against a peer that has stopped
+reading; set, a consumer who needs transport backpressure to reach their own flow control at a
+known point can put it there.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.SendIdleInterval.html#ReactorSockets_StreamSessionOptions_SendIdleInterval">SendIdleInterval</a></dt>
+    <dd><p>How long a Session may go without sending before it sends a heartbeat instead. Required:
+shorter costs bandwidth on an idle link, longer costs time to notice a dead Peer, and only the
+consumer knows which they would rather spend.</p>
+</dd>
+  </dl>
+
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+    <div class="container-xxl search-results" id="search-results"></div>
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          <span>Made with <a href="https://dotnet.github.io/docfx">docfx</a></span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Struct ReactorCounters | ReactorSockets API reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Struct ReactorCounters | ReactorSockets API reference ">
+      
+      <meta name="description" content="A point-in-time snapshot of the Reactor-scope counters (ADR 0013): monotonic figures running from construction, with no reset. Fetched by value so nothing lets a consumer hold a pointer into live state across a Pump; diffing two snapshots gives everything a reset would, from state the consumer already owns.">
+      <link rel="icon" href="favicon.ico">
+      <link rel="stylesheet" href="public/docfx.min.css">
+      <link rel="stylesheet" href="public/main.css">
+      <meta name="docfx:navrel" content="toc.html">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      <meta name="docfx:rel" content="">
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_ReactorCounters.md&amp;value=---%0Auid%3A%20ReactorSockets.ReactorCounters%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="index.html">
+            <img id="logo" class="svg" src="logo.svg" alt="ReactorSockets">
+            ReactorSockets
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+              <form class="search" role="search" id="search">
+                <i class="bi bi-search"></i>
+                <input class="form-control" id="search-query" type="search" disabled placeholder="Search" autocomplete="off" aria-label="Search">
+              </form>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+
+      <div class="content">
+        <div class="actionbar">
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="ReactorSockets.ReactorCounters">
+
+
+
+  <h1 id="ReactorSockets_ReactorCounters" data-uid="ReactorSockets.ReactorCounters" class="text-break">
+Struct ReactorCounters  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/ReactorCounters.cs/#L45"><i class="bi bi-code-slash"></i></a>
+  </h1>
+
+  <div class="facts text-secondary">
+    <dl><dt>Namespace</dt><dd><a class="xref" href="ReactorSockets.html">ReactorSockets</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>ReactorSockets.dll</dd></dl>
+  </div>
+
+  <div class="markdown summary"><p>A point-in-time snapshot of the Reactor-scope counters (ADR 0013): monotonic figures running
+from construction, with no reset. Fetched by value so nothing lets a consumer hold a pointer
+into live state across a Pump; diffing two snapshots gives everything a reset would, from state
+the consumer already owns.</p>
+</div>
+  <div class="markdown conceptual"></div>
+
+  <div class="codewrapper">
+    <pre><code class="lang-csharp hljs">public readonly record struct ReactorCounters : IEquatable&lt;ReactorCounters&gt;</code></pre>
+  </div>
+
+
+
+
+
+  <dl class="typelist implements">
+    <dt>Implements</dt>
+    <dd>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.iequatable-1">IEquatable</a>&lt;<a class="xref" href="ReactorSockets.ReactorCounters.html">ReactorCounters</a>&gt;</div>
+    </dd>
+  </dl>
+
+
+  <dl class="typelist inheritedMembers">
+    <dt>Inherited Members</dt>
+    <dd>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.valuetype.equals">ValueType.Equals(object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.valuetype.gethashcode">ValueType.GetHashCode()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.valuetype.tostring">ValueType.ToString()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object-system-object)">object.Equals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gettype">object.GetType()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.referenceequals">object.ReferenceEquals(object, object)</a>
+    </div>
+  </dd></dl>
+
+
+
+
+  <h2 id="ReactorSockets_ReactorCounters_remarks">Remarks</h2>
+  <div class="markdown level0 remarks"><p>The shape is shared by every profile; which members move is not. <code>DatagramsSent</code> and
+<code>DatagramsReceived</code> stay at zero on a Reactor carrying no datagram transport, and the two
+admission counters divide the same way. A member that never moves on a profile is reporting a
+true zero, not a gap.</p>
+</div>
+
+  <h2 class="section" id="constructors">Constructors
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.ReactorCounters.-ctor.html#ReactorSockets_ReactorCounters__ctor_System_UInt64_System_UInt64_System_UInt64_System_UInt64_System_UInt64_System_UInt64_System_UInt64_">ReactorCounters(ulong, ulong, ulong, ulong, ulong, ulong, ulong)</a></dt>
+    <dd><p>A point-in-time snapshot of the Reactor-scope counters (ADR 0013): monotonic figures running
+from construction, with no reset. Fetched by value so nothing lets a consumer hold a pointer
+into live state across a Pump; diffing two snapshots gives everything a reset would, from state
+the consumer already owns.</p>
+</dd>
+  </dl>
+
+  <h2 class="section" id="properties">Properties
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.ReactorCounters.AdmissionDeferrals.html#ReactorSockets_ReactorCounters_AdmissionDeferrals">AdmissionDeferrals</a></dt>
+    <dd><p>Admissions declined that left the work where it was, for a later Pump to take. Moves on the
+transports where declined work waits — Raw and the stream Session profile. Counted once per
+declining rather than once per piece of work turned away, which makes it coarse where the work
+sits in an OS backlog: one listening Link or bound endpoint declines its whole backlog with one
+declining, because that depth is unknowable without accepting. Where the Reactor already holds
+the work — a stream Session handshake accepted but not completed — one declining is one piece of
+work and the figure is exact. Read the magnitude as &quot;how much of the listening fleet is turning
+work away&quot;, never as backlog depth.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.ReactorCounters.AdmissionDiscards.html#ReactorSockets_ReactorCounters_AdmissionDiscards">AdmissionDiscards</a></dt>
+    <dd><p>Admissions declined that let the work go, because the transport gave it nowhere to wait. Moves
+only on the datagram Session profile, which Discards the Hellos it cannot admit. Always an exact
+count of work turned away, which <code class="paramref">AdmissionDeferrals</code> is not, because a Reactor
+can only Discard what it had in hand. Kept apart from Deferrals because the two differ in the
+one way a consumer would act on: deferred work arrives on a later Pump, Discarded work never
+does.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.ReactorCounters.ArenaHighWaterBytes.html#ReactorSockets_ReactorCounters_ArenaHighWaterBytes">ArenaHighWaterBytes</a></dt>
+    <dd><p>The most Arena bytes any single Frame has used.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.ReactorCounters.DatagramsReceived.html#ReactorSockets_ReactorCounters_DatagramsReceived">DatagramsReceived</a></dt>
+    <dd><p>Datagrams taken from the transport.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.ReactorCounters.DatagramsSent.html#ReactorSockets_ReactorCounters_DatagramsSent">DatagramsSent</a></dt>
+    <dd><p>Datagrams handed to the transport for sending.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.ReactorCounters.SinkFaulted.html#ReactorSockets_ReactorCounters_SinkFaulted">SinkFaulted</a></dt>
+    <dd><p>Times the installed Sink threw and was disabled for the Reactor's life.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.ReactorCounters.UnknownSourceDiscards.html#ReactorSockets_ReactorCounters_UnknownSourceDiscards">UnknownSourceDiscards</a></dt>
+    <dd><p>Datagrams taken from the transport and thrown away because nothing could be attributed to a Peer:
+a malformed control datagram, or a session id naming no Session. Reactor-scope rather than
+per-Peer precisely because there is no Peer to charge them to — the whole point of the member is
+the traffic that failed to name one. Moves only on the datagram Session profile. A rising figure
+on a Reactor that is otherwise healthy is a scan or a flood, not a fault, which is why the
+matching Diagnostics are <a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>.</p>
+</dd>
+  </dl>
+
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+    <div class="container-xxl search-results" id="search-results"></div>
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          <span>Made with <a href="https://dotnet.github.io/docfx">docfx</a></span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

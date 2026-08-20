@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Struct DiagnosticRecord | ReactorSockets API reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Struct DiagnosticRecord | ReactorSockets API reference ">
+      
+      <meta name="description" content="A single diagnostic emitted to an  Sink: a closed , its fixed , a tagged subject — none, Link, Source or Peer (ADR 0013) — and two numeric slots whose meaning is documented per  member. No strings, no object[], no closures — everything here lives on the stack and is built only after  passes.">
+      <link rel="icon" href="favicon.ico">
+      <link rel="stylesheet" href="public/docfx.min.css">
+      <link rel="stylesheet" href="public/main.css">
+      <meta name="docfx:navrel" content="toc.html">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      <meta name="docfx:rel" content="">
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_DiagnosticRecord.md&amp;value=---%0Auid%3A%20ReactorSockets.DiagnosticRecord%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="index.html">
+            <img id="logo" class="svg" src="logo.svg" alt="ReactorSockets">
+            ReactorSockets
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+              <form class="search" role="search" id="search">
+                <i class="bi bi-search"></i>
+                <input class="form-control" id="search-query" type="search" disabled placeholder="Search" autocomplete="off" aria-label="Search">
+              </form>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+
+      <div class="content">
+        <div class="actionbar">
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="ReactorSockets.DiagnosticRecord">
+
+
+
+  <h1 id="ReactorSockets_DiagnosticRecord" data-uid="ReactorSockets.DiagnosticRecord" class="text-break">
+Struct DiagnosticRecord  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DiagnosticRecord.cs/#L12"><i class="bi bi-code-slash"></i></a>
+  </h1>
+
+  <div class="facts text-secondary">
+    <dl><dt>Namespace</dt><dd><a class="xref" href="ReactorSockets.html">ReactorSockets</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>ReactorSockets.dll</dd></dl>
+  </div>
+
+  <div class="markdown summary"><p>A single diagnostic emitted to an <a class="xref" href="ReactorSockets.IReactorDiagnostics.html">IReactorDiagnostics</a> Sink: a closed
+<a class="xref" href="ReactorSockets.DiagnosticId.html">DiagnosticId</a>, its fixed <a class="xref" href="ReactorSockets.DiagnosticLevel.html">DiagnosticLevel</a>, a tagged subject — none,
+Link, Source or Peer (ADR 0013) — and two numeric slots whose meaning is documented per
+<a class="xref" href="ReactorSockets.DiagnosticId.html">DiagnosticId</a> member. No strings, no <code>object[]</code>, no closures — everything here
+lives on the stack and is built only after <a class="xref" href="ReactorSockets.IReactorDiagnostics.IsEnabled.html#ReactorSockets_IReactorDiagnostics_IsEnabled_ReactorSockets_DiagnosticLevel_">IsEnabled(DiagnosticLevel)</a> passes.</p>
+</div>
+  <div class="markdown conceptual"></div>
+
+  <div class="codewrapper">
+    <pre><code class="lang-csharp hljs">public readonly record struct DiagnosticRecord : IEquatable&lt;DiagnosticRecord&gt;</code></pre>
+  </div>
+
+
+
+
+
+  <dl class="typelist implements">
+    <dt>Implements</dt>
+    <dd>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.iequatable-1">IEquatable</a>&lt;<a class="xref" href="ReactorSockets.DiagnosticRecord.html">DiagnosticRecord</a>&gt;</div>
+    </dd>
+  </dl>
+
+
+  <dl class="typelist inheritedMembers">
+    <dt>Inherited Members</dt>
+    <dd>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.valuetype.equals">ValueType.Equals(object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.valuetype.gethashcode">ValueType.GetHashCode()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.valuetype.tostring">ValueType.ToString()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object-system-object)">object.Equals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gettype">object.GetType()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.referenceequals">object.ReferenceEquals(object, object)</a>
+    </div>
+  </dd></dl>
+
+
+
+
+
+  <h2 class="section" id="properties">Properties
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.Id.html#ReactorSockets_DiagnosticRecord_Id">Id</a></dt>
+    <dd><p>Which condition produced this record.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.Level.html#ReactorSockets_DiagnosticRecord_Level">Level</a></dt>
+    <dd><p>The fixed severity for <a class="xref" href="ReactorSockets.DiagnosticRecord.Id.html#ReactorSockets_DiagnosticRecord_Id">Id</a>, per ADR 0013's roster.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.Link.html#ReactorSockets_DiagnosticRecord_Link">Link</a></dt>
+    <dd><p>The Link this record concerns, valid only when <a class="xref" href="ReactorSockets.DiagnosticRecord.SubjectKind.html#ReactorSockets_DiagnosticRecord_SubjectKind">SubjectKind</a> is
+<a class="xref" href="ReactorSockets.DiagnosticSubjectKind.html#ReactorSockets_DiagnosticSubjectKind_Link">Link</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.Peer.html#ReactorSockets_DiagnosticRecord_Peer">Peer</a></dt>
+    <dd><p>The Peer this record concerns, valid only when <a class="xref" href="ReactorSockets.DiagnosticRecord.SubjectKind.html#ReactorSockets_DiagnosticRecord_SubjectKind">SubjectKind</a> is
+<a class="xref" href="ReactorSockets.DiagnosticSubjectKind.html#ReactorSockets_DiagnosticSubjectKind_Peer">Peer</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.Source.html#ReactorSockets_DiagnosticRecord_Source">Source</a></dt>
+    <dd><p>The claimed Source this record concerns, valid only when <a class="xref" href="ReactorSockets.DiagnosticRecord.SubjectKind.html#ReactorSockets_DiagnosticRecord_SubjectKind">SubjectKind</a> is
+<a class="xref" href="ReactorSockets.DiagnosticSubjectKind.html#ReactorSockets_DiagnosticSubjectKind_Source">Source</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.SubjectKind.html#ReactorSockets_DiagnosticRecord_SubjectKind">SubjectKind</a></dt>
+    <dd><p>Which of <a class="xref" href="ReactorSockets.DiagnosticRecord.Link.html#ReactorSockets_DiagnosticRecord_Link">Link</a>, <a class="xref" href="ReactorSockets.DiagnosticRecord.Source.html#ReactorSockets_DiagnosticRecord_Source">Source</a> or <a class="xref" href="ReactorSockets.DiagnosticRecord.Peer.html#ReactorSockets_DiagnosticRecord_Peer">Peer</a>, if any, is populated.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.Value0.html#ReactorSockets_DiagnosticRecord_Value0">Value0</a></dt>
+    <dd><p>The first numeric slot; meaning documented on the <a class="xref" href="ReactorSockets.DiagnosticId.html">DiagnosticId</a> member.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.Value1.html#ReactorSockets_DiagnosticRecord_Value1">Value1</a></dt>
+    <dd><p>The second numeric slot; meaning documented on the <a class="xref" href="ReactorSockets.DiagnosticId.html">DiagnosticId</a> member.</p>
+</dd>
+  </dl>
+
+  <h2 class="section" id="methods">Methods
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForAdmissionCapReached.html#ReactorSockets_DiagnosticRecord_ForAdmissionCapReached_System_Int32_System_Int32_">ForAdmissionCapReached(int, int)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_AdmissionCapReached">AdmissionCapReached</a> record. No subject.
+<code class="paramref">declined</code> counts declinings where the work waits out of reach and pieces of
+work where the Reactor held it — see the remarks on
+<a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_AdmissionCapReached">AdmissionCapReached</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForArenaExhausted.html#ReactorSockets_DiagnosticRecord_ForArenaExhausted_ReactorSockets_LinkId_System_Int32_System_Int32_">ForArenaExhausted(LinkId, int, int)</a></dt>
+    <dd><p>Builds an <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_ArenaExhausted">ArenaExhausted</a> record for the Link that made the request.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForArenaExhausted.html#ReactorSockets_DiagnosticRecord_ForArenaExhausted_ReactorSockets_PeerId_System_Int32_System_Int32_">ForArenaExhausted(PeerId, int, int)</a></dt>
+    <dd><p>Builds an <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_ArenaExhausted">ArenaExhausted</a> record for the Peer whose Message could not
+be reserved — the Session profile's counterpart to the Link-subject overload above (ADR 0014:
+share-holder identity is per-Peer in a Session, not per-socket).</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForCapacityExhausted.html#ReactorSockets_DiagnosticRecord_ForCapacityExhausted_System_Int32_System_Int32_">ForCapacityExhausted(int, int)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_CapacityExhausted">CapacityExhausted</a> record. No subject.
+<code class="paramref">declined</code> is counted exactly as
+<a class="xref" href="ReactorSockets.DiagnosticRecord.ForAdmissionCapReached.html#ReactorSockets_DiagnosticRecord_ForAdmissionCapReached_System_Int32_System_Int32_">ForAdmissionCapReached(int, int)</a>'s is.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForCookieRejected.html#ReactorSockets_DiagnosticRecord_ForCookieRejected_ReactorSockets_Source_System_Int64_System_Int64_">ForCookieRejected(Source, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_CookieRejected">CookieRejected</a> record for the claimed Source, carrying the
+epoch the cookie offered and the epoch current when it was checked.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForDataAfterGoodbye.html#ReactorSockets_DiagnosticRecord_ForDataAfterGoodbye_ReactorSockets_PeerId_">ForDataAfterGoodbye(PeerId)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DataAfterGoodbye">DataAfterGoodbye</a> record for the Peer that kept sending
+after its own Goodbye. No claimed length: <code>Value0</code> and <code>Value1</code> are unused.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForDatagramMalformed.html#ReactorSockets_DiagnosticRecord_ForDatagramMalformed_ReactorSockets_Source_System_Int32_">ForDatagramMalformed(Source, int)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DatagramMalformed">DatagramMalformed</a> record for the claimed Source, carrying
+the number of bytes that arrived.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForDatagramTruncated.html#ReactorSockets_DiagnosticRecord_ForDatagramTruncated_ReactorSockets_Source_System_Int32_">ForDatagramTruncated(Source, int)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DatagramTruncated">DatagramTruncated</a> record for the claimed Source, carrying
+the scratch buffer size the datagram was truncated to.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForDeliveryCounterRefused.html#ReactorSockets_DiagnosticRecord_ForDeliveryCounterRefused_ReactorSockets_PeerId_System_Int64_System_Int64_">ForDeliveryCounterRefused(PeerId, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DeliveryCounterRefused">DeliveryCounterRefused</a> record for the Peer whose
+delivery-counter record claimed more Messages than this end ever sent it. <code>Value0</code> is the
+claimed cumulative count; <code>Value1</code> is the count of Messages this end has actually appended
+to this Peer's retention.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForDestinationUnreachable.html#ReactorSockets_DiagnosticRecord_ForDestinationUnreachable_ReactorSockets_LinkId_System_Net_Sockets_SocketError_">ForDestinationUnreachable(LinkId, SocketError)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DestinationUnreachable">DestinationUnreachable</a> record carrying the platform
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> reported for the send.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForLingerNegotiated.html#ReactorSockets_DiagnosticRecord_ForLingerNegotiated_ReactorSockets_PeerId_System_Int64_System_Int64_">ForLingerNegotiated(PeerId, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_LingerNegotiated">LingerNegotiated</a> record for the newly established
+<code class="paramref">peer</code>. <code>Value0</code> is this end's own Linger in milliseconds; <code>Value1</code>
+is the effective (minimum of the two ends') Linger in milliseconds.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForLinkFailed.html#ReactorSockets_DiagnosticRecord_ForLinkFailed_ReactorSockets_LinkId_System_Net_Sockets_SocketError_">ForLinkFailed(LinkId, SocketError)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_LinkFailed">LinkFailed</a> record carrying the platform
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> that caused the failure.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForMalformedFraming.html#ReactorSockets_DiagnosticRecord_ForMalformedFraming_ReactorSockets_PeerId_System_Int64_System_Int64_">ForMalformedFraming(PeerId, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_MalformedFraming">MalformedFraming</a> record for the Peer whose framing broke
+this profile's rules. <code>Value0</code> is the offending length prefix — 0 for a truncation, where
+no full prefix was ever read; <code>Value1</code> is this Reactor's own <code>MaxMessageSize</code>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForPeerRefusedCapacity.html#ReactorSockets_DiagnosticRecord_ForPeerRefusedCapacity_ReactorSockets_Source_System_Int32_">ForPeerRefusedCapacity(Source, int)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_PeerRefused">PeerRefused</a> record for the claimed Source of a stream
+dialler refused because every capacity Slot was occupied. <code>Value0</code> carries this Reactor's
+capacity; <code>Value1</code> is unused.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForPeerRefusedVersion.html#ReactorSockets_DiagnosticRecord_ForPeerRefusedVersion_ReactorSockets_Source_System_Int64_System_Int64_">ForPeerRefusedVersion(Source, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_PeerRefused">PeerRefused</a> record for the claimed Source of a stream
+dialler refused because it announced a version this Reactor does not speak. <code>Value0</code> is
+the version offered; <code>Value1</code> is the version this Reactor requires.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForRedialAttempted.html#ReactorSockets_DiagnosticRecord_ForRedialAttempted_ReactorSockets_PeerId_System_Int64_System_Int64_">ForRedialAttempted(PeerId, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_RedialAttempted">RedialAttempted</a> record for the Peer beginning a fresh
+re-dial attempt. <code>Value0</code> is the attempt number; <code>Value1</code> is the delay in
+milliseconds this attempt actually waited before dialling — the jittered figure, not the
+computed delay before jitter.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForRedialFailed.html#ReactorSockets_DiagnosticRecord_ForRedialFailed_ReactorSockets_PeerId_System_Net_Sockets_SocketError_System_Int64_">ForRedialFailed(PeerId, SocketError, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_RedialFailed">RedialFailed</a> record for the Peer whose re-dial attempt
+could not connect. <code>Value0</code> carries the platform <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> as its
+underlying integer value; <code>Value1</code> is the attempt number that failed.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForResumeMatched.html#ReactorSockets_DiagnosticRecord_ForResumeMatched_ReactorSockets_PeerId_System_Int64_">ForResumeMatched(PeerId, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_ResumeMatched">ResumeMatched</a> record for the Peer a valid resume secret was
+matched back onto. <code>Value0</code> is the number of retained outbound bytes the match rewound;
+<code>Value1</code> is unused.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForResumeUnmatched.html#ReactorSockets_DiagnosticRecord_ForResumeUnmatched_ReactorSockets_Source_System_Int64_System_Int64_">ForResumeUnmatched(Source, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_ResumeUnmatched">ResumeUnmatched</a> record for the claimed Source of a
+connection that claimed an existing Session and was refused rather than resumed.
+<code>Value0</code> is the number of Interrupted Peers the claim was checked against;
+<code>Value1</code> is the wire record type the claim arrived as.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForVersionRefused.html#ReactorSockets_DiagnosticRecord_ForVersionRefused_ReactorSockets_Source_System_Int64_System_Int64_">ForVersionRefused(Source, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_VersionRefused">VersionRefused</a> record for the claimed Source, carrying the
+version offered and the version this Reactor requires.</p>
+</dd>
+  </dl>
+
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+    <div class="container-xxl search-results" id="search-results"></div>
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          <span>Made with <a href="https://dotnet.github.io/docfx">docfx</a></span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

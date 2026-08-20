@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Enum SessionEventKind | ReactorSockets API reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Enum SessionEventKind | ReactorSockets API reference ">
+      
+      <meta name="description" content="Which kind of  was drained, and therefore which of its fields carry meaning. Shared by both Session profiles (ADR 0010).">
+      <link rel="icon" href="favicon.ico">
+      <link rel="stylesheet" href="public/docfx.min.css">
+      <link rel="stylesheet" href="public/main.css">
+      <meta name="docfx:navrel" content="toc.html">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      <meta name="docfx:rel" content="">
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_SessionEventKind.md&amp;value=---%0Auid%3A%20ReactorSockets.SessionEventKind%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="index.html">
+            <img id="logo" class="svg" src="logo.svg" alt="ReactorSockets">
+            ReactorSockets
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+              <form class="search" role="search" id="search">
+                <i class="bi bi-search"></i>
+                <input class="form-control" id="search-query" type="search" disabled placeholder="Search" autocomplete="off" aria-label="Search">
+              </form>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+
+      <div class="content">
+        <div class="actionbar">
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="ReactorSockets.SessionEventKind">
+
+
+
+
+  <h1 id="ReactorSockets_SessionEventKind" data-uid="ReactorSockets.SessionEventKind" class="text-break">
+Enum SessionEventKind  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/SessionEventKind.cs/#L10"><i class="bi bi-code-slash"></i></a>
+  </h1>
+
+  <div class="facts text-secondary">
+    <dl><dt>Namespace</dt><dd><a class="xref" href="ReactorSockets.html">ReactorSockets</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>ReactorSockets.dll</dd></dl>
+  </div>
+
+  <div class="markdown summary"><p>Which kind of <a class="xref" href="ReactorSockets.SessionEvent.html">SessionEvent</a> was drained, and therefore which of its fields carry
+meaning. Shared by both Session profiles (ADR 0010).</p>
+</div>
+  <div class="markdown conceptual"></div>
+
+  <div class="codewrapper">
+    <pre><code class="lang-csharp hljs">public enum SessionEventKind</code></pre>
+  </div>
+
+
+
+
+
+
+
+
+
+  <h2 id="fields">Fields
+</h2>
+  <dl class="parameters">
+    <dt id="ReactorSockets_SessionEventKind_PeerConnected"><code>PeerConnected = 1</code></dt>
+  
+  <dd><p>A Session is established and the Peer is addressable. Raised on both ends: on the dialler when
+the Accept arrives, on the accepting end when a Hello is admitted.</p>
+</dd>
+    <dt id="ReactorSockets_SessionEventKind_PeerClosed"><code>PeerClosed = 2</code></dt>
+  
+  <dd><p>A Session ended, or a dial never became one. <a class="xref" href="ReactorSockets.SessionEvent.Reason.html#ReactorSockets_SessionEvent_Reason">Reason</a> says why, and
+the <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> is dead from this event onwards.</p>
+</dd>
+    <dt id="ReactorSockets_SessionEventKind_MessageReceived"><code>MessageReceived = 3</code></dt>
+  
+  <dd><p>A whole Message was reassembled from the Peer's stream and copied into the frame arena.
+<a class="xref" href="ReactorSockets.SessionEvent.Payload.html#ReactorSockets_SessionEvent_Payload">Payload</a> carries it, valid only until the next Pump (ADR 0008).</p>
+</dd>
+    <dt id="ReactorSockets_SessionEventKind_PeerClosing"><code>PeerClosing = 4</code></dt>
+  
+  <dd><p>The Peer's Goodbye arrived while something was still outstanding to deliver: either Messages
+this end had already reassembled from it but the consumer had not yet drained (issue #23 review
+finding — a Message queued ahead of the Goodbye in the same read counts, even though it reached
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_MessageReceived">MessageReceived</a> first), or bytes still buffered in its receive
+share awaiting arena room (#81), or this end's own outbound retention for it still being
+flushed to the socket. The Peer accepts no further <code>Send</code>s worth making from here (issue
+#23) and a <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> carrying
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_PeerGoodbye">PeerGoodbye</a> follows once all of that is exhausted. Never raised
+when nothing was outstanding on either side — a Goodbye that finds the Peer already caught up
+closes it directly, with no zero-Frame Closing observable in between.</p>
+</dd>
+    <dt id="ReactorSockets_SessionEventKind_PeerInterrupted"><code>PeerInterrupted = 5</code></dt>
+  
+  <dd><p>The stream profile's transport for this Peer is gone, but the Peer itself is not: its
+<a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> — including generation — stays live, <a class="xref" href="ReactorSockets.StreamSessionReactor.CountersOf.html#ReactorSockets_StreamSessionReactor_CountersOf_ReactorSockets_PeerId_">CountersOf(PeerId)</a>
+keeps answering for it, and its undelivered inbound Messages and outbound retention ring are
+held rather than discarded (issue #119, ADR 0010). Raised whenever an established Peer's
+transport ends without a Goodbye first: an inbound FIN carrying nothing further, a reset, a
+local write failure, or this end's own receive-idle deadline expiring (revising issue #117,
+which closed the Peer outright before this kind existed). <b>Distinct from
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosing">PeerClosing</a></b>: Closing means a Goodbye arrived and the Session is ending on
+purpose, with <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> to follow once both sides drain — nothing here is ever
+resumable. Interrupted means the opposite — no Goodbye was ever seen, the Session is not
+ending, and the Peer sits ready for a Resume (a later slice) for as long as Linger allows
+(issue #121). A Peer that sent Goodbye and then a bare FIN reaches <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosing">PeerClosing</a> or
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a>, never this. Carries only <a class="xref" href="ReactorSockets.SessionEvent.Peer.html#ReactorSockets_SessionEvent_Peer">Peer</a> — there is no
+<a class="xref" href="ReactorSockets.DisconnectReason.html">DisconnectReason</a> to report, because nothing has ended.</p>
+</dd>
+    <dt id="ReactorSockets_SessionEventKind_PeerResumed"><code>PeerResumed = 6</code></dt>
+  
+  <dd><p>A Session held <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerInterrupted">PeerInterrupted</a> reclaimed its transport and is delivering again
+(issue #128, closing out #30's Resume). Raised on whichever side completes the match, and in
+both cases only once that side knows where to resend from: on the listening side from
+<code>ResumeHeldPeer</code>, once the peer's Resume record checks out and its carried delivery counter
+has driven the rewind; on the dialling side not from <code>ResumeDialledPeer</code>, which only sends
+the Resume record, but later, when the listening side's reciprocal delivery-counter record
+arrives and is rewound off (issue #127). Only that success path reaches here: a resume refused
+because the peer named a Message this end no longer retains closes the Peer instead
+(<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_RetentionGap">RetentionGap</a>, issue #130) and never raises this. <a class="xref" href="ReactorSockets.SessionEvent.Peer.html#ReactorSockets_SessionEvent_Peer">Peer</a>'s <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a>, generation included, is
+exactly the one <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerInterrupted">PeerInterrupted</a> carried — a Resume is the same Peer's transport
+coming back, never a new one — and no <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> is ever observed between the two.
+The consumer is asked for no reconciliation: Messages sent before the interruption arrive
+without being re-sent, since the rewind that makes this event possible (issue #127) already put
+this end's outbound retention back to the peer's last confirmed point before this event is
+raised. Carries only <a class="xref" href="ReactorSockets.SessionEvent.Peer.html#ReactorSockets_SessionEvent_Peer">Peer</a>, the same as <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerInterrupted">PeerInterrupted</a> —
+nothing has ended, so there is no <a class="xref" href="ReactorSockets.DisconnectReason.html">DisconnectReason</a> to report.</p>
+</dd>
+  </dl>
+
+
+  <h2 id="ReactorSockets_SessionEventKind_remarks">Remarks</h2>
+  <div class="markdown level0 remarks"><p>The roster grows with Resume across later slices. Members are appended, never inserted.</p>
+</div>
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+    <div class="container-xxl search-results" id="search-results"></div>
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          <span>Made with <a href="https://dotnet.github.io/docfx">docfx</a></span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
