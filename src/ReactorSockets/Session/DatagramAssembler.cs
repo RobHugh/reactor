@@ -30,6 +30,11 @@ internal static class DatagramAssembler
     /// wire format has no field to say one is absent, so a Session with nothing yet to acknowledge
     /// still gets a zeroed block rather than a shorter header.
     /// </summary>
+    /// <remarks>
+    /// The bytes themselves are <see cref="DatagramHeaderCodec"/>'s, not written a second time here.
+    /// What this method adds is the running offset an assembly needs: the codec's job ends at the
+    /// header, and the caller's next question is always where the first record starts.
+    /// </remarks>
     public static int WriteHeader(
         Span<byte> destination,
         uint session,
@@ -95,8 +100,8 @@ internal static class DatagramAssembler
 
         Span<byte> record = destination.Slice(offset, recordSize);
         record[0] = (byte)mode;
-        BinaryPrimitives.WriteUInt32BigEndian(record[1..], sequence);
-        BinaryPrimitives.WriteUInt16BigEndian(record[5..], (ushort)payload.Length);
+        BinaryPrimitives.WriteUInt32BigEndian(record[DatagramSessionProtocol.RecordSequenceOffset..], sequence);
+        BinaryPrimitives.WriteUInt16BigEndian(record[DatagramSessionProtocol.RecordLengthOffset..], (ushort)payload.Length);
         payload.CopyTo(record[DatagramSessionProtocol.UnfragmentedRecordSize..]);
 
         bytesWritten = recordSize;

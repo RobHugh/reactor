@@ -66,9 +66,9 @@ public class DatagramSessionIdentityTests
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 
-    /// <summary>A datagram naming <paramref name="session"/>, which is not a control datagram and so takes the demux path.</summary>
     /// <summary>
-    /// A well-formed data datagram naming <paramref name="session"/>: just the 20-byte header (both
+    /// A well-formed data datagram naming <paramref name="session"/>, which is not a control datagram
+    /// and so takes the demux path: just the 20-byte header (both
     /// ack blocks zeroed) and no records. Issue #163 gave the data path a real parser, so a datagram
     /// used here to prove <em>attribution</em> — which Session a stranger or a rebound address lands
     /// on — must itself be well-formed, or it would be discarded as malformed for a reason these tests

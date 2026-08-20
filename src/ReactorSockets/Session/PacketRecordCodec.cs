@@ -72,48 +72,44 @@ internal static class PacketRecordCodec
         out ushort length,
         out int bytesConsumed)
     {
-        if (record.Length < 1)
+        mode = default;
+        sequence = default;
+        length = default;
+        bytesConsumed = default;
+
+        // Nothing to read the shape from: a record needs at least its flags byte before the legality
+        // table can say how long it is.
+        if (record.IsEmpty)
         {
-            mode = default;
-            sequence = default;
-            length = default;
-            bytesConsumed = default;
             return false;
         }
 
+        // A spare bit set is a protocol violation, not something to mask off. With exact version
+        // matching, leniency buys nothing and would cost the ability to ever trust a bit's absence.
         byte flags = record[0];
         if ((flags & DatagramSessionProtocol.SpareBitsMask) != 0)
         {
-            mode = default;
-            sequence = default;
-            length = default;
-            bytesConsumed = default;
             return false;
         }
 
+        // The fragment shape rejects here, through the table rather than through a second bit test, so
+        // the shape a record claims and the bytes it is read against can never disagree.
         PacketRecordShape shape = PacketRecordLegality.ShapeOf(flags);
         if (!shape.IsProcessed || record.Length < shape.RecordSize)
         {
-            mode = default;
-            sequence = default;
-            length = default;
-            bytesConsumed = default;
             return false;
         }
 
-        ushort candidateLength = BinaryPrimitives.ReadUInt16BigEndian(record[5..]);
-        int bytesRemainingAfterHeader = record.Length - shape.RecordSize;
-        if (candidateLength > bytesRemainingAfterHeader)
+        // The declared length is bounded against what is actually left before a single payload byte is
+        // touched, so a length a stranger chose can never move a read past the received bytes.
+        ushort candidateLength = BinaryPrimitives.ReadUInt16BigEndian(record[DatagramSessionProtocol.RecordLengthOffset..]);
+        if (candidateLength > record.Length - shape.RecordSize)
         {
-            mode = default;
-            sequence = default;
-            length = default;
-            bytesConsumed = default;
             return false;
         }
 
         mode = (PacketRecordMode)(flags & DatagramSessionProtocol.ModeMask);
-        sequence = BinaryPrimitives.ReadUInt32BigEndian(record[1..]);
+        sequence = BinaryPrimitives.ReadUInt32BigEndian(record[DatagramSessionProtocol.RecordSequenceOffset..]);
         length = candidateLength;
         bytesConsumed = shape.RecordSize + candidateLength;
         return true;

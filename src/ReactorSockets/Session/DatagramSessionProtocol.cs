@@ -110,6 +110,17 @@ internal static class DatagramSessionProtocol
     public const int FragmentRecordSize = UnfragmentedRecordSize + sizeof(ushort) + sizeof(ushort);
 
     /// <summary>
+    /// The offset of a packet record's <c>u32</c> sequence, immediately after the flags byte. Named
+    /// here rather than spelled as a literal at each end, because the reader and the writer sit in
+    /// separate files and a record whose two ends disagree by a byte is the one defect the wire format
+    /// cannot detect.
+    /// </summary>
+    public const int RecordSequenceOffset = sizeof(byte);
+
+    /// <summary>The offset of a packet record's <c>u16</c> payload length, immediately after its sequence.</summary>
+    public const int RecordLengthOffset = RecordSequenceOffset + sizeof(uint);
+
+    /// <summary>
     /// The mask isolating the two mode bits in a packet record's flags byte. Applied before comparing
     /// against <see cref="ModeUnreliable"/>, <see cref="ModeUnreliableSequenced"/>,
     /// <see cref="ModeReliableUnordered"/> or <see cref="ModeReliableOrdered"/>, since the fragment bit
