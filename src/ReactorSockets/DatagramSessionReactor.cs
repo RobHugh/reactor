@@ -1000,9 +1000,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <summary>
         /// This Peer's own mutable counters (ADR 0013), incremented on the hot path and read only
         /// through <see cref="CountersOf"/>. Mirrors <see cref="StreamSessionReactor"/>'s equivalent
-        /// field. Nothing in this slice increments <see cref="Core.PeerCounterSet.OutOfWindowPackets"/>
-        /// or <see cref="Core.PeerCounterSet.DuplicatePackets"/> yet — that lands with the per-Space
-        /// receive window (issue #170) — so a freshly connected Peer reads zero for both.
+        /// field. The parse loop's per-Space classification increments
+        /// <see cref="Core.PeerCounterSet.OutOfWindowPackets"/>,
+        /// <see cref="Core.PeerCounterSet.DuplicatePackets"/> and
+        /// <see cref="Core.PeerCounterSet.UnreliableLossPackets"/> (issues #172, #173); a freshly
+        /// connected Peer reads zero for all three.
         /// </summary>
         public PeerCounterSet Counters { get; } = new();
 

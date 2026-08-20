@@ -32,19 +32,21 @@ namespace ReactorSockets;
 /// </param>
 /// <param name="OutOfWindowPackets">
 /// How many packet records this Peer's per-Space receive window has classified as out of window —
-/// a sequence number too far ahead of or behind that Space's <c>OldestUnacked</c> to correlate
-/// against it (subtask 6.2.1, issue #168; ADR 0013). Recurs every Pump under sustained loss or
-/// reordering, which is exactly why it is a Counter and never a Diagnostic. Added ahead of the
-/// classification code that increments it (issue #170), so every later 6.2 ticket has a number to
-/// assert against; a freshly connected Peer reads zero.
+/// a sequence number too far ahead of, or behind, that Space's receive window base
+/// to be tracked against it (subtask 6.2.1, issue #168; ADR 0013). Recurs every Pump under sustained
+/// loss or reordering, which is exactly why it is a Counter and never a Diagnostic. Incremented by
+/// the parse loop's classification of each arriving record (issue #172); a freshly connected Peer
+/// reads zero. Note that only the two reliable Spaces raise this on a far-ahead arrival: the
+/// unreliable Spaces slide their window forward instead and count the retirement as loss (issue
+/// #173), so for those Spaces out-of-window means a sequence below the base alone.
 /// </param>
 /// <param name="DuplicatePackets">
 /// How many packet records this Peer's per-Space receive window has classified as duplicates — a
 /// sequence number already accounted for, most often a retransmission the far end sent because it
 /// never saw this end's acknowledgement rather than a protocol violation (subtask 6.2.1, issue #168;
 /// ADR 0013). Recurs every Pump under sustained loss exactly like <see cref="OutOfWindowPackets"/>,
-/// and for the same reason is a Counter. Added ahead of the classification code that increments it
-/// (issue #170); a freshly connected Peer reads zero.
+/// and for the same reason is a Counter. Incremented by the parse loop's classification of each
+/// arriving record (issue #172); a freshly connected Peer reads zero.
 /// </param>
 /// <param name="UnreliableLossPackets">
 /// How many sequences the <c>Unreliable</c> Space's receive window has lost — retired by sliding its

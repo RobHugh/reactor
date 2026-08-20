@@ -317,4 +317,25 @@ public class DatagramSessionReceiveArenaAllocationTests
         BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(5, 2), 0);
         return record;
     }
+
+    [Fact]
+    public void Construct_ReceiveWindowBelowItsFloor_ThrowsThroughTheReactorWithTheExistingMessage()
+    {
+        // Arrange — a window of one fragment cannot hold a Message that occupies four, so the
+        // options' floor refuses it. Asserted through the Reactor rather than the options object
+        // alone (issue #171): the arena is taken at construction, so a combination that cannot be
+        // afforded must fail before any socket is bound, not later when the first datagram arrives.
+        const int fragmentSize = 1200;
+        const int maxMessageSize = fragmentSize * 4;
+
+        // Act
+        Action construct = () => _ = new DatagramSessionReactorHarness(
+            maxMessageSize: maxMessageSize,
+            fragmentSize: fragmentSize,
+            receiveWindowFragments: 1);
+
+        // Assert
+        construct.Should().Throw<ArgumentException>()
+            .WithMessage($"*a receive window of 1 fragments cannot hold one {maxMessageSize}-byte Message*");
+    }
 }
