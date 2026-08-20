@@ -217,6 +217,27 @@ in whether any reservation was there to check (the count is 0 for the latter), a
 a secret a reservation is holding — refused as a protocol violation — differs only in the record type.
 Per the rule above, the table follows the shipped code.
 
+**Amended (slice 6.2.6).** `UnreliableLossPackets` joins the per-subject scope, carrying how many
+sequences an unreliable Space's receive window retired un-admitted as it slid forward. It passes
+the derivability test — no other counter exposes it, since a sequence that never arrives is by
+definition never classified — and it passes the record test the same way `duplicate packets` does: a
+lossy path produces a gap every Pump, so a per-gap Diagnostic would fill the Sink with exactly the
+volume this ADR's admission rule exists to keep out. It is the figure bought back by giving plain
+`Unreliable` a sequence number, and it is the one thing genuinely given up by declining QUIC's packet
+numbers. Per the rule above, the table follows the shipped code.
+
+**Amended (issue #176).** The figure covers **both** unreliable Spaces, `Unreliable` and
+`UnreliableSequenced`, summed — not `Unreliable` alone, as 6.2.6 first shipped it. Both slide on the
+same rule and lose sequences the same way, so leaving one of them counted nowhere meant a consumer
+running `UnreliableSequenced` over a lossy path saw nothing at all: its loss is not out-of-window
+either, because a far-ahead arrival in a sliding Space is admitted after the slide rather than refused.
+It shares the existing field rather than earning a second one because `OutOfWindowPackets` and
+`DuplicatePackets` already aggregate across all four Spaces — a per-Space loss field would be the
+anomaly, and every added field here is a permanent commitment. The cost is accepted deliberately: the
+two Spaces' loss is not separable from this figure, and a consumer needing that separation is asking
+for per-Space counters generally, which is a different decision from this one. The two reliable Spaces
+still contribute nothing, because their windows do not slide.
+
 Sixteen members as first drafted. What the rules **removed** is the more useful half of the exercise:
 
 - **`DatagramDuplicate` and `PacketOutOfWindow`** are per-packet volume driven by loss and reordering.
@@ -248,7 +269,7 @@ retention high-water and discards belong to a Peer. Very few appear in both.
 | Scope | Counters |
 | --- | --- |
 | Reactor | `SinkFaulted`, datagrams sent, datagrams received, datagrams discarded from an unknown Source, arena high-water in bytes, admission deferrals |
-| Per subject | bytes sent, bytes received, packets retransmitted, duplicate packets, out-of-window packets, horizon deferrals, read-share exhaustions, retention high-water in bytes, resumes |
+| Per subject | bytes sent, bytes received, packets retransmitted, duplicate packets, out-of-window packets, unreliable loss packets, horizon deferrals, read-share exhaustions, retention high-water in bytes, resumes |
 
 **Counters are monotonic `ulong` and there is no reset.** A reset is a *write* to observation state, and
 observation state is the one thing here with more than one plausible reader: a consumer's metrics export
@@ -281,7 +302,7 @@ ADR 0011 already makes per Peer, so it adds no allocation and no per-Pump cost b
 - **`DiagnosticRecord` grows to roughly 56 bytes and its subject becomes a tagged value.** This revises
   ADR 0008's profile-neutral subject a second time, and the justification is only sound because the
   admission rule emptied the path the original size was protecting.
-- **Sixteen permanent public members, plus fifteen permanent counter fields.** That is the real cost of
+- **Sixteen permanent public members, plus sixteen permanent counter fields.** That is the real cost of
   this ADR, and it is deliberate: every one of them was argued against a rule rather than added because
   it was easy.
 - **`Error` ships empty.** If a member is ever proposed for it, that is a signal to check whether the

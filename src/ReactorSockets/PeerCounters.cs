@@ -30,4 +30,42 @@ namespace ReactorSockets;
 /// carries no counter's history away with it, so a retransmission count spanning several resumes is
 /// how a flapping path shows itself instead of being hidden by a zeroing on every reconnect.
 /// </param>
-public readonly record struct PeerCounters(ulong MessagesReceived, ulong RetentionHighWaterBytes, ulong Resumes);
+/// <param name="OutOfWindowPackets">
+/// How many packet records this Peer's per-Space receive window has classified as out of window —
+/// a sequence number too far ahead of, or behind, that Space's receive window base
+/// to be tracked against it (subtask 6.2.1, issue #168; ADR 0013). Recurs every Pump under sustained
+/// loss or reordering, which is exactly why it is a Counter and never a Diagnostic. Incremented by
+/// the parse loop's classification of each arriving record (issue #172); a freshly connected Peer
+/// reads zero. Note that only the two reliable Spaces raise this on a far-ahead arrival: the
+/// unreliable Spaces slide their window forward instead and count the retirement as loss (issue
+/// #173), so for those Spaces out-of-window means a sequence below the base alone.
+/// </param>
+/// <param name="DuplicatePackets">
+/// How many packet records this Peer's per-Space receive window has classified as duplicates — a
+/// sequence number already accounted for, most often a retransmission the far end sent because it
+/// never saw this end's acknowledgement rather than a protocol violation (subtask 6.2.1, issue #168;
+/// ADR 0013). Recurs every Pump under sustained loss exactly like <see cref="OutOfWindowPackets"/>,
+/// and for the same reason is a Counter. Incremented by the parse loop's classification of each
+/// arriving record (issue #172); a freshly connected Peer reads zero.
+/// </param>
+/// <param name="UnreliableLossPackets">
+/// How many sequences an unreliable Space's receive window has lost — retired by sliding its base
+/// forward before that sequence ever arrived (issues #173, #176; ADR 0013). A gap is provisional until
+/// the window passes it by: a sequence still inside the window may yet arrive late and be admitted
+/// without ever touching this figure, so it reflects only sequences a window has moved past, never
+/// every sequence not yet seen. This is one figure covering both unreliable Spaces —
+/// <c>Unreliable</c> and <c>UnreliableSequenced</c> — summed, exactly as
+/// <see cref="OutOfWindowPackets"/> and <see cref="DuplicatePackets"/> already cover all four Spaces
+/// summed, so per-Space loss is not separable from it. The two reliable Spaces never contribute,
+/// because their windows do not slide: retransmission is what fills their holes, and what they refuse
+/// lands on <see cref="OutOfWindowPackets"/> instead. No Diagnostic accompanies a gap in either Space;
+/// a lossy path must not fill the Sink with volume. Monotonic and never reset, exactly like
+/// <see cref="OutOfWindowPackets"/>; a freshly connected Peer reads zero.
+/// </param>
+public readonly record struct PeerCounters(
+    ulong MessagesReceived,
+    ulong RetentionHighWaterBytes,
+    ulong Resumes,
+    ulong OutOfWindowPackets,
+    ulong DuplicatePackets,
+    ulong UnreliableLossPackets);

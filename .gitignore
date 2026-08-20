@@ -52,6 +52,9 @@ node_modules/
 ~$*
 *~
 CodeCoverage/
+code-coverage-results.xml
+*.coverage
+*.coveragexml
 
 # MSBuild Binary and Structured Log
 *.binlog
@@ -68,3 +71,6 @@ nunit-*.xml
 # docfx
 docs/.reference/
 docs/api/docfx/**/*.map
+
+# Agent working scratch
+.scratch/

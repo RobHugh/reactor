@@ -378,7 +378,7 @@ public class DatagramSessionOptionsTests
     }
 
     [Fact]
-    public void ReceiveBudgetBytes_WorkedExample_EqualsCapacityTimesTwoTimesWindowTimesFragmentSize()
+    public void ReceiveBudgetBytes_WorkedExample_CountsPayloadForTwoSpacesAndAdmissionForFour()
     {
         // Arrange — distinct numbers so a transposed factor in the formula is caught.
         DatagramSessionOptions options = CreateOptions(
@@ -390,8 +390,9 @@ public class DatagramSessionOptionsTests
         // Act
         long budget = options.ReceiveBudgetBytes;
 
-        // Assert
-        budget.Should().Be(3L * 2 * 5 * 1000);
+        // Assert — payload slots for the two reliable Spaces, one admission byte per slot for all
+        // four, both scaled by Capacity and the window (issue #174).
+        budget.Should().Be((3L * 2 * 5 * 1000) + (3L * 4 * 5));
     }
 
     [Fact]
@@ -413,7 +414,7 @@ public class DatagramSessionOptionsTests
         // Arrange — capacity 100 000 with a 100 000-byte retention and a one-fragment receive window
         // adds to far more than can be allocated.
         DatagramSessionOptions options = CreateOptions(capacity: 100_000, maxMessageSize: 1200, retentionBytes: 100_000);
-        long expectedReceive = 100_000L * 2 * 1 * 1200;
+        long expectedReceive = (100_000L * 2 * 1 * 1200) + (100_000L * 4 * 1);
         long expectedSend = 100_000L * 2 * 100_000;
         long expectedTotal = expectedReceive + expectedSend;
 
