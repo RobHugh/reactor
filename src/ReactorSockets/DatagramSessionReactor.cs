@@ -87,7 +87,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     private readonly byte[] _scratchBuffer = new byte[MaxUdpDatagramSize];
     private readonly byte[] _sendBuffer = new byte[DatagramSessionProtocol.ControlDatagramSize];
-    private readonly byte[] _dataSendBuffer = new byte[MaxUdpDatagramSize];
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
     private int _capDiscardsThisFrame;
@@ -598,7 +597,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _acceptedHandshakes[(source, clientNonce)] = handle;
         _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(handle) });
         SendAccept(link, slot);
-        SendInitialDataDatagram(slot);
     }
 
     /// <summary>
@@ -668,7 +666,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _dialsByNonce.Remove(clientNonce);
         _peersBySessionId[slot.LocalSessionId] = slot.Handle;
         _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(slot.Handle) });
-        SendInitialDataDatagram(slot);
     }
 
     /// <summary>
@@ -746,28 +743,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             (uint)_options.MaxMessageSize,
             slot.LocalResumeSecret);
         SendControl(link, slot.Remote);
-    }
-
-    /// <summary>
-    /// Puts this Session's first data-plane datagram on the wire the instant both ends know each
-    /// other's session id — the tracer bullet for the wire format itself (issue #165), separate from
-    /// whatever a consumer sends later. There are no packet records to carry yet, because carrying one
-    /// needs the Send this profile does not expose until #44 and #45 land, so this is
-    /// <see cref="DatagramAssembler.WriteHeader"/>'s 20 bytes and nothing after them — but that is
-    /// still a complete, honest datagram: <b>both ack blocks are always present, zeroed here because
-    /// nothing has been received yet</b>, exactly as a datagram carrying records would zero the blocks
-    /// for a Space nothing has arrived on. Sent once at establishment rather than on every later Pump,
-    /// because a Pump-driven cadence with nothing to coalesce is the flush policy #45 owns; sending
-    /// here reuses this file's own handshake-completion hook instead of inventing that policy early.
-    /// </summary>
-    private void SendInitialDataDatagram(PeerSlot slot)
-    {
-        int length = DatagramAssembler.WriteHeader(_dataSendBuffer, slot.RemoteSessionId, 0, 0, 0, 0);
-        UdpLinkSendResult result = slot.Link.SendTo(slot.Remote, _dataSendBuffer.AsSpan(0, length));
-        if (result.IsSuccess)
-        {
-            _counters.RecordDatagramSent();
-        }
     }
 
     /// <summary>
