@@ -19,8 +19,10 @@ internal sealed class WireObserver : IDisposable
 {
     private readonly RawReactor _reactor;
     private readonly List<byte[]> _receivedDatagrams = [];
+    private readonly List<Source> _receivedDatagramSources = [];
     private readonly List<byte[]> _receivedSegments = [];
     private readonly List<LinkId> _acceptedLinks = [];
+    private LinkId? _udpLink;
 
     /// <summary>Constructs an observer with its own Reactor, sized for the Links the caller registers on it.</summary>
     public WireObserver(int capacity = 4)
@@ -30,6 +32,13 @@ internal sealed class WireObserver : IDisposable
 
     /// <summary>Every datagram payload observed so far, in arrival order, each a defensive copy safe to keep past this observer's next Pump.</summary>
     public IReadOnlyList<byte[]> ReceivedDatagrams => _receivedDatagrams;
+
+    /// <summary>
+    /// The address each entry of <see cref="ReceivedDatagrams"/> actually arrived from, same index —
+    /// what a caller playing the accepting half of a handshake by hand needs to address its own reply
+    /// to, since the sender's own bound endpoint is often a wildcard address and not a routable one.
+    /// </summary>
+    public IReadOnlyList<Source> ReceivedDatagramSources => _receivedDatagramSources;
 
     /// <summary>Every stream Segment payload observed so far, in arrival order — concatenate these yourself if you need the whole run a peer wrote in one call.</summary>
     public IReadOnlyList<byte[]> ReceivedSegments => _receivedSegments;
@@ -50,7 +59,24 @@ internal sealed class WireObserver : IDisposable
     public IPEndPoint BindUdp(IPEndPoint endpoint)
     {
         LinkId link = _reactor.Bind(endpoint);
+        _udpLink = link;
         return _reactor.LocalOf(link);
+    }
+
+    /// <summary>
+    /// Sends raw bytes back to <paramref name="destination"/> from the Link <see cref="BindUdp"/>
+    /// bound, standing in for the counterparty's own protocol traffic — e.g. the Cookie and Accept a
+    /// hand-played accepter answers a dialling Session Reactor's handshake with. Throws if
+    /// <see cref="BindUdp"/> was never called: there is no Link to send from.
+    /// </summary>
+    public void SendUdp(Source destination, ReadOnlySpan<byte> bytes)
+    {
+        if (_udpLink is not LinkId link)
+        {
+            throw new InvalidOperationException($"{nameof(SendUdp)} requires {nameof(BindUdp)} to have been called first.");
+        }
+
+        _reactor.SendTo(link, destination, bytes);
     }
 
     /// <summary>Listens for TCP connections to observe the Segments written on them, returning the address a Session Reactor should be told to connect to.</summary>
@@ -73,6 +99,7 @@ internal sealed class WireObserver : IDisposable
             {
                 case RawEventKind.DatagramReceived:
                     _receivedDatagrams.Add(evt.Payload.ToArray());
+                    _receivedDatagramSources.Add(evt.Source);
                     break;
                 case RawEventKind.SegmentReceived:
                     _receivedSegments.Add(evt.Payload.ToArray());

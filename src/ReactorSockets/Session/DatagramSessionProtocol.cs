@@ -69,4 +69,82 @@ internal static class DatagramSessionProtocol
 
     /// <summary>The offset at which a control datagram's body begins.</summary>
     public const int ControlBodyOffset = ControlTypeOffset + sizeof(byte);
+
+    /// <summary>
+    /// The exact size in bytes of a live-Session datagram header (ADR 0009): the four-byte session id
+    /// followed by the two reliable spaces' ack blocks, always present and fixed-size regardless of
+    /// how much the sender has to acknowledge.
+    /// </summary>
+    public const int DatagramHeaderSize = sizeof(uint) + (2 * ReliableAckBlockSize);
+
+    /// <summary>
+    /// The offset of the <c>ReliableOrdered</c> space's ack block: a cumulative base sequence followed
+    /// by the 32-bit bitfield of the sequences above it.
+    /// </summary>
+    public const int ReliableOrderedAckBlockOffset = sizeof(uint);
+
+    /// <summary>
+    /// The offset of the <c>ReliableUnordered</c> space's ack block, immediately after the
+    /// <c>ReliableOrdered</c> one. Only the two reliable spaces are acked; <c>Unreliable</c> and
+    /// <c>UnreliableSequenced</c> are observed, never acknowledged, which is why there are four
+    /// sequence spaces but only two ack blocks.
+    /// </summary>
+    public const int ReliableUnorderedAckBlockOffset = ReliableOrderedAckBlockOffset + ReliableAckBlockSize;
+
+    /// <summary>The size in bytes of one ack block: a four-byte base sequence plus a four-byte bitfield.</summary>
+    private const int ReliableAckBlockSize = sizeof(uint) + sizeof(uint);
+
+    /// <summary>
+    /// The exact size in bytes of a packet record carrying the unfragmented shape (ADR 0009): one flags
+    /// byte, a four-byte sequence, and a two-byte length. This is the only shape until slice 7, when
+    /// <see cref="FragmentBit"/> admits the longer one.
+    /// </summary>
+    public const int UnfragmentedRecordSize = sizeof(byte) + sizeof(uint) + sizeof(ushort);
+
+    /// <summary>
+    /// The exact size in bytes of a packet record carrying the fragment shape (ADR 0009): the
+    /// unfragmented record's bytes followed by a two-byte fragment index and a two-byte fragment count.
+    /// Defined now so the two parse shapes exist as a contract from the start; a record with
+    /// <see cref="FragmentBit"/> set is rejected until slice 7 implements it.
+    /// </summary>
+    public const int FragmentRecordSize = UnfragmentedRecordSize + sizeof(ushort) + sizeof(ushort);
+
+    /// <summary>
+    /// The mask isolating the two mode bits in a packet record's flags byte. Applied before comparing
+    /// against <see cref="ModeUnreliable"/>, <see cref="ModeUnreliableSequenced"/>,
+    /// <see cref="ModeReliableUnordered"/> or <see cref="ModeReliableOrdered"/>, since the fragment bit
+    /// and the spare bits share the same byte.
+    /// </summary>
+    public const byte ModeMask = 0b0000_0011;
+
+    /// <summary>
+    /// The wire value of the <c>Unreliable</c> mode's two mode bits (ADR 0009). Not the public
+    /// <c>DeliveryMode</c> enum, which #44 owns — this is what the wire carries for that mode, named
+    /// here so the eight tickets after this one never restate the number.
+    /// </summary>
+    public const byte ModeUnreliable = 0b0000_0000;
+
+    /// <summary>The wire value of the <c>UnreliableSequenced</c> mode's two mode bits (ADR 0009).</summary>
+    public const byte ModeUnreliableSequenced = 0b0000_0001;
+
+    /// <summary>The wire value of the <c>ReliableUnordered</c> mode's two mode bits (ADR 0009).</summary>
+    public const byte ModeReliableUnordered = 0b0000_0010;
+
+    /// <summary>The wire value of the <c>ReliableOrdered</c> mode's two mode bits (ADR 0009).</summary>
+    public const byte ModeReliableOrdered = 0b0000_0011;
+
+    /// <summary>
+    /// The bit marking a packet record as a fragment of a larger Message rather than a complete one
+    /// (ADR 0004, ADR 0009). Only the two reliable modes ever set it; this subtask defines the bit and
+    /// leaves it rejected-if-set until slice 7 implements the fragment record shape.
+    /// </summary>
+    public const byte FragmentBit = 0b0000_0100;
+
+    /// <summary>
+    /// The mask isolating the five spare bits in a packet record's flags byte. These are genuinely
+    /// spare, not reserved-and-ignored: with the protocol version matched exactly (ADR 0009), a record
+    /// with any spare bit set is a protocol violation and is rejected, not tolerated. Only a version
+    /// bump unlocks them.
+    /// </summary>
+    public const byte SpareBitsMask = 0b1111_1000;
 }
