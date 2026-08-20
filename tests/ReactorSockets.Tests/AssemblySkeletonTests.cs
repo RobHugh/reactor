@@ -62,7 +62,9 @@ public class AssemblySkeletonTests
             nameof(PeerCounters),
             nameof(DisconnectReason),
             nameof(SendOutcome),
-            nameof(PumpIntervalObserver));
+            nameof(PumpIntervalObserver),
+            nameof(ReceiveWindow),
+            nameof(ReceiveWindowOutcome));
     }
 
     [Fact]
