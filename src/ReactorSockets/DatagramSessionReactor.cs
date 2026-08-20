@@ -917,5 +917,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>How far through the handshake this Peer has got.</summary>
         public required HandshakeState State { get; set; }
+
+        /// <summary>
+        /// This Peer's four outbound sequence allocators (issue #40, #169), one per delivery mode.
+        /// Nothing allocates from it yet — the datagram profile's <c>Send</c> lands in 6.7 — so it
+        /// exists here only so a Peer already has the state a later slice needs.
+        /// </summary>
+        public OutboundSequenceSpaces OutboundSequences { get; } = new();
     }
 }
