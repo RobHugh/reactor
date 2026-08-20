@@ -115,6 +115,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _receiveArena = new ReceiveArena(
             options.Reactor.Capacity,
             DatagramSessionOptions.ReliableSpaceCount,
+            DatagramSessionOptions.SpaceCount,
             options.ResolvedReceiveWindowFragments,
             options.ResolvedFragmentSize);
         _counters = new ReactorCounterSet();
