@@ -68,3 +68,6 @@ nunit-*.xml
 # docfx
 docs/.reference/
 docs/api/docfx/**/*.map
+
+# Agent working scratch
+.scratch/

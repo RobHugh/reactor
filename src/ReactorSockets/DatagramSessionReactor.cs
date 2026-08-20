@@ -463,9 +463,38 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        // The record path — packet records, the four Spaces, fragmentation and acknowledgement — is
-        // the next slice's. A datagram naming a live Session is dropped here rather than counted as
-        // unattributable, because it was attributable: there is simply nothing yet to do with it.
+        ParseDataDatagram(source, datagram);
+    }
+
+    /// <summary>
+    /// Reads the 20-byte header, then packet records until the datagram is exhausted (issue #163). A
+    /// datagram is a container, not a Message: one bad record — a short header, a bad flags byte, a
+    /// spare or fragment bit set, a length running past the end, or truncation inside a record —
+    /// discards the whole datagram rather than whatever records parsed before it, because a partial
+    /// admission would let a forged tail poison an otherwise legitimate send. Nothing here throws,
+    /// allocates or reads past <paramref name="datagram"/>. No Session event is produced: admitting a
+    /// record's payload into a Space is #40's, so a well-formed datagram is simply confirmed parseable
+    /// and dropped once every record in it has been walked.
+    /// </summary>
+    private void ParseDataDatagram(Source source, ReadOnlySpan<byte> datagram)
+    {
+        if (!DatagramHeaderCodec.TryReadHeader(datagram, out _, out _, out _, out _, out _))
+        {
+            DiscardMalformed(source, datagram.Length);
+            return;
+        }
+
+        ReadOnlySpan<byte> remainder = datagram[DatagramSessionProtocol.DatagramHeaderSize..];
+        while (remainder.Length > 0)
+        {
+            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out int bytesConsumed))
+            {
+                DiscardMalformed(source, datagram.Length);
+                return;
+            }
+
+            remainder = remainder[bytesConsumed..];
+        }
     }
 
     /// <summary>
