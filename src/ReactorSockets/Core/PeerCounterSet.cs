@@ -51,10 +51,43 @@ internal sealed class PeerCounterSet
     public ulong Resumes { get; private set; }
 
     /// <summary>
+    /// Records that one packet record's sequence number fell outside the per-Space receive window
+    /// (subtask 6.2.1, issue #168; ADR 0013) — too far ahead of or behind that Space's
+    /// <c>OldestUnacked</c> to correlate against it. Nothing calls this yet: it is added ahead of the
+    /// per-Space receive window classification that lands in issue #170, so that ticket has a number
+    /// to increment rather than inventing one.
+    /// </summary>
+    public void RecordOutOfWindowPacket() => OutOfWindowPackets++;
+
+    /// <summary>
+    /// The live count of out-of-window packets so far — the same figure <see cref="Snapshot"/> exposes
+    /// as <see cref="PeerCounters.OutOfWindowPackets"/>. Monotonic and never reset, exactly like
+    /// <see cref="MessagesReceived"/>.
+    /// </summary>
+    public ulong OutOfWindowPackets { get; private set; }
+
+    /// <summary>
+    /// Records that one packet record's sequence number was already accounted for by the per-Space
+    /// receive window (subtask 6.2.1, issue #168; ADR 0013) — a duplicate, most often a retransmission
+    /// the far end sent because it never saw this end's acknowledgement. Nothing calls this yet: added
+    /// ahead of the classification code that lands in issue #170, for the same reason as
+    /// <see cref="RecordOutOfWindowPacket"/>.
+    /// </summary>
+    public void RecordDuplicatePacket() => DuplicatePackets++;
+
+    /// <summary>
+    /// The live count of duplicate packets so far — the same figure <see cref="Snapshot"/> exposes as
+    /// <see cref="PeerCounters.DuplicatePackets"/>. Monotonic and never reset, exactly like
+    /// <see cref="MessagesReceived"/>.
+    /// </summary>
+    public ulong DuplicatePackets { get; private set; }
+
+    /// <summary>
     /// Takes a point-in-time snapshot of every counter belonging to this Peer.
     /// <paramref name="retentionHighWaterBytes"/> is pulled fresh from <see cref="RetentionArena"/> by
     /// the caller (ADR 0005 — Counters are pulled, not pushed) rather than held here, since this set
     /// holds only what a Peer increments on its own hot path.
     /// </summary>
-    public PeerCounters Snapshot(ulong retentionHighWaterBytes) => new(MessagesReceived, retentionHighWaterBytes, Resumes);
+    public PeerCounters Snapshot(ulong retentionHighWaterBytes) =>
+        new(MessagesReceived, retentionHighWaterBytes, Resumes, OutOfWindowPackets, DuplicatePackets);
 }

@@ -268,6 +268,27 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// A point-in-time snapshot of one Peer's counters (ADR 0013). Throws if the Peer is not open,
+    /// matching <see cref="StreamSessionReactor.CountersOf(PeerId)"/>'s shape for the stream profile —
+    /// the datagram profile had no per-Peer counter reader until this member (subtask 6.2.1, issue
+    /// #168). This slice's receive window has not landed yet, so
+    /// <see cref="PeerCounters.OutOfWindowPackets"/> and <see cref="PeerCounters.DuplicatePackets"/>
+    /// read zero for every Peer; <see cref="PeerCounters.MessagesReceived"/> and
+    /// <see cref="PeerCounters.Resumes"/> read zero too, since this profile has no retention or resume
+    /// machinery yet to increment them.
+    /// </summary>
+    public PeerCounters CountersOf(PeerId peer)
+    {
+        EnsureUsable();
+
+        SlotHandle handle = ToHandle(peer);
+        PeerSlot slot = _peers.TryResolve(handle)
+            ?? throw new ArgumentException($"Peer {peer} is not open.", nameof(peer));
+
+        return slot.Counters.Snapshot(retentionHighWaterBytes: 0);
+    }
+
+    /// <summary>
     /// Releases every socket this Reactor bound. A Reactor owns every socket it bound, so a consumer
     /// that drops one without disposing it leaks those sockets until each <see cref="Socket"/>'s
     /// finalizer runs. No <see cref="SessionEventKind.PeerClosed"/> events are queued: nothing can
@@ -917,5 +938,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>How far through the handshake this Peer has got.</summary>
         public required HandshakeState State { get; set; }
+
+        /// <summary>
+        /// This Peer's own mutable counters (ADR 0013), incremented on the hot path and read only
+        /// through <see cref="CountersOf"/>. Mirrors <see cref="StreamSessionReactor"/>'s equivalent
+        /// field. Nothing in this slice increments <see cref="Core.PeerCounterSet.OutOfWindowPackets"/>
+        /// or <see cref="Core.PeerCounterSet.DuplicatePackets"/> yet — that lands with the per-Space
+        /// receive window (issue #170) — so a freshly connected Peer reads zero for both.
+        /// </summary>
+        public PeerCounterSet Counters { get; } = new();
     }
 }

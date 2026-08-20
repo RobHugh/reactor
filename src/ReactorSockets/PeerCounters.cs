@@ -30,4 +30,25 @@ namespace ReactorSockets;
 /// carries no counter's history away with it, so a retransmission count spanning several resumes is
 /// how a flapping path shows itself instead of being hidden by a zeroing on every reconnect.
 /// </param>
-public readonly record struct PeerCounters(ulong MessagesReceived, ulong RetentionHighWaterBytes, ulong Resumes);
+/// <param name="OutOfWindowPackets">
+/// How many packet records this Peer's per-Space receive window has classified as out of window —
+/// a sequence number too far ahead of or behind that Space's <c>OldestUnacked</c> to correlate
+/// against it (subtask 6.2.1, issue #168; ADR 0013). Recurs every Pump under sustained loss or
+/// reordering, which is exactly why it is a Counter and never a Diagnostic. Added ahead of the
+/// classification code that increments it (issue #170), so every later 6.2 ticket has a number to
+/// assert against; a freshly connected Peer reads zero.
+/// </param>
+/// <param name="DuplicatePackets">
+/// How many packet records this Peer's per-Space receive window has classified as duplicates — a
+/// sequence number already accounted for, most often a retransmission the far end sent because it
+/// never saw this end's acknowledgement rather than a protocol violation (subtask 6.2.1, issue #168;
+/// ADR 0013). Recurs every Pump under sustained loss exactly like <see cref="OutOfWindowPackets"/>,
+/// and for the same reason is a Counter. Added ahead of the classification code that increments it
+/// (issue #170); a freshly connected Peer reads zero.
+/// </param>
+public readonly record struct PeerCounters(
+    ulong MessagesReceived,
+    ulong RetentionHighWaterBytes,
+    ulong Resumes,
+    ulong OutOfWindowPackets,
+    ulong DuplicatePackets);
