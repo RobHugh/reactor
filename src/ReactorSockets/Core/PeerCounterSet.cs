@@ -53,9 +53,9 @@ internal sealed class PeerCounterSet
     /// <summary>
     /// Records that one packet record's sequence number fell outside the per-Space receive window
     /// (subtask 6.2.1, issue #168; ADR 0013) — too far ahead of or behind that Space's
-    /// <c>OldestUnacked</c> to correlate against it. Nothing calls this yet: it is added ahead of the
-    /// per-Space receive window classification that lands in issue #170, so that ticket has a number
-    /// to increment rather than inventing one.
+    /// <see cref="ReceiveWindow.Base"/> to correlate against it. Called from
+    /// <see cref="DatagramSessionReactor"/>'s data path once a record classifies as
+    /// <see cref="ReceiveWindowOutcome.OutOfWindow"/> (issue #172).
     /// </summary>
     public void RecordOutOfWindowPacket() => OutOfWindowPackets++;
 
@@ -69,9 +69,9 @@ internal sealed class PeerCounterSet
     /// <summary>
     /// Records that one packet record's sequence number was already accounted for by the per-Space
     /// receive window (subtask 6.2.1, issue #168; ADR 0013) — a duplicate, most often a retransmission
-    /// the far end sent because it never saw this end's acknowledgement. Nothing calls this yet: added
-    /// ahead of the classification code that lands in issue #170, for the same reason as
-    /// <see cref="RecordOutOfWindowPacket"/>.
+    /// the far end sent because it never saw this end's acknowledgement. Called from
+    /// <see cref="DatagramSessionReactor"/>'s data path once a record classifies as
+    /// <see cref="ReceiveWindowOutcome.Duplicate"/> (issue #172).
     /// </summary>
     public void RecordDuplicatePacket() => DuplicatePackets++;
 
