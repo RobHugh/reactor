@@ -1,4 +1,4 @@
-namespace ReactorSockets;
+namespace ReactorSockets.Session;
 
 /// <summary>
 /// The classification a <see cref="ReceiveWindow"/> reports for one arriving sequence (#40, #170):
@@ -6,7 +6,7 @@ namespace ReactorSockets;
 /// window currently covers. The window only classifies — a caller such as #172/#173 is the one that
 /// counts each outcome.
 /// </summary>
-public enum ReceiveWindowOutcome
+internal enum ReceiveWindowOutcome
 {
     /// <summary>
     /// The sequence lay within the window and had not been recorded before. It is now recorded, and
@@ -38,16 +38,15 @@ public enum ReceiveWindowOutcome
 /// classifies each arriving sequence as new, a duplicate, or outside the span. Sharing one window
 /// across Spaces would reintroduce, through shared memory, the head-of-line blocking that separate
 /// Spaces exist to remove, so each Space owns one of these. Ordering is decided exclusively by
-/// <see cref="Session.SequenceNumber.IsNewerThan"/>, so the wrap-aware comparison exists in one place.
+/// <see cref="SequenceNumber.IsNewerThan"/>, so the wrap-aware comparison exists in one place.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Public precisely so this behaviour can be pinned by constructing one directly and calling
-/// <see cref="Classify"/>, with no <c>InternalsVisibleTo</c> and no interface invented for the
-/// purpose — the same reason <see cref="PumpIntervalObserver"/> is public (ADR 0015). This ticket
-/// (#170) builds the structure alone; nothing in this slice calls it yet, so there is no seam through
-/// a Reactor to observe it through. Wiring it to the data path is #172, and preallocating the two
-/// reliable Spaces' windows in one arena is #171.
+/// The type is internal, so the consumer's surface stays as small as ADR 0003 leaves it — nothing
+/// past <see cref="DatagramSessionReactor"/> and <see cref="DatagramSessionReactor.CountersOf"/> is a
+/// permanent commitment. Wired into the data path by #172 and into loss counting by #173, both
+/// reachable through that seam, with no <c>InternalsVisibleTo</c> and no interface invented for the
+/// purpose (ADR 0015).
 /// </para>
 /// <para>
 /// <b>Fixed at construction.</b> The window's size — in practice
@@ -69,7 +68,7 @@ public enum ReceiveWindowOutcome
 /// arriving sequence is.
 /// </para>
 /// </remarks>
-public sealed class ReceiveWindow
+internal sealed class ReceiveWindow
 {
     /// <summary>
     /// Whether the sequence at each slot has been admitted. Indexed by ring position, not by offset
@@ -80,7 +79,7 @@ public sealed class ReceiveWindow
 
     /// <summary>
     /// Whether this window slides its base forward to admit a far-ahead arrival instead of refusing
-    /// it (#173). Fixed at construction; see <see cref="ReceiveWindow(int, uint, bool)"/>.
+    /// it (#173). Fixed at construction; see <see cref="ReceiveWindow(int, bool)"/>.
     /// </summary>
     private readonly bool _slides;
 
@@ -91,23 +90,17 @@ public sealed class ReceiveWindow
     private int _baseSlot;
 
     /// <summary>
-    /// Builds a window of <paramref name="capacityFragments"/> sequence slots, based at
-    /// <paramref name="initialBase"/>. Allocates its backing storage once; nothing after this
-    /// allocates.
+    /// Builds a window of <paramref name="capacityFragments"/> sequence slots, based at sequence
+    /// zero — where every Space's numbering begins (ADR 0009). Allocates its backing storage once;
+    /// nothing after this allocates.
     /// </summary>
     /// <param name="capacityFragments">
     /// The number of sequence numbers the window spans, fixed for the window's lifetime. Must be at
     /// least 1. In practice this is
     /// <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>, already validated against
     /// its floor by <see cref="DatagramSessionOptions.Validate"/>; this constructor re-validates
-    /// rather than trusting the caller, because a window is cheap to misuse from a test or a future
-    /// caller that never went through those options.
-    /// </param>
-    /// <param name="initialBase">
-    /// The sequence <see cref="Base"/> starts at. Defaults to 0 — where every Space's sequence
-    /// numbering begins (ADR 0009) — but is a constructor parameter rather than a hardcoded zero so a
-    /// window can be built already positioned anywhere in the sequence space, including a test that
-    /// places it at the <c>u32</c> wrap boundary without walking every sequence up to it.
+    /// rather than trusting the caller, because a window is cheap to misuse from a future caller that
+    /// never went through those options.
     /// </param>
     /// <param name="slides">
     /// Whether a sequence at or beyond the window's far edge slides the base forward to admit it,
@@ -119,7 +112,7 @@ public sealed class ReceiveWindow
     /// past a hole would stall forever after the first real loss.
     /// </param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="capacityFragments"/> is less than 1.</exception>
-    public ReceiveWindow(int capacityFragments, uint initialBase = 0, bool slides = false)
+    internal ReceiveWindow(int capacityFragments, bool slides = false)
     {
         if (capacityFragments < 1)
         {
@@ -131,7 +124,7 @@ public sealed class ReceiveWindow
 
         Capacity = capacityFragments;
         _admitted = new bool[capacityFragments];
-        _base = initialBase;
+        _base = 0;
         _baseSlot = 0;
         _slides = slides;
     }
@@ -143,10 +136,10 @@ public sealed class ReceiveWindow
     /// and only ever advances, by exactly one sequence per already-admitted slot <see cref="Classify"/>
     /// passes over.
     /// </summary>
-    public uint Base => _base;
+    internal uint Base => _base;
 
     /// <summary>The number of sequence slots the window spans, fixed at construction.</summary>
-    public int Capacity { get; }
+    internal int Capacity { get; }
 
     /// <summary>
     /// How many sequences the most recent <see cref="Classify"/> call retired un-admitted by sliding
@@ -157,7 +150,7 @@ public sealed class ReceiveWindow
     /// the start of every <see cref="Classify"/> call, so a call that does not slide reports zero even
     /// if an earlier call slid.
     /// </summary>
-    public ulong LastSlideLoss { get; private set; }
+    internal ulong LastSlideLoss { get; private set; }
 
     /// <summary>
     /// Classifies <paramref name="sequence"/> against the window's current span. When it is new and
@@ -176,11 +169,11 @@ public sealed class ReceiveWindow
     /// <see cref="Base"/>, or — only for a window built with <c>slides: false</c> — at or beyond the
     /// window's far edge.
     /// </returns>
-    public ReceiveWindowOutcome Classify(uint sequence)
+    internal ReceiveWindowOutcome Classify(uint sequence)
     {
         LastSlideLoss = 0;
 
-        bool atOrAboveBase = sequence == _base || Session.SequenceNumber.IsNewerThan(sequence, _base);
+        bool atOrAboveBase = sequence == _base || SequenceNumber.IsNewerThan(sequence, _base);
         if (!atOrAboveBase)
         {
             // Below the base: already admitted or already retired. Never a duplicate report — a

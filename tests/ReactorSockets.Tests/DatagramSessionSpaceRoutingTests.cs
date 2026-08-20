@@ -14,9 +14,11 @@ namespace ReactorSockets.Tests;
 /// session id the accepter assigned.
 /// </summary>
 /// <remarks>
-/// Every window here is 4 fragments wide (<c>ReceiveWindowFragments: 4</c>), the smallest this
+/// Most windows here are 4 fragments wide (<c>ReceiveWindowFragments: 4</c>), the smallest this
 /// profile's floor allows for the harness's default 4096-byte <c>MaxMessageSize</c> and 1200-byte
-/// fragment size, so a sequence of 100 is unreachably far ahead without needing a huge send.
+/// fragment size, so a sequence of 100 is unreachably far ahead without needing a huge send. One test
+/// widens to 8 (with <c>MaxMessageSize</c> raised to keep it above that floor) so a hole opened at 0
+/// has three already-admitted sequences sitting above it to advance the base across in one step.
 /// </remarks>
 public class DatagramSessionSpaceRoutingTests
 {
@@ -220,6 +222,164 @@ public class DatagramSessionSpaceRoutingTests
         // were untouched by it.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.OutOfWindowPackets.Should().Be(1);
+        counters.DuplicatePackets.Should().Be(0);
+        accepter.Sink.Received.Should().BeEmpty();
+        accepter.DrainToList().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Pump_SequenceExactlyAtTheFarEdgeOfANonSlidingWindow_ReturnsOutOfWindowAndLeavesTheBaseUnmoved()
+    {
+        // Arrange — a 4-fragment window based at 0 spans [0, 3]; sequence 4 sits exactly one past the
+        // last reachable sequence — the off-by-one boundary, as distinct from the unreachably-far
+        // sequence 1_000 the far-above-window seam test already covers. ReliableOrdered, because since
+        // #173 only a non-sliding Space still refuses a far-edge arrival instead of sliding to admit it.
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 4);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        byte[] atTheFarEdge = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableOrdered, sequence: 4, payload: [])];
+
+        // Act
+        ulong datagramsReceivedBefore = accepter.Reactor.Counters.DatagramsReceived;
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), atTheFarEdge);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
+
+        // Assert — discarded, not admitted.
+        PeerCounters afterDiscard = accepter.Reactor.CountersOf(accepterPeer);
+        afterDiscard.OutOfWindowPackets.Should().Be(1);
+        afterDiscard.DuplicatePackets.Should().Be(0);
+
+        // Act — sequence 3, the base's own far edge, still inside the untouched window: if the base had
+        // moved, admitting 3 would be impossible and this send would itself count as another discard.
+        byte[] stillInsideTheWindow = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableOrdered, sequence: 3, payload: [])];
+        datagramsReceivedBefore = accepter.Reactor.Counters.DatagramsReceived;
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), stillInsideTheWindow);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
+
+        // Assert — admitted: the discard count is still exactly the one from the far-edge arrival.
+        PeerCounters afterAdmit = accepter.Reactor.CountersOf(accepterPeer);
+        afterAdmit.OutOfWindowPackets.Should().Be(1);
+        afterAdmit.DuplicatePackets.Should().Be(0);
+        accepter.Sink.Received.Should().BeEmpty();
+        accepter.DrainToList().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Pump_EachContiguousSequenceAdmittedInOrder_RetiresItBelowTheBaseImmediately()
+    {
+        // Arrange — a 4-fragment window based at 0. Each sequence, sent in order with no hole ever
+        // opened, should advance the base past itself the instant it admits rather than waiting for a
+        // run to finish: resending the same sequence right after it first admits reports OutOfWindow,
+        // never Duplicate, which is only true if the base already passed it. ReliableUnordered, so
+        // ordering within the Space plays no part in what is being pinned here.
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 4);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        // Act, Assert — 0, 1 and 2 each admit and are immediately retired below the base.
+        foreach (uint sequence in new uint[] { 0, 1, 2 })
+        {
+            byte[] firstArrival = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableUnordered, sequence, payload: [])];
+            ulong before = accepter.Reactor.Counters.DatagramsReceived;
+            client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), firstArrival);
+            accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+
+            byte[] resend = firstArrival;
+            before = accepter.Reactor.Counters.DatagramsReceived;
+            client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), resend);
+            accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+        }
+
+        // Assert — every resend classified OutOfWindow, none as Duplicate: the base moved past each
+        // sequence before its resend ever arrived.
+        PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
+        counters.OutOfWindowPackets.Should().Be(3);
+        counters.DuplicatePackets.Should().Be(0);
+        accepter.Sink.Received.Should().BeEmpty();
+        accepter.DrainToList().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Pump_SequenceArrivingAboveAHole_LeavesTheHoleStillAdmittableAfterwards()
+    {
+        // Arrange — sequence 1 arrives before sequence 0. If the base had advanced past the hole at 0,
+        // sequence 0 arriving next would be OutOfWindow rather than Admitted; it stays Admitted here,
+        // which is what proves the base is still sitting at the hole.
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 4);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        byte[] one = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableOrdered, sequence: 1, payload: [])];
+        byte[] zero = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableOrdered, sequence: 0, payload: [])];
+
+        // Act
+        ulong before = accepter.Reactor.Counters.DatagramsReceived;
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), one);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+
+        before = accepter.Reactor.Counters.DatagramsReceived;
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), zero);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+
+        // Assert — both admitted, neither discarded nor flagged a duplicate.
+        PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
+        counters.OutOfWindowPackets.Should().Be(0);
+        counters.DuplicatePackets.Should().Be(0);
+        accepter.Sink.Received.Should().BeEmpty();
+        accepter.DrainToList().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Pump_ArrivalFillingAHole_AdvancesTheBaseAcrossEveryAlreadyAdmittedSequenceAboveItInOneStep()
+    {
+        // Arrange — an 8-fragment window. 1, 2 and 3 arrive first and sit behind the hole at 0, each
+        // admitting on its own but leaving the base at 0.
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 8, maxMessageSize: 8192);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        foreach (uint sequence in new uint[] { 1, 2, 3 })
+        {
+            byte[] datagram = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableOrdered, sequence, payload: [])];
+            ulong before = accepter.Reactor.Counters.DatagramsReceived;
+            client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+            accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+        }
+
+        accepter.Reactor.CountersOf(accepterPeer).OutOfWindowPackets.Should().Be(0);
+        accepter.Reactor.CountersOf(accepterPeer).DuplicatePackets.Should().Be(0);
+
+        // Act — filling the hole at 0 should carry the base past 0, 1, 2 and 3 in this one arrival.
+        byte[] zero = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableOrdered, sequence: 0, payload: [])];
+        ulong beforeFill = accepter.Reactor.Counters.DatagramsReceived;
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), zero);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > beforeFill);
+
+        accepter.Reactor.CountersOf(accepterPeer).OutOfWindowPackets.Should().Be(0);
+        accepter.Reactor.CountersOf(accepterPeer).DuplicatePackets.Should().Be(0);
+
+        // Act — resending any of 0, 1, 2 or 3 now reports OutOfWindow, not Duplicate: the whole run is
+        // below the base in one step, not merely admitted-and-held.
+        foreach (uint sequence in new uint[] { 0, 1, 2, 3 })
+        {
+            byte[] resend = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableOrdered, sequence, payload: [])];
+            ulong before = accepter.Reactor.Counters.DatagramsReceived;
+            client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), resend);
+            accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+        }
+
+        // Assert
+        PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
+        counters.OutOfWindowPackets.Should().Be(4);
         counters.DuplicatePackets.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
         accepter.DrainToList().Should().BeEmpty();

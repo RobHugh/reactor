@@ -222,6 +222,74 @@ public class DatagramSessionUnreliableLossTests
         accepter.DrainToList().Should().BeEmpty();
     }
 
+    [Fact]
+    public void Pump_FirstArrivalJumpingFarBeyondTheWindowsCapacity_CountsEverySkippedSequenceIncludingThoseNeverTracked()
+    {
+        // Arrange — a 2-fragment window based at 0, spanning [0, 1]. The very first arrival is sequence
+        // 100: the slide it forces retires the two slots the ring could ever have tracked (both holes),
+        // plus every sequence between the old far edge and the new one that never had a slot to be
+        // tracked in at all — a jump wider than the window, not merely one past its edge.
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 2, maxMessageSize: 1300);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        byte[] farJump = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence: 100, payload: [])];
+
+        // Act — the new base is 100 - 2 + 1 = 99, so 99 sequences (0 through 98) are retired un-admitted.
+        ulong before = accepter.Reactor.Counters.DatagramsReceived;
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), farJump);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+
+        // Assert — admitted (not discarded), and every retired sequence counted, not only the two the
+        // ring itself had slots for.
+        PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
+        counters.UnreliableLossPackets.Should().Be(99);
+        counters.OutOfWindowPackets.Should().Be(0);
+        counters.DuplicatePackets.Should().Be(0);
+        accepter.Sink.Received.Should().BeEmpty();
+        accepter.DrainToList().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Pump_SequenceBelowTheBaseAfterASlide_ReturnsOutOfWindowWithoutRaisingTheLossFigureFurther()
+    {
+        // Arrange — the same 0, 1, 2, 4, 5 sequence (3 omitted) that raises the Unreliable Space's loss
+        // figure to 1 by sliding the base to 6.
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 2, maxMessageSize: 1300);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        foreach (uint sequence in new uint[] { 0, 1, 2, 4, 5 })
+        {
+            byte[] datagram = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence, payload: [])];
+            ulong datagramsReceivedBefore = accepter.Reactor.Counters.DatagramsReceived;
+            client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+            accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
+        }
+
+        accepter.Reactor.CountersOf(accepterPeer).UnreliableLossPackets.Should().Be(1);
+
+        // Act — sequence 0 is already retired, below the base the slide left at 6: an ordinary
+        // below-base arrival, not a new far-ahead one, so nothing should slide for it.
+        byte[] belowBase = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence: 0, payload: [])];
+        ulong before = accepter.Reactor.Counters.DatagramsReceived;
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), belowBase);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+
+        // Assert — out of window, exactly as a non-sliding window reports a below-base sequence, and
+        // the loss figure is exactly what it was: a below-base arrival is not a slide.
+        PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
+        counters.OutOfWindowPackets.Should().Be(1);
+        counters.UnreliableLossPackets.Should().Be(1);
+        counters.DuplicatePackets.Should().Be(0);
+        accepter.Sink.Received.Should().BeEmpty();
+        accepter.DrainToList().Should().BeEmpty();
+    }
+
     /// <summary>
     /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
     /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned

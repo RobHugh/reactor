@@ -29,7 +29,7 @@ internal sealed class ReceiveWindowSpaces
     /// </summary>
     /// <param name="capacityFragments">
     /// The span, in sequence numbers, each of the four windows covers. Passed straight to
-    /// <see cref="ReceiveWindow(int, uint, bool)"/>, which re-validates it.
+    /// <see cref="ReceiveWindow(int, bool)"/>, which re-validates it.
     /// </param>
     public ReceiveWindowSpaces(int capacityFragments)
     {

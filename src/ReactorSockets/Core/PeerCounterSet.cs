@@ -53,9 +53,9 @@ internal sealed class PeerCounterSet
     /// <summary>
     /// Records that one packet record's sequence number fell outside the per-Space receive window
     /// (subtask 6.2.1, issue #168; ADR 0013) — too far ahead of or behind that Space's
-    /// <see cref="ReceiveWindow.Base"/> to correlate against it. Called from
+    /// <see cref="Session.ReceiveWindow.Base"/> to correlate against it. Called from
     /// <see cref="DatagramSessionReactor"/>'s data path once a record classifies as
-    /// <see cref="ReceiveWindowOutcome.OutOfWindow"/> (issue #172).
+    /// <see cref="Session.ReceiveWindowOutcome.OutOfWindow"/> (issue #172).
     /// </summary>
     public void RecordOutOfWindowPacket() => OutOfWindowPackets++;
 
@@ -71,7 +71,7 @@ internal sealed class PeerCounterSet
     /// receive window (subtask 6.2.1, issue #168; ADR 0013) — a duplicate, most often a retransmission
     /// the far end sent because it never saw this end's acknowledgement. Called from
     /// <see cref="DatagramSessionReactor"/>'s data path once a record classifies as
-    /// <see cref="ReceiveWindowOutcome.Duplicate"/> (issue #172).
+    /// <see cref="Session.ReceiveWindowOutcome.Duplicate"/> (issue #172).
     /// </summary>
     public void RecordDuplicatePacket() => DuplicatePackets++;
 
@@ -87,7 +87,7 @@ internal sealed class PeerCounterSet
     /// un-admitted by sliding its base forward (issue #173, ADR 0013) — a gap the window has passed by
     /// rather than one still reachable inside its span. Called from <see cref="DatagramSessionReactor"/>'s
     /// data path once a record classified against the <c>Unreliable</c> Space reports
-    /// <see cref="ReceiveWindow.LastSlideLoss"/> greater than zero. A single arrival can slide the
+    /// <see cref="Session.ReceiveWindow.LastSlideLoss"/> greater than zero. A single arrival can slide the
     /// window past more than one gap at once, which is why this takes a count rather than being called
     /// once per lost sequence: adding the whole figure in one op keeps the hot path a single add
     /// regardless of how wide the jump was. No Diagnostic accompanies this — a lossy path must not

@@ -7,7 +7,7 @@ namespace ReactorSockets.Core;
 /// FragmentsPerSpace × FragmentSize</c>. Preallocated once at construction and never grown: the
 /// receive window is the library's main memory dial, taken once and never seen to grow. Only the two
 /// reliable Spaces get window storage here — the unreliable Spaces classify sequences
-/// (<see cref="ReceiveWindow"/>) but retain no payload, which is why a caller passes 2 for
+/// (<see cref="Session.ReceiveWindow"/>) but retain no payload, which is why a caller passes 2 for
 /// <c>spaceCount</c> rather than the full 4 (ADR 0009).
 /// </summary>
 /// <remarks>
@@ -21,8 +21,8 @@ namespace ReactorSockets.Core;
 /// <para>
 /// This type owns only the storage and the addressing arithmetic over it. It carries no notion of a
 /// sequence number, a fragment's offset within a Message, or which slot a given sequence belongs in —
-/// classifying a sequence into a slot is <see cref="ReceiveWindow"/>'s job (#170), and routing a
-/// parsed record's payload into the slot <see cref="ReceiveWindow.Classify"/> names is #172's. Keeping
+/// classifying a sequence into a slot is <see cref="Session.ReceiveWindow"/>'s job (#170), and routing a
+/// parsed record's payload into the slot <see cref="Session.ReceiveWindow.Classify"/> names is #172's. Keeping
 /// that knowledge out of this type is what keeps the allocation-and-lifetime concern this ticket
 /// (#171) owns separate from the classification-and-routing concern #172 owns, on the same file two
 /// branches are editing concurrently.
