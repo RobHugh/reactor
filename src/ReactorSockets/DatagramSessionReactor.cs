@@ -297,8 +297,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// the datagram profile had no per-Peer counter reader until this member (subtask 6.2.1, issue
     /// #168). <see cref="PeerCounters.OutOfWindowPackets"/> and <see cref="PeerCounters.DuplicatePackets"/>
     /// now reflect what the four per-Space receive windows have refused (issue #172);
-    /// <see cref="PeerCounters.UnreliableLossPackets"/> reflects gaps the <c>Unreliable</c> Space's
-    /// window has slid past (issue #173).
+    /// <see cref="PeerCounters.UnreliableLossPackets"/> reflects gaps either unreliable Space's window
+    /// has slid past (issues #173, #176).
     /// <see cref="PeerCounters.MessagesReceived"/> and <see cref="PeerCounters.Resumes"/> still read
     /// zero for every Peer, since this profile has no delivery or resume machinery yet to increment
     /// them.
@@ -562,9 +562,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Classifies one already-validated record against its mode's Space and counts what the window
-    /// refused, plus — for the <c>Unreliable</c> Space alone (issue #173) — whatever its window's
-    /// slide just retired un-admitted. Admission itself otherwise needs no counting: the window's
-    /// <see cref="ReceiveWindowOutcome.Admitted"/> case is a well-formed record simply taking effect,
+    /// refused, plus whatever the touched window's slide just retired un-admitted (issues #173, #176).
+    /// Admission itself otherwise needs no counting: the window's <see cref="ReceiveWindowOutcome.Admitted"/>
+    /// case is a well-formed record simply taking effect,
     /// and this ticket ends at "classified, and counted if refused or lost" — delivering an admitted
     /// record is 6.6's.
     /// </summary>
@@ -584,10 +584,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 break;
         }
 
-        // Scoped to Unreliable alone (#173): UnreliableSequenced's window also slides, so its own
-        // arrivals can produce a nonzero LastSlideLoss too, but this ticket's figure covers only the
-        // Unreliable Space, so any loss from another Space's slide is deliberately not counted here.
-        if (mode == PacketRecordMode.Unreliable && windows.LastSlideLoss > 0)
+        // No mode test guards this (#176): a window reports a nonzero LastSlideLoss only if it slid,
+        // and only the two unreliable Spaces' windows are built to slide, so this counts both of them
+        // and neither reliable Space without restating which Spaces slide. ReceiveWindowSpaces'
+        // constructor stays the one place that decides that, so the two cannot drift apart.
+        if (windows.LastSlideLoss > 0)
         {
             slot.Counters.RecordUnreliableLoss(windows.LastSlideLoss);
         }
@@ -1021,7 +1022,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// field. The parse loop's per-Space classification increments
         /// <see cref="Core.PeerCounterSet.OutOfWindowPackets"/>,
         /// <see cref="Core.PeerCounterSet.DuplicatePackets"/> and
-        /// <see cref="Core.PeerCounterSet.UnreliableLossPackets"/> (issues #172, #173); a freshly
+        /// <see cref="Core.PeerCounterSet.UnreliableLossPackets"/> (issues #172, #173, #176); a freshly
         /// connected Peer reads zero for all three.
         /// </summary>
         public PeerCounterSet Counters { get; } = new();

@@ -49,13 +49,17 @@ namespace ReactorSockets;
 /// arriving record (issue #172); a freshly connected Peer reads zero.
 /// </param>
 /// <param name="UnreliableLossPackets">
-/// How many sequences the <c>Unreliable</c> Space's receive window has lost — retired by sliding its
-/// base forward before that sequence ever arrived (issue #173, ADR 0013). A gap is provisional until
+/// How many sequences an unreliable Space's receive window has lost — retired by sliding its base
+/// forward before that sequence ever arrived (issues #173, #176; ADR 0013). A gap is provisional until
 /// the window passes it by: a sequence still inside the window may yet arrive late and be admitted
-/// without ever touching this figure, so it reflects only sequences the window has moved past, never
-/// every sequence not yet seen. Scoped to the <c>Unreliable</c> Space alone — the other three Spaces'
-/// figures, including <c>UnreliableSequenced</c>'s, do not move this one. No Diagnostic accompanies a
-/// gap; a lossy path must not fill the Sink with volume. Monotonic and never reset, exactly like
+/// without ever touching this figure, so it reflects only sequences a window has moved past, never
+/// every sequence not yet seen. This is one figure covering both unreliable Spaces —
+/// <c>Unreliable</c> and <c>UnreliableSequenced</c> — summed, exactly as
+/// <see cref="OutOfWindowPackets"/> and <see cref="DuplicatePackets"/> already cover all four Spaces
+/// summed, so per-Space loss is not separable from it. The two reliable Spaces never contribute,
+/// because their windows do not slide: retransmission is what fills their holes, and what they refuse
+/// lands on <see cref="OutOfWindowPackets"/> instead. No Diagnostic accompanies a gap in either Space;
+/// a lossy path must not fill the Sink with volume. Monotonic and never reset, exactly like
 /// <see cref="OutOfWindowPackets"/>; a freshly connected Peer reads zero.
 /// </param>
 public readonly record struct PeerCounters(

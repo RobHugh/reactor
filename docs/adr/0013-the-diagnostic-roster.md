@@ -218,7 +218,7 @@ a secret a reservation is holding — refused as a protocol violation — differ
 Per the rule above, the table follows the shipped code.
 
 **Amended (slice 6.2.6).** `UnreliableLossPackets` joins the per-subject scope, carrying how many
-sequences the `Unreliable` Space's receive window retired un-admitted as it slid forward. It passes
+sequences an unreliable Space's receive window retired un-admitted as it slid forward. It passes
 the derivability test — no other counter exposes it, since a sequence that never arrives is by
 definition never classified — and it passes the record test the same way `duplicate packets` does: a
 lossy path produces a gap every Pump, so a per-gap Diagnostic would fill the Sink with exactly the
@@ -226,8 +226,17 @@ volume this ADR's admission rule exists to keep out. It is the figure bought bac
 `Unreliable` a sequence number, and it is the one thing genuinely given up by declining QUIC's packet
 numbers. Per the rule above, the table follows the shipped code.
 
-Known gap: `UnreliableSequenced` slides on the same rule and can lose sequences the same way, and its
-loss is currently counted nowhere.
+**Amended (issue #176).** The figure covers **both** unreliable Spaces, `Unreliable` and
+`UnreliableSequenced`, summed — not `Unreliable` alone, as 6.2.6 first shipped it. Both slide on the
+same rule and lose sequences the same way, so leaving one of them counted nowhere meant a consumer
+running `UnreliableSequenced` over a lossy path saw nothing at all: its loss is not out-of-window
+either, because a far-ahead arrival in a sliding Space is admitted after the slide rather than refused.
+It shares the existing field rather than earning a second one because `OutOfWindowPackets` and
+`DuplicatePackets` already aggregate across all four Spaces — a per-Space loss field would be the
+anomaly, and every added field here is a permanent commitment. The cost is accepted deliberately: the
+two Spaces' loss is not separable from this figure, and a consumer needing that separation is asking
+for per-Space counters generally, which is a different decision from this one. The two reliable Spaces
+still contribute nothing, because their windows do not slide.
 
 Sixteen members as first drafted. What the rules **removed** is the more useful half of the exercise:
 

@@ -83,11 +83,12 @@ internal sealed class PeerCounterSet
     public ulong DuplicatePackets { get; private set; }
 
     /// <summary>
-    /// Records <paramref name="count"/> sequences the <c>Unreliable</c> Space's receive window retired
-    /// un-admitted by sliding its base forward (issue #173, ADR 0013) — a gap the window has passed by
-    /// rather than one still reachable inside its span. Called from <see cref="DatagramSessionReactor"/>'s
-    /// data path once a record classified against the <c>Unreliable</c> Space reports
-    /// <see cref="Session.ReceiveWindow.LastSlideLoss"/> greater than zero. A single arrival can slide the
+    /// Records <paramref name="count"/> sequences an unreliable Space's receive window retired
+    /// un-admitted by sliding its base forward (issues #173, #176; ADR 0013) — a gap the window has
+    /// passed by rather than one still reachable inside its span. Called from
+    /// <see cref="DatagramSessionReactor"/>'s data path once a record reports
+    /// <see cref="Session.ReceiveWindow.LastSlideLoss"/> greater than zero, whichever of the two
+    /// unreliable Spaces it was classified against — only those two slide. A single arrival can slide the
     /// window past more than one gap at once, which is why this takes a count rather than being called
     /// once per lost sequence: adding the whole figure in one op keeps the hot path a single add
     /// regardless of how wide the jump was. No Diagnostic accompanies this — a lossy path must not
@@ -96,7 +97,7 @@ internal sealed class PeerCounterSet
     public void RecordUnreliableLoss(ulong count) => UnreliableLossPackets += count;
 
     /// <summary>
-    /// The live count of sequences lost from the <c>Unreliable</c> Space so far — the same figure
+    /// The live count of sequences lost from either unreliable Space so far — the same figure
     /// <see cref="Snapshot"/> exposes as <see cref="PeerCounters.UnreliableLossPackets"/>. Monotonic
     /// and never reset, exactly like <see cref="MessagesReceived"/>.
     /// </summary>
