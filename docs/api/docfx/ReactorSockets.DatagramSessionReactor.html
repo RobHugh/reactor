@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Class DatagramSessionReactor | ReactorSockets API reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Class DatagramSessionReactor | ReactorSockets API reference ">
+      
+      <meta name="description" content="The datagram Session profile (ADR 0009): Sessions established over UDP, addressed as Peers, driven by a single synchronous  from the consumer&#39;s own loop. This slice builds the handshake and everything that guards it — the stateless cookie, the amplification bound, version and capacity refusals, session identity and demultiplexing. It does not yet carry data; the packet records, the four sequence Spaces, fragmentation and the acknowledgement machinery land in the slices that follow, and  grows with them.">
+      <link rel="icon" href="favicon.ico">
+      <link rel="stylesheet" href="public/docfx.min.css">
+      <link rel="stylesheet" href="public/main.css">
+      <meta name="docfx:navrel" content="toc.html">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      <meta name="docfx:rel" content="">
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_DatagramSessionReactor.md&amp;value=---%0Auid%3A%20ReactorSockets.DatagramSessionReactor%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="index.html">
+            <img id="logo" class="svg" src="logo.svg" alt="ReactorSockets">
+            ReactorSockets
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+              <form class="search" role="search" id="search">
+                <i class="bi bi-search"></i>
+                <input class="form-control" id="search-query" type="search" disabled placeholder="Search" autocomplete="off" aria-label="Search">
+              </form>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+
+      <div class="content">
+        <div class="actionbar">
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="ReactorSockets.DatagramSessionReactor">
+
+
+
+  <h1 id="ReactorSockets_DatagramSessionReactor" data-uid="ReactorSockets.DatagramSessionReactor" class="text-break">
+Class DatagramSessionReactor  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DatagramSessionReactor.cs/#L54"><i class="bi bi-code-slash"></i></a>
+  </h1>
+
+  <div class="facts text-secondary">
+    <dl><dt>Namespace</dt><dd><a class="xref" href="ReactorSockets.html">ReactorSockets</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>ReactorSockets.dll</dd></dl>
+  </div>
+
+  <div class="markdown summary"><p>The datagram Session profile (ADR 0009): Sessions established over UDP, addressed as Peers, driven
+by a single synchronous <a class="xref" href="ReactorSockets.DatagramSessionReactor.Pump.html#ReactorSockets_DatagramSessionReactor_Pump">Pump()</a> from the consumer's own loop. This slice builds the
+handshake and everything that guards it — the stateless cookie, the amplification bound, version
+and capacity refusals, session identity and demultiplexing. It does not yet carry data; the packet
+records, the four sequence Spaces, fragmentation and the acknowledgement machinery land in the
+slices that follow, and <a class="xref" href="ReactorSockets.SessionEventKind.html">SessionEventKind</a> grows with them.</p>
+</div>
+  <div class="markdown conceptual"></div>
+
+  <div class="codewrapper">
+    <pre><code class="lang-csharp hljs">public sealed class DatagramSessionReactor : IDisposable</code></pre>
+  </div>
+
+
+
+
+  <dl class="typelist inheritance">
+    <dt>Inheritance</dt>
+    <dd>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object">object</a></div>
+      <div><span class="xref">DatagramSessionReactor</span></div>
+    </dd>
+  </dl>
+
+  <dl class="typelist implements">
+    <dt>Implements</dt>
+    <dd>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.idisposable">IDisposable</a></div>
+    </dd>
+  </dl>
+
+
+  <dl class="typelist inheritedMembers">
+    <dt>Inherited Members</dt>
+    <dd>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object)">object.Equals(object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object-system-object)">object.Equals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gethashcode">object.GetHashCode()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gettype">object.GetType()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.referenceequals">object.ReferenceEquals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.tostring">object.ToString()</a>
+    </div>
+  </dd></dl>
+
+
+
+
+  <h2 id="ReactorSockets_DatagramSessionReactor_remarks">Remarks</h2>
+  <div class="markdown level0 remarks"><p>
+<b>Endpoints are declared, not registered.</b> Unlike <a class="xref" href="ReactorSockets.RawReactor.html">RawReactor</a>, which hands back a
+<a class="xref" href="ReactorSockets.LinkId.html">LinkId</a> for every socket a consumer registers, this Reactor takes its endpoints on
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.Endpoints.html#ReactorSockets_DatagramSessionOptions_Endpoints">Endpoints</a> at construction and never rebinds (ADR 0014).
+Binding returns no identity because there is nothing to address: a consumer addresses Peers, and a
+Peer is not a socket. A Reactor that declares no endpoints binds nothing until its first
+<a class="xref" href="ReactorSockets.DatagramSessionReactor.Connect.html#ReactorSockets_DatagramSessionReactor_Connect_System_Net_IPEndPoint_">Connect(IPEndPoint)</a>, which binds one wildcard, port-zero socket in the destination's address
+family and appends it to <a class="xref" href="ReactorSockets.DatagramSessionReactor.BoundEndpoints.html#ReactorSockets_DatagramSessionReactor_BoundEndpoints">BoundEndpoints</a>.
+</p>
+<p>
+<b>Capacity counts Peers.</b> The bound sockets are not share-holders and hold no read share
+(ADR 0014): a Peer's Messages arrive through whichever socket happens to carry them, so charging
+the arena per socket would give one Peer on a single-socket Reactor the whole arena and sixty-four
+Peers a sixty-fourth each — exactly inverted. The read share is the arena divided by
+<a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a>, and it belongs to the Peer.
+</p>
+<p>
+<b>What a stranger can make this Reactor do.</b> Very little, and that is the design. Anything an
+unauthenticated remote can generate at will goes to the Diagnostic Sink and never to the event
+stream, so a stranger cannot write into the consumer's protocol. Every reply to an unverified
+sender is exactly one control datagram of
+<span class="xref">ReactorSockets.Session.DatagramSessionProtocol.ControlDatagramSize</span> bytes, answering exactly one control
+datagram of the same size, so bytes sent never exceed bytes received and this Reactor cannot be
+used to amplify a flood at a spoofed third party. A bare Hello is answered with a Cookie whatever
+it claimed — never a Refusal — so nothing about this Reactor's version or occupancy is learnable
+without first proving the ability to receive at the address claimed.
+</p>
+<p>
+<b>The wire session id is not an authenticator.</b> It is a receiver-assigned random 32-bit
+demultiplexing token: unguessable enough that an off-path attacker cannot address a Session it was
+never introduced to, and nothing more. This library does not encrypt, does not authenticate the
+data plane, and an on-path attacker who can read a datagram can forge one. Consumers needing
+confidentiality or integrity must layer it themselves.
+</p>
+</div>
+
+  <h2 class="section" id="constructors">Constructors
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionReactor.-ctor.html#ReactorSockets_DatagramSessionReactor__ctor_ReactorSockets_DatagramSessionOptions_">DatagramSessionReactor(DatagramSessionOptions)</a></dt>
+    <dd><p>Constructs a Reactor bound to the calling thread (ADR 0002) — every future mutating call must
+come from this same thread or it throws — and binds every declared endpoint in the order
+supplied. A bind that fails throws here, naming the endpoint: binding is part of what this
+Reactor is, so there is no half-bound Reactor to hand back and no
+<a class="xref" href="ReactorSockets.DiagnosticId.html">DiagnosticId</a> member for the failure.</p>
+</dd>
+  </dl>
+
+  <h2 class="section" id="properties">Properties
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionReactor.BoundEndpoints.html#ReactorSockets_DatagramSessionReactor_BoundEndpoints">BoundEndpoints</a></dt>
+    <dd><p>The endpoints this Reactor is bound to right now, in the order they were declared, with any
+socket bound by a dial appended. A snapshot: it answers what is bound, and there is no member
+that binds another.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionReactor.Counters.html#ReactorSockets_DatagramSessionReactor_Counters">Counters</a></dt>
+    <dd><p>A point-in-time snapshot of this Reactor's own counters (ADR 0013). No reset.</p>
+</dd>
+  </dl>
+
+  <h2 class="section" id="methods">Methods
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionReactor.Close.html#ReactorSockets_DatagramSessionReactor_Close_ReactorSockets_PeerId_">Close(PeerId)</a></dt>
+    <dd><p>Ends the Session with <code class="paramref">peer</code> and queues a
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> carrying <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_LocalClose">LocalClose</a>.
+Idempotent: a stale <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> is a no-op, because a Peer closing under a caller is an
+ordinary race rather than a programmer error.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionReactor.Connect.html#ReactorSockets_DatagramSessionReactor_Connect_System_Net_IPEndPoint_">Connect(IPEndPoint)</a></dt>
+    <dd><p>Begins a Session with <code class="paramref">destination</code>, returning the <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> that
+will address it. The Peer occupies a capacity Slot from this moment, exactly as a dialling Link
+does in <a class="xref" href="ReactorSockets.RawReactor.html">RawReactor</a>: the handshake is work this Reactor is holding, and pretending
+otherwise would let a consumer dial past capacity and discover it only on the far side of a
+round trip. <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerConnected">PeerConnected</a> or
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> resolves it on a later Pump.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionReactor.Dispose.html#ReactorSockets_DatagramSessionReactor_Dispose">Dispose()</a></dt>
+    <dd><p>Releases every socket this Reactor bound. A Reactor owns every socket it bound, so a consumer
+that drops one without disposing it leaks those sockets until each <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socket">Socket</a>'s
+finalizer runs. No <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> events are queued: nothing can
+drain a disposed Reactor. Idempotent; every other member throws
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.objectdisposedexception">ObjectDisposedException</a> afterwards.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionReactor.Drain.html#ReactorSockets_DatagramSessionReactor_Drain">Drain()</a></dt>
+    <dd><p>Drains every event produced this Frame — since the last <a class="xref" href="ReactorSockets.DatagramSessionReactor.Pump.html#ReactorSockets_DatagramSessionReactor_Pump">Pump()</a> — in the order it was
+produced.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionReactor.Pump.html#ReactorSockets_DatagramSessionReactor_Pump">Pump()</a></dt>
+    <dd><p>One synchronous advance: wipes the previous Frame's events and arena, then reads whatever bound
+socket is ready right now, running the handshake for everything that arrived. Throws
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.invalidoperationexception">InvalidOperationException</a> if called from any thread other than the one that
+constructed this Reactor, or from inside a Pump already in progress.</p>
+</dd>
+  </dl>
+
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+    <div class="container-xxl search-results" id="search-results"></div>
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          <span>Made with <a href="https://dotnet.github.io/docfx">docfx</a></span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

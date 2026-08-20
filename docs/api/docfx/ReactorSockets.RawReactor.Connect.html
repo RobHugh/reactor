@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Method Connect | ReactorSockets API reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Method Connect | ReactorSockets API reference ">
+      
+      
+      <link rel="icon" href="favicon.ico">
+      <link rel="stylesheet" href="public/docfx.min.css">
+      <link rel="stylesheet" href="public/main.css">
+      <meta name="docfx:navrel" content="toc.html">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      <meta name="docfx:rel" content="">
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_RawReactor_Connect_.md&amp;value=---%0Auid%3A%20ReactorSockets.RawReactor.Connect*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="index.html">
+            <img id="logo" class="svg" src="logo.svg" alt="ReactorSockets">
+            ReactorSockets
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+              <form class="search" role="search" id="search">
+                <i class="bi bi-search"></i>
+                <input class="form-control" id="search-query" type="search" disabled placeholder="Search" autocomplete="off" aria-label="Search">
+              </form>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+
+      <div class="content">
+        <div class="actionbar">
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="ReactorSockets.RawReactor.Connect*">
+
+
+
+
+
+<h1 id="ReactorSockets_RawReactor_Connect_" data-uid="ReactorSockets.RawReactor.Connect*" class="text-break">
+Method Connect  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/RawReactor.cs/#L269"><i class="bi bi-code-slash"></i></a>
+</h1>
+
+<div class="facts text-secondary">
+  <dl><dt>Namespace</dt><dd><a class="xref" href="ReactorSockets.html">ReactorSockets</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>ReactorSockets.dll</dd></dl>
+</div>
+
+<div class="markdown summary"></div>
+<div class="markdown conceptual"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<a id="ReactorSockets_RawReactor_Connect_" data-uid="ReactorSockets.RawReactor.Connect*"></a>
+
+<h3 id="ReactorSockets_RawReactor_Connect_System_Net_IPEndPoint_" data-uid="ReactorSockets.RawReactor.Connect(System.Net.IPEndPoint)">
+  Connect(IPEndPoint)
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/RawReactor.cs/#L269"><i class="bi bi-code-slash"></i></a>
+</h3>
+
+<div class="markdown level1 summary"><p>Begins dialling a new outbound TCP connection to <code class="paramref">endpoint</code> and returns the
+<a class="xref" href="ReactorSockets.LinkId.html">LinkId</a> that addresses it immediately — connecting is advanced by the consumer's
+own loop like everything else, so this call never blocks and the handshake's outcome arrives
+later, from whichever <a class="xref" href="ReactorSockets.RawReactor.Pump.html#ReactorSockets_RawReactor_Pump">Pump()</a> first finds it resolved. A dial that succeeds produces
+exactly one <a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_Connected">Connected</a>; a dial that fails produces a
+<a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_Closed">Closed</a> naming <a class="xref" href="ReactorSockets.CloseReason.html#ReactorSockets_CloseReason_Refused">Refused</a> or
+<a class="xref" href="ReactorSockets.CloseReason.html#ReactorSockets_CloseReason_Unreachable">Unreachable</a> (or <a class="xref" href="ReactorSockets.CloseReason.html#ReactorSockets_CloseReason_Failed">Failed</a> for anything else),
+alongside a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_LinkFailed">LinkFailed</a> carrying the platform
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a>. Nothing about a dial in progress is delivered except in response to a
+Pump.</p>
+</div>
+<div class="markdown level1 conceptual"></div>
+
+<div class="codewrapper">
+  <pre><code class="lang-csharp hljs">public LinkId Connect(IPEndPoint endpoint)</code></pre>
+</div>
+
+<h4 class="section">Parameters</h4>
+<dl class="parameters">
+  <dt><code>endpoint</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.ipendpoint">IPEndPoint</a></dt>
+  <dd></dd>
+</dl>
+
+<h4 class="section">Returns</h4>
+<dl class="parameters">
+  <dt><a class="xref" href="ReactorSockets.LinkId.html">LinkId</a></dt>
+  <dd></dd>
+</dl>
+
+
+
+
+
+
+
+<h4 class="section" id="ReactorSockets_RawReactor_Connect_System_Net_IPEndPoint__remarks">Remarks</h4>
+<div class="markdown level1 remarks"><p>There is no hostname overload and no connect-timeout knob (parent slice spec): nothing ticks
+unless the consumer Pumps, and a dial going nowhere is closed by the consumer or by the OS, not
+by a timer this library invented. The dialled Link consumes a capacity slot exactly like a Bind
+or a Listen; <a class="xref" href="ReactorSockets.RawReactor.LocalOf.html#ReactorSockets_RawReactor_LocalOf_ReactorSockets_LinkId_">LocalOf(LinkId)</a> answers the address TCP bound implicitly the moment the
+connect began, whether or not the handshake has finished.</p>
+</div>
+
+
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+    <div class="container-xxl search-results" id="search-results"></div>
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          <span>Made with <a href="https://dotnet.github.io/docfx">docfx</a></span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

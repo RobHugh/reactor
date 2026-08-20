@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Class StreamSessionReactor | ReactorSockets API reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Class StreamSessionReactor | ReactorSockets API reference ">
+      
+      <meta name="description" content="The stream Session profile (ADR 0010): Sessions established over TCP, addressed as Peers, delivering u32 length-prefixed Messages rather than the byte runs the transport gives. Slices 3.1-3.3 validate  and its allocation bill at construction, bind the declared endpoint set, and carry a Peer through the handshake to an established Session. Slice 3.4 adds the data plane: each established Peer reassembles Messages in its own persistent receive buffer and delivers each whole one as a  event copied into the shared frame arena. Retention, write batching and the Goodbye exchange are not yet built and land in the sub-issues that follow.">
+      <link rel="icon" href="favicon.ico">
+      <link rel="stylesheet" href="public/docfx.min.css">
+      <link rel="stylesheet" href="public/main.css">
+      <meta name="docfx:navrel" content="toc.html">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      <meta name="docfx:rel" content="">
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_StreamSessionReactor.md&amp;value=---%0Auid%3A%20ReactorSockets.StreamSessionReactor%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="index.html">
+            <img id="logo" class="svg" src="logo.svg" alt="ReactorSockets">
+            ReactorSockets
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+              <form class="search" role="search" id="search">
+                <i class="bi bi-search"></i>
+                <input class="form-control" id="search-query" type="search" disabled placeholder="Search" autocomplete="off" aria-label="Search">
+              </form>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+
+      <div class="content">
+        <div class="actionbar">
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="ReactorSockets.StreamSessionReactor">
+
+
+
+  <h1 id="ReactorSockets_StreamSessionReactor" data-uid="ReactorSockets.StreamSessionReactor" class="text-break">
+Class StreamSessionReactor  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/StreamSessionReactor.cs/#L38"><i class="bi bi-code-slash"></i></a>
+  </h1>
+
+  <div class="facts text-secondary">
+    <dl><dt>Namespace</dt><dd><a class="xref" href="ReactorSockets.html">ReactorSockets</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>ReactorSockets.dll</dd></dl>
+  </div>
+
+  <div class="markdown summary"><p>The stream Session profile (ADR 0010): Sessions established over TCP, addressed as Peers,
+delivering <code>u32</code> length-prefixed Messages rather than the byte runs the transport gives.
+Slices 3.1-3.3 validate <a class="xref" href="ReactorSockets.StreamSessionOptions.html">StreamSessionOptions</a> and its allocation bill at
+construction, bind the declared endpoint set, and carry a Peer through the handshake to an
+established Session. Slice 3.4 adds the data plane: each established Peer reassembles Messages in
+its own persistent receive buffer and delivers each whole one as a
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_MessageReceived">MessageReceived</a> event copied into the shared frame arena. Retention,
+write batching and the Goodbye exchange are not yet built and land in the sub-issues that follow.</p>
+</div>
+  <div class="markdown conceptual"></div>
+
+  <div class="codewrapper">
+    <pre><code class="lang-csharp hljs">public sealed class StreamSessionReactor : IDisposable</code></pre>
+  </div>
+
+
+
+
+  <dl class="typelist inheritance">
+    <dt>Inheritance</dt>
+    <dd>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object">object</a></div>
+      <div><span class="xref">StreamSessionReactor</span></div>
+    </dd>
+  </dl>
+
+  <dl class="typelist implements">
+    <dt>Implements</dt>
+    <dd>
+      <div><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.idisposable">IDisposable</a></div>
+    </dd>
+  </dl>
+
+
+  <dl class="typelist inheritedMembers">
+    <dt>Inherited Members</dt>
+    <dd>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object)">object.Equals(object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.equals#system-object-equals(system-object-system-object)">object.Equals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gethashcode">object.GetHashCode()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.gettype">object.GetType()</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.referenceequals">object.ReferenceEquals(object, object)</a>
+    </div>
+    <div>
+      <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.object.tostring">object.ToString()</a>
+    </div>
+  </dd></dl>
+
+
+
+
+  <h2 id="ReactorSockets_StreamSessionReactor_remarks">Remarks</h2>
+  <div class="markdown level0 remarks"><p>
+There is no cookie, no ack, no sequence space, no fragment and no RTO in this profile: TCP already
+provides what those were built for. The datagram Session protocol is deliberately not carried over
+TCP, because that would put retransmission on top of retransmission.
+</p>
+<p>
+<b>Send timing (ADR 0011).</b> Nagle (<code>TCP_NODELAY</code>) is off, unconditionally, on every stream
+Session socket — it is not a knob on <a class="xref" href="ReactorSockets.StreamSessionOptions.html">StreamSessionOptions</a> and cannot be turned back
+on. In its place, every <a class="xref" href="ReactorSockets.StreamSessionReactor.Send.html#ReactorSockets_StreamSessionReactor_Send_ReactorSockets_PeerId_System_ReadOnlySpan_System_Byte__">Send(PeerId, ReadOnlySpan&lt;byte&gt;)</a> queued since the last <a class="xref" href="ReactorSockets.StreamSessionReactor.Pump.html#ReactorSockets_StreamSessionReactor_Pump">Pump()</a> is written to
+the wire together, once, by that <a class="xref" href="ReactorSockets.StreamSessionReactor.Pump.html#ReactorSockets_StreamSessionReactor_Pump">Pump()</a> call: batching we do ourselves, on our own
+schedule, rather than the connection's delayed acknowledgements deciding when a small Message may
+leave. That is a better version of what Nagle exists for, without Nagle's cost — a small Message
+waiting up to a round trip behind outstanding data — so a consumer measuring latency needs to know
+which of the two is doing the batching: theirs, by calling <a class="xref" href="ReactorSockets.StreamSessionReactor.Pump.html#ReactorSockets_StreamSessionReactor_Pump">Pump()</a> less often, or ours,
+always.
+</p>
+</div>
+
+  <h2 class="section" id="constructors">Constructors
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionReactor.-ctor.html#ReactorSockets_StreamSessionReactor__ctor_ReactorSockets_StreamSessionOptions_">StreamSessionReactor(StreamSessionOptions)</a></dt>
+    <dd><p>Validates <code class="paramref">options</code> — every knob and cross-check, then the frame arena's
+floor — before anything is allocated or bound, then binds every declared endpoint in the order
+supplied. A bind that fails throws here, naming the endpoint: binding is part of what this
+Reactor is, so there is no half-built Reactor to hand back.</p>
+</dd>
+  </dl>
+
+  <h2 class="section" id="properties">Properties
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionReactor.BoundEndpoints.html#ReactorSockets_StreamSessionReactor_BoundEndpoints">BoundEndpoints</a></dt>
+    <dd><p>The endpoints this Reactor is bound to right now, in the order they were declared. A snapshot:
+it answers what is bound, and there is no member that binds another — there is no rebinding
+(ADR 0014), and unlike the datagram profile a stream dial never binds a wildcard socket of its
+own, since TCP's own connect already binds an ephemeral local port implicitly.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionReactor.Counters.html#ReactorSockets_StreamSessionReactor_Counters">Counters</a></dt>
+    <dd><p>A point-in-time snapshot of this Reactor's own counters (ADR 0013). No reset.</p>
+</dd>
+  </dl>
+
+  <h2 class="section" id="methods">Methods
+</h2>
+
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionReactor.Close.html#ReactorSockets_StreamSessionReactor_Close_ReactorSockets_PeerId_">Close(PeerId)</a></dt>
+    <dd><p>Announces this end is ending the Session with <code class="paramref">peer</code> on purpose: attempts to
+append a Goodbye control record to whatever this Peer's retention region already holds, so it
+is the last thing flushed and everything queued before it is delivered first, then forbids any
+further <a class="xref" href="ReactorSockets.StreamSessionReactor.Send.html#ReactorSockets_StreamSessionReactor_Send_ReactorSockets_PeerId_System_ReadOnlySpan_System_Byte__">Send(PeerId, ReadOnlySpan&lt;byte&gt;)</a> to it. If retention has no room for it yet, the attempt is retried
+on every later Pump (<span class="xref">ReactorSockets.StreamSessionReactor.RetryGoodbyeAppends()</span>) until it commits — <a class="xref" href="ReactorSockets.StreamSessionReactor.Close.html#ReactorSockets_StreamSessionReactor_Close_ReactorSockets_PeerId_">Close(PeerId)</a>
+must never leave the far end open indefinitely because the Goodbye it promised was silently
+dropped (issue #23 review finding), and this end never closes itself locally until its own
+Goodbye has actually been appended and flushed. The <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a>
+carrying <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_LocalClose">LocalClose</a> is queued once that flush fully drains —
+immediately, on a later Pump, if nothing was queued when <a class="xref" href="ReactorSockets.StreamSessionReactor.Close.html#ReactorSockets_StreamSessionReactor_Close_ReactorSockets_PeerId_">Close(PeerId)</a> was called, or
+after however many Pumps a short write (or a retention append retry) takes to carry everything
+already retained plus the Goodbye itself. Idempotent: a stale <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a>, or a Peer
+already closing, is a no-op — a Peer closing under a caller, or a caller that closes the same
+Peer twice, is an ordinary race rather than a programmer error.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionReactor.Connect.html#ReactorSockets_StreamSessionReactor_Connect_System_Net_IPEndPoint_">Connect(IPEndPoint)</a></dt>
+    <dd><p>Begins a Session with <code class="paramref">destination</code>, returning the <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> that
+will address it. The Peer occupies a capacity Slot from this moment, exactly as a dialling Link
+does in <a class="xref" href="ReactorSockets.RawReactor.html">RawReactor</a>: the handshake is work this Reactor is holding, and pretending
+otherwise would let a consumer dial past capacity and discover it only on the far side of a
+round trip. <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerConnected">PeerConnected</a> or <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a>
+resolves it on a later Pump.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionReactor.CountersOf.html#ReactorSockets_StreamSessionReactor_CountersOf_ReactorSockets_PeerId_">CountersOf(PeerId)</a></dt>
+    <dd><p>A point-in-time snapshot of one Peer's counters (ADR 0013). Throws if the Peer is not open.
+Mirrors <a class="xref" href="ReactorSockets.RawReactor.CountersOf.html#ReactorSockets_RawReactor_CountersOf_ReactorSockets_LinkId_">CountersOf(LinkId)</a>'s shape for the Raw profile.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionReactor.Dispose.html#ReactorSockets_StreamSessionReactor_Dispose">Dispose()</a></dt>
+    <dd><p>Releases every socket this Reactor bound or accepted. A Reactor owns every socket it bound, so
+a consumer that drops one without disposing it leaks those sockets until each
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socket">Socket</a>'s finalizer runs. No <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> events are
+queued: nothing can drain a disposed Reactor. Idempotent; every other member throws
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.objectdisposedexception">ObjectDisposedException</a> afterwards.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionReactor.Drain.html#ReactorSockets_StreamSessionReactor_Drain">Drain()</a></dt>
+    <dd><p>Drains every event produced this Frame — since the last <a class="xref" href="ReactorSockets.StreamSessionReactor.Pump.html#ReactorSockets_StreamSessionReactor_Pump">Pump()</a> — in the order it was
+produced.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionReactor.Pump.html#ReactorSockets_StreamSessionReactor_Pump">Pump()</a></dt>
+    <dd><p>One synchronous advance: records this call's arrival against the last one
+(<span class="xref">ReactorSockets.StreamSessionReactor.ObservedPumpInterval</span>, issue #112) before anything else, then wipes the previous
+Frame's events — which is also the moment a Peer
+still <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosing">PeerClosing</a> only because the last Frame's Messages had not
+been drained past yet becomes eligible to close (<span class="xref">ReactorSockets.StreamSessionReactor.RetryPeersPendingClose()</span>) — then
+admits ready connections, advances every in-flight dial and reads whatever bound socket is
+ready right now, running the handshake for everything that arrived. Every Peer whose received
+count advanced somewhere in that work — this Frame's own reads, or a held-back Message finally
+delivered by <span class="xref">ReactorSockets.StreamSessionReactor.RetryPeersWithBufferedMessages()</span> — then has its delivery counter emitted
+exactly once (<span class="xref">ReactorSockets.StreamSessionReactor.EmitDeliveryCounters()</span>, issue #116/#25's second trigger), before every
+Peer's queued retention bytes are flushed exactly once
+(<span class="xref">ReactorSockets.StreamSessionReactor.FlushPendingRetentionWrites()</span>, #90/3.6.2) regardless of how many <a class="xref" href="ReactorSockets.StreamSessionReactor.Send.html#ReactorSockets_StreamSessionReactor_Send_ReactorSockets_PeerId_System_ReadOnlySpan_System_Byte__">Send(PeerId, ReadOnlySpan&lt;byte&gt;)</a>
+calls queued them. Finally, every established Peer's two independent idle timers (#26) are
+enforced in one scan (<span class="xref">ReactorSockets.StreamSessionReactor.EnforceIdleTimers()</span>): a Peer from which nothing has been
+received for <span class="xref">ReactorSockets.StreamSessionReactor.PeerSlot.RemoteSendIdleInterval</span> × <a class="xref" href="ReactorSockets.StreamSessionOptions.ResolvedMissedHeartbeats.html#ReactorSockets_StreamSessionOptions_ResolvedMissedHeartbeats">ResolvedMissedHeartbeats</a>
+moves to <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerInterrupted">PeerInterrupted</a> (issue #117, revised by issue #119), an
+already-Interrupted Peer instead closes with <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_LingerExpired">LingerExpired</a> once
+its effective Linger has elapsed since the interruption (issue #121), and every surviving Peer
+that has written nothing
+to the wire — including whatever this Frame's own flush just carried — for at least
+<a class="xref" href="ReactorSockets.StreamSessionOptions.SendIdleInterval.html#ReactorSockets_StreamSessionOptions_SendIdleInterval">SendIdleInterval</a> sends the same delivery-counter record as a
+heartbeat (issue #114/#26's first idle timer), unconditionally and regardless of whether anything
+was ever received from it. Once idle timers may have closed an Interrupted Peer on Linger expiry
+(issue #121), every Interrupted Peer this Reactor itself dialled is given its re-dial attempt for
+this Frame (<span class="xref">ReactorSockets.StreamSessionReactor.ProcessRedials()</span>, issue #125) — a schedule derived from the observed Pump
+interval just recorded above and the effective Linger, never a separate attempt-count knob, so a
+Peer whose Linger closed it this same Frame is never also given one. Throws
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.invalidoperationexception">InvalidOperationException</a> if called from any thread other than the one that
+constructed this Reactor, or from inside a Pump already in progress.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.StreamSessionReactor.Send.html#ReactorSockets_StreamSessionReactor_Send_ReactorSockets_PeerId_System_ReadOnlySpan_System_Byte__">Send(PeerId, ReadOnlySpan&lt;byte&gt;)</a></dt>
+    <dd><p>Frames <code class="paramref">message</code> as a <code>u32</code> big-endian length prefix followed by its
+bytes (<span class="xref">ReactorSockets.Session.MessageFramingCodec</span>, ADR 0010) and appends the framed bytes to
+<code class="paramref">peer</code>'s retention region. Nothing is written to the socket here, ever (#90,
+3.6.2 write batching) — a successful append only sets this Peer's pending-write marker
+(<span class="xref">ReactorSockets.StreamSessionReactor.PeerSlot.HasPendingRetentionWrite</span>), which the next <a class="xref" href="ReactorSockets.StreamSessionReactor.Pump.html#ReactorSockets_StreamSessionReactor_Pump">Pump()</a>'s explicit
+flush step (<span class="xref">ReactorSockets.StreamSessionReactor.FlushPendingRetentionWrites()</span>) drains in a single write carrying
+everything queued, including whatever was already sitting there. A Send with no following Pump
+call puts nothing on the wire. Refuses once a Goodbye has passed in either direction — this
+end's own (<span class="xref">ReactorSockets.StreamSessionReactor.PeerSlot.LocalGoodbyeSent</span>) or the far end's arrived and this Peer is
+already <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosing">PeerClosing</a> or on its way to
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> (<span class="xref">ReactorSockets.StreamSessionReactor.PeerSlot.PendingCloseReasonAfterRetentionDrains</span>)
+— since a Message queued after a Goodbye is not one the far end has any business receiving
+(issue #23).</p>
+</dd>
+  </dl>
+
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+    <div class="container-xxl search-results" id="search-results"></div>
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          <span>Made with <a href="https://dotnet.github.io/docfx">docfx</a></span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

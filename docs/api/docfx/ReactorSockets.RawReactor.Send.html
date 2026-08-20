@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Method Send | ReactorSockets API reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Method Send | ReactorSockets API reference ">
+      
+      
+      <link rel="icon" href="favicon.ico">
+      <link rel="stylesheet" href="public/docfx.min.css">
+      <link rel="stylesheet" href="public/main.css">
+      <meta name="docfx:navrel" content="toc.html">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      <meta name="docfx:rel" content="">
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_RawReactor_Send_.md&amp;value=---%0Auid%3A%20ReactorSockets.RawReactor.Send*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="index.html">
+            <img id="logo" class="svg" src="logo.svg" alt="ReactorSockets">
+            ReactorSockets
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+              <form class="search" role="search" id="search">
+                <i class="bi bi-search"></i>
+                <input class="form-control" id="search-query" type="search" disabled placeholder="Search" autocomplete="off" aria-label="Search">
+              </form>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+
+      <div class="content">
+        <div class="actionbar">
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="ReactorSockets.RawReactor.Send*">
+
+
+
+
+
+<h1 id="ReactorSockets_RawReactor_Send_" data-uid="ReactorSockets.RawReactor.Send*" class="text-break">
+Method Send  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/RawReactor.cs/#L346"><i class="bi bi-code-slash"></i></a>
+</h1>
+
+<div class="facts text-secondary">
+  <dl><dt>Namespace</dt><dd><a class="xref" href="ReactorSockets.html">ReactorSockets</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>ReactorSockets.dll</dd></dl>
+</div>
+
+<div class="markdown summary"></div>
+<div class="markdown conceptual"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<a id="ReactorSockets_RawReactor_Send_" data-uid="ReactorSockets.RawReactor.Send*"></a>
+
+<h3 id="ReactorSockets_RawReactor_Send_ReactorSockets_LinkId_System_ReadOnlySpan_System_Byte__" data-uid="ReactorSockets.RawReactor.Send(ReactorSockets.LinkId,System.ReadOnlySpan{System.Byte})">
+  Send(LinkId, ReadOnlySpan&lt;byte&gt;)
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/RawReactor.cs/#L346"><i class="bi bi-code-slash"></i></a>
+</h3>
+
+<div class="markdown level1 summary"><p><code>Send</code> is stream-only and illegal on a datagram or listening Link. Takes what the socket
+will accept of <code class="paramref">payload</code> right now and reports the count — never blocks, never
+copies and never queues (ADR 0008): whatever the socket did not take stays with the caller, who
+decides whether and when to offer it again. Queuing was rejected on principle, not merely left
+out: an unbounded queue is a memory leak with a network cause, and a bounded one needs a limit
+this library would have to justify plus a way to learn when to retry — which reintroduces this
+same event under another name. Either way the Reactor would be inventing a per-Link FIFO policy,
+which is machinery a Session has and Raw was said not to lend.</p>
+</div>
+<div class="markdown level1 conceptual"></div>
+
+<div class="codewrapper">
+  <pre><code class="lang-csharp hljs">public SendResult Send(LinkId link, ReadOnlySpan&lt;byte&gt; payload)</code></pre>
+</div>
+
+<h4 class="section">Parameters</h4>
+<dl class="parameters">
+  <dt><code>link</code> <a class="xref" href="ReactorSockets.LinkId.html">LinkId</a></dt>
+  <dd></dd>
+  <dt><code>payload</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.readonlyspan-1">ReadOnlySpan</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.byte">byte</a>&gt;</dt>
+  <dd></dd>
+</dl>
+
+<h4 class="section">Returns</h4>
+<dl class="parameters">
+  <dt><a class="xref" href="ReactorSockets.SendResult.html">SendResult</a></dt>
+  <dd></dd>
+</dl>
+
+
+
+
+
+
+
+<h4 class="section" id="ReactorSockets_RawReactor_Send_ReactorSockets_LinkId_System_ReadOnlySpan_System_Byte___remarks">Remarks</h4>
+<div class="markdown level1 remarks"><p>
+A send that takes fewer bytes than <code class="paramref">payload</code>.Length arms exactly one
+<a class="xref" href="ReactorSockets.RawEventKind.html#ReactorSockets_RawEventKind_Writable">Writable</a> for <code class="paramref">link</code>: the next <a class="xref" href="ReactorSockets.RawReactor.Pump.html#ReactorSockets_RawReactor_Pump">Pump()</a>
+that finds the socket writable queues it and clears the mark, so a consumer using this Link
+only ever sees one <code>Writable</code> per short send, never one for every Pump a socket happens to
+be writable (nearly always). A Link never over-sent on produces no <code>Writable</code> at all — the
+event is a reply to something the consumer did, not a status this Reactor volunteers.
+</p>
+<p>
+<i>When</i> that one event arrives is the platform's call, not this Reactor's, and the platforms
+differ by more than a rounding error: Windows offers writability again as soon as the send buffer
+has any room, while Linux waits until roughly half of it is free. A Link whose counterparty reads
+slowly can therefore stay unwritable on Linux long after it would have been writable on Windows,
+with a large auto-tuned send buffer widening the gap. This is reported, not smoothed over —
+synthesising an earlier <code>Writable</code> would mean promising room the socket has not got, and the
+next send would simply come back short again.
+</p>
+<p>
+Fails without throwing (ADR 0008), naming whichever applies: <code class="paramref">link</code> does not
+address an open Link, it does but cannot take a stream send, it was already shut down for
+writing by <a class="xref" href="ReactorSockets.RawReactor.Shutdown.html#ReactorSockets_RawReactor_Shutdown_ReactorSockets_LinkId_">Shutdown(LinkId)</a>, or the socket itself failed. The open check comes first —
+answering an illegality to a stale or garbage <a class="xref" href="ReactorSockets.LinkId.html">LinkId</a> would be a lie about a Link
+that does not exist.
+</p>
+</div>
+
+
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+    <div class="container-xxl search-results" id="search-results"></div>
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          <span>Made with <a href="https://dotnet.github.io/docfx">docfx</a></span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Enum DiagnosticId | ReactorSockets API reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Enum DiagnosticId | ReactorSockets API reference ">
+      
+      <meta name="description" content="A closed, permanent enumeration of diagnostic causes with explicit values in reserved blocks — common 1-99, Raw 100-199, datagram session 200-299, stream session 300-399 (ADR 0013) — so a future insertion cannot silently renumber an id a consumer has persisted. There is no None or Unknown member and zero is never used: every  has a cause by construction.">
+      <link rel="icon" href="favicon.ico">
+      <link rel="stylesheet" href="public/docfx.min.css">
+      <link rel="stylesheet" href="public/main.css">
+      <meta name="docfx:navrel" content="toc.html">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      <meta name="docfx:rel" content="">
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_DiagnosticId.md&amp;value=---%0Auid%3A%20ReactorSockets.DiagnosticId%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="index.html">
+            <img id="logo" class="svg" src="logo.svg" alt="ReactorSockets">
+            ReactorSockets
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+              <form class="search" role="search" id="search">
+                <i class="bi bi-search"></i>
+                <input class="form-control" id="search-query" type="search" disabled placeholder="Search" autocomplete="off" aria-label="Search">
+              </form>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+
+      <div class="content">
+        <div class="actionbar">
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="ReactorSockets.DiagnosticId">
+
+
+
+
+  <h1 id="ReactorSockets_DiagnosticId" data-uid="ReactorSockets.DiagnosticId" class="text-break">
+Enum DiagnosticId  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DiagnosticId.cs/#L10"><i class="bi bi-code-slash"></i></a>
+  </h1>
+
+  <div class="facts text-secondary">
+    <dl><dt>Namespace</dt><dd><a class="xref" href="ReactorSockets.html">ReactorSockets</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>ReactorSockets.dll</dd></dl>
+  </div>
+
+  <div class="markdown summary"><p>A closed, permanent enumeration of diagnostic causes with explicit values in reserved blocks —
+common 1-99, Raw 100-199, datagram session 200-299, stream session 300-399 (ADR 0013) — so a
+future insertion cannot silently renumber an id a consumer has persisted. There is no
+<code>None</code> or <code>Unknown</code> member and zero is never used: every <a class="xref" href="ReactorSockets.DiagnosticRecord.html">DiagnosticRecord</a>
+has a cause by construction.</p>
+</div>
+  <div class="markdown conceptual"></div>
+
+  <div class="codewrapper">
+    <pre><code class="lang-csharp hljs">public enum DiagnosticId</code></pre>
+  </div>
+
+
+
+
+
+
+
+
+
+  <h2 id="fields">Fields
+</h2>
+  <dl class="parameters">
+    <dt id="ReactorSockets_DiagnosticId_AdmissionCapReached"><code>AdmissionCapReached = 1</code></dt>
+  
+  <dd><p>The configured admission cap was hit this Pump with work still waiting to be admitted. No
+subject. <code>Value0</code> is the cap, <code>Value1</code> is the count of Admissions declined,
+counted as the Reactor's counters count them: once per declining where the work waits out of
+reach — a listening Link or bound endpoint with a pending connection it left in the OS
+backlog, never the number of connections left there, a depth unknowable without accepting —
+and once per piece of work where the Reactor was holding it, whether it then waits or is
+Discarded.</p>
+</dd>
+    <dt id="ReactorSockets_DiagnosticId_ArenaExhausted"><code>ArenaExhausted = 2</code></dt>
+  
+  <dd><p>The frame arena had no room left for a request, regardless of the read-share escape.
+Subject is the Link that made the request. <code>Value0</code> is the bytes requested,
+<code>Value1</code> is the arena's bytes free at the moment of the request.</p>
+</dd>
+    <dt id="ReactorSockets_DiagnosticId_CapacityExhausted"><code>CapacityExhausted = 3</code></dt>
+  
+  <dd><p>Every capacity slot was occupied this Pump with work still waiting to be admitted — a
+different exhaustion from <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_AdmissionCapReached">AdmissionCapReached</a>, reachable because the admission
+cap can be configured above <a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a>. No subject.
+<code>Value0</code> is the capacity, <code>Value1</code> is the count of Admissions declined, counted the
+same way and with the same limit as <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_AdmissionCapReached">AdmissionCapReached</a>'s.</p>
+</dd>
+    <dt id="ReactorSockets_DiagnosticId_LinkFailed"><code>LinkFailed = 100</code></dt>
+  
+  <dd><p>A registered Link failed and closed. Subject is the Link. <code>Value0</code> carries the
+platform <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> as its underlying integer value;
+<code>Value1</code> is unused.</p>
+</dd>
+    <dt id="ReactorSockets_DiagnosticId_DestinationUnreachable"><code>DestinationUnreachable = 101</code></dt>
+  
+  <dd><p>An ICMP port-unreachable (or platform equivalent) was reported for a send. Subject is the
+Link. <code>Value0</code> carries the platform <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> as its
+underlying integer value; <code>Value1</code> is unused.</p>
+</dd>
+    <dt id="ReactorSockets_DiagnosticId_DatagramTruncated"><code>DatagramTruncated = 102</code></dt>
+  
+  <dd><p>A datagram exceeded the Reactor's scratch buffer and was truncated. Subject is the claimed
+Source. <code>Value0</code> is the scratch buffer size in bytes; <code>Value1</code> is unused.</p>
+</dd>
+    <dt id="ReactorSockets_DiagnosticId_DatagramMalformed"><code>DatagramMalformed = 200</code></dt>
+  <dd><p>A datagram was discarded because nothing in it could be attributed to a Peer: wrong length,
+an unknown control type, a body the declared type cannot fill, padding that was not zero, a
+session id naming no Session, or a well-formed control reply — a Cookie, an Accept, a
+Refusal — matching no dial this Reactor is waiting on. That last case is not a parse failure,
+but it is the same thing to a consumer: bytes arrived, named nobody, and went nowhere.
+Subject is the claimed Source. <code>Value0</code> is the bytes received; <code>Value1</code> is unused.</p>
+<p>A remote can produce this at will by sending rubbish, which is exactly why it is a Diagnostic
+and never an Event: the event stream is the consumer's protocol, and an unauthenticated
+stranger must not be able to write to it. <a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a> rather than
+<a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Error">Error</a> for the same reason — nothing is wrong with this Reactor.</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_CookieRejected"><code>CookieRejected = 201</code></dt>
+  <dd><p>A Hello carried a cookie this Reactor did not mint, or minted too long ago: a forged or
+corrupted authenticator, a cookie replayed from a different source address, or one from an
+epoch older than the previous. Subject is the claimed Source. <code>Value0</code> is the epoch the
+cookie offered; <code>Value1</code> is the epoch current at the moment it was checked.</p>
+<p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>, never <a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Error">Error</a>: a cookie
+arriving one epoch after it was minted is the mechanism working, and a Reactor visible to the
+internet will see forged ones continuously. Raising this to Error would train a consumer to
+ignore Error.</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_VersionRefused"><code>VersionRefused = 202</code></dt>
+  <dd><p>A cookie-validated Hello offered a protocol version this Reactor does not speak, and was
+refused. Subject is the claimed Source. <code>Value0</code> is the version offered; <code>Value1</code> is
+the version this Reactor requires.</p>
+<p>Emitted only for a Hello that passed the cookie check, because that is the only Hello a
+Reactor answers at all — a bare Hello is answered with a Cookie and nothing else, whatever
+version it claimed.</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_PeerRefused"><code>PeerRefused = 300</code></dt>
+  <dd><p>A dialler was refused in-protocol during the stream handshake, either because it announced a
+different protocol version or because every capacity Slot was occupied. Subject is the claimed
+Source: at refusal time there is no Peer, only a claimed origin. For a capacity refusal,
+<code>Value0</code> is this Reactor's capacity and <code>Value1</code> is unused. For a version refusal,
+<code>Value0</code> is the version offered and <code>Value1</code> is the version this Reactor requires.</p>
+<p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Info">Info</a>, not <a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>: a version mismatch
+on an upgrade and an ordinary burst at capacity are both routine, expected outcomes of running
+this profile, not conditions a consumer needs to act on.</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_LingerNegotiated"><code>LingerNegotiated = 301</code></dt>
+  
+  <dd><p>A stream handshake completed and the two ends' announced Linger values were negotiated to their
+minimum (ADR 0011). Subject is the newly established Peer. <code>Value0</code> is this end's own
+Linger in milliseconds; <code>Value1</code> is the effective (minimum) Linger in milliseconds.</p>
+</dd>
+    <dt id="ReactorSockets_DiagnosticId_MalformedFraming"><code>MalformedFraming = 302</code></dt>
+  <dd><p>An established Peer's Message framing broke this profile's rules and the Session was closed
+with <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_ProtocolViolation">ProtocolViolation</a>: an oversized or zero-length prefix, or a
+stream that ended before a prefix or the Message body it named had fully arrived. Subject is
+the Peer. <code>Value0</code> is the offending length prefix — 0 for a truncation, where no full
+prefix was ever read; <code>Value1</code> is this Reactor's own <code>MaxMessageSize</code>.</p>
+<p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>: a remote can produce this at will by sending malformed
+bytes, which is exactly why the Session ends rather than throws, and why this is a Diagnostic
+rather than an Event on the consumer's own stream.</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_DataAfterGoodbye"><code>DataAfterGoodbye = 303</code></dt>
+  <dd><p>An established Peer sent Message bytes after its own Goodbye had already been received, and
+the Session was closed with <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_ProtocolViolation">ProtocolViolation</a> (issue #93).
+Subject is the Peer. Carries no claimed length — <span class="xref">ReactorSockets.Session.MessageFramingLegality</span> reaches
+this outcome before ever reading a prefix, so there is nothing to report but the contradiction
+itself. <code>Value0</code> and <code>Value1</code> are unused.</p>
+<p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>, for the same reason as <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_MalformedFraming">MalformedFraming</a>: a
+remote can produce this at will by ignoring the Goodbye it just sent.</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_ResumeMatched"><code>ResumeMatched = 304</code></dt>
+  <dd><p>A connection presenting a valid resume secret was matched onto the Interrupted Peer whose Slot
+was reserving the Session it named, and that Session continued over the replacement transport
+rather than a new one being established (issue #123, ADR 0011). Subject is the resumed Peer —
+the same <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a>, generation included, the Session had before the interruption,
+since nothing about a Peer's identity is renewed by a Resume. <code>Value0</code> is the number of
+retained outbound bytes the match rewound to the counter the Resume reported; <code>Value1</code> is
+unused.</p>
+<p>
+<a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Info">Info</a>: a reconnection is the outcome reserving a Slot exists to
+produce, not a condition a consumer needs to act on.
+</p>
+<p>
+<code>Value0</code> reads 0 until issue #127 supplies the rewind: this slice matches the Resume and
+reads the counter it reports without acting on it, so no bytes have been rewound yet and 0 is
+what the match can honestly report.
+</p>
+<p>
+Numbered 304 rather than the 302 the slice-4 spec named: 302 and 303 were taken by
+<a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_MalformedFraming">MalformedFraming</a> and <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DataAfterGoodbye">DataAfterGoodbye</a> (issues #92 and #106) after
+that spec was written, and a value published in a closed permanent enum is never renumbered.
+</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_ResumeUnmatched"><code>ResumeUnmatched = 305</code></dt>
+  <dd><p>A connection claiming an existing Session was refused rather than resumed. Subject is the
+claimed Source: a claim that is not matched comes from a party that is by construction not a
+Peer, so there is no Peer to name, only a claimed origin. <code>Value0</code> is the number of
+Interrupted Peers whose reservations the claim was checked against — 0 means nothing was being
+held at all, which is the reconfiguration path where a once-valid secret arrives after its
+Linger expired. <code>Value1</code> is the wire record type the claim arrived as: 3 for a Resume
+whose secret matched no held Peer, and 1 for a Hello presenting a secret that did match, which
+re-announces the parameters a Resume has no field for and is refused as a protocol violation.</p>
+<p>
+<a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a> rather than the <a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Info">Info</a> a version
+mismatch or a capacity refusal carries: those are routine outcomes of running this profile and
+a wrong secret is not.
+</p>
+<p>
+"Unmatched" names the outcome, not the comparison: the claim was not matched onto a Session.
+The Hello case reaches here having found the secret it announced, and is refused anyway because
+the record it arrived in re-announces parameters — <code>Value1</code> is what tells the two apart.
+</p>
+<p>
+<code>Value0</code> is reported to this end's own Sink and never to the wire: a refused party is
+closed on without being told anything, so it learns neither the count nor which of the three
+refusals it met.
+</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_RedialAttempted"><code>RedialAttempted = 306</code></dt>
+  <dd><p>A dialling-side Peer began a fresh re-dial attempt after its transport was lost (issue #125,
+ADR 0011). Subject is the Peer. <code>Value0</code> is the attempt number, starting at 1 and rising by
+one per attempt; <code>Value1</code> is the delay in milliseconds this attempt actually waited before
+dialling — the jittered figure <span class="xref">ReactorSockets.Session.RedialSchedule.NextDelay()</span> drew, so
+what actually elapsed is observable rather than only the computed figure before jitter.</p>
+<p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Info">Info</a>: a re-dial is the ordinary behaviour of a dialling Peer that
+lost its transport, not a condition a consumer needs to act on.</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_RedialFailed"><code>RedialFailed = 307</code></dt>
+  <dd><p>A re-dial attempt could not connect (issue #125, ADR 0011). Subject is the Peer, which this
+never closes — it stays Interrupted and waits out the schedule's next delay, leaving Linger,
+not an attempt count, the only thing that ever closes it. <code>Value0</code> carries the platform
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> as its underlying integer value; <code>Value1</code> is
+the attempt number that failed.</p>
+<p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Info">Info</a> rather than <a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>: under this
+profile's premise a failed reconnection attempt is an ordinary, expected outcome, and raising it
+to Warn would train a consumer to ignore Warn.</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_DeliveryCounterRefused"><code>DeliveryCounterRefused = 308</code></dt>
+  <dd><p>An established Peer's delivery-counter record (issue #109) claimed to have received more
+Messages than this end has ever sent it, and the Session was closed with
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_ProtocolViolation">ProtocolViolation</a> (issue #113) — the peer is confirming Messages
+this end never queued, rather than merely repeating a count it already reported. Subject is the
+Peer. <code>Value0</code> is the claimed cumulative count; <code>Value1</code> is the count of Messages (and,
+if this end's own Goodbye has already been queued for this Peer, that too) this end has actually
+appended to this Peer's retention — the largest count a legitimate confirmation could ever sit
+at or below.</p>
+<p>
+<a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>, for the same reason as <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_MalformedFraming">MalformedFraming</a>: a
+remote can produce this at will by inflating its own counter.
+</p>
+<p>
+Numbered 308 rather than the next free 304: ADR 0013's roster, as amended for this slice, reserves
+304-307 for the rest of slice 4 (<a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_ResumeMatched">ResumeMatched</a> and <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_ResumeUnmatched">ResumeUnmatched</a>,
+which issue #124 has since taken, then RedialAttempted and RedialFailed), and a value published
+in a closed permanent enum cannot be moved later to make room.
+</p>
+</dd>
+  
+  </dl>
+
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+    <div class="container-xxl search-results" id="search-results"></div>
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          <span>Made with <a href="https://dotnet.github.io/docfx">docfx</a></span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

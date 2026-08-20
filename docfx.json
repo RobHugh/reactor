@@ -1,0 +1,39 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/docfx/main/schemas/docfx.schema.json",
+  "metadata": [
+    {
+      "src": [
+        {
+          "src": "src/ReactorSockets",
+          "files": [ "ReactorSockets.csproj" ]
+        }
+      ],
+      "dest": "docs/.reference",
+      "namespaceLayout": "nested",
+      "memberLayout": "separatePages",
+      "enumSortOrder": "declaringOrder"
+    }
+  ],
+  "build": {
+    "content": [
+      {
+        "src": "docs/.docfx",
+        "files": [ "index.md" ],
+        "dest": "."
+      },
+      {
+        "src": "docs/.reference",
+        "files": [ "**/*.{md,yml}" ],
+        "dest": "."
+      }
+    ],
+    "output": "docs/api/docfx",
+    "template": [ "default", "modern" ],
+    "globalMetadata": {
+      "_appName": "ReactorSockets",
+      "_appTitle": "ReactorSockets API reference",
+      "_disableContribution": true,
+      "_enableSearch": true
+    }
+  }
+}
