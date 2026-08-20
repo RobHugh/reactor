@@ -94,14 +94,17 @@ public class DatagramSessionSpaceRoutingTests
     [Fact]
     public void Pump_RecordFarAheadOfItsSpacesWindow_IsDiscardedCountedOnceAndLeavesTheBaseUnmoved()
     {
-        // Arrange — a 4-fragment window based at 0 spans [0, 4); 100 is unreachably far ahead.
+        // Arrange — a 4-fragment window based at 0 spans [0, 4); 100 is unreachably far ahead. Uses
+        // ReliableOrdered rather than Unreliable: since #173, Unreliable's window slides a far-ahead
+        // arrival in rather than discarding it (retransmission fills a reliable Space's holes, so only
+        // a reliable Space keeps the discard-and-leave-the-base-unmoved behaviour this test pins).
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 4);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        byte[] farAhead = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence: 100, payload: [])];
+        byte[] farAhead = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableOrdered, sequence: 100, payload: [])];
 
         // Act
         ulong datagramsReceivedBefore = accepter.Reactor.Counters.DatagramsReceived;
@@ -120,7 +123,7 @@ public class DatagramSessionSpaceRoutingTests
         // retired the instant it admits, which is what lets the resend below tell admitted-and-held
         // apart from already-out-of-window: were the far-ahead arrival to have dragged the base
         // forward, 3 would now fall below it and classify as out-of-window instead of admitting.
-        byte[] atTheOldBasesFarEdge = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence: 3, payload: [])];
+        byte[] atTheOldBasesFarEdge = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableOrdered, sequence: 3, payload: [])];
         datagramsReceivedBefore = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), atTheOldBasesFarEdge);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
@@ -188,8 +191,11 @@ public class DatagramSessionSpaceRoutingTests
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        // Act — sequence 100 is unreachably far ahead of the Unreliable Space alone.
-        byte[] farAheadInOneSpace = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence: 100, payload: [])];
+        // Act — sequence 100 is unreachably far ahead of the ReliableUnordered Space alone. Uses
+        // ReliableUnordered rather than Unreliable: since #173, Unreliable's window slides a far-ahead
+        // arrival in rather than discarding it, so only a reliable Space still produces an
+        // OutOfWindow discard here.
+        byte[] farAheadInOneSpace = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableUnordered, sequence: 100, payload: [])];
         ulong datagramsReceivedBefore = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), farAheadInOneSpace);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
@@ -201,8 +207,8 @@ public class DatagramSessionSpaceRoutingTests
         byte[] admittedInTheOtherThree =
         [
             .. BuildHeader(sessionId),
+            .. BuildRecord(ModeUnreliable, sequence: 0, payload: []),
             .. BuildRecord(ModeUnreliableSequenced, sequence: 0, payload: []),
-            .. BuildRecord(ModeReliableUnordered, sequence: 0, payload: []),
             .. BuildRecord(ModeReliableOrdered, sequence: 0, payload: []),
         ];
         datagramsReceivedBefore = accepter.Reactor.Counters.DatagramsReceived;

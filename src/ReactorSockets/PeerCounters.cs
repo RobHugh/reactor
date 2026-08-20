@@ -46,9 +46,20 @@ namespace ReactorSockets;
 /// and for the same reason is a Counter. Added ahead of the classification code that increments it
 /// (issue #170); a freshly connected Peer reads zero.
 /// </param>
+/// <param name="UnreliableLossPackets">
+/// How many sequences the <c>Unreliable</c> Space's receive window has lost — retired by sliding its
+/// base forward before that sequence ever arrived (issue #173, ADR 0013). A gap is provisional until
+/// the window passes it by: a sequence still inside the window may yet arrive late and be admitted
+/// without ever touching this figure, so it reflects only sequences the window has moved past, never
+/// every sequence not yet seen. Scoped to the <c>Unreliable</c> Space alone — the other three Spaces'
+/// figures, including <c>UnreliableSequenced</c>'s, do not move this one. No Diagnostic accompanies a
+/// gap; a lossy path must not fill the Sink with volume. Monotonic and never reset, exactly like
+/// <see cref="OutOfWindowPackets"/>; a freshly connected Peer reads zero.
+/// </param>
 public readonly record struct PeerCounters(
     ulong MessagesReceived,
     ulong RetentionHighWaterBytes,
     ulong Resumes,
     ulong OutOfWindowPackets,
-    ulong DuplicatePackets);
+    ulong DuplicatePackets,
+    ulong UnreliableLossPackets);

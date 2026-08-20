@@ -249,6 +249,132 @@ public class ReceiveWindowTests
     }
 
     [Fact]
+    public void Classify_NonSlidingWindowSequenceFarAboveWindow_LeavesLastSlideLossAtZero()
+    {
+        // Arrange — the default (slides: false) window, matching every existing caller.
+        ReceiveWindow window = new(capacityFragments: 4);
+
+        // Act
+        ReceiveWindowOutcome outcome = window.Classify(1_000);
+
+        // Assert — refused, not slid, and nothing reported lost.
+        outcome.Should().Be(ReceiveWindowOutcome.OutOfWindow);
+        window.Base.Should().Be(0);
+        window.LastSlideLoss.Should().Be(0);
+    }
+
+    [Fact]
+    public void Classify_SlidingWindowSequenceOnePastTheFarEdge_SlidesByOneAndCountsTheSkippedBaseAsLoss()
+    {
+        // Arrange — capacity 4 based at 0 spans [0, 3]; sequence 4 is one past the edge. The window's
+        // own base slot (0) is a hole by construction — nothing has arrived yet — so admitting 4 must
+        // slide past sequence 0 without it ever having been seen: that is the loss this ticket exists
+        // to count, and it happens on the very first far-ahead arrival, not only after a visible hole.
+        ReceiveWindow window = new(capacityFragments: 4, slides: true);
+
+        // Act
+        ReceiveWindowOutcome outcome = window.Classify(4);
+
+        // Assert — the base slides forward exactly one, to keep 4 at the far edge (span [1, 4]).
+        outcome.Should().Be(ReceiveWindowOutcome.Admitted);
+        window.Base.Should().Be(1);
+        window.LastSlideLoss.Should().Be(1);
+    }
+
+    [Fact]
+    public void Classify_SlidingWindowFarAheadArrivalLeavesAnUnadmittedHoleBehind_ReportsOneLostPerHole()
+    {
+        // Arrange — capacity 4 based at 0 spans [0, 3]. 0, 1 and 2 admit in order, leaving 3 a hole
+        // and the base stuck at 3 (span [3, 6]).
+        ReceiveWindow window = new(capacityFragments: 4, slides: true);
+        window.Classify(0);
+        window.Classify(1);
+        window.Classify(2);
+        window.Base.Should().Be(3);
+
+        // Act — 7 is one past the far edge (span [3, 6]); sliding to admit it must pass the hole at 3.
+        ReceiveWindowOutcome outcome = window.Classify(7);
+
+        // Assert — exactly one sequence (3) was retired un-admitted, and the base now sits past it.
+        outcome.Should().Be(ReceiveWindowOutcome.Admitted);
+        window.LastSlideLoss.Should().Be(1);
+        window.Base.Should().BeGreaterThan(3);
+    }
+
+    [Fact]
+    public void Classify_SlidingWindowJumpWiderThanCapacity_CountsSequencesNeverTrackedAsLossToo()
+    {
+        // Arrange — capacity 4 based at 0. A jump to sequence 100 retires the whole ring (4 slots,
+        // none admitted) plus every sequence between the old far edge and the new one that never had a
+        // slot to be tracked in at all.
+        ReceiveWindow window = new(capacityFragments: 4, slides: true);
+
+        // Act — the window's new base is 100 - 4 + 1 = 97, so 97 sequences (0 through 96) are retired.
+        ReceiveWindowOutcome outcome = window.Classify(100);
+
+        // Assert
+        outcome.Should().Be(ReceiveWindowOutcome.Admitted);
+        window.Base.Should().Be(97);
+        window.LastSlideLoss.Should().Be(97);
+    }
+
+    [Fact]
+    public void Classify_SlidingWindowLateArrivalStillInsideWindowBeforeAnySlide_AdmitsWithZeroLoss()
+    {
+        // Arrange — capacity 4 based at 0 spans [0, 3]. 0 and 2 admit, leaving a hole at 1; the base
+        // stays at 1 (blocked by that hole), well inside the window's current span.
+        ReceiveWindow window = new(capacityFragments: 4, slides: true);
+        window.Classify(0);
+        window.Classify(2);
+        window.Base.Should().Be(1);
+
+        // Act — 1 arrives late but the window never had to slide to make room for it.
+        ReceiveWindowOutcome outcome = window.Classify(1);
+
+        // Assert — admitted, base now past both, and nothing was ever counted as lost: a sequence
+        // still inside the window when it arrives leaves no permanent gap.
+        outcome.Should().Be(ReceiveWindowOutcome.Admitted);
+        window.Base.Should().Be(3);
+        window.LastSlideLoss.Should().Be(0);
+    }
+
+    [Fact]
+    public void Classify_SlidingWindowDuplicateAfterASlide_ReportsZeroLoss()
+    {
+        // Arrange — sequence 4 arrives first, sliding a capacity-4 window based at 0 (span [0, 3]) one
+        // step forward to base 1 (span [1, 4]) and counting the skipped sequence 0 as one loss.
+        ReceiveWindow window = new(capacityFragments: 4, slides: true);
+        window.Classify(4);
+        window.LastSlideLoss.Should().Be(1);
+        window.Base.Should().Be(1);
+
+        // Act — resend the same sequence; it is still tracked inside the window, so nothing slides
+        // and this call reports no further loss.
+        ReceiveWindowOutcome outcome = window.Classify(4);
+
+        // Assert
+        outcome.Should().Be(ReceiveWindowOutcome.Duplicate);
+        window.LastSlideLoss.Should().Be(0);
+    }
+
+    [Fact]
+    public void Classify_SlidingWindowSequenceBelowBase_ReturnsOutOfWindowWithZeroLoss()
+    {
+        // Arrange — a slide that leaves the base at 1.
+        ReceiveWindow window = new(capacityFragments: 4, slides: true);
+        window.Classify(4);
+        window.Base.Should().Be(1);
+
+        // Act — 0 is below the base: already retired, not a new far-ahead arrival.
+        ReceiveWindowOutcome outcome = window.Classify(0);
+
+        // Assert — out of window, exactly as a non-sliding window reports a below-base sequence, and
+        // no slide happens for a sequence behind the base.
+        outcome.Should().Be(ReceiveWindowOutcome.OutOfWindow);
+        window.LastSlideLoss.Should().Be(0);
+    }
+
+    [Fact]
     public void Constructor_CapacityBelowOne_ThrowsArgumentOutOfRangeException()
     {
         // Arrange, Act

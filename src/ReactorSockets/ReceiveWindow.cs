@@ -22,9 +22,12 @@ public enum ReceiveWindowOutcome
     Duplicate,
 
     /// <summary>
-    /// The sequence lay outside the window: below <see cref="ReceiveWindow.Base"/> (already retired)
-    /// or at or beyond the window's far edge (not yet reachable). The window is unchanged; in
-    /// particular a far-ahead sequence never advances the base past data that has not arrived.
+    /// The sequence lay outside the window: below <see cref="ReceiveWindow.Base"/> (already retired),
+    /// or — for a window built with <c>slides: false</c> (#40, #170) — at or beyond the far edge
+    /// (not yet reachable), in which case the window is unchanged and a far-ahead sequence never
+    /// advances the base past data that has not arrived. A window built with <c>slides: true</c>
+    /// (#173) never reports this for a far-ahead sequence: it slides instead, so for such a window
+    /// this outcome means only "below the base".
     /// </summary>
     OutOfWindow,
 }
@@ -49,16 +52,21 @@ public enum ReceiveWindowOutcome
 /// <para>
 /// <b>Fixed at construction.</b> The window's size — in practice
 /// <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>, already validated against its
-/// floor by <see cref="DatagramSessionOptions.Validate"/> — never changes after construction. A
-/// sequence the window cannot currently hold is not an error it resolves: <see cref="Classify"/>
-/// reports <see cref="ReceiveWindowOutcome.OutOfWindow"/> and leaves <see cref="Base"/> exactly where
-/// it was, so a far-ahead packet can never drag the base forward past a hole that has not been
-/// filled.
+/// floor by <see cref="DatagramSessionOptions.Validate"/> — never changes after construction. Whether
+/// the window slides is fixed at construction too (#173): a <c>slides: false</c> window treats a
+/// sequence it cannot currently hold as nothing to resolve — <see cref="Classify"/> reports
+/// <see cref="ReceiveWindowOutcome.OutOfWindow"/> and leaves <see cref="Base"/> exactly where it was,
+/// so a far-ahead packet can never drag the base forward past a hole that has not been filled. A
+/// <c>slides: true</c> window instead slides its base forward to make room, retiring whatever the
+/// slide passes by un-admitted; see <see cref="LastSlideLoss"/>.
 /// </para>
 /// <para>
 /// <b>No allocation after construction.</b> The only storage this type owns is the <c>bool[]</c>
 /// backing array allocated once in the constructor. <see cref="Classify"/> only reads and writes that
-/// array and a handful of value-typed fields, so no sequence of arrivals ever allocates.
+/// array and a handful of value-typed fields, so no sequence of arrivals ever allocates. A slide walks
+/// at most <see cref="Capacity"/> array slots — the same bound <see cref="AdvanceBase"/> already
+/// has — so it stays allocation-free and its cost is bounded by construction, not by how far ahead the
+/// arriving sequence is.
 /// </para>
 /// </remarks>
 public sealed class ReceiveWindow
@@ -69,6 +77,12 @@ public sealed class ReceiveWindow
     /// currently occupies, and a slot is reused once the base advances past it.
     /// </summary>
     private readonly bool[] _admitted;
+
+    /// <summary>
+    /// Whether this window slides its base forward to admit a far-ahead arrival instead of refusing
+    /// it (#173). Fixed at construction; see <see cref="ReceiveWindow(int, uint, bool)"/>.
+    /// </summary>
+    private readonly bool _slides;
 
     /// <summary>The sequence at the window's lower edge. See <see cref="Base"/>.</summary>
     private uint _base;
@@ -95,8 +109,17 @@ public sealed class ReceiveWindow
     /// window can be built already positioned anywhere in the sequence space, including a test that
     /// places it at the <c>u32</c> wrap boundary without walking every sequence up to it.
     /// </param>
+    /// <param name="slides">
+    /// Whether a sequence at or beyond the window's far edge slides the base forward to admit it,
+    /// rather than being refused (#173). Defaults to <see langword="false"/> — today's behaviour for
+    /// every window built before this parameter existed, and the one <c>ReliableOrdered</c> and
+    /// <c>ReliableUnordered</c> keep: retransmission fills their holes, so sliding would retire data
+    /// that was about to arrive. <c>Unreliable</c> and <c>UnreliableSequenced</c> pass
+    /// <see langword="true"/>, because nothing retransmits into them and a window that never advances
+    /// past a hole would stall forever after the first real loss.
+    /// </param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="capacityFragments"/> is less than 1.</exception>
-    public ReceiveWindow(int capacityFragments, uint initialBase = 0)
+    public ReceiveWindow(int capacityFragments, uint initialBase = 0, bool slides = false)
     {
         if (capacityFragments < 1)
         {
@@ -110,6 +133,7 @@ public sealed class ReceiveWindow
         _admitted = new bool[capacityFragments];
         _base = initialBase;
         _baseSlot = 0;
+        _slides = slides;
     }
 
     /// <summary>
@@ -125,20 +149,37 @@ public sealed class ReceiveWindow
     public int Capacity { get; }
 
     /// <summary>
+    /// How many sequences the most recent <see cref="Classify"/> call retired un-admitted by sliding
+    /// the base forward (#173) — zero unless that call both slid the window and this window was built
+    /// with <c>slides: true</c>. Read after <see cref="Classify"/> returns; a caller that wants to
+    /// raise a loss figure by the right amount reads this once per call rather than assuming a slide
+    /// only ever loses one sequence, since a jump can retire several holes at once. Reset to zero at
+    /// the start of every <see cref="Classify"/> call, so a call that does not slide reports zero even
+    /// if an earlier call slid.
+    /// </summary>
+    public ulong LastSlideLoss { get; private set; }
+
+    /// <summary>
     /// Classifies <paramref name="sequence"/> against the window's current span. When it is new and
     /// within the span, it is admitted: recorded, and then <see cref="Base"/> is advanced across it
-    /// and every already-admitted sequence contiguous above it, stopping at the first hole. Nothing
-    /// else changes the window's state.
+    /// and every already-admitted sequence contiguous above it, stopping at the first hole. For a
+    /// window built with <c>slides: true</c> (#173), a sequence at or beyond the far edge instead
+    /// slides the base forward until the sequence fits, retiring whatever the slide passes by
+    /// un-admitted — see <see cref="LastSlideLoss"/> — and then admits it. Nothing else changes the
+    /// window's state.
     /// </summary>
     /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
     /// <returns>
     /// <see cref="ReceiveWindowOutcome.Admitted"/> the first time a sequence inside the window is
-    /// seen; <see cref="ReceiveWindowOutcome.Duplicate"/> if it was already recorded;
-    /// <see cref="ReceiveWindowOutcome.OutOfWindow"/> if it lies below <see cref="Base"/> or at or
-    /// beyond the window's far edge.
+    /// seen, including one admitted by a slide; <see cref="ReceiveWindowOutcome.Duplicate"/> if it was
+    /// already recorded; <see cref="ReceiveWindowOutcome.OutOfWindow"/> if it lies below
+    /// <see cref="Base"/>, or — only for a window built with <c>slides: false</c> — at or beyond the
+    /// window's far edge.
     /// </returns>
     public ReceiveWindowOutcome Classify(uint sequence)
     {
+        LastSlideLoss = 0;
+
         bool atOrAboveBase = sequence == _base || Session.SequenceNumber.IsNewerThan(sequence, _base);
         if (!atOrAboveBase)
         {
@@ -155,9 +196,15 @@ public sealed class ReceiveWindow
         uint offset = unchecked(sequence - _base);
         if (offset >= (uint)Capacity)
         {
-            // At or beyond the far edge: not yet reachable. The base stays exactly where it was, so a
-            // far-ahead packet can never drag it forward past data that has not arrived.
-            return ReceiveWindowOutcome.OutOfWindow;
+            if (!_slides)
+            {
+                // At or beyond the far edge: not yet reachable. The base stays exactly where it was,
+                // so a far-ahead packet can never drag it forward past data that has not arrived.
+                return ReceiveWindowOutcome.OutOfWindow;
+            }
+
+            SlideTo(sequence);
+            offset = unchecked(sequence - _base);
         }
 
         int slot = (int)((_baseSlot + offset) % (uint)Capacity);
@@ -186,5 +233,46 @@ public sealed class ReceiveWindow
             _baseSlot = _baseSlot + 1 == Capacity ? 0 : _baseSlot + 1;
             _base = unchecked(_base + 1);
         }
+    }
+
+    /// <summary>
+    /// Slides the base forward until <paramref name="sequence"/> sits exactly at the window's new far
+    /// edge, called only for a <c>slides: true</c> window when <paramref name="sequence"/> arrived at
+    /// or beyond the current far edge. Every slot the slide passes by that was not admitted is one
+    /// lost sequence, tallied into <see cref="LastSlideLoss"/>; a slot that was admitted is data
+    /// already received, so it is cleared and reused rather than counted as loss. The walk over
+    /// <see cref="_admitted"/> is bounded at <see cref="Capacity"/> slots regardless of how far ahead
+    /// <paramref name="sequence"/> is — a jump wider than the window retires the whole ring in one
+    /// pass and folds every sequence beyond it straight into the loss tally, since those were never
+    /// tracked by a slot at all.
+    /// </summary>
+    private void SlideTo(uint sequence)
+    {
+        uint newBase = unchecked(sequence - (uint)Capacity + 1);
+        uint retiredCount = unchecked(newBase - _base);
+        int slotsToWalk = retiredCount < (uint)Capacity ? (int)retiredCount : Capacity;
+
+        ulong lost = 0;
+        for (int i = 0; i < slotsToWalk; i++)
+        {
+            if (_admitted[_baseSlot])
+            {
+                _admitted[_baseSlot] = false;
+            }
+            else
+            {
+                lost++;
+            }
+
+            _baseSlot = _baseSlot + 1 == Capacity ? 0 : _baseSlot + 1;
+        }
+
+        if (retiredCount > (uint)Capacity)
+        {
+            lost += retiredCount - (uint)Capacity;
+        }
+
+        _base = newBase;
+        LastSlideLoss = lost;
     }
 }

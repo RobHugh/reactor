@@ -83,11 +83,31 @@ internal sealed class PeerCounterSet
     public ulong DuplicatePackets { get; private set; }
 
     /// <summary>
+    /// Records <paramref name="count"/> sequences the <c>Unreliable</c> Space's receive window retired
+    /// un-admitted by sliding its base forward (issue #173, ADR 0013) — a gap the window has passed by
+    /// rather than one still reachable inside its span. Called from <see cref="DatagramSessionReactor"/>'s
+    /// data path once a record classified against the <c>Unreliable</c> Space reports
+    /// <see cref="ReceiveWindow.LastSlideLoss"/> greater than zero. A single arrival can slide the
+    /// window past more than one gap at once, which is why this takes a count rather than being called
+    /// once per lost sequence: adding the whole figure in one op keeps the hot path a single add
+    /// regardless of how wide the jump was. No Diagnostic accompanies this — a lossy path must not
+    /// fill the Sink with volume (ADR 0013).
+    /// </summary>
+    public void RecordUnreliableLoss(ulong count) => UnreliableLossPackets += count;
+
+    /// <summary>
+    /// The live count of sequences lost from the <c>Unreliable</c> Space so far — the same figure
+    /// <see cref="Snapshot"/> exposes as <see cref="PeerCounters.UnreliableLossPackets"/>. Monotonic
+    /// and never reset, exactly like <see cref="MessagesReceived"/>.
+    /// </summary>
+    public ulong UnreliableLossPackets { get; private set; }
+
+    /// <summary>
     /// Takes a point-in-time snapshot of every counter belonging to this Peer.
     /// <paramref name="retentionHighWaterBytes"/> is pulled fresh from <see cref="RetentionArena"/> by
     /// the caller (ADR 0005 — Counters are pulled, not pushed) rather than held here, since this set
     /// holds only what a Peer increments on its own hot path.
     /// </summary>
     public PeerCounters Snapshot(ulong retentionHighWaterBytes) =>
-        new(MessagesReceived, retentionHighWaterBytes, Resumes, OutOfWindowPackets, DuplicatePackets);
+        new(MessagesReceived, retentionHighWaterBytes, Resumes, OutOfWindowPackets, DuplicatePackets, UnreliableLossPackets);
 }
