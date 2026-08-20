@@ -10,7 +10,7 @@ namespace ReactorSockets.Transports;
 /// socket's.
 /// </summary>
 /// <remarks>
-/// <see cref="DualMode"/> is never set, for the same reason as <see cref="UdpLink"/>: a consumer
+/// <see cref="Socket.DualMode"/> is never set, for the same reason as <see cref="UdpLink"/>: a consumer
 /// wanting both address families binds twice. On Windows, <c>ExclusiveAddressUse</c> is set
 /// explicitly so binds are exclusive on every platform identically. The backlog length passed to
 /// <see cref="Socket.Listen()"/> is left at the runtime's own default (the largest the platform

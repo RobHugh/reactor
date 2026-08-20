@@ -9,7 +9,7 @@ namespace ReactorSockets.Transports;
 /// the socket and its bound address (ADR 0008, ADR 0012).
 /// </summary>
 /// <remarks>
-/// <see cref="DualMode"/> is never set: <see cref="IPAddress.Any"/> binds IPv4, <see cref="IPAddress.IPv6Any"/>
+/// <see cref="Socket.DualMode"/> is never set: <see cref="IPAddress.Any"/> binds IPv4, <see cref="IPAddress.IPv6Any"/>
 /// binds IPv6, and a consumer wanting both binds twice (ADR 0014). On Windows, <c>ExclusiveAddressUse</c>
 /// is set explicitly so that binds are exclusive on every platform identically rather than by the
 /// accident of <c>SO_REUSEADDR</c>'s Windows semantics.

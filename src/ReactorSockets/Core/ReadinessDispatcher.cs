@@ -63,6 +63,12 @@ internal sealed class ReadinessDispatcher
     /// before the next one starts. Registering the same socket twice is a programmer error and
     /// throws <see cref="ArgumentException"/>.
     /// </summary>
+    /// <param name="socket">
+    /// The socket to register. Must not already be registered with this dispatcher.
+    /// </param>
+    /// <param name="onReadable">
+    /// Runs synchronously the first Pump after <paramref name="socket"/> has bytes to read.
+    /// </param>
     /// <param name="onWritable">
     /// Runs synchronously the first Pump after <paramref name="socket"/> is found writable while
     /// armed via <see cref="ArmWritable"/> — never on an unarmed socket, and never level-triggered
