@@ -63,6 +63,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private readonly DatagramSessionOptions _options;
     private readonly ReadinessDispatcher _dispatcher;
     private readonly FrameArena _arena;
+    private readonly ReceiveArena _receiveArena;
     private readonly DiagnosticGateway _diagnostics;
     private readonly ReactorCounterSet _counters;
     private readonly ShareHolderTable<PeerSlot> _peers;
@@ -111,6 +112,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _options = options;
         _dispatcher = new ReadinessDispatcher();
         _arena = new FrameArena(options.ResolveArenaSize(), options.Reactor.Capacity);
+        _receiveArena = new ReceiveArena(
+            options.Reactor.Capacity,
+            DatagramSessionOptions.ReliableSpaceCount,
+            options.ResolvedReceiveWindowFragments,
+            options.ResolvedFragmentSize);
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Reactor.Sink, options.Reactor.MinimumLevel, _counters);
         _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity);

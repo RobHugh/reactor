@@ -80,8 +80,13 @@ public sealed class DatagramSessionOptions
     /// </summary>
     private const int DefaultMissedHeartbeats = 3;
 
-    /// <summary>The number of Spaces that reassemble on receive and retain on send — the reliable pair of the four.</summary>
-    private const int ReliableSpaceCount = 2;
+    /// <summary>
+    /// The number of Spaces that reassemble on receive and retain on send — the reliable pair of the
+    /// four. Internal rather than private so <see cref="DatagramSessionReactor"/> can size its receive
+    /// arena (issue #171) against the same constant this budget is computed from, rather than a second
+    /// literal 2 that could drift from it.
+    /// </summary>
+    internal const int ReliableSpaceCount = 2;
 
     /// <summary>
     /// The shared L0 budget: capacity, admission cap, arena size, time source and Diagnostic Sink.
