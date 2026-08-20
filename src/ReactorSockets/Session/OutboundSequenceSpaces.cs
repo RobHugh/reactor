@@ -12,8 +12,9 @@ namespace ReactorSockets.Session;
 /// </summary>
 /// <remarks>
 /// Each Space starts at zero (settled in 5.4, not a random initial sequence number) and wraps through
-/// the full <c>u32</c> range: allocation is <c>unchecked</c> post-increment, so the counter returns to
-/// zero after <see cref="uint.MaxValue"/> rather than throwing. Ordering across that wrap is decided
+/// the full <c>u32</c> range: allocation is an explicitly <c>unchecked</c> post-increment, so the
+/// counter returns to zero after <see cref="uint.MaxValue"/> rather than throwing, and stays that way
+/// if the project ever turns on <c>CheckForOverflowUnderflow</c>. Ordering across that wrap is decided
 /// solely by <see cref="SequenceNumber.IsNewerThan"/>; this type does no comparison of its own. Not
 /// thread-safe, matching every other piece of a Peer's state (ADR 0009): a Peer is driven from one
 /// Reactor's single synchronous <c>Pump</c>.
@@ -35,10 +36,10 @@ internal sealed class OutboundSequenceSpaces
     /// <returns>The sequence number this allocation claimed.</returns>
     public uint Allocate(PacketRecordMode mode) => mode switch
     {
-        PacketRecordMode.Unreliable => _unreliable++,
-        PacketRecordMode.UnreliableSequenced => _unreliableSequenced++,
-        PacketRecordMode.ReliableUnordered => _reliableUnordered++,
-        PacketRecordMode.ReliableOrdered => _reliableOrdered++,
+        PacketRecordMode.Unreliable => unchecked(_unreliable++),
+        PacketRecordMode.UnreliableSequenced => unchecked(_unreliableSequenced++),
+        PacketRecordMode.ReliableUnordered => unchecked(_reliableUnordered++),
+        PacketRecordMode.ReliableOrdered => unchecked(_reliableOrdered++),
         _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown delivery mode."),
     };
 }
