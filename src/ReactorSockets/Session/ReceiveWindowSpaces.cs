@@ -1,0 +1,100 @@
+using ReactorSockets.Core;
+
+namespace ReactorSockets.Session;
+
+/// <summary>
+/// One Peer's four inbound receive windows (ADR 0009, issue #40): one independent
+/// <see cref="ReceiveWindow"/> per delivery mode's Space, keyed by the same
+/// <see cref="PacketRecordMode"/> a packet record's flags byte carries on the wire and mirroring
+/// <see cref="OutboundSequenceSpaces"/>'s shape on the receive side. Four windows exist, rather than
+/// one shared window, for the same reason four outbound Spaces do: a sequence admitted under one mode
+/// says nothing about the same sequence under another, so sharing one window would let one mode's
+/// traffic classify — and duplicate-suppress — another's.
+/// </summary>
+/// <remarks>
+/// Every Space gets a window here, including the two unreliable ones that #171 never gives payload
+/// storage: classification is the same act whether or not anything is retained, and giving all four a
+/// window is what lets the same sequence be admitted independently in all four (subtask 6.2.5, issue
+/// #172). Not thread-safe, matching every other piece of a Peer's state: a Peer is driven from one
+/// Reactor's single synchronous <c>Pump</c>.
+/// </remarks>
+internal sealed class ReceiveWindowSpaces
+{
+    private readonly ReceiveWindow _unreliable;
+    private readonly ReceiveWindow _unreliableSequenced;
+    private readonly ReceiveWindow _reliableUnordered;
+    private readonly ReceiveWindow _reliableOrdered;
+
+    /// <summary>
+    /// Builds four windows for <paramref name="shareHolderId"/>'s Slot, one per
+    /// <see cref="PacketRecordMode"/>, each over the admission run
+    /// <see cref="ReceiveArena.GetAdmissionRun"/> hands back for that Space (#179) — nothing here
+    /// allocates.
+    /// </summary>
+    /// <param name="arena">The receive arena a Slot's four admission runs come from.</param>
+    /// <param name="shareHolderId">The Slot index this instance's four windows are built over.</param>
+    public ReceiveWindowSpaces(ReceiveArena arena, int shareHolderId)
+    {
+        // Unreliable and UnreliableSequenced slide (#173): nothing retransmits into either, so a
+        // window that only ever refused a far-ahead arrival would stall forever after the first real
+        // loss. ReliableUnordered and ReliableOrdered keep today's behaviour — retransmission (6.4/6.5)
+        // is what fills their holes, so sliding would retire data that was about to arrive.
+        _unreliable = new ReceiveWindow(
+            arena.GetAdmissionRun(shareHolderId, (int)PacketRecordMode.Unreliable), slides: true);
+        _unreliableSequenced = new ReceiveWindow(
+            arena.GetAdmissionRun(shareHolderId, (int)PacketRecordMode.UnreliableSequenced), slides: true);
+        _reliableUnordered = new ReceiveWindow(
+            arena.GetAdmissionRun(shareHolderId, (int)PacketRecordMode.ReliableUnordered));
+        _reliableOrdered = new ReceiveWindow(
+            arena.GetAdmissionRun(shareHolderId, (int)PacketRecordMode.ReliableOrdered));
+    }
+
+    /// <summary>
+    /// How many sequences <see cref="Classify"/>'s most recent call retired un-admitted by sliding the
+    /// touched Space's window forward (#173) — zero unless that call touched a sliding Space (today,
+    /// <c>Unreliable</c> or <c>UnreliableSequenced</c>) and that Space's window slid. Mirrors
+    /// <see cref="ReceiveWindow.LastSlideLoss"/> one level up, since a caller here does not hold a
+    /// reference to whichever of the four windows <see cref="Classify"/> touched.
+    /// </summary>
+    public ulong LastSlideLoss { get; private set; }
+
+    /// <summary>
+    /// Classifies <paramref name="sequence"/> against <paramref name="mode"/>'s Space alone — the other
+    /// three Spaces' windows are untouched by this call, which is what keeps the four Spaces from
+    /// disturbing one another. <see cref="LastSlideLoss"/> reflects whatever this call did before it
+    /// returns.
+    /// </summary>
+    /// <param name="mode">Which of the four Spaces to classify against.</param>
+    /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
+    /// <returns>The outcome <paramref name="mode"/>'s window reports for <paramref name="sequence"/>.</returns>
+    public ReceiveWindowOutcome Classify(PacketRecordMode mode, uint sequence)
+    {
+        ReceiveWindow window = mode switch
+        {
+            PacketRecordMode.Unreliable => _unreliable,
+            PacketRecordMode.UnreliableSequenced => _unreliableSequenced,
+            PacketRecordMode.ReliableUnordered => _reliableUnordered,
+            PacketRecordMode.ReliableOrdered => _reliableOrdered,
+            _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown delivery mode."),
+        };
+
+        ReceiveWindowOutcome outcome = window.Classify(sequence);
+        LastSlideLoss = window.LastSlideLoss;
+        return outcome;
+    }
+
+    /// <summary>
+    /// Resets all four windows (<see cref="ReceiveWindow.Reset"/>) so a Slot a new Peer reuses
+    /// classifies from a clean state, inheriting none of the previous occupant's admissions (#179).
+    /// Called at both admission sites — <see cref="DatagramSessionReactor.Connect"/> and the
+    /// accepted-Peer path in <see cref="DatagramSessionReactor.OnHelloWithCookie"/> — right after the
+    /// Slot's handle is assigned.
+    /// </summary>
+    public void Reset()
+    {
+        _unreliable.Reset();
+        _unreliableSequenced.Reset();
+        _reliableUnordered.Reset();
+        _reliableOrdered.Reset();
+    }
+}

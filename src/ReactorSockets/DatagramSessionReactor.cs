@@ -63,9 +63,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private readonly DatagramSessionOptions _options;
     private readonly ReadinessDispatcher _dispatcher;
     private readonly FrameArena _arena;
+    private readonly ReceiveArena _receiveArena;
     private readonly DiagnosticGateway _diagnostics;
     private readonly ReactorCounterSet _counters;
     private readonly ShareHolderTable<PeerSlot> _peers;
+
+    /// <summary>
+    /// One <see cref="ReceiveWindowSpaces"/> per capacity Slot, preallocated at construction and never
+    /// grown or replaced (issue #180): each Slot's four windows are built once over the receive
+    /// arena's admission runs for that Slot index and outlive whichever Peer occupies the Slot.
+    /// <see cref="ClassifyRecord"/> resolves into this by <see cref="SlotHandle.Index"/> rather than
+    /// through <c>PeerSlot</c>, since a Slot's windows exist before any Peer is admitted into it.
+    /// </summary>
+    private readonly ReceiveWindowSpaces[] _receiveWindows;
+
     private readonly CookieMinter _cookies;
     private readonly RandomNumberGenerator _entropy;
     private readonly List<UdpLink> _links = [];
@@ -111,12 +122,24 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _options = options;
         _dispatcher = new ReadinessDispatcher();
         _arena = new FrameArena(options.ResolveArenaSize(), options.Reactor.Capacity);
+        _receiveArena = new ReceiveArena(
+            options.Reactor.Capacity,
+            DatagramSessionOptions.ReliableSpaceCount,
+            DatagramSessionOptions.SpaceCount,
+            options.ResolvedReceiveWindowFragments,
+            options.ResolvedFragmentSize);
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Reactor.Sink, options.Reactor.MinimumLevel, _counters);
         _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity);
         _entropy = options.Entropy;
         _cookies = new CookieMinter(options.Reactor.TimeProvider, _entropy);
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
+
+        _receiveWindows = new ReceiveWindowSpaces[options.Reactor.Capacity];
+        for (int i = 0; i < _receiveWindows.Length; i++)
+        {
+            _receiveWindows[i] = new ReceiveWindowSpaces(_receiveArena, i);
+        }
 
         try
         {
@@ -240,6 +263,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             $"This Reactor's capacity of {_options.Reactor.Capacity} Peers is fully occupied — close a Peer before dialling another.");
 
         slot.Handle = handle;
+        _receiveWindows[handle.Index].Reset();
         _dialsByNonce[slot.ClientNonce] = handle;
 
         ControlDatagramCodec.WriteHello(_sendBuffer, DatagramSessionProtocol.Version, slot.ClientNonce);
@@ -265,6 +289,29 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         EnsureCallingThreadIsConstructingThread();
 
         ClosePeer(ToHandle(peer), DisconnectReason.LocalClose);
+    }
+
+    /// <summary>
+    /// A point-in-time snapshot of one Peer's counters (ADR 0013). Throws if the Peer is not open,
+    /// matching <see cref="StreamSessionReactor.CountersOf(PeerId)"/>'s shape for the stream profile —
+    /// the datagram profile had no per-Peer counter reader until this member (subtask 6.2.1, issue
+    /// #168). <see cref="PeerCounters.OutOfWindowPackets"/> and <see cref="PeerCounters.DuplicatePackets"/>
+    /// now reflect what the four per-Space receive windows have refused (issue #172);
+    /// <see cref="PeerCounters.UnreliableLossPackets"/> reflects gaps the <c>Unreliable</c> Space's
+    /// window has slid past (issue #173).
+    /// <see cref="PeerCounters.MessagesReceived"/> and <see cref="PeerCounters.Resumes"/> still read
+    /// zero for every Peer, since this profile has no delivery or resume machinery yet to increment
+    /// them.
+    /// </summary>
+    public PeerCounters CountersOf(PeerId peer)
+    {
+        EnsureUsable();
+
+        SlotHandle handle = ToHandle(peer);
+        PeerSlot slot = _peers.TryResolve(handle)
+            ?? throw new ArgumentException($"Peer {peer} is not open.", nameof(peer));
+
+        return slot.Counters.Snapshot(retentionHighWaterBytes: 0);
     }
 
     /// <summary>
@@ -457,26 +504,30 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private void ProcessDataDatagram(Source source, uint session, ReadOnlySpan<byte> datagram)
     {
-        if (!_peersBySessionId.TryGetValue(session, out SlotHandle handle) || _peers.TryResolve(handle) is null)
+        if (!_peersBySessionId.TryGetValue(session, out SlotHandle handle) || _peers.TryResolve(handle) is not PeerSlot slot)
         {
             DiscardMalformed(source, datagram.Length);
             return;
         }
 
-        ParseDataDatagram(source, datagram);
+        ParseDataDatagram(source, slot, datagram);
     }
 
     /// <summary>
-    /// Reads the 20-byte header, then packet records until the datagram is exhausted (issue #163). A
-    /// datagram is a container, not a Message: one bad record — a short header, a bad flags byte, a
+    /// Reads the 20-byte header, then packet records until the datagram is exhausted (issue #163), and
+    /// routes every record that parses into <paramref name="slot"/>'s Space for its mode (issue #172).
+    /// A datagram is a container, not a Message: one bad record — a short header, a bad flags byte, a
     /// spare or fragment bit set, a length running past the end, or truncation inside a record —
     /// discards the whole datagram rather than whatever records parsed before it, because a partial
-    /// admission would let a forged tail poison an otherwise legitimate send. Nothing here throws,
-    /// allocates or reads past <paramref name="datagram"/>. No Session event is produced: admitting a
-    /// record's payload into a Space is #40's, so a well-formed datagram is simply confirmed parseable
-    /// and dropped once every record in it has been walked.
+    /// admission would let a forged tail poison an otherwise legitimate send. Parsing therefore runs in
+    /// two passes over the same bytes: the first confirms every record is well-formed without touching
+    /// any Space, and only once the whole datagram has proven parseable does the second classify each
+    /// record in turn — so an early record is never classified on the strength of a datagram whose tail
+    /// turns out to be forged. Nothing here throws, allocates or reads past <paramref name="datagram"/>.
+    /// No Session event is produced and nothing is delivered: what a Space does with an admitted record
+    /// is #173 and #6.6's, so this method's whole job ends at "classified, and counted if refused".
     /// </summary>
-    private void ParseDataDatagram(Source source, ReadOnlySpan<byte> datagram)
+    private void ParseDataDatagram(Source source, PeerSlot slot, ReadOnlySpan<byte> datagram)
     {
         if (!DatagramHeaderCodec.TryReadHeader(datagram, out _, out _, out _, out _, out _))
         {
@@ -484,7 +535,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        ReadOnlySpan<byte> remainder = datagram[DatagramSessionProtocol.DatagramHeaderSize..];
+        ReadOnlySpan<byte> body = datagram[DatagramSessionProtocol.DatagramHeaderSize..];
+
+        ReadOnlySpan<byte> remainder = body;
         while (remainder.Length > 0)
         {
             if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out int bytesConsumed))
@@ -494,6 +547,49 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
 
             remainder = remainder[bytesConsumed..];
+        }
+
+        remainder = body;
+        while (remainder.Length > 0)
+        {
+            // Every record in this span already proved well-formed in the pass above, so this read
+            // cannot fail — the return value is not re-checked.
+            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out _, out int bytesConsumed);
+            ClassifyRecord(slot, mode, sequence);
+            remainder = remainder[bytesConsumed..];
+        }
+    }
+
+    /// <summary>
+    /// Classifies one already-validated record against its mode's Space and counts what the window
+    /// refused, plus — for the <c>Unreliable</c> Space alone (issue #173) — whatever its window's
+    /// slide just retired un-admitted. Admission itself otherwise needs no counting: the window's
+    /// <see cref="ReceiveWindowOutcome.Admitted"/> case is a well-formed record simply taking effect,
+    /// and this ticket ends at "classified, and counted if refused or lost" — delivering an admitted
+    /// record is 6.6's.
+    /// </summary>
+    private void ClassifyRecord(PeerSlot slot, PacketRecordMode mode, uint sequence)
+    {
+        ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
+        ReceiveWindowOutcome outcome = windows.Classify(mode, sequence);
+
+        switch (outcome)
+        {
+            case ReceiveWindowOutcome.OutOfWindow:
+                slot.Counters.RecordOutOfWindowPacket();
+                break;
+
+            case ReceiveWindowOutcome.Duplicate:
+                slot.Counters.RecordDuplicatePacket();
+                break;
+        }
+
+        // Scoped to Unreliable alone (#173): UnreliableSequenced's window also slides, so its own
+        // arrivals can produce a nonzero LastSlideLoss too, but this ticket's figure covers only the
+        // Unreliable Space, so any loss from another Space's slide is deliberately not counted here.
+        if (mode == PacketRecordMode.Unreliable && windows.LastSlideLoss > 0)
+        {
+            slot.Counters.RecordUnreliableLoss(windows.LastSlideLoss);
         }
     }
 
@@ -593,6 +689,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             "A Peer Slot admitted this instant did not resolve — the share-holder table's generation accounting is broken.");
 
         slot.Handle = handle;
+        _receiveWindows[handle.Index].Reset();
         _peersBySessionId[slot.LocalSessionId] = handle;
         _acceptedHandshakes[(source, clientNonce)] = handle;
         _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(handle) });
@@ -917,5 +1014,23 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>How far through the handshake this Peer has got.</summary>
         public required HandshakeState State { get; set; }
+
+        /// <summary>
+        /// This Peer's own mutable counters (ADR 0013), incremented on the hot path and read only
+        /// through <see cref="CountersOf"/>. Mirrors <see cref="StreamSessionReactor"/>'s equivalent
+        /// field. The parse loop's per-Space classification increments
+        /// <see cref="Core.PeerCounterSet.OutOfWindowPackets"/>,
+        /// <see cref="Core.PeerCounterSet.DuplicatePackets"/> and
+        /// <see cref="Core.PeerCounterSet.UnreliableLossPackets"/> (issues #172, #173); a freshly
+        /// connected Peer reads zero for all three.
+        /// </summary>
+        public PeerCounterSet Counters { get; } = new();
+
+        /// <summary>
+        /// This Peer's four outbound sequence allocators (issue #40, #169), one per delivery mode.
+        /// Nothing allocates from it yet — the datagram profile's <c>Send</c> lands in 6.7 — so it
+        /// exists here only so a Peer already has the state a later slice needs.
+        /// </summary>
+        public OutboundSequenceSpaces OutboundSequences { get; } = new();
     }
 }
