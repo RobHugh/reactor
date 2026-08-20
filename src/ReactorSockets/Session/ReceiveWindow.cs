@@ -60,26 +60,31 @@ internal enum ReceiveWindowOutcome
 /// slide passes by un-admitted; see <see cref="LastSlideLoss"/>.
 /// </para>
 /// <para>
-/// <b>No allocation after construction.</b> The only storage this type owns is the <c>bool[]</c>
-/// backing array allocated once in the constructor. <see cref="Classify"/> only reads and writes that
-/// array and a handful of value-typed fields, so no sequence of arrivals ever allocates. A slide walks
-/// at most <see cref="Capacity"/> array slots — the same bound <see cref="AdvanceBase"/> already
-/// has — so it stays allocation-free and its cost is bounded by construction, not by how far ahead the
-/// arriving sequence is.
+/// <b>No allocation of its own, ever (#179).</b> The only storage this type touches is the
+/// <see cref="Memory{T}"/> run <see cref="Core.ReceiveArena.GetAdmissionRun"/> hands it at
+/// construction — one byte per slot, zero for not-admitted and non-zero for admitted. <see cref="Classify"/>
+/// only reads and writes that run and a handful of value-typed fields, so no sequence of arrivals ever
+/// allocates. A slide walks at most <see cref="Capacity"/> slots — the same bound
+/// <see cref="AdvanceBase"/> already has — so it stays allocation-free and its cost is bounded by
+/// construction, not by how far ahead the arriving sequence is. Because the arena's storage outlives
+/// any one Peer, a Slot reused by a later Peer must not inherit the previous occupant's admissions —
+/// that is what <see cref="Reset"/> is for.
 /// </para>
 /// </remarks>
 internal sealed class ReceiveWindow
 {
     /// <summary>
-    /// Whether the sequence at each slot has been admitted. Indexed by ring position, not by offset
-    /// from <see cref="Base"/>: <see cref="_baseSlot"/> is the ring position <see cref="Base"/>
-    /// currently occupies, and a slot is reused once the base advances past it.
+    /// Whether the sequence at each slot has been admitted: zero for not-admitted, non-zero for
+    /// admitted. Indexed by ring position, not by offset from <see cref="Base"/>:
+    /// <see cref="_baseSlot"/> is the ring position <see cref="Base"/> currently occupies, and a slot
+    /// is reused once the base advances past it. Backed by the receive arena (#179), not owned by this
+    /// type.
     /// </summary>
-    private readonly bool[] _admitted;
+    private readonly Memory<byte> _admitted;
 
     /// <summary>
     /// Whether this window slides its base forward to admit a far-ahead arrival instead of refusing
-    /// it (#173). Fixed at construction; see <see cref="ReceiveWindow(int, bool)"/>.
+    /// it (#173). Fixed at construction; see <see cref="ReceiveWindow(Memory{byte}, bool)"/>.
     /// </summary>
     private readonly bool _slides;
 
@@ -90,17 +95,14 @@ internal sealed class ReceiveWindow
     private int _baseSlot;
 
     /// <summary>
-    /// Builds a window of <paramref name="capacityFragments"/> sequence slots, based at sequence
-    /// zero — where every Space's numbering begins (ADR 0009). Allocates its backing storage once;
-    /// nothing after this allocates.
+    /// Builds a window over <paramref name="admitted"/>'s slots, based at sequence zero — where every
+    /// Space's numbering begins (ADR 0009). Allocates nothing: <paramref name="admitted"/> is the
+    /// window's entire storage, on loan from the receive arena for the calling Peer's lifetime.
     /// </summary>
-    /// <param name="capacityFragments">
-    /// The number of sequence numbers the window spans, fixed for the window's lifetime. Must be at
-    /// least 1. In practice this is
-    /// <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>, already validated against
-    /// its floor by <see cref="DatagramSessionOptions.Validate"/>; this constructor re-validates
-    /// rather than trusting the caller, because a window is cheap to misuse from a future caller that
-    /// never went through those options.
+    /// <param name="admitted">
+    /// The admission run this window classifies into, one byte per sequence slot — see
+    /// <see cref="Core.ReceiveArena.GetAdmissionRun"/>. <see cref="Capacity"/> is
+    /// <c><paramref name="admitted"/>.Length</c>. Must not be empty.
     /// </param>
     /// <param name="slides">
     /// Whether a sequence at or beyond the window's far edge slides the base forward to admit it,
@@ -111,19 +113,19 @@ internal sealed class ReceiveWindow
     /// <see langword="true"/>, because nothing retransmits into them and a window that never advances
     /// past a hole would stall forever after the first real loss.
     /// </param>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="capacityFragments"/> is less than 1.</exception>
-    internal ReceiveWindow(int capacityFragments, bool slides = false)
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="admitted"/> is empty.</exception>
+    internal ReceiveWindow(Memory<byte> admitted, bool slides = false)
     {
-        if (capacityFragments < 1)
+        if (admitted.Length < 1)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(capacityFragments),
-                capacityFragments,
-                $"a receive window of {capacityFragments} slots cannot hold anything — it must be at least 1.");
+                nameof(admitted),
+                admitted.Length,
+                $"a receive window of {admitted.Length} slots cannot hold anything — it must be at least 1.");
         }
 
-        Capacity = capacityFragments;
-        _admitted = new bool[capacityFragments];
+        Capacity = admitted.Length;
+        _admitted = admitted;
         _base = 0;
         _baseSlot = 0;
         _slides = slides;
@@ -201,14 +203,31 @@ internal sealed class ReceiveWindow
         }
 
         int slot = (int)((_baseSlot + offset) % (uint)Capacity);
-        if (_admitted[slot])
+        Span<byte> admitted = _admitted.Span;
+        if (admitted[slot] != 0)
         {
             return ReceiveWindowOutcome.Duplicate;
         }
 
-        _admitted[slot] = true;
+        admitted[slot] = 1;
         AdvanceBase();
         return ReceiveWindowOutcome.Admitted;
+    }
+
+    /// <summary>
+    /// Clears this window's admission run, and resets <see cref="Base"/>, its ring position and
+    /// <see cref="LastSlideLoss"/> to their construction-time values. The arena storage a window is
+    /// built over outlives the Peer that used it (#179): a Slot a new Peer reuses must classify from a
+    /// clean window, not inherit whatever the previous occupant had admitted. Mirrors the division
+    /// <see cref="Core.ReceiveArena.GetFragmentSlot"/> already draws — the arena keeps the bytes, the
+    /// occupant clears them.
+    /// </summary>
+    internal void Reset()
+    {
+        _admitted.Span.Clear();
+        _base = 0;
+        _baseSlot = 0;
+        LastSlideLoss = 0;
     }
 
     /// <summary>
@@ -220,9 +239,10 @@ internal sealed class ReceiveWindow
     /// </summary>
     private void AdvanceBase()
     {
-        while (_admitted[_baseSlot])
+        Span<byte> admitted = _admitted.Span;
+        while (admitted[_baseSlot] != 0)
         {
-            _admitted[_baseSlot] = false;
+            admitted[_baseSlot] = 0;
             _baseSlot = _baseSlot + 1 == Capacity ? 0 : _baseSlot + 1;
             _base = unchecked(_base + 1);
         }
@@ -245,12 +265,13 @@ internal sealed class ReceiveWindow
         uint retiredCount = unchecked(newBase - _base);
         int slotsToWalk = retiredCount < (uint)Capacity ? (int)retiredCount : Capacity;
 
+        Span<byte> admitted = _admitted.Span;
         ulong lost = 0;
         for (int i = 0; i < slotsToWalk; i++)
         {
-            if (_admitted[_baseSlot])
+            if (admitted[_baseSlot] != 0)
             {
-                _admitted[_baseSlot] = false;
+                admitted[_baseSlot] = 0;
             }
             else
             {

@@ -385,6 +385,52 @@ public class DatagramSessionSpaceRoutingTests
         accepter.DrainToList().Should().BeEmpty();
     }
 
+    [Fact]
+    public void Pump_APeerReusingASlotAfterAnEarlierPeerClosed_ClassifiesFromACleanWindow()
+    {
+        // Arrange — one Slot total, so the second Peer's handshake can only complete by reusing the
+        // first Peer's freed Slot (issue #180): the arena's admission bytes for that Slot outlive the
+        // first Peer, and this is what proves a reused Slot does not inherit what the first Peer had
+        // already admitted there.
+        using DatagramSessionReactorHarness accepter = new(capacity: 1, receiveWindowFragments: 4);
+        using RawReactor firstClient = new(new ReactorOptions { Capacity = 4 });
+        LinkId firstClientLink = firstClient.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint firstSessionId = EstablishLiveSessionId(accepter, firstClient, firstClientLink);
+        PeerId firstPeer = FindAccepterPeer(accepter);
+
+        byte[] datagram = [.. BuildHeader(firstSessionId), .. BuildRecord(ModeReliableOrdered, sequence: 0, payload: [])];
+        ulong before = accepter.Reactor.Counters.DatagramsReceived;
+        firstClient.SendTo(firstClientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+        accepter.Reactor.CountersOf(firstPeer).OutOfWindowPackets.Should().Be(0);
+        accepter.Reactor.CountersOf(firstPeer).DuplicatePackets.Should().Be(0);
+
+        // Act — the first Peer closes, freeing the one Slot, and a second Peer's handshake takes it.
+        accepter.Reactor.Close(firstPeer);
+        accepter.Reactor.Pump();
+        accepter.DrainToList();
+
+        using RawReactor secondClient = new(new ReactorOptions { Capacity = 4 });
+        LinkId secondClientLink = secondClient.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint secondSessionId = EstablishLiveSessionId(accepter, secondClient, secondClientLink);
+        PeerId secondPeer = FindAccepterPeer(accepter);
+
+        // Act — sequence 0 again, this time from the second Peer. If the reused Slot's window still
+        // carried the first Peer's admission, this would classify as a Duplicate rather than Admitted.
+        byte[] sameSequenceFromTheSecondPeer =
+            [.. BuildHeader(secondSessionId), .. BuildRecord(ModeReliableOrdered, sequence: 0, payload: [])];
+        before = accepter.Reactor.Counters.DatagramsReceived;
+        secondClient.SendTo(secondClientLink, Source.FromIPEndPoint(accepter.Endpoint), sameSequenceFromTheSecondPeer);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+
+        // Assert — admitted cleanly: neither a duplicate nor an out-of-window discard.
+        PeerCounters secondPeerCounters = accepter.Reactor.CountersOf(secondPeer);
+        secondPeerCounters.OutOfWindowPackets.Should().Be(0);
+        secondPeerCounters.DuplicatePackets.Should().Be(0);
+        accepter.Sink.Received.Should().BeEmpty();
+        accepter.DrainToList().Should().BeEmpty();
+    }
+
     /// <summary>
     /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
     /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned

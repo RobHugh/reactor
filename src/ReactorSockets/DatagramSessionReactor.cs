@@ -67,6 +67,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private readonly DiagnosticGateway _diagnostics;
     private readonly ReactorCounterSet _counters;
     private readonly ShareHolderTable<PeerSlot> _peers;
+
+    /// <summary>
+    /// One <see cref="ReceiveWindowSpaces"/> per capacity Slot, preallocated at construction and never
+    /// grown or replaced (issue #180): each Slot's four windows are built once over the receive
+    /// arena's admission runs for that Slot index and outlive whichever Peer occupies the Slot.
+    /// <see cref="ClassifyRecord"/> resolves into this by <see cref="SlotHandle.Index"/> rather than
+    /// through <c>PeerSlot</c>, since a Slot's windows exist before any Peer is admitted into it.
+    /// </summary>
+    private readonly ReceiveWindowSpaces[] _receiveWindows;
+
     private readonly CookieMinter _cookies;
     private readonly RandomNumberGenerator _entropy;
     private readonly List<UdpLink> _links = [];
@@ -124,6 +134,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _entropy = options.Entropy;
         _cookies = new CookieMinter(options.Reactor.TimeProvider, _entropy);
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
+
+        _receiveWindows = new ReceiveWindowSpaces[options.Reactor.Capacity];
+        for (int i = 0; i < _receiveWindows.Length; i++)
+        {
+            _receiveWindows[i] = new ReceiveWindowSpaces(_receiveArena, i);
+        }
 
         try
         {
@@ -241,13 +257,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             LocalSessionId = NextSessionId(),
             LocalResumeSecret = NextResumeSecret(),
             State = HandshakeState.AwaitingCookie,
-            ReceiveWindows = new ReceiveWindowSpaces(_options.ResolvedReceiveWindowFragments),
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
             $"This Reactor's capacity of {_options.Reactor.Capacity} Peers is fully occupied — close a Peer before dialling another.");
 
         slot.Handle = handle;
+        _receiveWindows[handle.Index].Reset();
         _dialsByNonce[slot.ClientNonce] = handle;
 
         ControlDatagramCodec.WriteHello(_sendBuffer, DatagramSessionProtocol.Version, slot.ClientNonce);
@@ -552,9 +568,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// and this ticket ends at "classified, and counted if refused or lost" — delivering an admitted
     /// record is 6.6's.
     /// </summary>
-    private static void ClassifyRecord(PeerSlot slot, PacketRecordMode mode, uint sequence)
+    private void ClassifyRecord(PeerSlot slot, PacketRecordMode mode, uint sequence)
     {
-        ReceiveWindowOutcome outcome = slot.ReceiveWindows.Classify(mode, sequence);
+        ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
+        ReceiveWindowOutcome outcome = windows.Classify(mode, sequence);
 
         switch (outcome)
         {
@@ -570,9 +587,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // Scoped to Unreliable alone (#173): UnreliableSequenced's window also slides, so its own
         // arrivals can produce a nonzero LastSlideLoss too, but this ticket's figure covers only the
         // Unreliable Space, so any loss from another Space's slide is deliberately not counted here.
-        if (mode == PacketRecordMode.Unreliable && slot.ReceiveWindows.LastSlideLoss > 0)
+        if (mode == PacketRecordMode.Unreliable && windows.LastSlideLoss > 0)
         {
-            slot.Counters.RecordUnreliableLoss(slot.ReceiveWindows.LastSlideLoss);
+            slot.Counters.RecordUnreliableLoss(windows.LastSlideLoss);
         }
     }
 
@@ -672,6 +689,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             "A Peer Slot admitted this instant did not resolve — the share-holder table's generation accounting is broken.");
 
         slot.Handle = handle;
+        _receiveWindows[handle.Index].Reset();
         _peersBySessionId[slot.LocalSessionId] = handle;
         _acceptedHandshakes[(source, clientNonce)] = handle;
         _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(handle) });
@@ -811,7 +829,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RemoteMaxMessageSize = remoteMaxMessageSize,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
             State = HandshakeState.Established,
-            ReceiveWindows = new ReceiveWindowSpaces(_options.ResolvedReceiveWindowFragments),
         };
 
     private void SendAccept(UdpLink link, PeerSlot slot)
@@ -1015,13 +1032,5 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// exists here only so a Peer already has the state a later slice needs.
         /// </summary>
         public OutboundSequenceSpaces OutboundSequences { get; } = new();
-
-        /// <summary>
-        /// This Peer's four inbound receive windows (issue #40, #170, #172), one per delivery mode,
-        /// each sized to <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>. Built per
-        /// Peer here rather than drawn from a shared arena — preallocating and disposing the two
-        /// reliable Spaces' storage in one arena is #171's concern, not this ticket's.
-        /// </summary>
-        public required ReceiveWindowSpaces ReceiveWindows { get; init; }
     }
 }

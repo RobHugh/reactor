@@ -1,3 +1,5 @@
+using ReactorSockets.Core;
+
 namespace ReactorSockets.Session;
 
 /// <summary>
@@ -24,23 +26,27 @@ internal sealed class ReceiveWindowSpaces
     private readonly ReceiveWindow _reliableOrdered;
 
     /// <summary>
-    /// Builds four windows, each of <paramref name="capacityFragments"/> sequence slots starting at
-    /// sequence zero — where every Space's numbering begins (ADR 0009).
+    /// Builds four windows for <paramref name="shareHolderId"/>'s Slot, one per
+    /// <see cref="PacketRecordMode"/>, each over the admission run
+    /// <see cref="ReceiveArena.GetAdmissionRun"/> hands back for that Space (#179) — nothing here
+    /// allocates.
     /// </summary>
-    /// <param name="capacityFragments">
-    /// The span, in sequence numbers, each of the four windows covers. Passed straight to
-    /// <see cref="ReceiveWindow(int, bool)"/>, which re-validates it.
-    /// </param>
-    public ReceiveWindowSpaces(int capacityFragments)
+    /// <param name="arena">The receive arena a Slot's four admission runs come from.</param>
+    /// <param name="shareHolderId">The Slot index this instance's four windows are built over.</param>
+    public ReceiveWindowSpaces(ReceiveArena arena, int shareHolderId)
     {
         // Unreliable and UnreliableSequenced slide (#173): nothing retransmits into either, so a
         // window that only ever refused a far-ahead arrival would stall forever after the first real
         // loss. ReliableUnordered and ReliableOrdered keep today's behaviour — retransmission (6.4/6.5)
         // is what fills their holes, so sliding would retire data that was about to arrive.
-        _unreliable = new ReceiveWindow(capacityFragments, slides: true);
-        _unreliableSequenced = new ReceiveWindow(capacityFragments, slides: true);
-        _reliableUnordered = new ReceiveWindow(capacityFragments);
-        _reliableOrdered = new ReceiveWindow(capacityFragments);
+        _unreliable = new ReceiveWindow(
+            arena.GetAdmissionRun(shareHolderId, (int)PacketRecordMode.Unreliable), slides: true);
+        _unreliableSequenced = new ReceiveWindow(
+            arena.GetAdmissionRun(shareHolderId, (int)PacketRecordMode.UnreliableSequenced), slides: true);
+        _reliableUnordered = new ReceiveWindow(
+            arena.GetAdmissionRun(shareHolderId, (int)PacketRecordMode.ReliableUnordered));
+        _reliableOrdered = new ReceiveWindow(
+            arena.GetAdmissionRun(shareHolderId, (int)PacketRecordMode.ReliableOrdered));
     }
 
     /// <summary>
@@ -75,5 +81,20 @@ internal sealed class ReceiveWindowSpaces
         ReceiveWindowOutcome outcome = window.Classify(sequence);
         LastSlideLoss = window.LastSlideLoss;
         return outcome;
+    }
+
+    /// <summary>
+    /// Resets all four windows (<see cref="ReceiveWindow.Reset"/>) so a Slot a new Peer reuses
+    /// classifies from a clean state, inheriting none of the previous occupant's admissions (#179).
+    /// Called at both admission sites — <see cref="DatagramSessionReactor.Connect"/> and the
+    /// accepted-Peer path in <see cref="DatagramSessionReactor.OnHelloWithCookie"/> — right after the
+    /// Slot's handle is assigned.
+    /// </summary>
+    public void Reset()
+    {
+        _unreliable.Reset();
+        _unreliableSequenced.Reset();
+        _reliableUnordered.Reset();
+        _reliableOrdered.Reset();
     }
 }
