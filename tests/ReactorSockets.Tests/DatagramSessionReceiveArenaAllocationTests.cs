@@ -15,65 +15,119 @@ namespace ReactorSockets.Tests;
 /// </summary>
 public class DatagramSessionReceiveArenaAllocationTests
 {
-    [Fact]
-    public void Construct_WithNoPeersConnected_AllocatesAtLeastCapacityTimesTwoTimesReceiveWindowTimesFragmentSize()
-    {
-        // Arrange
-        const int capacity = 16;
-        const int fragmentSize = 1200;
-        const int receiveWindowFragments = 25;
+    /// <summary>
+    /// The window size the exact-match measurements below start from, and the Reactor shape they all
+    /// share. Every measurement builds the same Reactor and fills every one of its Peer Slots, so the
+    /// only thing that differs between two measurements is the configured window — which makes the
+    /// difference between them exactly the receive side's own bytes, with no allowance for anything
+    /// else construction happens to allocate.
+    /// </summary>
+    private const int MeasurementCapacity = 8;
+    private const int ReliableSpaces = 2;
+    private const int AllSpaces = 4;
+    private const int MeasurementFragmentSize = 1200;
+    private const int MeasurementWindowFragments = 32;
 
+    [Fact]
+    public void Construct_AndFillEveryPeerSlot_AllocatesExactlyTheOptionsStatedReceiveBudget()
+    {
+        // Act — two Reactors identical but for the window, each with every Peer Slot occupied.
+        WarmUpTheMeasurement();
+        long narrow = MeasureReceiveSideAllocation(MeasurementWindowFragments);
+        long wide = MeasureReceiveSideAllocation(MeasurementWindowFragments * 2);
+
+        // Assert — the receive budget is linear in the window with no constant term, so doubling the
+        // window adds exactly one more narrow budget's worth of bytes. Exact, not a lower bound
+        // (issue #174): every byte of per-Peer receive state now comes out of the arena, so occupying
+        // all eight Slots takes nothing on top of what the options said the receive side would cost.
+        (wide - narrow).Should().Be(StatedReceiveBudgetBytes(MeasurementWindowFragments));
+    }
+
+    [Fact]
+    public void Construct_DoublingReceiveWindowFragments_ExactlyDoublesTheMeasuredAllocation()
+    {
+        // Act — three points on the same line, at one, two and three windows.
+        WarmUpTheMeasurement();
+        long single = MeasureReceiveSideAllocation(MeasurementWindowFragments);
+        long doubled = MeasureReceiveSideAllocation(MeasurementWindowFragments * 2);
+        long tripled = MeasureReceiveSideAllocation(MeasurementWindowFragments * 3);
+
+        // Assert — each step of one window costs the same, which is what makes the measurement a
+        // straight line through a window-independent fixed overhead (sockets, Slot table, Peer state).
+        // Subtracting that overhead leaves the receive side alone, and doubling the window doubles it
+        // exactly.
+        long oneWindowOfBytes = doubled - single;
+        (tripled - doubled).Should().Be(oneWindowOfBytes);
+
+        long fixedOverhead = single - oneWindowOfBytes;
+        (doubled - fixedOverhead).Should().Be(2 * (single - fixedOverhead));
+    }
+
+    [Fact]
+    public void ReceiveBudgetBytes_CountsPayloadForTheTwoReliableSpacesAndClassificationForAllFour()
+    {
         // Act
-        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        long stated = StatedReceiveBudgetBytes(MeasurementWindowFragments);
+
+        // Assert — the stated multiplier says what is actually allocated (issue #174). Payload slots
+        // exist only for the two reliable Spaces, which retain fragments until a Message is whole;
+        // the one-byte-per-slot admission record that lets a window classify a sequence exists for
+        // all four, because all four classify.
+        long payload = (long)MeasurementCapacity * ReliableSpaces
+            * MeasurementWindowFragments * MeasurementFragmentSize;
+        long classification = (long)MeasurementCapacity * AllSpaces
+            * MeasurementWindowFragments;
+        stated.Should().Be(payload + classification);
+    }
+
+    /// <summary>
+    /// Takes and discards one measurement before the real ones.
+    /// <see cref="GC.GetAllocatedBytesForCurrentThread"/> counts everything the thread allocates,
+    /// including the one-off JIT and static-initialisation cost of the first construction, which
+    /// would otherwise land entirely in the first data point and tilt the line. Discarding a
+    /// measurement pays that cost up front so the points that are compared differ only by the window.
+    /// </summary>
+    private static void WarmUpTheMeasurement() => MeasureReceiveSideAllocation(MeasurementWindowFragments);
+
+    /// <summary>
+    /// Builds one Reactor of <paramref name="receiveWindowFragments"/> window, fills every one of its
+    /// Peer Slots by dialling, and returns the bytes that took. Non-inlined and self-contained so the
+    /// Reactor and its Peers are unreachable by the time the caller compares two measurements.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureReceiveSideAllocation(int receiveWindowFragments)
+    {
+        long before = GC.GetAllocatedBytesForCurrentThread();
         using DatagramSessionReactorHarness harness = new(
-            capacity: capacity,
-            maxMessageSize: fragmentSize,
-            fragmentSize: fragmentSize,
+            capacity: MeasurementCapacity,
+            maxMessageSize: MeasurementFragmentSize,
+            fragmentSize: MeasurementFragmentSize,
             receiveWindowFragments: receiveWindowFragments);
-        long allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
 
-        // Assert — the receive arena's backing buffer alone accounts for at least this many bytes,
-        // preallocated up front rather than grown lazily as data arrives. Only the two reliable Spaces
-        // get window storage (the unreliable Spaces classify sequences but retain no payload), which
-        // is why this is Capacity × 2 rather than Capacity × 4.
-        long expectedReceiveBudgetBytes = (long)capacity * 2 * receiveWindowFragments * fragmentSize;
-        (allocatedAfter - allocatedBefore).Should().BeGreaterThanOrEqualTo(expectedReceiveBudgetBytes);
-    }
-
-    [Fact]
-    public void Construct_DoublingReceiveWindowFragments_AtLeastDoublesTheAllocationDelta()
-    {
-        // Arrange
-        const int capacity = 16;
-        const int fragmentSize = 1200;
-        const int narrowWindow = 25;
-        const int wideWindow = 50;
-
-        // Act
-        long beforeNarrow = GC.GetAllocatedBytesForCurrentThread();
-        using (DatagramSessionReactorHarness narrow = new(
-            capacity: capacity,
-            maxMessageSize: fragmentSize,
-            fragmentSize: fragmentSize,
-            receiveWindowFragments: narrowWindow))
+        for (int i = 0; i < MeasurementCapacity; i++)
         {
-            long allocatedForNarrow = GC.GetAllocatedBytesForCurrentThread() - beforeNarrow;
-
-            long beforeWide = GC.GetAllocatedBytesForCurrentThread();
-            using DatagramSessionReactorHarness wide = new(
-                capacity: capacity,
-                maxMessageSize: fragmentSize,
-                fragmentSize: fragmentSize,
-                receiveWindowFragments: wideWindow);
-            long allocatedForWide = GC.GetAllocatedBytesForCurrentThread() - beforeWide;
-
-            // Assert — doubling the configured window at least doubles the arena's own contribution:
-            // the wide Reactor's construction allocates at least one more narrow-window's worth of
-            // receive-arena bytes than the narrow Reactor's construction did.
-            long oneWindowWorthOfBytes = (long)capacity * 2 * narrowWindow * fragmentSize;
-            (allocatedForWide - allocatedForNarrow).Should().BeGreaterThanOrEqualTo(oneWindowWorthOfBytes);
+            harness.Reactor.Connect(new IPEndPoint(IPAddress.Loopback, 40000 + i));
         }
+
+        return GC.GetAllocatedBytesForCurrentThread() - before;
     }
+
+    /// <summary>
+    /// What the options say the receive side of the memory bill costs for the measurement Reactor at
+    /// <paramref name="receiveWindowFragments"/> — the figure every measurement above is compared
+    /// against.
+    /// </summary>
+    private static long StatedReceiveBudgetBytes(int receiveWindowFragments) =>
+        new DatagramSessionOptions
+        {
+            Reactor = new ReactorOptions { Capacity = MeasurementCapacity },
+            MaxMessageSize = MeasurementFragmentSize,
+            FragmentSize = MeasurementFragmentSize,
+            ReceiveWindowFragments = receiveWindowFragments,
+            RetentionBytes = MeasurementFragmentSize,
+            SendIdleInterval = TimeSpan.FromSeconds(1),
+            Linger = TimeSpan.FromSeconds(1),
+        }.ReceiveBudgetBytes;
 
     [Fact]
     public void Dispose_ReleasesTheReactorAndItsPreallocatedArenas()

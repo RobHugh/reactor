@@ -89,6 +89,14 @@ public sealed class DatagramSessionOptions
     internal const int ReliableSpaceCount = 2;
 
     /// <summary>
+    /// The number of Spaces a Peer classifies arrivals against — all four of ADR 0009's delivery
+    /// modes, reliable and unreliable alike. Every one of them owns a receive window and so a run of
+    /// admission bytes in the receive arena, which is why the receive budget multiplies by this as
+    /// well as by <see cref="ReliableSpaceCount"/> (issue #174).
+    /// </summary>
+    internal const int SpaceCount = 4;
+
+    /// <summary>
     /// The shared L0 budget: capacity, admission cap, arena size, time source and Diagnostic Sink.
     /// Required — a Reactor cannot be built without one, and its <see cref="ReactorOptions.Capacity"/>
     /// has no default of its own.
@@ -191,8 +199,18 @@ public sealed class DatagramSessionOptions
     /// combination too large to allocate is a value this can report rather than an overflow it
     /// silently wraps through.
     /// </summary>
+    /// <remarks>
+    /// Two things per Peer scale with the window, and this figure covers both (issue #174). Payload
+    /// slots — <see cref="ResolvedFragmentSize"/> bytes each — exist only for the
+    /// <see cref="ReliableSpaceCount"/> Spaces that hold fragments until a Message is whole. The
+    /// one-byte-per-slot admission record a receive window classifies against exists for all
+    /// <see cref="SpaceCount"/> Spaces, because all four classify whether or not they retain. Nothing
+    /// on the receive side is allocated outside this figure, so it is an exact statement of what a
+    /// Reactor takes, not a floor it sits above.
+    /// </remarks>
     public long ReceiveBudgetBytes =>
-        (long)Reactor.Capacity * ReliableSpaceCount * ResolvedReceiveWindowFragments * ResolvedFragmentSize;
+        (long)Reactor.Capacity * ResolvedReceiveWindowFragments
+        * (((long)ReliableSpaceCount * ResolvedFragmentSize) + SpaceCount);
 
     /// <summary>The send line of the memory bill in bytes, reported the same way.</summary>
     public long SendBudgetBytes =>
@@ -326,9 +344,10 @@ public sealed class DatagramSessionOptions
         {
             throw new ArgumentException(
                 $"these options ask for {total} bytes of preallocation, which cannot be allocated. " +
-                $"Receive is Capacity {Reactor.Capacity} × 2 reliable Spaces × {ResolvedReceiveWindowFragments} fragments × " +
-                $"{ResolvedFragmentSize} bytes = {receive}; send is Capacity {Reactor.Capacity} × 2 reliable Spaces × " +
-                $"{RetentionBytes} bytes = {send}. Lower Capacity, MaxMessageSize, ReceiveWindowFragments or RetentionBytes.",
+                $"Receive is Capacity {Reactor.Capacity} × {ResolvedReceiveWindowFragments} fragments × " +
+                $"({ReliableSpaceCount} reliable Spaces × {ResolvedFragmentSize} payload bytes + {SpaceCount} Spaces × " +
+                $"1 admission byte) = {receive}; send is Capacity {Reactor.Capacity} × {ReliableSpaceCount} reliable " +
+                $"Spaces × {RetentionBytes} bytes = {send}. Lower Capacity, MaxMessageSize, ReceiveWindowFragments or RetentionBytes.",
                 nameof(Reactor));
         }
     }
