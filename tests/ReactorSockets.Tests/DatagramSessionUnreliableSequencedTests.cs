@@ -70,6 +70,34 @@ public class DatagramSessionUnreliableSequencedTests
     }
 
     [Fact]
+    public void Pump_AMessageEqualInSequenceToTheLastDelivered_IsNotDelivered()
+    {
+        // Arrange
+        using DatagramSessionReactorHarness sender = new(bindLoopback: false);
+        using DatagramSessionReactorHarness receiver = new();
+        using LossyProxy proxy = new(receiver.Endpoint, sender.TimeProvider);
+        PeerId peer = sender.Reactor.Connect(proxy.PublicEndPoint);
+        PeerId receiverPeer = DatagramSessionReactorHarness.PumpThroughProxyUntilConnected(sender, proxy, receiver);
+
+        byte[] message = [9];
+
+        // Act — the proxy repeats the Datagram verbatim, so the second arrival carries the same
+        // sequence as the first rather than a fresh one. "Strictly newer" makes equal a discard, which
+        // is what separates this Space from plain Unreliable's bounded duplicate suppression.
+        proxy.DuplicateNext(RelayDirection.ClientToUpstream);
+        sender.Reactor.Send(peer, DeliveryMode.UnreliableSequenced, message);
+        sender.Reactor.Pump();
+
+        List<byte[]> delivered = PumpRoundsCollectingPayloads(sender, proxy, receiver, rounds: 8);
+
+        // Assert
+        delivered.Should().ContainSingle("a repeat of the last delivered sequence is not strictly newer")
+            .Which.Should().Equal(message);
+        receiver.Reactor.CountersOf(receiverPeer).MessagesReceived.Should().Be(
+            1UL, "the repeat was discarded before it could be counted as received");
+    }
+
+    [Fact]
     public void Pump_ALongRunOfReorderedArrivals_DeliversAStrictlyIncreasingSequenceWithNoException()
     {
         // Arrange
