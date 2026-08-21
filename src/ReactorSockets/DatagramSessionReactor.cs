@@ -622,22 +622,39 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Runs once per <see cref="Pump"/>, over every Established Peer's own
     /// <see cref="PeerSlot.AckTracker"/> (subtask 6.4.8, issue #198): sweeps each reliable Space for
-    /// sequences whose retransmit deadline has passed, and raises that Peer's
+    /// sequences whose retransmit deadline has passed, raises that Peer's
     /// <see cref="Core.PeerCounterSet.RecordPacketsRetransmitted"/> by however many
-    /// <see cref="OutstandingReliableSequences.CollectExpired"/> reports. Nothing here resends anything
-    /// — holding the record bytes is 6.5's retention and packing them into an outbound datagram is
-    /// 6.7's coalescing; this ticket stops at the sequences having been named.
+    /// <see cref="OutstandingReliableSequences.CollectExpired"/> reports, and — if either Space reported
+    /// anything — backs off that Peer's <see cref="PeerSlot.RetransmitTimer"/> exactly once and reports
+    /// it (subtask 6.4.9, issue #199). Nothing here resends anything — holding the record bytes is 6.5's
+    /// retention and packing them into an outbound datagram is 6.7's coalescing; this ticket stops at
+    /// the sequences having been named.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>At most one backoff per Peer per Pump.</b> A single <see cref="RetransmissionTimer"/> is
+    /// shared by both of a Peer's reliable Spaces (<see cref="NewAckTracker"/>). The backoff decision
+    /// used to live inside <see cref="OutstandingReliableSequences.CollectExpired"/> itself, called once
+    /// per Space — so a Pump where both Spaces expired something backed off the shared timer twice,
+    /// doubling the RTO twice and raising <see cref="RetransmissionTimer.ConsecutiveBackoffs"/> by two
+    /// for what subtask 6.4.4 (issue #194) defines as one loss event, not two. This method now sweeps
+    /// both Spaces first, decides the backoff once here at the Peer level from their combined count, and
+    /// only then re-arms each Space's findings — <see cref="OutstandingReliableSequences.ReArmExpired"/>
+    /// — at the single resulting <see cref="RetransmissionTimer.EffectiveTimeout"/>, matching how a
+    /// horizon slide arms everything it newly covers from one shared moment and RTO.
+    /// </para>
+    /// <para>
     /// A single scan over <see cref="_peers"/> (<see cref="ShareHolderTable{T}.OccupantAt"/>), the same
     /// shape <see cref="StreamSessionReactor.EnforceIdleTimers"/> uses for its own per-Pump-per-Peer
     /// sweep: it costs at most <see cref="ShareHolderTable{T}.Capacity"/> array reads against
-    /// already-allocated state, so it allocates nothing itself, and <see cref="OutstandingReliableSequences.CollectExpired"/>
-    /// allocates nothing either — including on the steady path where nothing has expired, since its
-    /// result is a reused buffer. A Peer still mid-handshake has recorded nothing on either reliable
-    /// Space yet (<see cref="OutstandingReliableSequences.RecordSent"/> is only ever called for a sent
-    /// record), so restricting the scan to <see cref="HandshakeState.Established"/> Peers changes
-    /// nothing observable; it only skips a scan certain to find nothing.
+    /// already-allocated state, so it allocates nothing itself, and
+    /// <see cref="OutstandingReliableSequences.CollectExpired"/> and
+    /// <see cref="OutstandingReliableSequences.ReArmExpired"/> allocate nothing either — including on
+    /// the steady path where nothing has expired. A Peer still mid-handshake has recorded nothing on
+    /// either reliable Space yet (<see cref="OutstandingReliableSequences.RecordSent"/> is only ever
+    /// called for a sent record), so restricting the scan to <see cref="HandshakeState.Established"/>
+    /// Peers changes nothing observable; it only skips a scan certain to find nothing.
+    /// </para>
     /// </remarks>
     private void ReportExpiredRetransmissions()
     {
@@ -648,12 +665,28 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            int expiredCount = slot.AckTracker.CollectExpired(PacketRecordMode.ReliableOrdered, ObservedPumpInterval, _options.Linger).Length
-                + slot.AckTracker.CollectExpired(PacketRecordMode.ReliableUnordered, ObservedPumpInterval, _options.Linger).Length;
+            int reliableOrderedExpired = slot.AckTracker.CollectExpired(PacketRecordMode.ReliableOrdered).Length;
+            int reliableUnorderedExpired = slot.AckTracker.CollectExpired(PacketRecordMode.ReliableUnordered).Length;
+            int expiredCount = reliableOrderedExpired + reliableUnorderedExpired;
 
-            if (expiredCount > 0)
+            if (expiredCount == 0)
             {
-                slot.Counters.RecordPacketsRetransmitted((ulong)expiredCount);
+                continue;
+            }
+
+            slot.Counters.RecordPacketsRetransmitted((ulong)expiredCount);
+
+            slot.RetransmitTimer.BackOff();
+            TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
+            slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableOrdered, effectiveRto);
+            slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableUnordered, effectiveRto);
+
+            if (_diagnostics.IsEnabled(DiagnosticLevel.Trace))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForRetransmissionTimerBackedOff(
+                    ToPeerId(slot.Handle),
+                    newRtoMilliseconds: (long)effectiveRto.TotalMilliseconds,
+                    consecutiveBackoffs: slot.RetransmitTimer.ConsecutiveBackoffs));
             }
         }
     }

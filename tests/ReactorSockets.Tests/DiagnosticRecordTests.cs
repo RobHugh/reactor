@@ -136,6 +136,24 @@ public class DiagnosticRecordTests
     }
 
     [Fact]
+    public void ForRetransmissionTimerBackedOff_PeerRtoAndCount_CarriesPeerSubjectAndTraceLevel()
+    {
+        // Arrange — subtask 6.4.9, issue #199: the roster's Trace-level, Peer-subject entry at 204.
+        PeerId peer = new(Origin: 1, Index: 0, Generation: 1);
+
+        // Act
+        DiagnosticRecord record = DiagnosticRecord.ForRetransmissionTimerBackedOff(peer, newRtoMilliseconds: 800, consecutiveBackoffs: 3);
+
+        // Assert
+        record.Id.Should().Be(DiagnosticId.RetransmissionTimerBackedOff);
+        record.Level.Should().Be(DiagnosticLevel.Trace);
+        record.SubjectKind.Should().Be(DiagnosticSubjectKind.Peer);
+        record.Peer.Should().Be(peer);
+        record.Value0.Should().Be(800);
+        record.Value1.Should().Be(3);
+    }
+
+    [Fact]
     public void ForLingerNegotiated_PeerAndDurations_CarriesPeerSubjectAndInfoLevel()
     {
         // Arrange

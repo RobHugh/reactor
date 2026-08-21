@@ -15,6 +15,7 @@ public class DiagnosticIdTests
     [InlineData(DiagnosticId.DatagramMalformed, 200)]
     [InlineData(DiagnosticId.CookieRejected, 201)]
     [InlineData(DiagnosticId.VersionRefused, 202)]
+    [InlineData(DiagnosticId.RetransmissionTimerBackedOff, 204)]
     [InlineData(DiagnosticId.PeerRefused, 300)]
     [InlineData(DiagnosticId.LingerNegotiated, 301)]
     [InlineData(DiagnosticId.MalformedFraming, 302)]
