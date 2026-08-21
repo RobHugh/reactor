@@ -4,7 +4,7 @@ namespace ReactorSockets.Core;
 /// The send side's uniform-slot preallocation (issue #43, 6.5): one buffer, sliced into
 /// fixed-size fragment slots, one run of slots per reliable Space per share-holder.
 /// <see cref="TryAcquire"/> is the only way a slot becomes occupied; <see cref="Release"/> is
-/// the only way one is freed; read-back (issue #204) is a later ticket in the same slice.
+/// the only way one is freed; <see cref="TryRead"/> reads one back for retransmission.
 /// </summary>
 /// <remarks>
 /// <see cref="RetentionArena"/>'s ring does not port here. Its head pointer works because the
@@ -247,6 +247,47 @@ internal sealed class RetentionPool
                 return;
             }
         }
+    }
+
+    /// <summary>
+    /// Attempts to read back the fragment retained under <paramref name="sequenceNumber"/> in
+    /// <paramref name="shareHolderId"/>'s <paramref name="spaceIndex"/>th reliable Space run, for
+    /// the retransmit path to resend. Returns <see langword="false"/>, with <paramref name="payload"/>
+    /// left empty, when no occupied slot in that Space holds <paramref name="sequenceNumber"/> — the
+    /// sequence was never acquired, or it already was and then released.
+    /// </summary>
+    /// <remarks>
+    /// Like <see cref="TryAcquire"/> and <see cref="Release"/>, this is a linear scan over
+    /// <see cref="SlotsPerSpace"/> entries rather than a dictionary keyed by sequence number, for the
+    /// same reason: <see cref="SlotsPerSpace"/> is small and bounded, so the scan is cheaper than a
+    /// hash lookup and allocates nothing. The returned span aliases the pool's backing buffer
+    /// directly — it is exactly <paramref name="payload"/>'s written length, not the whole slot — so
+    /// this allocates nothing either.
+    /// </remarks>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    /// <param name="spaceIndex">A zero-based index below <see cref="ReliableSpaceCount"/>.</param>
+    /// <param name="sequenceNumber">The sequence number of the retained fragment to read.</param>
+    /// <param name="payload">
+    /// On success, the retained bytes as a read-only span of exactly the length written. On a miss,
+    /// an empty span.
+    /// </param>
+    public bool TryRead(int shareHolderId, int spaceIndex, uint sequenceNumber, out ReadOnlySpan<byte> payload)
+    {
+        int regionBase = ValidateRegion(shareHolderId, spaceIndex);
+
+        for (int slotIndex = 0; slotIndex < SlotsPerSpace; slotIndex++)
+        {
+            int stateIndex = regionBase + slotIndex;
+            if (_occupied[stateIndex] && _slotSequence[stateIndex] == sequenceNumber)
+            {
+                int offset = stateIndex * FragmentSize;
+                payload = _buffer.AsSpan(offset, _slotLength[stateIndex]);
+                return true;
+            }
+        }
+
+        payload = ReadOnlySpan<byte>.Empty;
+        return false;
     }
 
     /// <summary>
