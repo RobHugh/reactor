@@ -77,6 +77,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private readonly ReceiveWindowSpaces[] _receiveWindows;
 
+    /// <summary>
+    /// This Reactor's one send-side retention pool (issue #43, #206), built once at construction from
+    /// the options' capacity, reliable Space count, retention slot count and fragment size, and
+    /// resolved by <see cref="SlotHandle.Index"/> the same way <see cref="_receiveWindows"/> is —
+    /// a Slot's retention exists before any Peer is admitted into it and outlives whichever Peer
+    /// occupies the Slot, so nothing is allocated on admission and nothing is freed on disconnect.
+    /// </summary>
+    private readonly RetentionPool _retention;
+
     private readonly CookieMinter _cookies;
     private readonly RandomNumberGenerator _entropy;
     private readonly PumpIntervalObserver _pumpIntervalObserver;
@@ -142,6 +151,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             _receiveWindows[i] = new ReceiveWindowSpaces(_receiveArena, i);
         }
+
+        _retention = new RetentionPool(
+            options.Reactor.Capacity,
+            DatagramSessionOptions.ReliableSpaceCount,
+            options.RetentionSlots,
+            options.ResolvedFragmentSize);
 
         try
         {
