@@ -62,6 +62,17 @@ internal static class DatagramSessionProtocol
     public const int EpochSecretLength = 32;
 
     /// <summary>
+    /// How long after being sent an outstanding reliable sequence's retransmit deadline falls, once
+    /// armed (subtask 6.3.6, issue #188). Deliberately not a <see cref="DatagramSessionOptions"/> knob:
+    /// nothing calls <see cref="Session.OutstandingReliableSequences.RecordSent"/> yet — the datagram
+    /// profile's outbound data send lands in 6.4/6.5 — so no deadline this value feeds is reachable
+    /// from any live path today, and offering a consumer a knob for a cadence this library has not yet
+    /// decided would misrepresent a placeholder as a considered setting. 6.4/6.5 owns revisiting this
+    /// value once a real retransmission cadence exists to derive it from.
+    /// </summary>
+    internal static readonly TimeSpan DefaultRetransmitTimeout = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
     /// The offset of a control datagram's type byte: immediately after the four-byte session id that
     /// every datagram, control or data, opens with.
     /// </summary>
