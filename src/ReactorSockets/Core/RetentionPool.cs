@@ -38,6 +38,21 @@ internal sealed class RetentionPool
     private readonly int[] _slotLength;
 
     /// <summary>
+    /// The bytes a share-holder currently has retained, summed across both reliable Spaces — one entry
+    /// per share-holder, not per Space, since <see cref="HighWaterBytes"/> answers a question about one
+    /// share-holder's memory (issue #43) rather than one Space's bound. Kept as a running total rather
+    /// than resummed from <see cref="_slotLength"/> on every <see cref="TryAcquire"/>/<see cref="Release"/>,
+    /// so both stay a single add or subtract regardless of <see cref="SlotsPerSpace"/>.
+    /// </summary>
+    private readonly int[] _retainedBytes;
+
+    /// <summary>
+    /// The most bytes each share-holder has ever had retained at once, summed across both reliable
+    /// Spaces — never decremented by <see cref="Release"/>, only ever raised by <see cref="TryAcquire"/>.
+    /// </summary>
+    private readonly ulong[] _highWaterBytes;
+
+    /// <summary>
     /// Constructs a pool of <paramref name="capacity"/> share-holders, each holding
     /// <paramref name="reliableSpaceCount"/> reliable Spaces, every Space a run of
     /// <paramref name="slotsPerSpace"/> fixed-size slots — <paramref name="fragmentSize"/> bytes
@@ -114,6 +129,9 @@ internal sealed class RetentionPool
         _occupied = new bool[slotCount];
         _slotSequence = new uint[slotCount];
         _slotLength = new int[slotCount];
+
+        _retainedBytes = new int[capacity];
+        _highWaterBytes = new ulong[capacity];
     }
 
     /// <summary>The number of share-holders this pool divides its regions across.</summary>
@@ -133,6 +151,21 @@ internal sealed class RetentionPool
     /// <see cref="SlotsPerSpace"/> × <see cref="FragmentSize"/>.
     /// </summary>
     public int TotalSize => _buffer.Length;
+
+    /// <summary>
+    /// The most bytes <paramref name="shareHolderId"/> has ever had retained at once, summed across
+    /// both reliable Spaces, since this pool was constructed (issue #205, subtask 6.5.6). Rises only on
+    /// <see cref="TryAcquire"/>; <see cref="Release"/> never lowers it, matching
+    /// <see cref="RetentionArena.HighWaterBytes(int)"/>'s monotonic contract on the stream profile's
+    /// ring.
+    /// </summary>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    public ulong HighWaterBytes(int shareHolderId)
+    {
+        ValidateShareHolderId(shareHolderId);
+
+        return _highWaterBytes[shareHolderId];
+    }
 
     /// <summary>
     /// The fixed-size slot for <paramref name="slotIndex"/> within <paramref name="shareHolderId"/>'s
@@ -215,6 +248,12 @@ internal sealed class RetentionPool
         _slotSequence[stateIndex] = sequenceNumber;
         _slotLength[stateIndex] = payload.Length;
 
+        _retainedBytes[shareHolderId] += payload.Length;
+        if ((ulong)_retainedBytes[shareHolderId] > _highWaterBytes[shareHolderId])
+        {
+            _highWaterBytes[shareHolderId] = (ulong)_retainedBytes[shareHolderId];
+        }
+
         return RetentionSlotOutcome.Committed;
     }
 
@@ -244,6 +283,7 @@ internal sealed class RetentionPool
             if (_occupied[stateIndex] && _slotSequence[stateIndex] == sequenceNumber)
             {
                 _occupied[stateIndex] = false;
+                _retainedBytes[shareHolderId] -= _slotLength[stateIndex];
                 return;
             }
         }
@@ -298,13 +338,7 @@ internal sealed class RetentionPool
     /// </summary>
     private int ValidateRegion(int shareHolderId, int spaceIndex)
     {
-        if (shareHolderId < 0 || shareHolderId >= Capacity)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(shareHolderId),
-                shareHolderId,
-                $"share-holder {shareHolderId} is outside the pool's capacity of {Capacity}.");
-        }
+        ValidateShareHolderId(shareHolderId);
 
         if (spaceIndex < 0 || spaceIndex >= ReliableSpaceCount)
         {
@@ -315,5 +349,20 @@ internal sealed class RetentionPool
         }
 
         return ((shareHolderId * ReliableSpaceCount) + spaceIndex) * SlotsPerSpace;
+    }
+
+    /// <summary>
+    /// Validates <paramref name="shareHolderId"/> alone, for the callers — <see cref="HighWaterBytes"/>
+    /// and <see cref="ValidateRegion"/> — that need the bound checked without also naming a Space.
+    /// </summary>
+    private void ValidateShareHolderId(int shareHolderId)
+    {
+        if (shareHolderId < 0 || shareHolderId >= Capacity)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(shareHolderId),
+                shareHolderId,
+                $"share-holder {shareHolderId} is outside the pool's capacity of {Capacity}.");
+        }
     }
 }
