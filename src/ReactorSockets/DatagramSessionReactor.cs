@@ -297,6 +297,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         slot.Handle = handle;
         _receiveWindows[handle.Index].Reset();
+        _retention.ResetShareHolder(handle.Index);
         _dialsByNonce[slot.ClientNonce] = handle;
 
         ControlDatagramCodec.WriteHello(_sendBuffer, DatagramSessionProtocol.Version, slot.ClientNonce);
@@ -904,6 +905,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         slot.Handle = handle;
         _receiveWindows[handle.Index].Reset();
+        _retention.ResetShareHolder(handle.Index);
         _peersBySessionId[slot.LocalSessionId] = handle;
         _acceptedHandshakes[(source, clientNonce)] = handle;
         _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(handle) });

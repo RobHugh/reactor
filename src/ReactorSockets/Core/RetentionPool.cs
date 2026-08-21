@@ -331,6 +331,35 @@ internal sealed class RetentionPool
     }
 
     /// <summary>
+    /// Frees every slot <paramref name="shareHolderId"/> holds, in both reliable Spaces, and returns
+    /// its retained-byte and <see cref="HighWaterBytes"/> figures to zero — what a Slot a new Peer
+    /// reuses needs before it sends anything, mirroring
+    /// <see cref="RetentionArena.ResetShareHolder"/> on the stream profile's ring and
+    /// <see cref="Session.ReceiveWindowSpaces.Reset"/> on the receive side. Without it a Slot whose
+    /// previous occupant left with fragments still retained would refuse the new Peer's very first
+    /// reliable Send as <see cref="RetentionSlotOutcome.Exhausted"/> and report the old Peer's
+    /// high-water as the new one's.
+    /// </summary>
+    /// <remarks>
+    /// Only the occupancy flags are cleared. <see cref="_slotSequence"/> and
+    /// <see cref="_slotLength"/> are read only where <see cref="_occupied"/> is set, and the backing
+    /// bytes are never read back except through a slot this pool itself wrote — the same reason
+    /// <see cref="RetentionArena.ResetShareHolder"/> resets counters rather than the bytes behind
+    /// them.
+    /// </remarks>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    public void ResetShareHolder(int shareHolderId)
+    {
+        ValidateShareHolderId(shareHolderId);
+
+        int firstSlot = shareHolderId * ReliableSpaceCount * SlotsPerSpace;
+        Array.Clear(_occupied, firstSlot, ReliableSpaceCount * SlotsPerSpace);
+
+        _retainedBytes[shareHolderId] = 0;
+        _highWaterBytes[shareHolderId] = 0;
+    }
+
+    /// <summary>
     /// Validates <paramref name="shareHolderId"/> and <paramref name="spaceIndex"/> and returns the
     /// Space run's base index into this pool's per-slot arrays — <see cref="_buffer"/> sliced by
     /// <see cref="FragmentSize"/>, <see cref="_occupied"/>/<see cref="_slotSequence"/>/<see cref="_slotLength"/>
