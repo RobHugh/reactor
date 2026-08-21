@@ -786,9 +786,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            int reliableOrderedExpired = slot.AckTracker.CollectExpired(PacketRecordMode.ReliableOrdered).Length;
-            int reliableUnorderedExpired = slot.AckTracker.CollectExpired(PacketRecordMode.ReliableUnordered).Length;
-            int expiredCount = reliableOrderedExpired + reliableUnorderedExpired;
+            // Each Space keeps its own scratch buffer, so holding both spans across the second call is
+            // safe — they are not the same array.
+            ReadOnlySpan<uint> reliableOrderedExpired = slot.AckTracker.CollectExpired(PacketRecordMode.ReliableOrdered);
+            ReadOnlySpan<uint> reliableUnorderedExpired = slot.AckTracker.CollectExpired(PacketRecordMode.ReliableUnordered);
+            int expiredCount = reliableOrderedExpired.Length + reliableUnorderedExpired.Length;
 
             if (expiredCount == 0)
             {
@@ -796,6 +798,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
 
             slot.Counters.RecordPacketsRetransmitted((ulong)expiredCount);
+
+            // Queued, not sent: the record joins whatever this Peer's PendingSends already holds and
+            // rides the same Pump's flush, alongside records Sent this Frame. That is what makes
+            // retransmission byte-identical at packet-record granularity and not at Datagram
+            // granularity — the record is repacked into whatever container goes out next, and no
+            // attempt is made to reproduce the Datagram it originally travelled in.
+            QueueForRetransmission(slot, PacketRecordMode.ReliableOrdered, reliableOrderedExpired);
+            QueueForRetransmission(slot, PacketRecordMode.ReliableUnordered, reliableUnorderedExpired);
 
             slot.RetransmitTimer.BackOff();
             TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
@@ -809,6 +819,37 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                     newRtoMilliseconds: (long)effectiveRto.TotalMilliseconds,
                     consecutiveBackoffs: slot.RetransmitTimer.ConsecutiveBackoffs));
             }
+        }
+    }
+
+    /// <summary>
+    /// Queues every sequence <see cref="ReportExpiredRetransmissions"/> found expired on one reliable
+    /// Space back onto <paramref name="slot"/>'s <see cref="PeerSlot.PendingSends"/>, so the same
+    /// Pump's <see cref="FlushOutboundDatagrams"/> packs it (subtask 6.6.8, issue #218). No payload
+    /// copy is made or needed: a reliable record's bytes are in <see cref="_retention"/> from the
+    /// moment <see cref="Send"/> committed them, and <see cref="TryResolvePendingPayload"/> reads them
+    /// back at flush time — which is also what makes the resent bytes identical to the original
+    /// without this method holding anything to compare them against.
+    /// </summary>
+    /// <remarks>
+    /// A sequence whose retention slot has already been released resolves to nothing at flush time and
+    /// is skipped there rather than guarded against here. That is the right place for it: releasing a
+    /// slot is what an arriving acknowledgement does, so a sequence acked between this queueing and
+    /// the flush is one that no longer needs resending, and dropping it silently is the outcome
+    /// wanted.
+    /// </remarks>
+    /// <summary>
+    /// Whether <paramref name="mode"/> is one of the two Spaces that retain, acknowledge and retransmit
+    /// — the single place that question is asked, so the reliable half of the four modes is named once.
+    /// </summary>
+    private static bool IsReliable(PacketRecordMode mode) =>
+        mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered;
+
+    private static void QueueForRetransmission(PeerSlot slot, PacketRecordMode mode, ReadOnlySpan<uint> sequences)
+    {
+        foreach (uint sequence in sequences)
+        {
+            slot.PendingSends.Add(new PendingOutboundRecord { Mode = mode, Sequence = sequence, IsRetransmission = true });
         }
     }
 
@@ -885,6 +926,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             if (!packer.TryPackRecord(pending.Mode, pending.Sequence, payload))
             {
                 break;
+            }
+
+            // Arming happens here, at the moment the record actually reaches a Datagram, rather than in
+            // Send: a sequence queued but not yet flushed has not been transmitted, and starting its
+            // retransmit deadline before it leaves would spend part of that deadline on this end's own
+            // queue (subtask 6.6.8, issue #218). A resend is skipped — ReArmExpired has already given it
+            // this Pump's single backed-off deadline. The horizon gate lives inside RecordSent, so a
+            // sequence too far ahead of the ack horizon still has its timer withheld rather than
+            // started, exactly as #185 requires.
+            if (!pending.IsRetransmission && IsReliable(pending.Mode))
+            {
+                slot.AckTracker.RecordSent(
+                    pending.Mode,
+                    pending.Sequence,
+                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger));
             }
         }
 
@@ -1443,6 +1499,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>The sequence number <see cref="Send"/> allocated for this record.</summary>
         public required uint Sequence { get; init; }
+
+        /// <summary>
+        /// Whether this queue entry is a resend rather than a first transmission (subtask 6.6.8, issue
+        /// #218). What it decides at flush time is one thing: a first transmission arms its retransmit
+        /// deadline through <see cref="OutstandingReliableSequences.RecordSent"/>, while a resend has
+        /// already been re-armed by <see cref="OutstandingReliableSequences.ReArmExpired"/> at the single
+        /// RTO its Peer's one backoff for that Pump produced. Recording a resend as newly sent would
+        /// overwrite that deadline with a second one and count the sequence as outstanding twice.
+        /// </summary>
+        public bool IsRetransmission { get; init; }
 
         /// <summary>
         /// A copy of the Message's bytes for an unreliable record; <see langword="null"/> for a
