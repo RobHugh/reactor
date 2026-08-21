@@ -76,9 +76,6 @@ internal sealed class OrderedDeliveryQueue
     /// <summary>The ring position <see cref="NextSequence"/> currently occupies.</summary>
     private int _headSlot;
 
-    /// <summary>The sequence at the queue's lower edge. See <see cref="NextSequence"/>.</summary>
-    private uint _next;
-
     /// <summary>
     /// Builds a queue expecting <paramref name="initialSequence"/> next — zero by default, where every
     /// Space's numbering begins (ADR 0009). Allocates its initial ring once, up front; nothing after
@@ -87,7 +84,7 @@ internal sealed class OrderedDeliveryQueue
     /// <param name="initialSequence">The first sequence this queue will release. Defaults to zero.</param>
     public OrderedDeliveryQueue(uint initialSequence = 0)
     {
-        _next = initialSequence;
+        NextSequence = initialSequence;
     }
 
     /// <summary>
@@ -96,7 +93,7 @@ internal sealed class OrderedDeliveryQueue
     /// release the run currently held behind it, if any. Starts at the value the constructor was given
     /// and only ever advances, by exactly one sequence per payload <see cref="Admit"/> releases.
     /// </summary>
-    public uint NextSequence => _next;
+    public uint NextSequence { get; private set; }
 
     /// <summary>
     /// Admits one already-<see cref="ReceiveWindowOutcome.Admitted"/> sequence and its payload.
@@ -116,8 +113,8 @@ internal sealed class OrderedDeliveryQueue
     /// </returns>
     public ReadOnlySpan<ReadOnlyMemory<byte>> Admit(uint sequence, ReadOnlyMemory<byte> payload)
     {
-        bool isNext = sequence == _next;
-        if (!isNext && !SequenceNumber.IsNewerThan(sequence, _next))
+        bool isNext = sequence == NextSequence;
+        if (!isNext && !SequenceNumber.IsNewerThan(sequence, NextSequence))
         {
             // Not newer than, and not equal to, the next expected sequence: already released by an
             // earlier call. A duplicate of what has already been yielded, never yielded twice.
@@ -128,7 +125,7 @@ internal sealed class OrderedDeliveryQueue
         {
             // Ahead of a gap: hold it. A sequence already held at this offset is a duplicate of what
             // is already waiting and is dropped rather than overwriting the held payload.
-            uint offset = unchecked(sequence - _next);
+            uint offset = unchecked(sequence - NextSequence);
             EnsureCapacity(offset);
             int slot = SlotFor(offset);
             if (!_occupied[slot])
@@ -145,7 +142,7 @@ internal sealed class OrderedDeliveryQueue
         // _capacity, the same bound the ring's own growth already established.
         int releasedCount = 0;
         _releaseBuffer[releasedCount++] = payload;
-        _next = unchecked(_next + 1);
+        NextSequence = unchecked(NextSequence + 1);
 
         while (_occupied[_headSlot])
         {
@@ -153,7 +150,7 @@ internal sealed class OrderedDeliveryQueue
             _occupied[_headSlot] = false;
             _held[_headSlot] = default;
             _headSlot = _headSlot + 1 == _capacity ? 0 : _headSlot + 1;
-            _next = unchecked(_next + 1);
+            NextSequence = unchecked(NextSequence + 1);
         }
 
         return _releaseBuffer.AsSpan(0, releasedCount);

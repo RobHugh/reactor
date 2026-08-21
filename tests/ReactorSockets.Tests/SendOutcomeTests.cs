@@ -1,5 +1,4 @@
 using FluentAssertions;
-using ReactorSockets;
 using Xunit;
 
 namespace ReactorSockets.Tests;

@@ -108,6 +108,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     private readonly byte[] _scratchBuffer = new byte[MaxUdpDatagramSize];
     private readonly byte[] _sendBuffer = new byte[DatagramSessionProtocol.ControlDatagramSize];
+
+    /// <summary>
+    /// The scratch buffer <see cref="FlushPeer"/> packs one Peer's data Datagram into (issue #216),
+    /// separate from <see cref="_scratchBuffer"/> — which is read-side and reused within one
+    /// <see cref="OnLinkReadable"/> call — and from <see cref="_sendBuffer"/>, which is sized for a
+    /// control datagram only and far too small for a coalesced data one. Sized at
+    /// <see cref="MaxUdpDatagramSize"/> like <see cref="_scratchBuffer"/> so it can hold whatever a
+    /// Pump packs into it; reused across every Peer flushed by one Pump rather than allocated per Peer.
+    /// </summary>
+    private readonly byte[] _outboundDatagramBuffer = new byte[MaxUdpDatagramSize];
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
     private int _capDiscardsThisFrame;
@@ -239,6 +249,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             _capacityDiscardsThisFrame = 0;
             _dispatcher.Pump();
             ReportExpiredRetransmissions();
+            FlushOutboundDatagrams();
             ReportDeclinedAdmissions();
         }
         finally
@@ -350,16 +361,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Sends <paramref name="message"/> to <paramref name="peer"/> under <paramref name="mode"/> (ADR
-    /// 0009, issue #207): a reliable mode allocates the next sequence in its own Space and retains the
-    /// Message whole there, returning <see cref="SendOutcome.RetentionExhausted"/> once that Space has
-    /// no slot left; <see cref="DeliveryMode.Unreliable"/> and
-    /// <see cref="DeliveryMode.UnreliableSequenced"/> still allocate a sequence — every mode gets one,
-    /// the same as every other (<see cref="OutboundSequenceSpaces"/>) — but retain nothing, because
-    /// nothing unreliable is ever retransmitted (issue #43). This is the first public <c>Send</c> on
-    /// this profile, and it is deliberately this narrow: packing a record, fragmenting a Message too
-    /// wide for one, and flushing a Peer's coalesced Datagram are #44's and #45's, so nothing here
-    /// reaches the wire and nothing here throws for a Message a later slice will refuse as
-    /// <c>MessageTooLarge</c>.
+    /// 0009, issues #207, #215, #216). A Message wider than one Datagram is refused up front as
+    /// <see cref="SendOutcome.MessageTooLarge"/>, before anything else happens: no sequence is
+    /// allocated and no retention is taken, so a rejected Send leaves no trace on the Session. Past
+    /// that gate, a reliable mode allocates the next sequence in its own Space and retains the Message
+    /// whole there, returning <see cref="SendOutcome.RetentionExhausted"/> once that Space has no slot
+    /// left; <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/>
+    /// still allocate a sequence — every mode gets one, the same as every other
+    /// (<see cref="OutboundSequenceSpaces"/>) — but retain nothing, because nothing unreliable is ever
+    /// retransmitted (issue #43). A Message this call accepts is queued on <paramref name="peer"/>'s
+    /// Slot (<see cref="PeerSlot.PendingSends"/>) and leaves as one packet record inside the next
+    /// <see cref="Pump"/>'s single coalesced Datagram to that Peer (<see cref="FlushOutboundDatagrams"/>,
+    /// issue #216) — nothing reaches the wire before that Pump runs, and a <c>Send</c> with no
+    /// following Pump puts nothing on the wire at all.
     /// </summary>
     /// <remarks>
     /// Sending to a <paramref name="peer"/> this Reactor is not currently holding open — unknown, or
@@ -370,10 +384,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <param name="peer">The Peer to send to.</param>
     /// <param name="mode">Which of the four delivery modes carries this Message; see <c>docs/delivery-modes.md</c>.</param>
     /// <param name="message">
-    /// The Message payload, unframed. Throws if wider than one fragment — this call cannot yet split a
-    /// Message across more than one, so a Message wider than
-    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> has nowhere to go until #45's
-    /// fragmentation lands.
+    /// The Message payload, unframed. A Message wider than
+    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> cannot fit in one Datagram and is
+    /// reported back as <see cref="SendOutcome.MessageTooLarge"/> rather than thrown. For
+    /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> the cap
+    /// is permanent: fragmenting what cannot be retransmitted multiplies the failure rate by the
+    /// number of pieces, so those two modes may only ever fragment what they can repair
+    /// (<c>docs/delivery-modes.md</c>). For <see cref="DeliveryMode.ReliableOrdered"/> and
+    /// <see cref="DeliveryMode.ReliableUnordered"/> the same cap applies for now and is lifted once
+    /// slice 7 gives the reliable modes fragmentation.
     /// </param>
     public SendOutcome Send(PeerId peer, DeliveryMode mode, ReadOnlySpan<byte> message)
     {
@@ -382,11 +401,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         if (message.Length > _options.ResolvedFragmentSize)
         {
-            throw new ArgumentException(
-                $"message of {message.Length} bytes exceeds this Reactor's fragment size of " +
-                $"{_options.ResolvedFragmentSize} bytes — a Send cannot yet split a Message across more " +
-                "than one fragment.",
-                nameof(message));
+            return SendOutcome.MessageTooLarge;
         }
 
         SlotHandle handle = ToHandle(peer);
@@ -400,11 +415,22 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         if (recordMode is not (PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered))
         {
+            slot.PendingSends.Add(new PendingOutboundRecord
+            {
+                Mode = recordMode,
+                Sequence = sequence,
+                UnreliablePayload = message.ToArray(),
+            });
             return SendOutcome.Sent;
         }
 
         int spaceIndex = ReliableSpaceIndex(recordMode);
         RetentionSlotOutcome outcome = _retention.TryAcquire(handle.Index, spaceIndex, sequence, message);
+
+        if (outcome == RetentionSlotOutcome.Committed)
+        {
+            slot.PendingSends.Add(new PendingOutboundRecord { Mode = recordMode, Sequence = sequence });
+        }
 
         return outcome switch
         {
@@ -771,6 +797,113 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                     consecutiveBackoffs: slot.RetransmitTimer.ConsecutiveBackoffs));
             }
         }
+    }
+
+    /// <summary>
+    /// Puts every Established Peer's Sent-since-last-flush records on the wire, once per
+    /// <see cref="Pump"/> (issue #216): a Peer with nothing queued in
+    /// <see cref="PeerSlot.PendingSends"/> is skipped entirely, so a Pump following no <see cref="Send"/>
+    /// puts nothing on the wire for that Peer. A Peer still mid-handshake has nothing to flush to
+    /// either — <see cref="Send"/> can queue against it, but nothing here reaches it until it reaches
+    /// <see cref="HandshakeState.Established"/>, the same restriction <see cref="ReportExpiredRetransmissions"/>
+    /// already applies to its own per-Peer sweep.
+    /// </summary>
+    /// <remarks>
+    /// A single scan over <see cref="_peers"/> (<see cref="ShareHolderTable{T}.OccupantAt"/>), the same
+    /// shape <see cref="ReportExpiredRetransmissions"/> uses: at most <see cref="ShareHolderTable{T}.Capacity"/>
+    /// array reads, and a Peer with an empty queue costs nothing more than that one read.
+    /// </remarks>
+    private void FlushOutboundDatagrams()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            {
+                continue;
+            }
+
+            if (slot.PendingSends.Count == 0)
+            {
+                continue;
+            }
+
+            FlushPeer(slot);
+            slot.PendingSends.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Packs everything <paramref name="slot"/> has queued since its last flush into one data Datagram
+    /// and sends it (issue #216): the 20-byte header — this Peer's own <see cref="PeerSlot.RemoteSessionId"/>
+    /// stamped as the session, since that is the id the far end asked to be stamped on datagrams sent to
+    /// it — followed by both reliable Spaces' ack blocks read fresh from
+    /// <see cref="_receiveWindows"/>, so an admission this same Pump's read pass just made is reflected
+    /// in the Datagram this same Pump's flush sends. Every queued record is packed in Send order through
+    /// <see cref="DatagramRecordPacker"/>, an unreliable record's payload read back from
+    /// <see cref="PendingOutboundRecord.UnreliablePayload"/> and a reliable one's from
+    /// <see cref="_retention"/> (<see cref="TryResolvePendingPayload"/>). Splitting a Pump's queue
+    /// across more than one Datagram once it stops fitting in <see cref="_outboundDatagramBuffer"/> is
+    /// #45's coalescing; this ticket packs what fits, in order, and stops — the only records the tests
+    /// driving this method ever queue are small enough that the case never triggers. Nothing is sent at
+    /// all if nothing ended up packed, so a queue whose one record failed to resolve — read back from a
+    /// retention slot already released — costs a wasted flush rather than a header-only Datagram with no
+    /// records in it.
+    /// </summary>
+    private void FlushPeer(PeerSlot slot)
+    {
+        ((uint Base, uint Bits) reliableOrdered, (uint Base, uint Bits) reliableUnordered) =
+            _receiveWindows[slot.Handle.Index].GenerateAckBlocks();
+
+        DatagramRecordPacker packer = new(
+            _outboundDatagramBuffer,
+            slot.RemoteSessionId,
+            reliableOrdered.Base,
+            reliableOrdered.Bits,
+            reliableUnordered.Base,
+            reliableUnordered.Bits);
+
+        foreach (PendingOutboundRecord pending in slot.PendingSends)
+        {
+            if (!TryResolvePendingPayload(slot, pending, out ReadOnlySpan<byte> payload))
+            {
+                continue;
+            }
+
+            if (!packer.TryPackRecord(pending.Mode, pending.Sequence, payload))
+            {
+                break;
+            }
+        }
+
+        if (packer.RecordsPacked == 0)
+        {
+            return;
+        }
+
+        UdpLinkSendResult result = slot.Link.SendTo(slot.Remote, _outboundDatagramBuffer.AsSpan(0, packer.BytesWritten));
+        if (result.IsSuccess)
+        {
+            _counters.RecordDatagramSent();
+        }
+    }
+
+    /// <summary>
+    /// The bytes one queued record's flush should pack: <paramref name="pending"/>'s own copy for an
+    /// unreliable record, since nothing else retains it; otherwise a read back from
+    /// <see cref="_retention"/> at the reliable Space <paramref name="pending"/>'s mode addresses.
+    /// Fails — nothing to pack — only if a reliable sequence was already released from retention
+    /// between being queued and this flush, which no path on this ticket's live traffic does yet.
+    /// </summary>
+    private bool TryResolvePendingPayload(PeerSlot slot, PendingOutboundRecord pending, out ReadOnlySpan<byte> payload)
+    {
+        if (pending.UnreliablePayload is byte[] bytes)
+        {
+            payload = bytes;
+            return true;
+        }
+
+        int spaceIndex = ReliableSpaceIndex(pending.Mode);
+        return _retention.TryRead(slot.Handle.Index, spaceIndex, pending.Sequence, out payload);
     }
 
     /// <summary>
@@ -1218,6 +1351,34 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Not a reliable delivery mode."),
     };
 
+    /// <summary>
+    /// One record <see cref="Send"/> queued on a Peer's Slot, awaiting that Peer's next flush
+    /// (<see cref="FlushOutboundDatagrams"/>, issue #216): the wire mode and sequence
+    /// <see cref="Send"/> already allocated, plus — only for the two unreliable modes — a copy of the
+    /// Message's bytes. A reliable record carries no copy of its own: its bytes already live in
+    /// <see cref="_retention"/> from the moment <see cref="Send"/> committed them, and
+    /// <see cref="TryResolvePendingPayload"/> reads them back from there at flush time instead of
+    /// duplicating them here. Nothing retains an unreliable Send's bytes anywhere else — plain
+    /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> take no
+    /// retention slot at all (issue #43) — so this is the simplest place that can hold them until the
+    /// Pump that finally needs them: one small copy per unreliable Send, released the moment that
+    /// Pump's flush clears <see cref="PeerSlot.PendingSends"/>.
+    /// </summary>
+    private readonly struct PendingOutboundRecord
+    {
+        /// <summary>The wire mode this record was allocated under.</summary>
+        public required PacketRecordMode Mode { get; init; }
+
+        /// <summary>The sequence number <see cref="Send"/> allocated for this record.</summary>
+        public required uint Sequence { get; init; }
+
+        /// <summary>
+        /// A copy of the Message's bytes for an unreliable record; <see langword="null"/> for a
+        /// reliable one, whose bytes live in <see cref="_retention"/> instead.
+        /// </summary>
+        public byte[]? UnreliablePayload { get; init; }
+    }
+
     /// <summary>How far through the handshake one Peer has got.</summary>
     private enum HandshakeState
     {
@@ -1287,6 +1448,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// wire until #45's coalescing flush exists.
         /// </summary>
         public OutboundSequenceSpaces OutboundSequences { get; } = new();
+
+        /// <summary>
+        /// Records this Peer has Sent since its last flush, in Send order (issue #216): appended to by
+        /// <see cref="DatagramSessionReactor.Send"/> once a record is accepted, packed into one data
+        /// Datagram by <see cref="FlushPeer"/> on the next <see cref="Pump"/> that finds this
+        /// non-empty, and cleared immediately after by <see cref="FlushOutboundDatagrams"/>. A fresh
+        /// Slot always starts with an empty queue — <see cref="Connect"/> and the accepted-Peer path in
+        /// <see cref="OnHelloWithCookie"/> both construct a brand new <see cref="PeerSlot"/> rather than
+        /// reusing one, so a Slot a later Peer occupies never inherits a previous occupant's queue.
+        /// </summary>
+        public List<PendingOutboundRecord> PendingSends { get; } = [];
 
         /// <summary>
         /// This Peer's own tracker of outstanding reliable sequences and their ack horizon (subtask
