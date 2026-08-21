@@ -2,9 +2,9 @@ namespace ReactorSockets.Core;
 
 /// <summary>
 /// The send side's uniform-slot preallocation (issue #43, 6.5): one buffer, sliced into
-/// fixed-size fragment slots, one run of slots per reliable Space per share-holder. Geometry and
-/// addressing only — no acquire, no release; a later ticket in the same slice adds those on top of
-/// this type's storage.
+/// fixed-size fragment slots, one run of slots per reliable Space per share-holder.
+/// <see cref="TryAcquire"/> is the only way a slot becomes occupied; release (issue #203) and
+/// read-back (issue #204) are later tickets in the same slice.
 /// </summary>
 /// <remarks>
 /// <see cref="RetentionArena"/>'s ring does not port here. Its head pointer works because the
@@ -22,6 +22,20 @@ namespace ReactorSockets.Core;
 internal sealed class RetentionPool
 {
     private readonly byte[] _buffer;
+
+    /// <summary>
+    /// Whether the slot at a given per-slot index currently holds a retained fragment. Parallel to
+    /// <see cref="_slotSequence"/> and <see cref="_slotLength"/>, indexed the same way — one entry
+    /// per share-holder × Space × slot, never per byte, so it stays small regardless of
+    /// <see cref="FragmentSize"/>.
+    /// </summary>
+    private readonly bool[] _occupied;
+
+    /// <summary>The sequence number occupying a slot, valid only where <see cref="_occupied"/> is set.</summary>
+    private readonly uint[] _slotSequence;
+
+    /// <summary>The byte length written into a slot, valid only where <see cref="_occupied"/> is set.</summary>
+    private readonly int[] _slotLength;
 
     /// <summary>
     /// Constructs a pool of <paramref name="capacity"/> share-holders, each holding
@@ -95,6 +109,11 @@ internal sealed class RetentionPool
         }
 
         _buffer = new byte[totalBytes];
+
+        int slotCount = capacity * reliableSpaceCount * slotsPerSpace;
+        _occupied = new bool[slotCount];
+        _slotSequence = new uint[slotCount];
+        _slotLength = new int[slotCount];
     }
 
     /// <summary>The number of share-holders this pool divides its regions across.</summary>
@@ -127,6 +146,86 @@ internal sealed class RetentionPool
     /// <param name="slotIndex">A zero-based index below <see cref="SlotsPerSpace"/>.</param>
     public Span<byte> GetSlot(int shareHolderId, int spaceIndex, int slotIndex)
     {
+        int regionBase = ValidateRegion(shareHolderId, spaceIndex);
+
+        if (slotIndex < 0 || slotIndex >= SlotsPerSpace)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(slotIndex),
+                slotIndex,
+                $"slot {slotIndex} is outside this pool's run of {SlotsPerSpace} slots per Space.");
+        }
+
+        int offset = (regionBase + slotIndex) * FragmentSize;
+        return _buffer.AsSpan(offset, FragmentSize);
+    }
+
+    /// <summary>
+    /// Attempts to copy <paramref name="payload"/> into a free slot of <paramref name="shareHolderId"/>'s
+    /// <paramref name="spaceIndex"/>th reliable Space run, recording <paramref name="sequenceNumber"/>
+    /// and the byte length written against that slot. Refused as <see cref="RetentionSlotOutcome.Exhausted"/>,
+    /// without touching the pool, once every slot in that Space is already occupied.
+    /// </summary>
+    /// <remarks>
+    /// Sequence-to-slot lookup — here, a free-slot search — is a linear scan over
+    /// <see cref="SlotsPerSpace"/> entries rather than a dictionary keyed by sequence number.
+    /// <see cref="SlotsPerSpace"/> is small and bounded (issue #200 derives it from a byte budget), so
+    /// the scan costs less than a hash lookup and allocates nothing on the hot path.
+    /// </remarks>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    /// <param name="spaceIndex">A zero-based index below <see cref="ReliableSpaceCount"/>.</param>
+    /// <param name="sequenceNumber">The sequence number the acquired slot is recorded under.</param>
+    /// <param name="payload">
+    /// The fragment bytes to retain. Must not exceed <see cref="FragmentSize"/> — a caller sending
+    /// more than the fragment size it declared is a programming error, not an exhaustion outcome, so
+    /// this throws rather than truncating or overflowing into the neighbouring slot.
+    /// </param>
+    /// <exception cref="ArgumentException"><paramref name="payload"/> is longer than <see cref="FragmentSize"/>.</exception>
+    public RetentionSlotOutcome TryAcquire(int shareHolderId, int spaceIndex, uint sequenceNumber, ReadOnlySpan<byte> payload)
+    {
+        int regionBase = ValidateRegion(shareHolderId, spaceIndex);
+
+        if (payload.Length > FragmentSize)
+        {
+            throw new ArgumentException(
+                $"payload of {payload.Length} bytes exceeds this pool's fragment size of {FragmentSize} bytes.",
+                nameof(payload));
+        }
+
+        int freeSlot = -1;
+        for (int slotIndex = 0; slotIndex < SlotsPerSpace; slotIndex++)
+        {
+            if (!_occupied[regionBase + slotIndex])
+            {
+                freeSlot = slotIndex;
+                break;
+            }
+        }
+
+        if (freeSlot < 0)
+        {
+            return RetentionSlotOutcome.Exhausted;
+        }
+
+        int offset = (regionBase + freeSlot) * FragmentSize;
+        payload.CopyTo(_buffer.AsSpan(offset, payload.Length));
+
+        int stateIndex = regionBase + freeSlot;
+        _occupied[stateIndex] = true;
+        _slotSequence[stateIndex] = sequenceNumber;
+        _slotLength[stateIndex] = payload.Length;
+
+        return RetentionSlotOutcome.Committed;
+    }
+
+    /// <summary>
+    /// Validates <paramref name="shareHolderId"/> and <paramref name="spaceIndex"/> and returns the
+    /// Space run's base index into this pool's per-slot arrays — <see cref="_buffer"/> sliced by
+    /// <see cref="FragmentSize"/>, <see cref="_occupied"/>/<see cref="_slotSequence"/>/<see cref="_slotLength"/>
+    /// sliced directly — so every caller computes the same region the same way.
+    /// </summary>
+    private int ValidateRegion(int shareHolderId, int spaceIndex)
+    {
         if (shareHolderId < 0 || shareHolderId >= Capacity)
         {
             throw new ArgumentOutOfRangeException(
@@ -143,16 +242,6 @@ internal sealed class RetentionPool
                 $"Space {spaceIndex} is outside this pool's reliable Space count of {ReliableSpaceCount}.");
         }
 
-        if (slotIndex < 0 || slotIndex >= SlotsPerSpace)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(slotIndex),
-                slotIndex,
-                $"slot {slotIndex} is outside this pool's run of {SlotsPerSpace} slots per Space.");
-        }
-
-        int regionStart = ((shareHolderId * ReliableSpaceCount) + spaceIndex) * SlotsPerSpace * FragmentSize;
-        int offset = regionStart + (slotIndex * FragmentSize);
-        return _buffer.AsSpan(offset, FragmentSize);
+        return ((shareHolderId * ReliableSpaceCount) + spaceIndex) * SlotsPerSpace;
     }
 }
