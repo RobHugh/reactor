@@ -3,8 +3,8 @@ namespace ReactorSockets.Core;
 /// <summary>
 /// The send side's uniform-slot preallocation (issue #43, 6.5): one buffer, sliced into
 /// fixed-size fragment slots, one run of slots per reliable Space per share-holder.
-/// <see cref="TryAcquire"/> is the only way a slot becomes occupied; release (issue #203) and
-/// read-back (issue #204) are later tickets in the same slice.
+/// <see cref="TryAcquire"/> is the only way a slot becomes occupied; <see cref="Release"/> is
+/// the only way one is freed; read-back (issue #204) is a later ticket in the same slice.
 /// </summary>
 /// <remarks>
 /// <see cref="RetentionArena"/>'s ring does not port here. Its head pointer works because the
@@ -216,6 +216,37 @@ internal sealed class RetentionPool
         _slotLength[stateIndex] = payload.Length;
 
         return RetentionSlotOutcome.Committed;
+    }
+
+    /// <summary>
+    /// Frees the slot in <paramref name="shareHolderId"/>'s <paramref name="spaceIndex"/>th reliable
+    /// Space run that holds <paramref name="sequenceNumber"/>, making it immediately available to
+    /// the next <see cref="TryAcquire"/> in that Space. A no-op when no occupied slot in that Space
+    /// holds <paramref name="sequenceNumber"/> — a duplicate acknowledgement releasing a sequence
+    /// already released, or never retained, is ordinary and not an error.
+    /// </summary>
+    /// <remarks>
+    /// Release, like acquire, is a linear scan over <see cref="SlotsPerSpace"/> entries rather than a
+    /// dictionary keyed by sequence number — <c>ReliableUnordered</c> confirms delivery out of order
+    /// by design, so a release can name any occupied slot in the Space, not just the oldest, and the
+    /// scan is cheap and allocation-free for the same reason <see cref="TryAcquire"/>'s is.
+    /// </remarks>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    /// <param name="spaceIndex">A zero-based index below <see cref="ReliableSpaceCount"/>.</param>
+    /// <param name="sequenceNumber">The sequence number of the slot to free.</param>
+    public void Release(int shareHolderId, int spaceIndex, uint sequenceNumber)
+    {
+        int regionBase = ValidateRegion(shareHolderId, spaceIndex);
+
+        for (int slotIndex = 0; slotIndex < SlotsPerSpace; slotIndex++)
+        {
+            int stateIndex = regionBase + slotIndex;
+            if (_occupied[stateIndex] && _slotSequence[stateIndex] == sequenceNumber)
+            {
+                _occupied[stateIndex] = false;
+                return;
+            }
+        }
     }
 
     /// <summary>
