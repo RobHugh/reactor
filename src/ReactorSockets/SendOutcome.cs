@@ -37,4 +37,14 @@ public enum SendOutcome
     /// business receiving.
     /// </summary>
     Closed = 2,
+
+    /// <summary>
+    /// The Message is wider than one Datagram can carry, and the Space it was sent on cannot
+    /// fragment it. Nothing was copied. Deliberately its own value rather than folded into
+    /// <see cref="RetentionExhausted"/>: retention exhaustion is backpressure the caller can retry
+    /// once bytes are released, while an oversized Message will never fit however long the caller
+    /// waits — a consumer that cannot tell the two apart cannot tell "retry later" from "split it or
+    /// use a reliable mode".
+    /// </summary>
+    MessageTooLarge = 3,
 }
