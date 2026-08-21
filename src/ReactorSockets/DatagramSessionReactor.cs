@@ -994,7 +994,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         switch (outcome)
         {
             case ReceiveWindowOutcome.Admitted:
-                DeliverAdmittedRecord(slot, payload);
+                DeliverAdmittedRecord(slot, mode, sequence, payload);
                 break;
 
             case ReceiveWindowOutcome.OutOfWindow:
@@ -1034,13 +1034,38 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// retransmission rather than through a re-reservation this end schedules for itself.
     /// </para>
     /// <para>
-    /// Per-mode delivery rules do not live here. Holding a <c>ReliableOrdered</c> record behind a gap
-    /// is #220's, and the two unreliable modes' own rules are #221's and #222's; this method is what
-    /// each of them ends at once it has decided a record is deliverable.
+    /// <b>The one rule applied here is <c>UnreliableSequenced</c>'s</b> (subtask 6.6.11, issue #221):
+    /// a record is delivered only if it is strictly newer than the highest that Space has already
+    /// delivered. Admission and delivery part company for this mode alone — a record reordered behind a
+    /// newer one is a perfectly ordinary arrival as far as the receive window is concerned, and
+    /// discarding it is the whole reason the mode exists. There is deliberately no tolerance window for
+    /// recovering such a record: the rule is stated in a sentence with no exceptions — you never
+    /// receive an older update after a newer one — and a tolerance would break that sentence to
+    /// recover exactly what the mode is for discarding.
+    /// </para>
+    /// <para>
+    /// Holding a <c>ReliableOrdered</c> record behind a gap is #220's and <c>Unreliable</c>'s bounded
+    /// duplicate window is #222's; for the other three modes this method still delivers whatever the
+    /// window admitted.
     /// </para>
     /// </remarks>
-    private void DeliverAdmittedRecord(PeerSlot slot, ReadOnlySpan<byte> payload)
+    private void DeliverAdmittedRecord(PeerSlot slot, PacketRecordMode mode, uint sequence, ReadOnlySpan<byte> payload)
     {
+        if (mode == PacketRecordMode.UnreliableSequenced)
+        {
+            if (slot.HighestDeliveredUnreliableSequenced is uint highest
+                && !SequenceNumber.IsNewerThan(sequence, highest))
+            {
+                return;
+            }
+
+            // Advanced before the delivery attempt, not after it: a record this Space has decided is
+            // the newest stays the newest whether or not the arena had room for it. Advancing only on a
+            // successful reservation would let a Message refused for room be superseded by an older one
+            // that happened to fit, which is the one thing the mode promises cannot happen.
+            slot.HighestDeliveredUnreliableSequenced = sequence;
+        }
+
         int payloadOffset = _arena.BytesUsed;
         ArenaReservation reservation = _arena.Reserve(slot.Handle.Index, payload);
 
@@ -1629,5 +1654,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// consulted. Zero for a freshly built Slot, matching a tracker that has deferred nothing yet.
         /// </summary>
         public ulong ObservedHorizonDeferrals { get; set; }
+
+        /// <summary>
+        /// The highest sequence this Peer has delivered in its <c>UnreliableSequenced</c> Space, or
+        /// <see langword="null"/> if it has delivered none (subtask 6.6.11, issue #221). What the mode's
+        /// whole rule is stated against: a record is delivered only if it is strictly newer than this,
+        /// so a Message superseded before it arrived is discarded rather than delivered late.
+        /// </summary>
+        /// <remarks>
+        /// Nullable rather than a zero default, because zero is a real sequence a Session's first
+        /// UnreliableSequenced Send uses: without the distinction that first Message would have to be
+        /// strictly newer than itself to be delivered. Compared with
+        /// <see cref="SequenceNumber.IsNewerThan"/> rather than <c>&gt;</c>, so the comparison stays
+        /// correct across the <c>u32</c> wrap.
+        /// </remarks>
+        public uint? HighestDeliveredUnreliableSequenced { get; set; }
     }
 }
