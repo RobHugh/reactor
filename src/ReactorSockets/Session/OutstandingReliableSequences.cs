@@ -17,14 +17,8 @@ namespace ReactorSockets.Session;
 /// any ack the peer could send, so arming its deadline now would retransmit it the moment the timeout
 /// elapsed even though nothing was lost — it is recorded as outstanding but left unjudged, and
 /// <see cref="HorizonDeferrals"/> counts the deferral. Only once a later ack advances the base far
-/// enough that the horizon slides over it does its deadline arm, from that moment (subtask 6.3.5,
-/// issue #187, via an <c>ApplyAck(PacketRecordMode, uint, uint)</c> method 6.3.5 adds to this class).
-/// </para>
-/// <para>
-/// <b><c>ApplyAck</c> is deliberately not declared here.</b> Its shape is pinned by issue #185, but its
-/// body depends on how an ack block's bitfield correlates to the sequences this tracker already holds
-/// — 6.3.5's decision, not one to guess at from this side. A stub body would only be a placeholder
-/// pretending to work, so 6.3.5 adds the member itself when it lands.
+/// enough that the horizon slides over it does its deadline arm, from that moment — <see cref="ApplyAck"/>
+/// (subtask 6.3.5, issue #187).
 /// </para>
 /// <para>
 /// Without this rule, a Message spanning more than 33 Fragments would have its later Fragments arrive
@@ -45,7 +39,9 @@ namespace ReactorSockets.Session;
 /// offset-from-base indexing on the receive side. The ring only grows — doubling its backing arrays —
 /// when more sequences are outstanding at once than it has ever held before; <see cref="RecordSent"/>,
 /// <see cref="IsOutstanding"/> and <see cref="TryGetDeadline"/> allocate nothing once a Space's ring has
-/// grown to cover its steady-state outstanding count.
+/// grown to cover its steady-state outstanding count. <see cref="ApplyAck"/> never grows the ring — it
+/// only releases sequences and moves the tracked window's edges — so it allocates nothing regardless of
+/// how many times it has been called.
 /// </para>
 /// </remarks>
 internal sealed class OutstandingReliableSequences
@@ -129,6 +125,45 @@ internal sealed class OutstandingReliableSequences
         SpaceOf(mode).TryGetDeadline(sequence, out deadline);
 
     /// <summary>
+    /// Applies one received ack block to <paramref name="mode"/>'s reliable Space (subtask 6.3.5, issue
+    /// #187): releases every sequence the block acknowledges, slides the Space's horizon to
+    /// <paramref name="ackBase"/>, and arms any deferred sequence the slide newly covers.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>What is released.</b> <paramref name="ackBase"/> is cumulative — every outstanding sequence
+    /// strictly below it is released in this one call, whether or not any bit ever described it. Bit
+    /// <c>n</c> (0-based) of <paramref name="ackBits"/> additionally releases the single sequence
+    /// <c>ackBase + n + 1</c> when set, matching the projection <see cref="ReceiveWindow.DescribeAsAckBlock"/>
+    /// builds on the receive side. An unset bit releases nothing, and a bit describing a sequence this
+    /// Space never recorded (untrusted peer input) is silently ignored rather than throwing.
+    /// </para>
+    /// <para>
+    /// <b>Staleness.</b> <paramref name="ackBase"/> is compared against the base of the last ack this
+    /// Space applied, using <see cref="SequenceNumber.IsNewerThan"/> so the comparison is correct across
+    /// the <c>u32</c> wrap. A base that is not newer than (and not equal to) the base already applied is
+    /// stale: the whole block is ignored, moving nothing and releasing nothing, since an equal base can
+    /// still carry new bits worth applying but an older one cannot be trusted at all.
+    /// </para>
+    /// <para>
+    /// <b>The slide.</b> Once <paramref name="ackBase"/> is accepted, it becomes this Space's horizon.
+    /// Any sequence still outstanding after the release above, not yet armed, and now within
+    /// <c>[ackBase, ackBase + 32]</c> arms at this moment — its deadline is taken from the injected
+    /// <see cref="TimeProvider"/> plus the retransmit timeout <i>now</i>, not backdated to when it was
+    /// originally sent.
+    /// </para>
+    /// <para>Allocates nothing: it only flips flags and moves the tracked window's edges.</para>
+    /// </remarks>
+    /// <param name="mode">Which reliable Space the ack block describes.</param>
+    /// <param name="ackBase">The ack block's cumulative base.</param>
+    /// <param name="ackBits">
+    /// The ack block's 32-bit field; bit <c>n</c> describes sequence <c>ackBase + n + 1</c>.
+    /// </param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
+    public void ApplyAck(PacketRecordMode mode, uint ackBase, uint ackBits) =>
+        SpaceOf(mode).ApplyAck(ackBase, ackBits, _time, _retransmitTimeout);
+
+    /// <summary>
     /// Resolves <paramref name="mode"/> to its reliable Space's tracker. Only the two reliable modes are
     /// valid — the two unreliable modes are never acknowledged and so are never tracked here — matching
     /// how <see cref="OutboundSequenceSpaces.Allocate"/> rejects a mode it does not recognize.
@@ -158,6 +193,7 @@ internal sealed class OutstandingReliableSequences
         private const int InitialCapacity = 16;
 
         private bool[] _armed = new bool[InitialCapacity];
+        private bool[] _released = new bool[InitialCapacity];
         private DateTimeOffset[] _deadline = new DateTimeOffset[InitialCapacity];
         private int _capacity = InitialCapacity;
 
@@ -171,12 +207,12 @@ internal sealed class OutstandingReliableSequences
         private int _count;
 
         /// <summary>
-        /// The base of the last ack block received for this Space — the horizon's lower edge. Zero
-        /// until the first ack arrives, matching every Space's numbering start. Assigned only by the
-        /// ack-applying member 6.3.5 (issue #187) adds to the enclosing type; explicitly initialized
-        /// here so it reads as the deliberate initial horizon rather than an unused field.
+        /// The base of the last ack block applied to this Space — the horizon's lower edge. Zero until
+        /// the first ack arrives, matching every Space's numbering start. Advanced only by
+        /// <see cref="ApplyAck"/>, and only forward: a stale ack (subtask 6.3.5, issue #187) never moves
+        /// it back.
         /// </summary>
-        private readonly uint _ackBase = 0;
+        private uint _ackBase;
 
         /// <summary>
         /// Records <paramref name="sequence"/> as newly outstanding, arming its deadline when the
@@ -197,6 +233,7 @@ internal sealed class OutstandingReliableSequences
             int slot = SlotFor(offset);
 
             bool withinHorizon = unchecked(sequence - _ackBase) <= HorizonWidth;
+            _released[slot] = false;
             if (withinHorizon)
             {
                 _armed[slot] = true;
@@ -211,16 +248,20 @@ internal sealed class OutstandingReliableSequences
             return !withinHorizon;
         }
 
-        /// <summary>Whether <paramref name="sequence"/> is currently tracked as outstanding.</summary>
-        public bool IsOutstanding(uint sequence) => TryGetSlot(sequence, out _);
+        /// <summary>
+        /// Whether <paramref name="sequence"/> is currently tracked as outstanding — sent, and not yet
+        /// released by <see cref="ApplyAck"/>.
+        /// </summary>
+        public bool IsOutstanding(uint sequence) => TryGetSlot(sequence, out int slot) && !_released[slot];
 
         /// <summary>
-        /// Attempts to read <paramref name="sequence"/>'s deadline: fails both when it is not tracked at
-        /// all and when it is tracked but not currently armed.
+        /// Attempts to read <paramref name="sequence"/>'s deadline: fails when it is not tracked at all,
+        /// when it has been released by <see cref="ApplyAck"/>, and when it is tracked but not currently
+        /// armed.
         /// </summary>
         public bool TryGetDeadline(uint sequence, out DateTimeOffset deadline)
         {
-            if (TryGetSlot(sequence, out int slot) && _armed[slot])
+            if (TryGetSlot(sequence, out int slot) && !_released[slot] && _armed[slot])
             {
                 deadline = _deadline[slot];
                 return true;
@@ -228,6 +269,96 @@ internal sealed class OutstandingReliableSequences
 
             deadline = default;
             return false;
+        }
+
+        /// <summary>
+        /// Applies one received ack block (see the enclosing type's <c>ApplyAck</c> for the full
+        /// contract): releases what it acknowledges, slides the horizon to <paramref name="ackBase"/>,
+        /// and arms any deferred sequence the slide newly covers. A stale <paramref name="ackBase"/> —
+        /// one <see cref="SequenceNumber.IsNewerThan"/> says is not newer than, and is not equal to, the
+        /// base already applied — is rejected outright: nothing is released and the horizon does not
+        /// move.
+        /// </summary>
+        public void ApplyAck(uint ackBase, uint ackBits, TimeProvider time, TimeSpan retransmitTimeout)
+        {
+            bool stale = ackBase != _ackBase && !SequenceNumber.IsNewerThan(ackBase, _ackBase);
+            if (stale)
+            {
+                return;
+            }
+
+            ReleaseBelowBase(ackBase);
+
+            for (int n = 0; n < (int)HorizonWidth; n++)
+            {
+                if ((ackBits & (1u << n)) == 0)
+                {
+                    continue;
+                }
+
+                uint sequence = unchecked(ackBase + (uint)n + 1);
+                if (TryGetSlot(sequence, out int slot))
+                {
+                    _armed[slot] = false;
+                    _released[slot] = true;
+                }
+            }
+
+            _ackBase = ackBase;
+            ArmNewlyCovered(time, retransmitTimeout);
+        }
+
+        /// <summary>
+        /// Releases every tracked sequence strictly below <paramref name="ackBase"/> in one step, by
+        /// moving the tracked window's start past them — whether or not any of them was ever named by a
+        /// bit. A no-op when nothing is tracked, or when <paramref name="ackBase"/> does not reach past
+        /// <see cref="_oldest"/> at all.
+        /// </summary>
+        private void ReleaseBelowBase(uint ackBase)
+        {
+            if (_count == 0 || _oldest == ackBase || SequenceNumber.IsNewerThan(_oldest, ackBase))
+            {
+                return;
+            }
+
+            uint advance = unchecked(ackBase - _oldest);
+            int steps = advance >= (uint)_count ? _count : (int)advance;
+
+            _oldest = unchecked(_oldest + (uint)steps);
+            _headSlot = (int)(((uint)_headSlot + (uint)steps) % (uint)_capacity);
+            _count -= steps;
+        }
+
+        /// <summary>
+        /// Arms every tracked sequence that is not released, not already armed, and now falls within
+        /// <c>[_ackBase, _ackBase + <see cref="HorizonWidth"/>]</c> — the sequences a horizon slide just
+        /// brought into view. Every sequence armed by one call shares the same deadline, taken once from
+        /// <paramref name="time"/> so a slide that covers several deferred sequences at once arms them
+        /// all from that single moment rather than one clock read apiece.
+        /// </summary>
+        private void ArmNewlyCovered(TimeProvider time, TimeSpan retransmitTimeout)
+        {
+            if (_count == 0)
+            {
+                return;
+            }
+
+            DateTimeOffset deadline = time.GetUtcNow() + retransmitTimeout;
+            for (int offset = 0; offset < _count; offset++)
+            {
+                int slot = SlotFor((uint)offset);
+                if (_released[slot] || _armed[slot])
+                {
+                    continue;
+                }
+
+                uint sequence = unchecked(_oldest + (uint)offset);
+                if (unchecked(sequence - _ackBase) <= HorizonWidth)
+                {
+                    _armed[slot] = true;
+                    _deadline[slot] = deadline;
+                }
+            }
         }
 
         /// <summary>
@@ -284,15 +415,18 @@ internal sealed class OutstandingReliableSequences
             }
 
             bool[] newArmed = new bool[newCapacity];
+            bool[] newReleased = new bool[newCapacity];
             DateTimeOffset[] newDeadline = new DateTimeOffset[newCapacity];
             for (int i = 0; i < _count; i++)
             {
                 int oldSlot = (int)((_headSlot + i) % (uint)_capacity);
                 newArmed[i] = _armed[oldSlot];
+                newReleased[i] = _released[oldSlot];
                 newDeadline[i] = _deadline[oldSlot];
             }
 
             _armed = newArmed;
+            _released = newReleased;
             _deadline = newDeadline;
             _capacity = newCapacity;
             _headSlot = 0;
