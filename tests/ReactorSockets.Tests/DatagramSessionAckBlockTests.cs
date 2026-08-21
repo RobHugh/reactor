@@ -18,6 +18,17 @@ namespace ReactorSockets.Tests;
 /// surface at all — <c>OutstandingReliableSequences</c> has no public reader — so that half of the
 /// ticket is not asserted here (see the ticket report).
 /// </summary>
+/// <remarks>
+/// Subtask 6.3.8 (issue #190) extends this file rather than sitting beside it, per that ticket: the
+/// untrusted-ack criterion is the one edge of the ack path genuinely reachable through the public seam
+/// (a peer's own send is not — no outbound data datagram is ever produced by this codebase, see the
+/// ticket report). These tests drive a raw client's ack blocks with values no legitimate sender could
+/// ever produce — every bit set, a base at the <c>u32</c> wrap, a base far ahead of anything sent, and a
+/// long fixed-seed run of wildly flipping bases and bits — and assert only what the seam can show: no
+/// <see cref="DiagnosticId.DatagramMalformed"/>, no thrown exception, no Session event, the
+/// <c>HorizonDeferrals</c> counter staying at zero (nothing legitimate was ever sent for the horizon rule
+/// to defer), and the Session still processing an ordinary arrival afterwards.
+/// </remarks>
 public class DatagramSessionAckBlockTests
 {
     private const int ControlDatagramSize = 256;
@@ -128,6 +139,178 @@ public class DatagramSessionAckBlockTests
         // cost climbing as the run goes on, which is what a tracker that allocated on every ack it
         // applied would show up as.
         phaseTwoDelta.Should().BeLessThanOrEqualTo(phaseOneDelta * 2 + 1);
+    }
+
+    [Fact]
+    public void Pump_AckBlocksWithEveryBitSetInBothReliableSpaces_SurvivesWithoutMalformedOrThrowingAndLeavesHorizonDeferralsAtZero()
+    {
+        // Arrange — subtask 6.3.8 (#190): an ack block describing sequences the sender never sent is
+        // untrusted input. All 32 bits set claims every one of the 32 sequences above the base is
+        // outstanding and now acknowledged, none of which this raw client ever sent.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        byte[] datagram = BuildHeader(
+            sessionId,
+            reliableOrderedAckBase: 5,
+            reliableOrderedAckBits: 0xFFFF_FFFF,
+            reliableUnorderedAckBase: 5,
+            reliableUnorderedAckBits: 0xFFFF_FFFF);
+
+        // Act
+        ulong receivedBefore = accepter.Reactor.Counters.DatagramsReceived;
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > receivedBefore);
+
+        // Assert — nothing was ever recorded as sent, so nothing exists to release; the point is that
+        // an all-bits-set block against an empty tracker parses cleanly, is not reported malformed, and
+        // never arms a deadline for a sequence that was never sent.
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        accepter.DrainToList().Should().BeEmpty();
+        accepter.Reactor.CountersOf(accepterPeer).HorizonDeferrals.Should().Be(0);
+    }
+
+    [Fact]
+    public void Pump_AckBaseAtUInt32MaxValueWithEveryBitSet_SurvivesTheWrappingAdditionWithoutThrowing()
+    {
+        // Arrange — subtask 6.3.8 (#190): a base of uint.MaxValue makes every bit's described sequence
+        // (ackBase + n + 1) wrap past zero. This is the arithmetic edge the untrusted-ack criterion asks
+        // for: a hostile base placed exactly where unchecked addition wraps.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        byte[] datagram = BuildHeader(
+            sessionId,
+            reliableOrderedAckBase: uint.MaxValue,
+            reliableOrderedAckBits: 0xFFFF_FFFF,
+            reliableUnorderedAckBase: uint.MaxValue,
+            reliableUnorderedAckBits: 0xFFFF_FFFF);
+
+        // Act
+        ulong receivedBefore = accepter.Reactor.Counters.DatagramsReceived;
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > receivedBefore);
+
+        // Assert — parsed and applied cleanly across the wrap, nothing reported malformed, nothing
+        // deferred (nothing was ever sent to defer).
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        accepter.DrainToList().Should().BeEmpty();
+        accepter.Reactor.CountersOf(accepterPeer).HorizonDeferrals.Should().Be(0);
+    }
+
+    [Fact]
+    public void Pump_AckBaseFarAheadOfAnythingEverSent_SurvivesAndAppliesWithoutThrowing()
+    {
+        // Arrange — subtask 6.3.8 (#190): a base far ahead of anything this Session's Peer could ever
+        // legitimately have sent (nothing has been sent at all — no outbound data send exists yet on
+        // this profile). The receiving Peer has no way to know that, so it must accept the claim without
+        // misbehaving.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        const uint farAheadBase = 0x7000_0000;
+        byte[] datagram = BuildHeader(
+            sessionId,
+            reliableOrderedAckBase: farAheadBase,
+            reliableOrderedAckBits: 0xAAAA_AAAA,
+            reliableUnorderedAckBase: farAheadBase,
+            reliableUnorderedAckBits: 0x5555_5555);
+
+        // Act
+        ulong receivedBefore = accepter.Reactor.Counters.DatagramsReceived;
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > receivedBefore);
+
+        // Assert
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        accepter.DrainToList().Should().BeEmpty();
+        accepter.Reactor.CountersOf(accepterPeer).HorizonDeferrals.Should().Be(0);
+    }
+
+    [Fact]
+    public void Pump_ASustainedRunOfWildlyFlippingHostileAckBlocks_NeverThrowsKeepsHorizonDeferralsAtZeroAndLeavesThePeerConnected()
+    {
+        // Arrange — subtask 6.3.8 (#190): a long run of arrivals whose ack bases and bits flip wildly
+        // between one datagram and the next — forward jumps, backward jumps landing on now-stale bases,
+        // the two wrap edges, all-zero and all-one bitfields, and ordinary small values — driven from a
+        // fixed seed so a failure is reproducible. Nothing here was ever legitimately sent, so this is
+        // squarely the untrusted-ack criterion: the Peer must survive every shape without throwing,
+        // without gaining a deferral that has nothing behind it, and without the Session itself being
+        // torn down.
+        const int seed = 20260821;
+        const int arrivals = 500;
+
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        Random random = new(seed);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> allDrained = [];
+
+        // Act
+        for (int i = 0; i < arrivals; i++)
+        {
+            uint orderedBase = NextHostileValue(random);
+            uint orderedBits = NextHostileValue(random);
+            uint unorderedBase = NextHostileValue(random);
+            uint unorderedBits = NextHostileValue(random);
+
+            byte[] datagram = BuildHeader(sessionId, orderedBase, orderedBits, unorderedBase, unorderedBits);
+
+            ulong before = accepter.Reactor.Counters.DatagramsReceived;
+            client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+            accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+            allDrained.AddRange(accepter.DrainToList());
+        }
+
+        // Assert — no record ever hit the Sink as malformed, nothing was ever delivered or disconnected,
+        // and the deferral figure stayed at zero throughout: no legitimate send exists for the horizon
+        // rule to have anything real to defer.
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        allDrained.Should().BeEmpty();
+        accepter.Reactor.CountersOf(accepterPeer).HorizonDeferrals.Should().Be(0);
+
+        // Assert — the Peer is still alive and the Reactor still usable: an ordinary further exchange
+        // still works after the hostile run, proving the run left the Session itself intact rather than
+        // merely failing to crash mid-run.
+        byte[] ordinaryFollowUp = BuildHeader(sessionId, 0, 0, 0, 0);
+        ulong followUpBefore = accepter.Reactor.Counters.DatagramsReceived;
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), ordinaryFollowUp);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > followUpBefore);
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        accepter.DrainToList().Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Draws one hostile <c>u32</c>: mostly a uniformly random value, but biased toward the edges a
+    /// wrap-aware tracker must handle correctly — zero, <see cref="uint.MaxValue"/>, and values either
+    /// side of the wrap — so the fixed-seed run in
+    /// <see cref="Pump_ASustainedRunOfWildlyFlippingHostileAckBlocks_NeverThrowsKeepsHorizonDeferralsAtZeroAndLeavesThePeerConnected"/>
+    /// reliably lands on those edges rather than only on the interior of the range.
+    /// </summary>
+    private static uint NextHostileValue(Random random)
+    {
+        int roll = random.Next(10);
+        return roll switch
+        {
+            0 => 0u,
+            1 => uint.MaxValue,
+            2 => unchecked(uint.MaxValue - (uint)random.Next(1, 32)),
+            3 => unchecked((uint)(0 - random.Next(1, 32))),
+            4 => (uint)random.Next(0, 32),
+            _ => unchecked((uint)random.NextInt64(0, uint.MaxValue)),
+        };
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
