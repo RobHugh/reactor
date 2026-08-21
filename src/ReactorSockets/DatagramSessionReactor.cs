@@ -823,6 +823,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// Whether <paramref name="mode"/> is one of the two Spaces that retain, acknowledge and retransmit
+    /// — the single place that question is asked, so the reliable half of the four modes is named once.
+    /// </summary>
+    private static bool IsReliable(PacketRecordMode mode) =>
+        mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered;
+
+    /// <summary>
     /// Queues every sequence <see cref="ReportExpiredRetransmissions"/> found expired on one reliable
     /// Space back onto <paramref name="slot"/>'s <see cref="PeerSlot.PendingSends"/>, so the same
     /// Pump's <see cref="FlushOutboundDatagrams"/> packs it (subtask 6.6.8, issue #218). No payload
@@ -838,13 +845,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// the flush is one that no longer needs resending, and dropping it silently is the outcome
     /// wanted.
     /// </remarks>
-    /// <summary>
-    /// Whether <paramref name="mode"/> is one of the two Spaces that retain, acknowledge and retransmit
-    /// — the single place that question is asked, so the reliable half of the four modes is named once.
-    /// </summary>
-    private static bool IsReliable(PacketRecordMode mode) =>
-        mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered;
-
     private static void QueueForRetransmission(PeerSlot slot, PacketRecordMode mode, ReadOnlySpan<uint> sequences)
     {
         foreach (uint sequence in sequences)
@@ -981,10 +981,25 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// and delivers what it admitted (subtask 6.6.5, issue #217).
     /// </summary>
     /// <remarks>
-    /// Only an admitted record is delivered. A duplicate or an out-of-window record reaches neither the
-    /// frame arena nor <see cref="PeerCounters.MessagesReceived"/> — suppressing a duplicate is the
-    /// window's whole purpose, and counting one as received would make the suppression invisible in the
-    /// figure a consumer reads to check it.
+    /// <para>
+    /// For three of the four Spaces, only an admitted record is delivered: a duplicate or an
+    /// out-of-window record reaches neither the frame arena nor
+    /// <see cref="PeerCounters.MessagesReceived"/>, because suppressing a duplicate is the window's
+    /// whole purpose and counting one as received would make the suppression invisible in the figure a
+    /// consumer reads to check it.
+    /// </para>
+    /// <para>
+    /// <b>Plain <c>Unreliable</c> is the exception</b> (subtask 6.6.12, issue #222; ADR 0017). Its
+    /// promise is that a late arrival is delivered and that duplicate suppression is bounded at 64
+    /// sequences, and the receive window can keep neither: it refuses everything below its base
+    /// outright, so a repeat delayed past 64 would be discarded rather than delivered, and its capacity
+    /// is a consumer option rather than the protocol's 64. So for that Space the receive window still
+    /// classifies — that is what counts loss from the gaps it slides past, and what its ack bookkeeping
+    /// needs — while the delivery decision comes from
+    /// <see cref="PeerSlot.UnreliableDuplicates"/> alone. The receive window's own refusals are not
+    /// counted for this Space, since the 64-entry window is the authority on what was a duplicate here
+    /// and counting both would count one repeat twice.
+    /// </para>
     /// </remarks>
     private void ClassifyRecord(PeerSlot slot, PacketRecordMode mode, uint sequence, ReadOnlySpan<byte> payload)
     {
@@ -993,10 +1008,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         switch (outcome)
         {
-            case ReceiveWindowOutcome.Admitted:
-                DeliverAdmittedRecord(slot, mode, sequence, payload);
-                break;
-
             case ReceiveWindowOutcome.OutOfWindow:
                 slot.Counters.RecordOutOfWindowPacket();
                 break;
@@ -1004,6 +1015,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             case ReceiveWindowOutcome.Duplicate:
                 slot.Counters.RecordDuplicatePacket();
                 break;
+        }
+
+        if (mode == PacketRecordMode.Unreliable)
+        {
+            DeliverUnreliableRecord(slot, sequence, payload, alreadyCountedAsRefused: outcome != ReceiveWindowOutcome.Admitted);
+        }
+        else if (outcome == ReceiveWindowOutcome.Admitted)
+        {
+            DeliverAdmittedRecord(slot, mode, sequence, payload);
         }
 
         // No mode test guards this (#176): a window reports a nonzero LastSlideLoss only if it slid,
@@ -1014,6 +1034,45 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             slot.Counters.RecordUnreliableLoss(windows.LastSlideLoss);
         }
+    }
+
+    /// <summary>
+    /// The plain <c>Unreliable</c> Space's delivery decision (subtask 6.6.12, issue #222; ADR 0017):
+    /// deliver unless this Peer's own 64-entry <see cref="UnreliableDuplicateWindow"/> has already seen
+    /// <paramref name="sequence"/>. A repeat inside those 64 sequences is suppressed and counted as a
+    /// duplicate; a repeat delayed past them is delivered, because suppression here is bounded rather
+    /// than absolute and pretending otherwise would promise something a 64-entry window cannot keep.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The receive window's own verdict does not decide delivery here. That window refuses everything
+    /// below its base, which for this Space would discard exactly the late arrival the mode promises to
+    /// deliver, and its capacity is a consumer option rather than the protocol's 64. It still runs and
+    /// is still counted, for the loss its slides retire and the refusals a consumer reads off
+    /// <see cref="PeerCounters.OutOfWindowPackets"/>; it simply is not what says whether a Message
+    /// reaches the consumer.
+    /// </para>
+    /// <para>
+    /// <paramref name="alreadyCountedAsRefused"/> is what keeps one repeat from counting twice. A
+    /// record the receive window already refused has raised a counter of its own, so suppressing it
+    /// here raises nothing further; only a record that window admitted, and that this one recognises,
+    /// is a duplicate this Space would otherwise never have counted.
+    /// </para>
+    /// </remarks>
+    private void DeliverUnreliableRecord(
+        PeerSlot slot, uint sequence, ReadOnlySpan<byte> payload, bool alreadyCountedAsRefused)
+    {
+        if (!slot.UnreliableDuplicates.TryAdmit(sequence))
+        {
+            if (!alreadyCountedAsRefused)
+            {
+                slot.Counters.RecordDuplicatePacket();
+            }
+
+            return;
+        }
+
+        DeliverAdmittedRecord(slot, PacketRecordMode.Unreliable, sequence, payload);
     }
 
     /// <summary>
@@ -1044,9 +1103,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// recover exactly what the mode is for discarding.
     /// </para>
     /// <para>
-    /// Holding a <c>ReliableOrdered</c> record behind a gap is #220's and <c>Unreliable</c>'s bounded
-    /// duplicate window is #222's; for the other three modes this method still delivers whatever the
-    /// window admitted.
+    /// <b>Plain <c>Unreliable</c>'s rule is bounded duplicate suppression</b> (subtask 6.6.12, issue
+    /// #222; ADR 0017): a record the Peer's own <see cref="UnreliableDuplicateWindow"/> has already
+    /// seen is suppressed, and one delayed past that window's 64 sequences is delivered. That window
+    /// is deliberately not the receive window — 64 is a protocol constant, while the receive window's
+    /// capacity is a consumer option — so the two are asked separately and a suppression here is
+    /// counted as a duplicate exactly as one the receive window caught is.
+    /// </para>
+    /// <para>
+    /// Holding a <c>ReliableOrdered</c> record behind a gap is #220's; for the two reliable modes this
+    /// method still delivers whatever the window admitted.
     /// </para>
     /// </remarks>
     private void DeliverAdmittedRecord(PeerSlot slot, PacketRecordMode mode, uint sequence, ReadOnlySpan<byte> payload)
@@ -1669,5 +1735,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// correct across the <c>u32</c> wrap.
         /// </remarks>
         public uint? HighestDeliveredUnreliableSequenced { get; set; }
+
+        /// <summary>
+        /// This Peer's bounded duplicate suppression for the plain <c>Unreliable</c> Space (subtask
+        /// 6.6.12, issue #222; ADR 0017): 64 sequences wide, a protocol constant rather than anything
+        /// derived from this Reactor's options. Built with the Slot and released with it, so a Slot a
+        /// later Peer occupies never inherits the previous occupant's suppression state.
+        /// </summary>
+        public UnreliableDuplicateWindow UnreliableDuplicates { get; } = new();
     }
 }

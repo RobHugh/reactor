@@ -47,6 +47,14 @@ namespace ReactorSockets;
 /// ADR 0013). Recurs every Pump under sustained loss exactly like <see cref="OutOfWindowPackets"/>,
 /// and for the same reason is a Counter. Incremented by the parse loop's classification of each
 /// arriving record (issue #172); a freshly connected Peer reads zero.
+/// The plain <c>Unreliable</c> Space contributes from a second place as well (issue #222, ADR 0017):
+/// that Space suppresses repeats within its own bounded 64-sequence window, a protocol constant rather
+/// than the receive window, and a repeat that window catches after the receive window <em>admitted</em>
+/// it raises this figure. A repeat the receive window itself refused is counted there instead — most
+/// often on <see cref="OutOfWindowPackets"/>, since a repeat usually arrives below a base that has
+/// already passed it — so one record raises one figure and never both. A repeat delayed past those 64
+/// sequences is delivered and raises neither: suppression there is bounded by design, and these
+/// figures count what was refused rather than what was repeated.
 /// </param>
 /// <param name="UnreliableLossPackets">
 /// How many sequences an unreliable Space's receive window has lost — retired by sliding its base
