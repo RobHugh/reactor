@@ -104,11 +104,27 @@ internal sealed class PeerCounterSet
     public ulong UnreliableLossPackets { get; private set; }
 
     /// <summary>
+    /// Records that one sequence arrived beyond a reliable Space's ack horizon, so its retransmit timer
+    /// was withheld rather than started (subtask 6.3, issue #41; ADR 0013). Called from the horizon
+    /// gate (issue #185) once a record classifies as beyond <c>[base, base+32)</c> for the Space it
+    /// belongs to; nothing calls this yet. No Diagnostic accompanies this — a deferral can recur every
+    /// Pump under sustained load, which is exactly why this is a Counter (ADR 0013).
+    /// </summary>
+    public void RecordHorizonDeferral() => HorizonDeferrals++;
+
+    /// <summary>
+    /// The live count of horizon deferrals so far — the same figure <see cref="Snapshot"/> exposes as
+    /// <see cref="PeerCounters.HorizonDeferrals"/>. Monotonic and never reset, exactly like
+    /// <see cref="MessagesReceived"/>.
+    /// </summary>
+    public ulong HorizonDeferrals { get; private set; }
+
+    /// <summary>
     /// Takes a point-in-time snapshot of every counter belonging to this Peer.
     /// <paramref name="retentionHighWaterBytes"/> is pulled fresh from <see cref="RetentionArena"/> by
     /// the caller (ADR 0005 — Counters are pulled, not pushed) rather than held here, since this set
     /// holds only what a Peer increments on its own hot path.
     /// </summary>
     public PeerCounters Snapshot(ulong retentionHighWaterBytes) =>
-        new(MessagesReceived, retentionHighWaterBytes, Resumes, OutOfWindowPackets, DuplicatePackets, UnreliableLossPackets);
+        new(MessagesReceived, retentionHighWaterBytes, Resumes, OutOfWindowPackets, DuplicatePackets, UnreliableLossPackets, HorizonDeferrals);
 }
