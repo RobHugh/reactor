@@ -120,11 +120,27 @@ internal sealed class PeerCounterSet
     public ulong HorizonDeferrals { get; private set; }
 
     /// <summary>
+    /// Records <paramref name="count"/> packet records this Peer has resent (subtask 6.4.6, issue #196;
+    /// ADR 0013). Nothing calls this yet — the expiry path that does is issue #198. Takes a count rather
+    /// than being called once per record for the same reason as <see cref="RecordUnreliableLoss"/>: one
+    /// Pump's sweep can report many expired sequences retransmitted at once, and adding the whole figure
+    /// in one op keeps the hot path a single add regardless of how many sequences it covered.
+    /// </summary>
+    public void RecordPacketsRetransmitted(ulong count) => PacketsRetransmitted += count;
+
+    /// <summary>
+    /// The live count of packet records retransmitted so far — the same figure <see cref="Snapshot"/>
+    /// exposes as <see cref="PeerCounters.PacketsRetransmitted"/>. Monotonic and never reset, exactly
+    /// like <see cref="MessagesReceived"/>.
+    /// </summary>
+    public ulong PacketsRetransmitted { get; private set; }
+
+    /// <summary>
     /// Takes a point-in-time snapshot of every counter belonging to this Peer.
     /// <paramref name="retentionHighWaterBytes"/> is pulled fresh from <see cref="RetentionArena"/> by
     /// the caller (ADR 0005 — Counters are pulled, not pushed) rather than held here, since this set
     /// holds only what a Peer increments on its own hot path.
     /// </summary>
     public PeerCounters Snapshot(ulong retentionHighWaterBytes) =>
-        new(MessagesReceived, retentionHighWaterBytes, Resumes, OutOfWindowPackets, DuplicatePackets, UnreliableLossPackets, HorizonDeferrals);
+        new(MessagesReceived, retentionHighWaterBytes, Resumes, OutOfWindowPackets, DuplicatePackets, UnreliableLossPackets, HorizonDeferrals, PacketsRetransmitted);
 }

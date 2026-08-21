@@ -99,6 +99,23 @@ public enum DiagnosticId
     VersionRefused = 202,
 
     /// <summary>
+    /// This Peer's <see cref="RetransmissionTimer"/> backed off: a Pump's expiry sweep
+    /// (<see cref="Session.OutstandingReliableSequences.CollectExpired"/>, subtask 6.4.8, issue #198)
+    /// found at least one overdue sequence on either reliable Space, so <see cref="RetransmissionTimer.BackOff"/>
+    /// was called once for the Peer and every sequence the sweep reported re-armed at the single
+    /// resulting RTO. Subject is the Peer. <c>Value0</c> is the new RTO in milliseconds —
+    /// <see cref="RetransmissionTimer.EffectiveTimeout"/> at the moment of the backoff; <c>Value1</c> is
+    /// <see cref="RetransmissionTimer.ConsecutiveBackoffs"/> after this backoff.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Trace"/>, not <see cref="DiagnosticLevel.Warn"/>: this is protocol
+    /// machinery working correctly, not a fault. A lossy path emits it continuously — every Pump that
+    /// finds an overdue sequence backs off again — and raising it above <c>Trace</c> would train a
+    /// consumer to ignore the level it sits at (subtask 6.4.9, issue #199).
+    /// </remarks>
+    RetransmissionTimerBackedOff = 204,
+
+    /// <summary>
     /// A dialler was refused in-protocol during the stream handshake, either because it announced a
     /// different protocol version or because every capacity Slot was occupied. Subject is the claimed
     /// Source: at refusal time there is no Peer, only a claimed origin. For a capacity refusal,
