@@ -7,7 +7,8 @@ namespace ReactorSockets.Tests;
 /// Subtask 6.4.8 (issue #198): the per-Pump expiry sweep that reports the sequences a Peer's
 /// <c>OutstandingReliableSequences.AckTracker</c> considers overdue for retransmission, marks them
 /// retransmitted, re-arms them at the backed-off RTO, and raises <see cref="PeerCounters.PacketsRetransmitted"/>
-/// by however many were reported.
+/// by however many were reported. Subtask 6.4.9 (issue #199) adds the at-most-once-per-Pump backoff
+/// restructure and the <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> Diagnostic that reports it.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -107,5 +108,34 @@ public class RetransmissionExpirySweepTests
 
         // Assert
         accepter.Reactor.CountersOf(secondPeer).PacketsRetransmitted.Should().Be(0);
+    }
+
+    [Fact]
+    public void Pump_EstablishedSessionThatHasLostNothing_NeverEmitsRetransmissionTimerBackedOff()
+    {
+        // Arrange — subtask 6.4.9, issue #199: the Diagnostic fires only when a Pump's sweep finds an
+        // overdue sequence, which requires an armed retransmit deadline. Nothing in this codebase can
+        // arm one yet — OutstandingReliableSequences.RecordSent has zero callers in src/ — so a healthy
+        // Session, pumped repeatedly under an advancing clock, must never emit id 204 at all. This is
+        // the negative half of the ticket's acceptance criterion; the positive half (a rising count, an
+        // RTO doubling to Linger, a delivery resetting it) needs a send path this slice does not have.
+        using DatagramSessionReactorHarness accepter = new();
+        using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
+
+        dialler.Reactor.Connect(accepter.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(dialler, accepter);
+        accepter.DrainToList();
+        dialler.DrainToList();
+        accepter.Sink.Received.Clear();
+
+        // Act
+        for (int i = 0; i < 100; i++)
+        {
+            accepter.TimeProvider.Advance(TimeSpan.FromMilliseconds(50));
+            accepter.Reactor.Pump();
+        }
+
+        // Assert
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.RetransmissionTimerBackedOff);
     }
 }

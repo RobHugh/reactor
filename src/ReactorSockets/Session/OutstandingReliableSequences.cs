@@ -246,16 +246,16 @@ internal sealed class OutstandingReliableSequences
     /// <para>
     /// Each reported sequence is marked retransmitted (<see cref="MarkRetransmitted"/>) before this
     /// returns, so a later <see cref="ApplyAck"/> release feeds Karn's rule the ambiguous case rather
-    /// than a clean sample, and is re-armed at the backed-off RTO: if this call finds anything expired
-    /// on this Space, the injected <see cref="RetransmissionTimer"/>'s <see cref="RetransmissionTimer.BackOff"/>
-    /// is called exactly once, and every sequence this call reports is re-armed from now at the single
-    /// <see cref="RetransmissionTimer.EffectiveTimeout"/> that backoff produced — mirroring how a
-    /// horizon slide arms every sequence it newly covers from one shared moment and one shared RTO
-    /// (<see cref="ApplyAck"/>'s own <c>ArmNewlyCovered</c>) rather than reading the clock or the timer
-    /// once per sequence. A Space that reports nothing never calls <see cref="RetransmissionTimer.BackOff"/>
-    /// at all, so a quiet Space never inflates <see cref="RetransmissionTimer.ConsecutiveBackoffs"/> on
-    /// the other reliable Space's behalf — the two reliable Spaces stay independent even though they
-    /// share one Peer's <see cref="RetransmissionTimer"/>.
+    /// than a clean sample. This call does <em>not</em> back off <see cref="RetransmissionTimer"/> and
+    /// does not re-arm what it finds — <see cref="ReArmExpired"/> does both, once the caller has swept
+    /// every reliable Space and decided whether this Peer backs off at all this Pump (subtask 6.4.9,
+    /// issue #199, fixing a defect in the original 6.4.8 shape: with the backoff decided inside this
+    /// call, a Pump where both reliable Spaces expired something backed off the shared
+    /// <see cref="RetransmissionTimer"/> twice, doubling the RTO twice for what is one loss event, not
+    /// two). Call <see cref="ReArmExpired"/> for <paramref name="mode"/> before this Space is swept
+    /// again — a second <see cref="CollectExpired"/> call before re-arming would simply re-report the
+    /// same sequences, since nothing here changes <see cref="TryGetDeadlineTimestamp"/>'s answer for
+    /// them.
     /// </para>
     /// <para>
     /// Allocates nothing: the returned span is backed by a buffer sized alongside this Space's ring and
@@ -266,18 +266,31 @@ internal sealed class OutstandingReliableSequences
     /// </para>
     /// </remarks>
     /// <param name="mode">Which reliable Space to sweep for expired deadlines.</param>
-    /// <param name="observedPumpInterval">
-    /// The Reactor's own observed Pump cadence, forwarded to <see cref="RetransmissionTimer.EffectiveTimeout"/>
-    /// for the backed-off re-arm, read fresh at the moment of this call.
-    /// </param>
-    /// <param name="linger">The Session's own Linger, forwarded the same way.</param>
     /// <returns>
     /// The <c>u32</c> sequence numbers on <paramref name="mode"/>'s Space that just expired, in the
     /// order they were originally sent. Empty when nothing has expired.
     /// </returns>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
-    public ReadOnlySpan<uint> CollectExpired(PacketRecordMode mode, TimeSpan observedPumpInterval, TimeSpan linger) =>
-        SpaceOf(mode).CollectExpired(_time, _timer, observedPumpInterval, linger);
+    public ReadOnlySpan<uint> CollectExpired(PacketRecordMode mode) =>
+        SpaceOf(mode).CollectExpired(_time);
+
+    /// <summary>
+    /// Re-arms whatever <see cref="CollectExpired"/> most recently found on <paramref name="mode"/>'s
+    /// reliable Space, at <paramref name="effectiveRto"/>, from the same moment that sweep read
+    /// (subtask 6.4.9, issue #199) — mirroring how a horizon slide arms every sequence it newly covers
+    /// from one shared moment and one shared RTO (<see cref="ApplyAck"/>'s own <c>ArmNewlyCovered</c>)
+    /// rather than reading the clock or the timer once per sequence. The caller decides
+    /// <paramref name="effectiveRto"/> itself — typically <see cref="RetransmissionTimer.EffectiveTimeout"/>
+    /// read once after backing off <see cref="RetransmissionTimer"/> at most once for however many
+    /// Spaces reported anything this Pump, so two reliable Spaces expiring in the same Pump share one
+    /// backoff and one resulting RTO rather than compounding. A no-op if <see cref="CollectExpired"/>
+    /// found nothing on this Space, or has not been called since the last re-arm.
+    /// </summary>
+    /// <param name="mode">Which reliable Space to re-arm the most recent sweep's findings on.</param>
+    /// <param name="effectiveRto">The single RTO every re-armed sequence on <paramref name="mode"/> arms at.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
+    public void ReArmExpired(PacketRecordMode mode, TimeSpan effectiveRto) =>
+        SpaceOf(mode).ReArmExpired(_time, effectiveRto);
 
     /// <summary>
     /// Resolves <paramref name="mode"/> to its reliable Space's tracker. Only the two reliable modes are
@@ -346,6 +359,21 @@ internal sealed class OutstandingReliableSequences
         private uint[] _expiredSequences = new uint[InitialCapacity];
 
         private int _capacity = InitialCapacity;
+
+        /// <summary>
+        /// How many entries in <see cref="_expiredSequences"/> the most recent <see cref="CollectExpired"/>
+        /// call reported and left un-armed, awaiting <see cref="ReArmExpired"/> (subtask 6.4.9, issue
+        /// #199). Reset to zero once <see cref="ReArmExpired"/> arms them, so a re-arm call with nothing
+        /// pending is a no-op rather than re-arming stale entries.
+        /// </summary>
+        private int _pendingRearmCount;
+
+        /// <summary>
+        /// The monotonic moment <see cref="_pendingRearmCount"/>'s entries were found expired, so
+        /// <see cref="ReArmExpired"/> arms them from the same instant they were swept at rather than a
+        /// later one — matching <see cref="ArmNewlyCovered"/>'s one-shared-moment shape.
+        /// </summary>
+        private long _pendingRearmTimestamp;
 
         /// <summary>The ring position the oldest tracked sequence currently occupies.</summary>
         private int _headSlot;
@@ -438,15 +466,14 @@ internal sealed class OutstandingReliableSequences
         /// enclosing type's <c>CollectExpired</c> for the full contract): a deferred sequence has no
         /// armed deadline (<see cref="TryGetDeadlineTimestamp"/> fails for it) and so is never reported,
         /// matching the horizon rule. Every reported sequence is marked retransmitted
-        /// (<see cref="MarkRetransmitted"/>) as it is found; if anything was found at all,
-        /// <paramref name="timer"/> backs off exactly once and every reported sequence re-arms from
-        /// <paramref name="time"/>'s current moment at the single resulting
-        /// <see cref="RetransmissionTimer.EffectiveTimeout"/> — one shared arming moment and RTO for the
-        /// whole sweep, the same shape <see cref="ArmNewlyCovered"/> uses for a horizon slide covering
-        /// several sequences at once. Allocates nothing: the result is <see cref="_expiredSequences"/>,
-        /// which never grows here (see its own doc) and is simply overwritten.
+        /// (<see cref="MarkRetransmitted"/>) as it is found, and left un-armed:
+        /// <see cref="ReArmExpired"/> arms them once the caller has decided this Peer's single backoff
+        /// for the Pump (subtask 6.4.9, issue #199). What is found and the moment it was found at are
+        /// stashed in <see cref="_pendingRearmCount"/> and <see cref="_pendingRearmTimestamp"/> for that
+        /// call. Allocates nothing: the result is <see cref="_expiredSequences"/>, which never grows
+        /// here (see its own doc) and is simply overwritten.
         /// </summary>
-        public ReadOnlySpan<uint> CollectExpired(TimeProvider time, RetransmissionTimer timer, TimeSpan observedPumpInterval, TimeSpan linger)
+        public ReadOnlySpan<uint> CollectExpired(TimeProvider time)
         {
             int expiredCount = 0;
             if (_count > 0)
@@ -465,19 +492,37 @@ internal sealed class OutstandingReliableSequences
                     MarkRetransmitted(sequence);
                 }
 
-                if (expiredCount > 0)
-                {
-                    timer.BackOff();
-                    TimeSpan effectiveRto = timer.EffectiveTimeout(observedPumpInterval, linger);
-                    for (int i = 0; i < expiredCount; i++)
-                    {
-                        TryGetSlot(_expiredSequences[i], out int slot);
-                        Arm(slot, now, time, effectiveRto);
-                    }
-                }
+                _pendingRearmCount = expiredCount;
+                _pendingRearmTimestamp = now;
+            }
+            else
+            {
+                _pendingRearmCount = 0;
             }
 
             return _expiredSequences.AsSpan(0, expiredCount);
+        }
+
+        /// <summary>
+        /// Arms whatever the most recent <see cref="CollectExpired"/> call found and left pending, at
+        /// <paramref name="effectiveRto"/>, from that call's own moment (<see cref="_pendingRearmTimestamp"/>)
+        /// rather than reading <paramref name="time"/> again — matching <see cref="ArmNewlyCovered"/>'s
+        /// one-shared-moment shape. A no-op when nothing is pending, whether because
+        /// <see cref="CollectExpired"/> found nothing or because a previous <see cref="ReArmExpired"/>
+        /// call already cleared it. Clears the pending count either way, so a second call without an
+        /// intervening <see cref="CollectExpired"/> re-arms nothing.
+        /// </summary>
+        public void ReArmExpired(TimeProvider time, TimeSpan effectiveRto)
+        {
+            for (int i = 0; i < _pendingRearmCount; i++)
+            {
+                if (TryGetSlot(_expiredSequences[i], out int slot))
+                {
+                    Arm(slot, _pendingRearmTimestamp, time, effectiveRto);
+                }
+            }
+
+            _pendingRearmCount = 0;
         }
 
         /// <summary>

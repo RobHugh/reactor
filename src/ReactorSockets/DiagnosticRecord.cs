@@ -138,6 +138,14 @@ public readonly record struct DiagnosticRecord
         new(DiagnosticId.VersionRefused, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, versionOffered, versionRequired);
 
     /// <summary>
+    /// Builds a <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record for the Peer whose
+    /// <see cref="RetransmissionTimer"/> just backed off (subtask 6.4.9, issue #199). <c>Value0</c> is
+    /// the new RTO in milliseconds; <c>Value1</c> is the consecutive backoff count after this backoff.
+    /// </summary>
+    public static DiagnosticRecord ForRetransmissionTimerBackedOff(PeerId peer, long newRtoMilliseconds, long consecutiveBackoffs) =>
+        new(DiagnosticId.RetransmissionTimerBackedOff, DiagnosticLevel.Trace, DiagnosticSubjectKind.Peer, default, default, peer, newRtoMilliseconds, consecutiveBackoffs);
+
+    /// <summary>
     /// Builds a <see cref="DiagnosticId.PeerRefused"/> record for the claimed Source of a stream
     /// dialler refused because every capacity Slot was occupied. <c>Value0</c> carries this Reactor's
     /// capacity; <c>Value1</c> is unused.
