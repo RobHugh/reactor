@@ -217,6 +217,15 @@ public sealed class DatagramSessionOptions
         (long)Reactor.Capacity * ReliableSpaceCount * RetentionBytes;
 
     /// <summary>
+    /// The uniform retention slots one reliable Space holds per Peer: <see cref="RetentionBytes"/>
+    /// divided by <see cref="ResolvedFragmentSize"/>, truncating any remainder. Stays derived from the
+    /// byte bound rather than a knob of its own (ADR 0012, issue #43) so it cannot drift from
+    /// <see cref="RetentionBytes"/> when the fragment size changes. <see cref="Validate"/> already
+    /// requires retention to hold at least one fragment, so this is always at least 1.
+    /// </summary>
+    public int RetentionSlots => RetentionBytes / ResolvedFragmentSize;
+
+    /// <summary>
     /// Validates every knob and every cross-check, throwing before a Reactor allocates anything.
     /// Internal because a consumer never validates an options value themselves — the constructor
     /// calls this, so a combination that cannot work throws at construction and nowhere else.
