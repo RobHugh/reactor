@@ -88,6 +88,39 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
     }
 
     /// <summary>
+    /// Drains the current Frame and copies out every <see cref="SessionEventKind.MessageReceived"/>
+    /// payload. The copy is what makes the bytes outlive the Frame they aliased, which is the only way
+    /// a test can assert on them after the next Pump (#219).
+    /// </summary>
+    public List<byte[]> DrainPayloads()
+    {
+        List<byte[]> payloads = [];
+        foreach (SessionEvent evt in Reactor.Drain())
+        {
+            if (evt.Kind == SessionEventKind.MessageReceived)
+            {
+                payloads.Add(evt.Payload.ToArray());
+            }
+        }
+
+        return payloads;
+    }
+
+    /// <summary>
+    /// Drains the current Frame and keeps nothing. What an allocation measurement uses in place of
+    /// <see cref="DrainToList"/>: that helper's own list grows with the number of Events drained, so a
+    /// phase delivering more Messages than another would appear to allocate more inside the Reactor
+    /// when the difference is the test's list (#217).
+    /// </summary>
+    public void DrainAndDiscard()
+    {
+        foreach (SessionEvent evt in Reactor.Drain())
+        {
+            _ = evt.Kind;
+        }
+    }
+
+    /// <summary>
     /// Pumps exactly <paramref name="pumps"/> times, accumulating everything drained. For asserting
     /// that something does <em>not</em> happen: a fixed count of Pumps bounds syscalls, not time, so
     /// it is not a way to wait for something to arrive — see <see cref="PumpDeadline"/> and use

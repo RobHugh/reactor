@@ -474,8 +474,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     SessionEvent ISessionEventSource.GetPendingEvent(int index)
     {
         PendingEvent pending = _pendingEvents[index];
-        return pending.Kind.TryCreateCommonSessionEvent(pending.Peer, pending.Reason, out SessionEvent sessionEvent)
-            ? sessionEvent
+        if (pending.Kind.TryCreateCommonSessionEvent(pending.Peer, pending.Reason, out SessionEvent sessionEvent))
+        {
+            return sessionEvent;
+        }
+
+        // The one kind this profile queues that the shared half cannot build, because it alone needs
+        // the arena the payload was committed to (subtask 6.6.6, issue #219). The span is handed out
+        // aliasing the arena directly, so it is valid for this Frame only — the same contract the
+        // stream profile's own MessageReceived carries.
+        return pending.Kind == SessionEventKind.MessageReceived
+            ? SessionEvent.ForMessageReceived(pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength))
             : throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind.");
     }
 
@@ -697,8 +706,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             // Every record in this span already proved well-formed in the pass above, so this read
             // cannot fail — the return value is not re-checked.
-            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out _, out int bytesConsumed);
-            ClassifyRecord(slot, mode, sequence);
+            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out ushort length, out int bytesConsumed);
+
+            // The payload is the tail of what this record consumed, so it is sliced from the record's
+            // own span rather than re-derived from a header width this method would then have to know.
+            ReadOnlySpan<byte> payload = remainder.Slice(bytesConsumed - length, length);
+            ClassifyRecord(slot, mode, sequence, payload);
             remainder = remainder[bytesConsumed..];
         }
     }
@@ -907,20 +920,27 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Classifies one already-validated record against its mode's Space and counts what the window
-    /// refused, plus whatever the touched window's slide just retired un-admitted (issues #173, #176).
-    /// Admission itself otherwise needs no counting: the window's <see cref="ReceiveWindowOutcome.Admitted"/>
-    /// case is a well-formed record simply taking effect,
-    /// and this ticket ends at "classified, and counted if refused or lost" — delivering an admitted
-    /// record is 6.6's.
+    /// Classifies one already-validated record against its mode's Space, counts what the window
+    /// refused plus whatever the touched window's slide just retired un-admitted (issues #173, #176),
+    /// and delivers what it admitted (subtask 6.6.5, issue #217).
     /// </summary>
-    private void ClassifyRecord(PeerSlot slot, PacketRecordMode mode, uint sequence)
+    /// <remarks>
+    /// Only an admitted record is delivered. A duplicate or an out-of-window record reaches neither the
+    /// frame arena nor <see cref="PeerCounters.MessagesReceived"/> — suppressing a duplicate is the
+    /// window's whole purpose, and counting one as received would make the suppression invisible in the
+    /// figure a consumer reads to check it.
+    /// </remarks>
+    private void ClassifyRecord(PeerSlot slot, PacketRecordMode mode, uint sequence, ReadOnlySpan<byte> payload)
     {
         ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
         ReceiveWindowOutcome outcome = windows.Classify(mode, sequence);
 
         switch (outcome)
         {
+            case ReceiveWindowOutcome.Admitted:
+                DeliverAdmittedRecord(slot, payload);
+                break;
+
             case ReceiveWindowOutcome.OutOfWindow:
                 slot.Counters.RecordOutOfWindowPacket();
                 break;
@@ -938,6 +958,58 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             slot.Counters.RecordUnreliableLoss(windows.LastSlideLoss);
         }
+    }
+
+    /// <summary>
+    /// Copies an admitted record's payload into the shared frame arena under this Peer's own
+    /// share-holder identity (ADR 0014), queues it as a pending
+    /// <see cref="SessionEventKind.MessageReceived"/>, and raises this Peer's
+    /// <see cref="PeerCounters.MessagesReceived"/> — the same three steps, in the same order, that
+    /// <c>StreamSessionReactor.DeliverCompleteMessages</c> takes, so the two profiles report a received
+    /// Message identically (subtask 6.6.5, issue #217).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A Message the arena had no room for is not counted as received.</b> The counter moves only
+    /// where the bytes did, which is what makes a share exhaustion visible: a Frame in which records
+    /// plainly arrived but this figure did not move is a Message the arena refused, not one the network
+    /// lost. Unlike the stream profile, nothing is buffered for a retry — a datagram's bytes are gone
+    /// once the parse loop passes them, and the reliable modes recover a refused record through
+    /// retransmission rather than through a re-reservation this end schedules for itself.
+    /// </para>
+    /// <para>
+    /// Per-mode delivery rules do not live here. Holding a <c>ReliableOrdered</c> record behind a gap
+    /// is #220's, and the two unreliable modes' own rules are #221's and #222's; this method is what
+    /// each of them ends at once it has decided a record is deliverable.
+    /// </para>
+    /// </remarks>
+    private void DeliverAdmittedRecord(PeerSlot slot, ReadOnlySpan<byte> payload)
+    {
+        int payloadOffset = _arena.BytesUsed;
+        ArenaReservation reservation = _arena.Reserve(slot.Handle.Index, payload);
+
+        if (reservation.Outcome != ArenaReservationOutcome.Committed)
+        {
+            if (reservation.Outcome == ArenaReservationOutcome.ArenaExhausted && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(
+                    ToPeerId(slot.Handle),
+                    reservation.BytesRequested,
+                    reservation.BytesFree));
+            }
+
+            return;
+        }
+
+        _pendingEvents.Add(new PendingEvent
+        {
+            Kind = SessionEventKind.MessageReceived,
+            Peer = ToPeerId(slot.Handle),
+            PayloadOffset = payloadOffset,
+            PayloadLength = payload.Length,
+        });
+
+        slot.Counters.RecordMessageReceived();
     }
 
     /// <summary>
