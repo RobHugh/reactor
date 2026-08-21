@@ -223,6 +223,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             _capDiscardsThisFrame = 0;
             _capacityDiscardsThisFrame = 0;
             _dispatcher.Pump();
+            ReportExpiredRetransmissions();
             ReportDeclinedAdmissions();
         }
         finally
@@ -616,6 +617,45 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         slot.ObservedHorizonDeferrals = total;
+    }
+
+    /// <summary>
+    /// Runs once per <see cref="Pump"/>, over every Established Peer's own
+    /// <see cref="PeerSlot.AckTracker"/> (subtask 6.4.8, issue #198): sweeps each reliable Space for
+    /// sequences whose retransmit deadline has passed, and raises that Peer's
+    /// <see cref="Core.PeerCounterSet.RecordPacketsRetransmitted"/> by however many
+    /// <see cref="OutstandingReliableSequences.CollectExpired"/> reports. Nothing here resends anything
+    /// — holding the record bytes is 6.5's retention and packing them into an outbound datagram is
+    /// 6.7's coalescing; this ticket stops at the sequences having been named.
+    /// </summary>
+    /// <remarks>
+    /// A single scan over <see cref="_peers"/> (<see cref="ShareHolderTable{T}.OccupantAt"/>), the same
+    /// shape <see cref="StreamSessionReactor.EnforceIdleTimers"/> uses for its own per-Pump-per-Peer
+    /// sweep: it costs at most <see cref="ShareHolderTable{T}.Capacity"/> array reads against
+    /// already-allocated state, so it allocates nothing itself, and <see cref="OutstandingReliableSequences.CollectExpired"/>
+    /// allocates nothing either — including on the steady path where nothing has expired, since its
+    /// result is a reused buffer. A Peer still mid-handshake has recorded nothing on either reliable
+    /// Space yet (<see cref="OutstandingReliableSequences.RecordSent"/> is only ever called for a sent
+    /// record), so restricting the scan to <see cref="HandshakeState.Established"/> Peers changes
+    /// nothing observable; it only skips a scan certain to find nothing.
+    /// </remarks>
+    private void ReportExpiredRetransmissions()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            {
+                continue;
+            }
+
+            int expiredCount = slot.AckTracker.CollectExpired(PacketRecordMode.ReliableOrdered, ObservedPumpInterval, _options.Linger).Length
+                + slot.AckTracker.CollectExpired(PacketRecordMode.ReliableUnordered, ObservedPumpInterval, _options.Linger).Length;
+
+            if (expiredCount > 0)
+            {
+                slot.Counters.RecordPacketsRetransmitted((ulong)expiredCount);
+            }
+        }
     }
 
     /// <summary>
