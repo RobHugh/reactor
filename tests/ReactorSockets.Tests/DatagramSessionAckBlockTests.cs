@@ -19,6 +19,7 @@ namespace ReactorSockets.Tests;
 /// ticket is not asserted here (see the ticket report).
 /// </summary>
 /// <remarks>
+/// <para>
 /// Subtask 6.3.8 (issue #190) extends this file rather than sitting beside it, per that ticket: the
 /// untrusted-ack criterion is the one edge of the ack path genuinely reachable through the public seam
 /// (a peer's own send is not — no outbound data datagram is ever produced by this codebase, see the
@@ -28,6 +29,26 @@ namespace ReactorSockets.Tests;
 /// <see cref="DiagnosticId.DatagramMalformed"/>, no thrown exception, no Session event, the
 /// <c>HorizonDeferrals</c> counter staying at zero (nothing legitimate was ever sent for the horizon rule
 /// to defer), and the Session still processing an ordinary arrival afterwards.
+/// </para>
+/// <para>
+/// Subtask 6.4.7 (issue #197) also extends this file rather than sitting beside it: it is what makes
+/// <c>OutstandingReliableSequences.ApplyAck</c> take the effective RTO as a parameter instead of a value
+/// captured at construction, and <see cref="ParseDataDatagram_ArrivalsSeparatedByVaryingPumpCadences_StillDeriveTheEffectiveRtoWithoutMalformedOrWarnDiagnostic"/>
+/// is what a `DatagramSessionReactor`-only seam can prove about that: the per-arrival read of
+/// <c>ObservedPumpInterval</c> and <c>Linger</c> that now feeds every <c>ApplyAck</c> call keeps working,
+/// under no fixed cadence, a very fast one and a very slow one, without a malformed report or a Warn
+/// diagnostic. Everything 6.4.7's own acceptance criteria actually ask for — that arming reads the RTO
+/// fresh rather than at construction, that a horizon slide arms at the RTO current when the slide
+/// happens, that a release feeds the estimator one sample carrying whether the sequence was
+/// retransmitted, that a still-deferred release feeds none, and that two sequences armed at different
+/// moments get different, non-retroactive deadlines — needs a sequence to have been recorded as sent at
+/// all. <c>OutstandingReliableSequences</c> is <see langword="internal"/> with no
+/// <c>InternalsVisibleTo</c>, and, as this file's own summary above already says, nothing on any live
+/// path calls <c>RecordSent</c> yet (the datagram profile's outbound data send is still 6.4/6.5's, later
+/// than this ticket), so none of that is reachable through this or any other public seam today. It is a
+/// design signal to note in this ticket's report, not a gap to paper over with a test that only looks
+/// like it covers it (tests/CLAUDE.md, ADR 0015).
+/// </para>
 /// </remarks>
 public class DatagramSessionAckBlockTests
 {
@@ -290,6 +311,58 @@ public class DatagramSessionAckBlockTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > followUpBefore);
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         accepter.DrainToList().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseDataDatagram_ArrivalsSeparatedByVaryingPumpCadences_StillDeriveTheEffectiveRtoWithoutMalformedOrWarnDiagnostic()
+    {
+        // Arrange — subtask 6.4.7 (#197): every arrival's two ApplyAck calls now take an effective RTO
+        // read fresh from ObservedPumpInterval and Linger, in place of the constant #197 deletes. This
+        // varies the gap between Pumps under the harness's FakeTimeProvider — no advance at all (the
+        // unseeded TimeSpan.MaxValue case), a very fast cadence, then a very slow one — so the value fed
+        // into ApplyAck actually changes across the run, exercising the new computation rather than
+        // leaving it always evaluated once at a single cadence.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+        Source destination = Source.FromIPEndPoint(accepter.Endpoint);
+
+        TimeSpan[] gapsBetweenArrivals =
+        [
+            TimeSpan.Zero,
+            TimeSpan.FromMilliseconds(1),
+            TimeSpan.FromMilliseconds(1),
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(5),
+        ];
+
+        // Act
+        for (int i = 0; i < gapsBetweenArrivals.Length; i++)
+        {
+            accepter.TimeProvider.Advance(gapsBetweenArrivals[i]);
+
+            byte[] datagram = BuildHeader(
+                sessionId,
+                reliableOrderedAckBase: (uint)i,
+                reliableOrderedAckBits: 0xFFFF_FFFF,
+                reliableUnorderedAckBase: (uint)i,
+                reliableUnorderedAckBits: 0xFFFF_FFFF);
+
+            ulong before = accepter.Reactor.Counters.DatagramsReceived;
+            client.SendTo(clientLink, destination, datagram);
+            accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+        }
+
+        // Assert — the wiring stayed healthy across every cadence the run exercised: nothing was
+        // reported malformed, nothing was delivered or disconnected, no Warn-or-above diagnostic was
+        // raised, and the deferral figure stayed at zero, matching a Peer nothing was ever legitimately
+        // sent to.
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        accepter.Sink.Received.Should().NotContain(record => record.Level >= DiagnosticLevel.Warn);
+        accepter.DrainToList().Should().BeEmpty();
+        accepter.Reactor.CountersOf(accepterPeer).HorizonDeferrals.Should().Be(0);
     }
 
     /// <summary>

@@ -13,12 +13,12 @@ namespace ReactorSockets.Session;
 /// the sequences above it (subtask 6.1) — it can only ever speak for the span
 /// <c>[base, base + 32]</c>. A sequence sent inside that span is judged: <see cref="RecordSent"/> arms
 /// its retransmit deadline immediately, taken from the injected <see cref="TimeProvider"/> plus the
-/// configured retransmit timeout. A sequence sent beyond that span cannot yet be described by
+/// effective RTO passed in at that call. A sequence sent beyond that span cannot yet be described by
 /// any ack the peer could send, so arming its deadline now would retransmit it the moment the timeout
 /// elapsed even though nothing was lost — it is recorded as outstanding but left unjudged, and
 /// <see cref="HorizonDeferrals"/> counts the deferral. Only once a later ack advances the base far
-/// enough that the horizon slides over it does its deadline arm, from that moment — <see cref="ApplyAck"/>
-/// (subtask 6.3.5, issue #187).
+/// enough that the horizon slides over it does its deadline arm, from that moment, at the RTO current
+/// at the slide — <see cref="ApplyAck"/> (subtask 6.3.5, issue #187; subtask 6.4.7, issue #197).
 /// </para>
 /// <para>
 /// Without this rule, a Message spanning more than 33 Fragments would have its later Fragments arrive
@@ -28,26 +28,55 @@ namespace ReactorSockets.Session;
 /// loss.
 /// </para>
 /// <para>
+/// <b>The adaptive RTO, composed with the horizon (issue #197).</b> There is no timeout captured at
+/// construction any more (issue #42 finding R1: a captured or fallback RTO is how a fixed timeout
+/// survives into a design that rejected one — see <c>DatagramSessionProtocol</c>'s now-deleted
+/// <c>DefaultRetransmitTimeout</c>). Every call that arms a deadline — <see cref="RecordSent"/> for a
+/// sequence already inside the horizon, and the newly-covered arm inside <see cref="ApplyAck"/> for a
+/// sequence the horizon has just slid over — takes the effective RTO as a parameter, read by the caller
+/// at that exact moment from <see cref="RetransmissionTimer.EffectiveTimeout"/>. The horizon gate and
+/// the adaptive timer are therefore one path: a deferred sequence has no deadline and so never touches
+/// the RTO at all until the moment it arms, and it arms at whatever the RTO is <em>then</em> — not the
+/// RTO current when it was originally sent, and not backdated. Two sequences armed at different moments
+/// can and do get different deadlines; arming a later sequence never retroactively moves an earlier
+/// one's deadline, because each slot's deadline is written only by the call that armed it.
+/// </para>
+/// <para>
+/// <b>Feeding the estimator.</b> Releasing an armed sequence — by <see cref="ApplyAck"/>, whether
+/// named by a bit or swept up by the cumulative base advancing past it — feeds exactly one sample into
+/// the injected <see cref="RetransmissionTimer"/>'s <see cref="RetransmissionTimer.Estimator"/>: the
+/// elapsed time from when that sequence was armed to this release, and whether it was ever marked
+/// retransmitted (<see cref="MarkRetransmitted"/>), so <see cref="RoundTripEstimator.Sample(TimeSpan,bool)"/>'s
+/// Karn's-rule discard applies. A sequence released while still deferred — never armed, because the
+/// horizon never slid over it before it was acknowledged — feeds no sample at all: there was no arming
+/// moment to measure from. A sequence already released by an earlier bit and later swept out of the ring
+/// by the base advancing past it is not sampled twice.
+/// </para>
+/// <para>
 /// Deadlines are always computed from the injected <see cref="TimeProvider"/>, never the ambient clock,
 /// so a test can advance time deterministically and so a real Reactor's single time source stays the
-/// only clock a Peer ever reads. Not thread-safe, matching every other piece of a Peer's state (ADR
-/// 0009): a Peer is driven from one Reactor's single synchronous <c>Pump</c>.
+/// only clock a Peer ever reads. Every timing read here is monotonic — <see cref="TimeProvider.GetTimestamp"/>
+/// and <see cref="TimeProvider.GetElapsedTime(long,long)"/> only, never <c>GetUtcNow</c> (issue #42): a
+/// deadline stored as a wall-clock <see cref="DateTimeOffset"/> is exactly the state a clock adjustment
+/// could use to fire every armed deadline at once, and a monotonic timestamp cannot be moved by one. Not
+/// thread-safe, matching every other piece of a Peer's state (ADR 0009): a Peer is driven from one
+/// Reactor's single synchronous <c>Pump</c>.
 /// </para>
 /// <para>
 /// <b>Allocation.</b> Each reliable Space's outstanding sequences are held in a growable ring indexed by
 /// offset from the oldest still-outstanding sequence, mirroring <see cref="ReceiveWindow"/>'s
 /// offset-from-base indexing on the receive side. The ring only grows — doubling its backing arrays —
 /// when more sequences are outstanding at once than it has ever held before; <see cref="RecordSent"/>,
-/// <see cref="IsOutstanding"/> and <see cref="TryGetDeadline"/> allocate nothing once a Space's ring has
-/// grown to cover its steady-state outstanding count. <see cref="ApplyAck"/> never grows the ring — it
-/// only releases sequences and moves the tracked window's edges — so it allocates nothing regardless of
-/// how many times it has been called.
+/// <see cref="IsOutstanding"/> and <see cref="TryGetDeadlineTimestamp"/> allocate nothing once a
+/// Space's ring has grown to cover its steady-state outstanding count. <see cref="ApplyAck"/> never
+/// grows the ring — it only releases sequences, feeds estimator samples and moves the tracked window's
+/// edges — so it allocates nothing regardless of how many times it has been called.
 /// </para>
 /// </remarks>
 internal sealed class OutstandingReliableSequences
 {
     private readonly TimeProvider _time;
-    private readonly TimeSpan _retransmitTimeout;
+    private readonly RetransmissionTimer _timer;
     private readonly ReliableSpaceTracker _reliableUnordered = new();
     private readonly ReliableSpaceTracker _reliableOrdered = new();
 
@@ -56,15 +85,20 @@ internal sealed class OutstandingReliableSequences
     /// — sequence zero, matching every Space's numbering start (ADR 0009) — so before any ack is ever
     /// received, sequences <c>0</c> through <c>32</c> arm and <c>33</c> upward defer.
     /// </summary>
-    /// <param name="time">The time source every armed deadline is computed from.</param>
-    /// <param name="retransmitTimeout">
-    /// How long after being sent an outstanding sequence's deadline falls, once armed.
+    /// <param name="time">The monotonic time source every armed deadline and every estimator sample is computed from.</param>
+    /// <param name="timer">
+    /// This Peer's own <see cref="RetransmissionTimer"/> (issue #194, #197): a release feeds its
+    /// <see cref="RetransmissionTimer.Estimator"/> exactly one sample, and its own effective RTO is what
+    /// every arming call is given by the caller — this tracker never reads <see cref="RetransmissionTimer.Timeout"/>
+    /// or <see cref="RetransmissionTimer.EffectiveTimeout"/> itself, since only the Reactor knows the
+    /// observed Pump cadence and Linger that <c>EffectiveTimeout</c> clamps against.
     /// </param>
-    public OutstandingReliableSequences(TimeProvider time, TimeSpan retransmitTimeout)
+    public OutstandingReliableSequences(TimeProvider time, RetransmissionTimer timer)
     {
         ArgumentNullException.ThrowIfNull(time);
+        ArgumentNullException.ThrowIfNull(timer);
         _time = time;
-        _retransmitTimeout = retransmitTimeout;
+        _timer = timer;
     }
 
     /// <summary>
@@ -78,18 +112,22 @@ internal sealed class OutstandingReliableSequences
     /// <summary>
     /// Records that <paramref name="sequence"/> was just sent on <paramref name="mode"/>'s reliable
     /// Space and is now outstanding. Arms its retransmit deadline — <paramref name="sequence"/>'s send
-    /// time is not tracked, only the deadline computed at this call — when the Space's current horizon
-    /// covers it; otherwise leaves it unjudged and counts the deferral in
-    /// <see cref="HorizonDeferrals"/>. Expects the sequences recorded for one Space to arrive in the
+    /// time is not tracked, only the moment this call arms from — at <paramref name="effectiveRto"/>
+    /// when the Space's current horizon covers it; otherwise leaves it unjudged and counts the deferral
+    /// in <see cref="HorizonDeferrals"/>. Expects the sequences recorded for one Space to arrive in the
     /// order they were allocated (<see cref="OutboundSequenceSpaces.Allocate"/> is the only source),
     /// the same precondition <see cref="ReceiveWindow"/> relies on for its own offset arithmetic.
     /// </summary>
     /// <param name="mode">Which reliable Space <paramref name="sequence"/> was sent on.</param>
     /// <param name="sequence">The <c>u32</c> sequence number that was just sent.</param>
+    /// <param name="effectiveRto">
+    /// The effective RTO to arm with, read fresh by the caller at the moment of this call (issue #197)
+    /// — never captured earlier and never a value fixed at construction.
+    /// </param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
-    public void RecordSent(PacketRecordMode mode, uint sequence)
+    public void RecordSent(PacketRecordMode mode, uint sequence, TimeSpan effectiveRto)
     {
-        if (SpaceOf(mode).RecordSent(sequence, _time, _retransmitTimeout))
+        if (SpaceOf(mode).RecordSent(sequence, _time, effectiveRto))
         {
             HorizonDeferrals++;
         }
@@ -99,7 +137,7 @@ internal sealed class OutstandingReliableSequences
     /// Whether <paramref name="sequence"/> was sent on <paramref name="mode"/>'s reliable Space and has
     /// not yet been released by an acknowledging ack block — regardless of whether its deadline is
     /// currently armed. A deferred-but-outstanding sequence and an armed one both report
-    /// <see langword="true"/> here; <see cref="TryGetDeadline"/> is what distinguishes them.
+    /// <see langword="true"/> here; <see cref="TryGetDeadlineTimestamp"/> is what distinguishes them.
     /// </summary>
     /// <param name="mode">Which reliable Space to query.</param>
     /// <param name="sequence">The <c>u32</c> sequence number to query.</param>
@@ -108,26 +146,47 @@ internal sealed class OutstandingReliableSequences
     public bool IsOutstanding(PacketRecordMode mode, uint sequence) => SpaceOf(mode).IsOutstanding(sequence);
 
     /// <summary>
-    /// Attempts to read <paramref name="sequence"/>'s current retransmit deadline on
-    /// <paramref name="mode"/>'s reliable Space. Fails when <paramref name="sequence"/> is not
-    /// outstanding at all, and also fails while it is outstanding but deferred by the horizon rule — the
-    /// mechanism the horizon tests assert on, since a deferred sequence has no deadline to report until
-    /// a later ack's horizon slide arms one.
+    /// Attempts to read <paramref name="sequence"/>'s current retransmit deadline, as a monotonic
+    /// <see cref="TimeProvider.GetTimestamp"/> value, on <paramref name="mode"/>'s reliable Space. Fails
+    /// when <paramref name="sequence"/> is not outstanding at all, and also fails while it is
+    /// outstanding but deferred by the horizon rule — the mechanism the horizon tests assert on, since a
+    /// deferred sequence has no deadline to report until a later ack's horizon slide arms one. Internal,
+    /// and reached only through the Reactor's own expiry sweep (issue #198) — never a
+    /// <see cref="DateTimeOffset"/>, matching this whole type's monotonic-only discipline (issue #42).
     /// </summary>
     /// <param name="mode">Which reliable Space to query.</param>
     /// <param name="sequence">The <c>u32</c> sequence number to query.</param>
-    /// <param name="deadline">
-    /// The armed retransmit deadline, valid only when this method returns <see langword="true"/>.
+    /// <param name="deadlineTimestamp">
+    /// The armed retransmit deadline as a <see cref="TimeProvider.GetTimestamp"/> value, valid only
+    /// when this method returns <see langword="true"/>. Compare against a fresh
+    /// <see cref="TimeProvider.GetTimestamp"/> with <see cref="TimeProvider.GetElapsedTime(long,long)"/>
+    /// to test whether it has passed.
     /// </param>
     /// <returns><see langword="true"/> if <paramref name="sequence"/> is outstanding and armed.</returns>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
-    public bool TryGetDeadline(PacketRecordMode mode, uint sequence, out DateTimeOffset deadline) =>
-        SpaceOf(mode).TryGetDeadline(sequence, out deadline);
+    internal bool TryGetDeadlineTimestamp(PacketRecordMode mode, uint sequence, out long deadlineTimestamp) =>
+        SpaceOf(mode).TryGetDeadlineTimestamp(sequence, out deadlineTimestamp);
+
+    /// <summary>
+    /// Marks <paramref name="sequence"/> on <paramref name="mode"/>'s reliable Space as having been
+    /// retransmitted at least once, so a later <see cref="ApplyAck"/> release feeds its sample to the
+    /// estimator as ambiguous (Karn's rule, issue #193) rather than as a clean round trip. A no-op if
+    /// <paramref name="sequence"/> is not currently tracked — released or never sent. Internal: this
+    /// ticket does not build the expiry sweep that decides <em>when</em> to retransmit and call this
+    /// (issue #198's), only the machinery that records the fact once told.
+    /// </summary>
+    /// <param name="mode">Which reliable Space <paramref name="sequence"/> was sent on.</param>
+    /// <param name="sequence">The <c>u32</c> sequence number that was retransmitted.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
+    internal void MarkRetransmitted(PacketRecordMode mode, uint sequence) =>
+        SpaceOf(mode).MarkRetransmitted(sequence);
 
     /// <summary>
     /// Applies one received ack block to <paramref name="mode"/>'s reliable Space (subtask 6.3.5, issue
-    /// #187): releases every sequence the block acknowledges, slides the Space's horizon to
-    /// <paramref name="ackBase"/>, and arms any deferred sequence the slide newly covers.
+    /// #187; subtask 6.4.7, issue #197): releases every sequence the block acknowledges, feeding the
+    /// injected <see cref="RetransmissionTimer"/>'s estimator one sample per armed sequence released,
+    /// slides the Space's horizon to <paramref name="ackBase"/>, and arms any deferred sequence the
+    /// slide newly covers at <paramref name="effectiveRto"/>.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -139,29 +198,40 @@ internal sealed class OutstandingReliableSequences
     /// Space never recorded (untrusted peer input) is silently ignored rather than throwing.
     /// </para>
     /// <para>
+    /// <b>Sampling on release.</b> Every released sequence that was armed feeds one sample — the elapsed
+    /// time since it armed, and whether <see cref="MarkRetransmitted"/> was ever called for it — into
+    /// <see cref="RetransmissionTimer.Estimator"/>. A released sequence that was never armed (still
+    /// deferred) feeds nothing. A sequence already released by an earlier call's bit, later swept out of
+    /// the ring here as the base advances past it, is not sampled a second time.
+    /// </para>
+    /// <para>
     /// <b>Staleness.</b> <paramref name="ackBase"/> is compared against the base of the last ack this
     /// Space applied, using <see cref="SequenceNumber.IsNewerThan"/> so the comparison is correct across
     /// the <c>u32</c> wrap. A base that is not newer than (and not equal to) the base already applied is
-    /// stale: the whole block is ignored, moving nothing and releasing nothing, since an equal base can
-    /// still carry new bits worth applying but an older one cannot be trusted at all.
+    /// stale: the whole block is ignored, moving nothing, releasing nothing and sampling nothing, since
+    /// an equal base can still carry new bits worth applying but an older one cannot be trusted at all.
     /// </para>
     /// <para>
     /// <b>The slide.</b> Once <paramref name="ackBase"/> is accepted, it becomes this Space's horizon.
     /// Any sequence still outstanding after the release above, not yet armed, and now within
     /// <c>[ackBase, ackBase + 32]</c> arms at this moment — its deadline is taken from the injected
-    /// <see cref="TimeProvider"/> plus the retransmit timeout <i>now</i>, not backdated to when it was
-    /// originally sent.
+    /// <see cref="TimeProvider"/> plus <paramref name="effectiveRto"/> <i>now</i>, not backdated to when
+    /// it was originally sent, and not at whatever RTO was current back then.
     /// </para>
-    /// <para>Allocates nothing: it only flips flags and moves the tracked window's edges.</para>
+    /// <para>Allocates nothing: it only flips flags, feeds estimator samples and moves the tracked window's edges.</para>
     /// </remarks>
     /// <param name="mode">Which reliable Space the ack block describes.</param>
     /// <param name="ackBase">The ack block's cumulative base.</param>
     /// <param name="ackBits">
     /// The ack block's 32-bit field; bit <c>n</c> describes sequence <c>ackBase + n + 1</c>.
     /// </param>
+    /// <param name="effectiveRto">
+    /// The effective RTO any newly-covered sequence arms at, read fresh by the caller at the moment of
+    /// this call (issue #197) — never a value fixed at construction.
+    /// </param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
-    public void ApplyAck(PacketRecordMode mode, uint ackBase, uint ackBits) =>
-        SpaceOf(mode).ApplyAck(ackBase, ackBits, _time, _retransmitTimeout);
+    public void ApplyAck(PacketRecordMode mode, uint ackBase, uint ackBits, TimeSpan effectiveRto) =>
+        SpaceOf(mode).ApplyAck(ackBase, ackBits, _time, effectiveRto, _timer);
 
     /// <summary>
     /// Resolves <paramref name="mode"/> to its reliable Space's tracker. Only the two reliable modes are
@@ -175,6 +245,28 @@ internal sealed class OutstandingReliableSequences
         _ => throw new ArgumentOutOfRangeException(
             nameof(mode), mode, "Only the two reliable delivery modes are tracked for retransmission."),
     };
+
+    /// <summary>
+    /// Converts <paramref name="span"/> into <paramref name="time"/>'s own provider-tick units, the way
+    /// a <see cref="TimeProvider.GetTimestamp"/> reading is added to. There is no built-in
+    /// "timestamp plus TimeSpan" operation on <see cref="TimeProvider"/> — only the inverse,
+    /// <see cref="TimeProvider.GetElapsedTime(long,long)"/> — so this performs the documented conversion
+    /// through <see cref="TimeProvider.TimestampFrequency"/> once per arm. Saturates at
+    /// <see cref="long.MaxValue"/> rather than producing an undefined result if <paramref name="span"/>
+    /// is (or is close to) <see cref="TimeSpan.MaxValue"/>, even though every live caller's
+    /// <paramref name="span"/> is already finite — <see cref="RetransmissionTimer.EffectiveTimeout"/>
+    /// always clamps to a finite Linger.
+    /// </summary>
+    private static long ToProviderTicks(TimeProvider time, TimeSpan span)
+    {
+        if (span >= TimeSpan.MaxValue)
+        {
+            return long.MaxValue;
+        }
+
+        double providerTicks = span.Ticks * ((double)time.TimestampFrequency / TimeSpan.TicksPerSecond);
+        return providerTicks >= long.MaxValue ? long.MaxValue : (long)providerTicks;
+    }
 
     /// <summary>
     /// One reliable Space's outstanding sequences and horizon (see the enclosing type's remarks). Holds
@@ -194,7 +286,9 @@ internal sealed class OutstandingReliableSequences
 
         private bool[] _armed = new bool[InitialCapacity];
         private bool[] _released = new bool[InitialCapacity];
-        private DateTimeOffset[] _deadline = new DateTimeOffset[InitialCapacity];
+        private bool[] _retransmitted = new bool[InitialCapacity];
+        private long[] _armedAtTimestamp = new long[InitialCapacity];
+        private long[] _deadlineTimestamp = new long[InitialCapacity];
         private int _capacity = InitialCapacity;
 
         /// <summary>The ring position the oldest tracked sequence currently occupies.</summary>
@@ -215,12 +309,12 @@ internal sealed class OutstandingReliableSequences
         private uint _ackBase;
 
         /// <summary>
-        /// Records <paramref name="sequence"/> as newly outstanding, arming its deadline when the
-        /// current horizon covers it. Returns whether it was deferred instead, so the caller can fold
-        /// that into <see cref="HorizonDeferrals"/> without this tracker needing to know about the
-        /// counter it feeds.
+        /// Records <paramref name="sequence"/> as newly outstanding, arming its deadline at
+        /// <paramref name="effectiveRto"/> when the current horizon covers it. Returns whether it was
+        /// deferred instead, so the caller can fold that into <see cref="HorizonDeferrals"/> without this
+        /// tracker needing to know about the counter it feeds.
         /// </summary>
-        public bool RecordSent(uint sequence, TimeProvider time, TimeSpan retransmitTimeout)
+        public bool RecordSent(uint sequence, TimeProvider time, TimeSpan effectiveRto)
         {
             if (_count == 0)
             {
@@ -234,10 +328,10 @@ internal sealed class OutstandingReliableSequences
 
             bool withinHorizon = unchecked(sequence - _ackBase) <= HorizonWidth;
             _released[slot] = false;
+            _retransmitted[slot] = false;
             if (withinHorizon)
             {
-                _armed[slot] = true;
-                _deadline[slot] = time.GetUtcNow() + retransmitTimeout;
+                Arm(slot, time.GetTimestamp(), time, effectiveRto);
             }
             else
             {
@@ -255,31 +349,44 @@ internal sealed class OutstandingReliableSequences
         public bool IsOutstanding(uint sequence) => TryGetSlot(sequence, out int slot) && !_released[slot];
 
         /// <summary>
-        /// Attempts to read <paramref name="sequence"/>'s deadline: fails when it is not tracked at all,
-        /// when it has been released by <see cref="ApplyAck"/>, and when it is tracked but not currently
-        /// armed.
+        /// Attempts to read <paramref name="sequence"/>'s deadline timestamp: fails when it is not
+        /// tracked at all, when it has been released by <see cref="ApplyAck"/>, and when it is tracked
+        /// but not currently armed.
         /// </summary>
-        public bool TryGetDeadline(uint sequence, out DateTimeOffset deadline)
+        public bool TryGetDeadlineTimestamp(uint sequence, out long deadlineTimestamp)
         {
             if (TryGetSlot(sequence, out int slot) && !_released[slot] && _armed[slot])
             {
-                deadline = _deadline[slot];
+                deadlineTimestamp = _deadlineTimestamp[slot];
                 return true;
             }
 
-            deadline = default;
+            deadlineTimestamp = default;
             return false;
         }
 
         /// <summary>
-        /// Applies one received ack block (see the enclosing type's <c>ApplyAck</c> for the full
-        /// contract): releases what it acknowledges, slides the horizon to <paramref name="ackBase"/>,
-        /// and arms any deferred sequence the slide newly covers. A stale <paramref name="ackBase"/> —
-        /// one <see cref="SequenceNumber.IsNewerThan"/> says is not newer than, and is not equal to, the
-        /// base already applied — is rejected outright: nothing is released and the horizon does not
-        /// move.
+        /// Marks <paramref name="sequence"/> as retransmitted, if it is still tracked. A no-op for a
+        /// sequence already released or never sent.
         /// </summary>
-        public void ApplyAck(uint ackBase, uint ackBits, TimeProvider time, TimeSpan retransmitTimeout)
+        public void MarkRetransmitted(uint sequence)
+        {
+            if (TryGetSlot(sequence, out int slot))
+            {
+                _retransmitted[slot] = true;
+            }
+        }
+
+        /// <summary>
+        /// Applies one received ack block (see the enclosing type's <c>ApplyAck</c> for the full
+        /// contract): releases what it acknowledges (feeding <paramref name="timer"/>'s estimator one
+        /// sample per armed sequence released), slides the horizon to <paramref name="ackBase"/>, and
+        /// arms any deferred sequence the slide newly covers at <paramref name="effectiveRto"/>. A stale
+        /// <paramref name="ackBase"/> — one <see cref="SequenceNumber.IsNewerThan"/> says is not newer
+        /// than, and is not equal to, the base already applied — is rejected outright: nothing is
+        /// released, sampled or armed, and the horizon does not move.
+        /// </summary>
+        public void ApplyAck(uint ackBase, uint ackBits, TimeProvider time, TimeSpan effectiveRto, RetransmissionTimer timer)
         {
             bool stale = ackBase != _ackBase && !SequenceNumber.IsNewerThan(ackBase, _ackBase);
             if (stale)
@@ -287,7 +394,9 @@ internal sealed class OutstandingReliableSequences
                 return;
             }
 
-            ReleaseBelowBase(ackBase);
+            long now = time.GetTimestamp();
+
+            ReleaseBelowBase(ackBase, time, now, timer);
 
             for (int n = 0; n < (int)HorizonWidth; n++)
             {
@@ -299,22 +408,22 @@ internal sealed class OutstandingReliableSequences
                 uint sequence = unchecked(ackBase + (uint)n + 1);
                 if (TryGetSlot(sequence, out int slot))
                 {
-                    _armed[slot] = false;
-                    _released[slot] = true;
+                    Release(slot, time, now, timer);
                 }
             }
 
             _ackBase = ackBase;
-            ArmNewlyCovered(time, retransmitTimeout);
+            ArmNewlyCovered(time, now, effectiveRto);
         }
 
         /// <summary>
-        /// Releases every tracked sequence strictly below <paramref name="ackBase"/> in one step, by
-        /// moving the tracked window's start past them — whether or not any of them was ever named by a
+        /// Releases every tracked sequence strictly below <paramref name="ackBase"/> in one step — each
+        /// one sampled first if it was armed and not already released (see <see cref="Release"/>) — by
+        /// moving the tracked window's start past them, whether or not any of them was ever named by a
         /// bit. A no-op when nothing is tracked, or when <paramref name="ackBase"/> does not reach past
         /// <see cref="_oldest"/> at all.
         /// </summary>
-        private void ReleaseBelowBase(uint ackBase)
+        private void ReleaseBelowBase(uint ackBase, TimeProvider time, long now, RetransmissionTimer timer)
         {
             if (_count == 0 || _oldest == ackBase || SequenceNumber.IsNewerThan(_oldest, ackBase))
             {
@@ -324,26 +433,51 @@ internal sealed class OutstandingReliableSequences
             uint advance = unchecked(ackBase - _oldest);
             int steps = advance >= (uint)_count ? _count : (int)advance;
 
+            for (int i = 0; i < steps; i++)
+            {
+                Release(SlotFor((uint)i), time, now, timer);
+            }
+
             _oldest = unchecked(_oldest + (uint)steps);
             _headSlot = (int)(((uint)_headSlot + (uint)steps) % (uint)_capacity);
             _count -= steps;
         }
 
         /// <summary>
+        /// Releases one slot: if it was armed and not already released, feeds
+        /// <paramref name="timer"/>'s <see cref="RetransmissionTimer.Estimator"/> one sample — the
+        /// elapsed time from when it armed to <paramref name="now"/>, and whether it was ever marked
+        /// retransmitted (Karn's rule, issue #193) — then marks it released either way. A slot that was
+        /// never armed (still deferred) or already released feeds no sample, matching the contract that
+        /// a deferred release yields nothing and a sequence is never sampled twice.
+        /// </summary>
+        private void Release(int slot, TimeProvider time, long now, RetransmissionTimer timer)
+        {
+            if (_armed[slot] && !_released[slot])
+            {
+                TimeSpan elapsed = time.GetElapsedTime(_armedAtTimestamp[slot], now);
+                timer.Estimator.Sample(elapsed, _retransmitted[slot]);
+            }
+
+            _armed[slot] = false;
+            _released[slot] = true;
+        }
+
+        /// <summary>
         /// Arms every tracked sequence that is not released, not already armed, and now falls within
         /// <c>[_ackBase, _ackBase + <see cref="HorizonWidth"/>]</c> — the sequences a horizon slide just
-        /// brought into view. Every sequence armed by one call shares the same deadline, taken once from
-        /// <paramref name="time"/> so a slide that covers several deferred sequences at once arms them
-        /// all from that single moment rather than one clock read apiece.
+        /// brought into view. Every sequence armed by one call shares the same arming moment
+        /// (<paramref name="now"/>) and the same <paramref name="effectiveRto"/>, so a slide that covers
+        /// several deferred sequences at once arms them all from that single moment rather than one
+        /// clock read and one RTO read apiece.
         /// </summary>
-        private void ArmNewlyCovered(TimeProvider time, TimeSpan retransmitTimeout)
+        private void ArmNewlyCovered(TimeProvider time, long now, TimeSpan effectiveRto)
         {
             if (_count == 0)
             {
                 return;
             }
 
-            DateTimeOffset deadline = time.GetUtcNow() + retransmitTimeout;
             for (int offset = 0; offset < _count; offset++)
             {
                 int slot = SlotFor((uint)offset);
@@ -355,10 +489,21 @@ internal sealed class OutstandingReliableSequences
                 uint sequence = unchecked(_oldest + (uint)offset);
                 if (unchecked(sequence - _ackBase) <= HorizonWidth)
                 {
-                    _armed[slot] = true;
-                    _deadline[slot] = deadline;
+                    Arm(slot, now, time, effectiveRto);
                 }
             }
+        }
+
+        /// <summary>
+        /// Arms <paramref name="slot"/> at <paramref name="armedAt"/>, computing its deadline timestamp
+        /// as <paramref name="armedAt"/> plus <paramref name="effectiveRto"/> converted into
+        /// <paramref name="time"/>'s own provider-tick units.
+        /// </summary>
+        private void Arm(int slot, long armedAt, TimeProvider time, TimeSpan effectiveRto)
+        {
+            _armed[slot] = true;
+            _armedAtTimestamp[slot] = armedAt;
+            _deadlineTimestamp[slot] = armedAt + ToProviderTicks(time, effectiveRto);
         }
 
         /// <summary>
@@ -416,18 +561,24 @@ internal sealed class OutstandingReliableSequences
 
             bool[] newArmed = new bool[newCapacity];
             bool[] newReleased = new bool[newCapacity];
-            DateTimeOffset[] newDeadline = new DateTimeOffset[newCapacity];
+            bool[] newRetransmitted = new bool[newCapacity];
+            long[] newArmedAtTimestamp = new long[newCapacity];
+            long[] newDeadlineTimestamp = new long[newCapacity];
             for (int i = 0; i < _count; i++)
             {
                 int oldSlot = (int)((_headSlot + i) % (uint)_capacity);
                 newArmed[i] = _armed[oldSlot];
                 newReleased[i] = _released[oldSlot];
-                newDeadline[i] = _deadline[oldSlot];
+                newRetransmitted[i] = _retransmitted[oldSlot];
+                newArmedAtTimestamp[i] = _armedAtTimestamp[oldSlot];
+                newDeadlineTimestamp[i] = _deadlineTimestamp[oldSlot];
             }
 
             _armed = newArmed;
             _released = newReleased;
-            _deadline = newDeadline;
+            _retransmitted = newRetransmitted;
+            _armedAtTimestamp = newArmedAtTimestamp;
+            _deadlineTimestamp = newDeadlineTimestamp;
             _capacity = newCapacity;
             _headSlot = 0;
         }

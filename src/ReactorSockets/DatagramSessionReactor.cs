@@ -79,6 +79,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     private readonly CookieMinter _cookies;
     private readonly RandomNumberGenerator _entropy;
+    private readonly PumpIntervalObserver _pumpIntervalObserver;
     private readonly List<UdpLink> _links = [];
     private readonly List<PendingEvent> _pendingEvents = [];
 
@@ -134,6 +135,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _entropy = options.Entropy;
         _cookies = new CookieMinter(options.Reactor.TimeProvider, _entropy);
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
+        _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
 
         _receiveWindows = new ReceiveWindowSpaces[options.Reactor.Capacity];
         for (int i = 0; i < _receiveWindows.Length; i++)
@@ -186,14 +188,25 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
     }
 
+    /// <summary>
+    /// The interval this Reactor's own Pump calls are currently observed to arrive at
+    /// (<see cref="PumpIntervalObserver"/>), read fresh from every Pump. This is the derived floor the
+    /// adaptive RTO (issue #191, slice #42) clamps against: a timeout shorter than the gap between
+    /// Pumps cannot be acted on. Internal because nothing outside this Reactor derives a bound from it
+    /// yet — this ticket only wires the measurement in.
+    /// </summary>
+    internal TimeSpan ObservedPumpInterval => _pumpIntervalObserver.Interval;
+
     /// <inheritdoc cref="ISessionEventSource.PendingEventCount"/>
     int ISessionEventSource.PendingEventCount => _pendingEvents.Count;
 
     /// <summary>
-    /// One synchronous advance: wipes the previous Frame's events and arena, then reads whatever bound
-    /// socket is ready right now, running the handshake for everything that arrived. Throws
-    /// <see cref="InvalidOperationException"/> if called from any thread other than the one that
-    /// constructed this Reactor, or from inside a Pump already in progress.
+    /// One synchronous advance: records this call's arrival against the last one
+    /// (<see cref="ObservedPumpInterval"/>, issue #191) before anything else, then wipes the previous
+    /// Frame's events and arena, then reads whatever bound socket is ready right now, running the
+    /// handshake for everything that arrived. Throws <see cref="InvalidOperationException"/> if called
+    /// from any thread other than the one that constructed this Reactor, or from inside a Pump already
+    /// in progress.
     /// </summary>
     public void Pump()
     {
@@ -203,6 +216,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _lifecycle.InPump = true;
         try
         {
+            _pumpIntervalObserver.Observe();
             _pendingEvents.Clear();
             _arena.Reset();
             _admissionsThisFrame = 0;
@@ -248,6 +262,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         UdpLink link = LinkForFamily(destination.AddressFamily);
         Source remote = Source.FromIPEndPoint(destination);
+        RetransmissionTimer retransmitTimer = new();
 
         PeerSlot slot = new()
         {
@@ -257,7 +272,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             LocalSessionId = NextSessionId(),
             LocalResumeSecret = NextResumeSecret(),
             State = HandshakeState.AwaitingCookie,
-            AckTracker = NewAckTracker(),
+            AckTracker = NewAckTracker(retransmitTimer),
+            RetransmitTimer = retransmitTimer,
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
@@ -527,7 +543,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// turns out to be forged. The header's two ack blocks are applied to <paramref name="slot"/>'s
     /// <see cref="PeerSlot.AckTracker"/> for the two reliable Spaces only (subtask 6.3.6, issue #188)
     /// once that same proof stands — a short or malformed datagram applies neither block, exactly as it
-    /// admits no record. Nothing here throws, allocates or reads past <paramref name="datagram"/>. No
+    /// admits no record. Both blocks are applied at the same effective RTO, read once from
+    /// <paramref name="slot"/>'s own <see cref="PeerSlot.RetransmitTimer"/> and this Reactor's
+    /// <see cref="ObservedPumpInterval"/> (subtask 6.4.7, issue #197), so a horizon slide inside either
+    /// call arms at the same value. Nothing here throws, allocates or reads past <paramref name="datagram"/>. No
     /// Session event is produced and nothing is delivered: what a Space does with an admitted record is
     /// #173 and #6.6's, so this method's whole job ends at "classified, and counted if refused".
     /// </summary>
@@ -559,8 +578,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             remainder = remainder[bytesConsumed..];
         }
 
-        slot.AckTracker.ApplyAck(PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits);
-        slot.AckTracker.ApplyAck(PacketRecordMode.ReliableUnordered, reliableUnorderedAckBase, reliableUnorderedAckBits);
+        TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
+        slot.AckTracker.ApplyAck(PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits, effectiveRto);
+        slot.AckTracker.ApplyAck(PacketRecordMode.ReliableUnordered, reliableUnorderedAckBase, reliableUnorderedAckBits, effectiveRto);
         ReconcileHorizonDeferrals(slot);
 
         remainder = body;
@@ -856,8 +876,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         uint remoteSessionId,
         uint remoteMaxMessageSize,
         ReadOnlySpan<byte> remoteResumeSecret,
-        ulong clientNonce) =>
-        new()
+        ulong clientNonce)
+    {
+        RetransmissionTimer retransmitTimer = new();
+        return new()
         {
             Remote = source,
             Link = link,
@@ -868,17 +890,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RemoteMaxMessageSize = remoteMaxMessageSize,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
             State = HandshakeState.Established,
-            AckTracker = NewAckTracker(),
+            AckTracker = NewAckTracker(retransmitTimer),
+            RetransmitTimer = retransmitTimer,
         };
+    }
 
     /// <summary>
     /// Builds a fresh outstanding-sequence tracker for a Peer newly admitted into a Slot (subtask
-    /// 6.3.6, issue #188), timed from this Reactor's own <see cref="ReactorOptions.TimeProvider"/> and
-    /// the protocol's placeholder retransmit timeout (<see cref="DatagramSessionProtocol.DefaultRetransmitTimeout"/>) —
-    /// 6.4/6.5 owns replacing that value once a real retransmission cadence exists.
+    /// 6.3.6, issue #188; subtask 6.4.7, issue #197), timed from this Reactor's own
+    /// <see cref="ReactorOptions.TimeProvider"/> and backed by <paramref name="retransmitTimer"/> — the
+    /// same instance stored on the Slot's own <see cref="PeerSlot.RetransmitTimer"/>, so the tracker's
+    /// estimator samples and the Slot's own effective-RTO reads are two views of one timer, not two that
+    /// happen to agree.
     /// </summary>
-    private OutstandingReliableSequences NewAckTracker() =>
-        new(_options.Reactor.TimeProvider, DatagramSessionProtocol.DefaultRetransmitTimeout);
+    private OutstandingReliableSequences NewAckTracker(RetransmissionTimer retransmitTimer) =>
+        new(_options.Reactor.TimeProvider, retransmitTimer);
 
     private void SendAccept(UdpLink link, PeerSlot slot)
     {
@@ -1090,6 +1116,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <see cref="ReactorOptions.TimeProvider"/>, never the ambient clock.
         /// </summary>
         public required OutstandingReliableSequences AckTracker { get; init; }
+
+        /// <summary>
+        /// This Peer's own adaptive retransmission timer (issue #194; subtask 6.4.7, issue #197): the
+        /// same instance passed into <see cref="AckTracker"/> at construction, so a release
+        /// <see cref="AckTracker"/> processes and an effective-RTO read from this property are two views
+        /// of one timer rather than two that happen to agree. Built fresh alongside
+        /// <see cref="OutboundSequences"/> and <see cref="AckTracker"/> at the same two admission sites
+        /// and released with the Slot. Minimal state added by 6.4.7 so <see cref="AckTracker"/> is
+        /// constructible at all; issue #198 owns the per-Pump expiry sweep that reads
+        /// <see cref="RetransmissionTimer.BackOff"/>/<see cref="RetransmissionTimer.RecordDelivery"/>
+        /// through it and should extend this property rather than add a second one.
+        /// </summary>
+        public required RetransmissionTimer RetransmitTimer { get; init; }
 
         /// <summary>
         /// The value of <see cref="OutstandingReliableSequences.HorizonDeferrals"/> last folded into

@@ -77,6 +77,18 @@ namespace ReactorSockets;
 /// <see cref="OutOfWindowPackets"/>: a Resume carries no counter's history away with it, and this one's
 /// lifetime is the Peer's, not the transport's. A freshly connected Peer reads zero.
 /// </param>
+/// <param name="PacketsRetransmitted">
+/// How many packet records this Peer has resent (subtask 6.4.6, issue #196; ADR 0013). Counts packet
+/// RECORDS resent, not datagrams sent and not Messages: retransmission is byte-identical at packet-
+/// record granularity, because a datagram is repacked on every send and is not itself reproducible —
+/// several records can ride one datagram, and the same record can ride a different datagram on retry.
+/// This is why it is a Counter and not a Diagnostic (ADR 0013): a retransmit recurs continuously on a
+/// lossy path, which fails the record test, and it keeps its own identity — rather than folding into
+/// <see cref="OutOfWindowPackets"/> or <see cref="HorizonDeferrals"/> — because counters have a
+/// per-Peer scope. Monotonic and never reset, exactly like <see cref="HorizonDeferrals"/>: its lifetime
+/// is the Peer's, not the transport's, so a Resume does not zero it. Nothing increments this yet — the
+/// expiry path that does is issue #198 — so a freshly connected Peer reads zero.
+/// </param>
 public readonly record struct PeerCounters(
     ulong MessagesReceived,
     ulong RetentionHighWaterBytes,
@@ -84,4 +96,5 @@ public readonly record struct PeerCounters(
     ulong OutOfWindowPackets,
     ulong DuplicatePackets,
     ulong UnreliableLossPackets,
-    ulong HorizonDeferrals);
+    ulong HorizonDeferrals,
+    ulong PacketsRetransmitted);
