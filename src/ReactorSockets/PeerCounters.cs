@@ -66,7 +66,7 @@ namespace ReactorSockets;
 /// How many sequences arrived beyond a reliable Space's ack horizon and so had their retransmit timer
 /// withheld rather than started (subtask 6.3, issue #41; ADR 0013). It measures a deferral, not a
 /// loss: the sequence is not missing and nothing was discarded, only judged too far ahead of
-/// <c>[base, base+32)</c> for this Pump's ack blocks to describe yet, so the timer that would otherwise
+/// <c>[base, base + 32]</c> for this Pump's ack blocks to describe yet, so the timer that would otherwise
 /// start ticking toward a spurious retransmission is withheld until the horizon slides over it. This
 /// is why it is a Counter and not a Diagnostic (ADR 0013): sustained load with many sequences in
 /// flight defers on every Pump, which fails the record test, and it keeps its own identity — rather

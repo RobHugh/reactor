@@ -106,7 +106,7 @@ internal sealed class PeerCounterSet
     /// <summary>
     /// Records that one sequence arrived beyond a reliable Space's ack horizon, so its retransmit timer
     /// was withheld rather than started (subtask 6.3, issue #41; ADR 0013). Called from the horizon
-    /// gate (issue #185) once a record classifies as beyond <c>[base, base+32)</c> for the Space it
+    /// gate (issue #185) once a record classifies as beyond <c>[base, base + 32]</c> for the Space it
     /// belongs to; nothing calls this yet. No Diagnostic accompanies this — a deferral can recur every
     /// Pump under sustained load, which is exactly why this is a Counter (ADR 0013).
     /// </summary>
