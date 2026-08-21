@@ -334,7 +334,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// has slid past (issues #173, #176).
     /// <see cref="PeerCounters.MessagesReceived"/> and <see cref="PeerCounters.Resumes"/> still read
     /// zero for every Peer, since this profile has no delivery or resume machinery yet to increment
-    /// them.
+    /// them. <see cref="PeerCounters.RetentionHighWaterBytes"/> reads the true per-Peer figure — summed
+    /// across both reliable Spaces — from <see cref="_retention"/> (subtask 6.5.6, issue #205).
     /// </summary>
     public PeerCounters CountersOf(PeerId peer)
     {
@@ -344,7 +345,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         PeerSlot slot = _peers.TryResolve(handle)
             ?? throw new ArgumentException($"Peer {peer} is not open.", nameof(peer));
 
-        return slot.Counters.Snapshot(retentionHighWaterBytes: 0);
+        return slot.Counters.Snapshot(retentionHighWaterBytes: _retention.HighWaterBytes(handle.Index));
     }
 
     /// <summary>

@@ -69,11 +69,64 @@ public class DatagramSessionSendTests
     }
 
     [Fact]
+    public void Send_ReliableUnorderedUntilItsSpaceIsFull_ReturnsRetentionExhaustedAndLeavesReliableOrderedUnaffected()
+    {
+        // Arrange — the reverse of the test above: exhausting ReliableUnordered's own Space must leave
+        // ReliableOrdered's untouched, proving #43's interference guard holds in both directions.
+        const int fragmentSize = 600;
+        using DatagramSessionReactorHarness harness = new(
+            bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize * 2, maxMessageSize: fragmentSize);
+        using DatagramSessionReactorHarness remote = new();
+        PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+        byte[] message = [1, 2, 3];
+
+        // Act
+        SendOutcome first = harness.Reactor.Send(peer, DeliveryMode.ReliableUnordered, message);
+        SendOutcome second = harness.Reactor.Send(peer, DeliveryMode.ReliableUnordered, message);
+        SendOutcome third = harness.Reactor.Send(peer, DeliveryMode.ReliableUnordered, message);
+        SendOutcome orderedStillWorks = harness.Reactor.Send(peer, DeliveryMode.ReliableOrdered, message);
+
+        // Assert
+        first.Should().Be(SendOutcome.Sent);
+        second.Should().Be(SendOutcome.Sent);
+        third.Should().Be(SendOutcome.RetentionExhausted);
+        orderedStillWorks.Should().Be(SendOutcome.Sent);
+    }
+
+    [Fact]
+    public void Send_OnePeerExhaustedInReliableOrdered_LeavesAnotherPeersSendsUnaffected()
+    {
+        // Arrange — one slot per reliable Space, so a Peer's second ReliableOrdered Send already finds
+        // its own Space full. Retention is per Peer per Space (#43), so a second, distinct Peer must be
+        // entirely unaffected by the first Peer's exhaustion.
+        const int fragmentSize = 600;
+        using DatagramSessionReactorHarness harness = new(
+            bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
+        using DatagramSessionReactorHarness firstRemote = new();
+        using DatagramSessionReactorHarness secondRemote = new();
+        PeerId firstPeer = harness.Reactor.Connect(firstRemote.Endpoint);
+        PeerId secondPeer = harness.Reactor.Connect(secondRemote.Endpoint);
+        byte[] message = [1, 2, 3];
+
+        // Act
+        SendOutcome firstPeerFirstSend = harness.Reactor.Send(firstPeer, DeliveryMode.ReliableOrdered, message);
+        SendOutcome firstPeerExhausted = harness.Reactor.Send(firstPeer, DeliveryMode.ReliableOrdered, message);
+        SendOutcome secondPeerSend = harness.Reactor.Send(secondPeer, DeliveryMode.ReliableOrdered, message);
+
+        // Assert
+        firstPeerFirstSend.Should().Be(SendOutcome.Sent);
+        firstPeerExhausted.Should().Be(SendOutcome.RetentionExhausted);
+        secondPeerSend.Should().Be(SendOutcome.Sent);
+    }
+
+    [Fact]
     public void Send_UnreliableAtHighRateWithRetentionAtItsMinimum_NeverConsumesRetention()
     {
         // Arrange — one slot per reliable Space, so a single ReliableOrdered Send would already exhaust
         // it; a long run of Unreliable and UnreliableSequenced Sends must all still succeed, because
-        // neither consumes retention at all (#43).
+        // neither consumes retention at all (#43). RetentionHighWaterBytes is monotonic and never falls,
+        // so it staying at zero after this run also certifies retained bytes never rose above zero at
+        // any point during it.
         const int fragmentSize = 600;
         using DatagramSessionReactorHarness harness = new(
             bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
@@ -89,8 +142,11 @@ public class DatagramSessionSendTests
             outcomes.Add(harness.Reactor.Send(peer, DeliveryMode.UnreliableSequenced, message));
         }
 
+        PeerCounters counters = harness.Reactor.CountersOf(peer);
+
         // Assert
         outcomes.Should().AllSatisfy(outcome => outcome.Should().Be(SendOutcome.Sent));
+        counters.RetentionHighWaterBytes.Should().Be(0UL, "neither unreliable mode ever consumes retention (#43)");
     }
 
     [Fact]
