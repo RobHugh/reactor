@@ -595,9 +595,19 @@ internal sealed class OutstandingReliableSequences
         /// Releases one slot: if it was armed and not already released, feeds
         /// <paramref name="timer"/>'s <see cref="RetransmissionTimer.Estimator"/> one sample — the
         /// elapsed time from when it armed to <paramref name="now"/>, and whether it was ever marked
-        /// retransmitted (Karn's rule, issue #193) — then marks it released either way. A slot that was
+        /// retransmitted (Karn's rule, issue #193) — and records the delivery against
+        /// <paramref name="timer"/>'s backoff, then marks it released either way. A slot that was
         /// never armed (still deferred) or already released feeds no sample, matching the contract that
         /// a deferred release yields nothing and a sequence is never sampled twice.
+        /// <para>
+        /// The sample and the backoff reset are two separate things and are deliberately not gated
+        /// alike (issue #194: "a successful delivery resets both the multiplier and the count in one
+        /// step"). Karn's rule discards the <em>sample</em> from a retransmitted sequence because the
+        /// round trip it measures is ambiguous, but the <em>delivery</em> is not ambiguous at all — the
+        /// sequence arrived, so the path is working and the backoff that accumulated while it was
+        /// failing must end. Resetting only on a clean sample would leave a path that recovered by
+        /// retransmission backed off forever, which is exactly the case backoff exists to escape.
+        /// </para>
         /// </summary>
         private void Release(int slot, TimeProvider time, long now, RetransmissionTimer timer)
         {
@@ -605,6 +615,7 @@ internal sealed class OutstandingReliableSequences
             {
                 TimeSpan elapsed = time.GetElapsedTime(_armedAtTimestamp[slot], now);
                 timer.Estimator.Sample(elapsed, _retransmitted[slot]);
+                timer.RecordDelivery();
             }
 
             _armed[slot] = false;
@@ -646,12 +657,26 @@ internal sealed class OutstandingReliableSequences
         /// Arms <paramref name="slot"/> at <paramref name="armedAt"/>, computing its deadline timestamp
         /// as <paramref name="armedAt"/> plus <paramref name="effectiveRto"/> converted into
         /// <paramref name="time"/>'s own provider-tick units.
+        /// <para>
+        /// The addition saturates rather than wrapping. <see cref="ToProviderTicks"/> already clamps an
+        /// unbounded <paramref name="effectiveRto"/> to <see cref="long.MaxValue"/>, and
+        /// <c>EffectiveTimeout</c> returns exactly that when Linger is <see cref="TimeSpan.MaxValue"/> —
+        /// which <c>DatagramSessionOptions</c> permits, validating only that Linger is greater than zero.
+        /// Adding an unclamped <see cref="long.MaxValue"/> to a positive <paramref name="armedAt"/>
+        /// overflows into a negative timestamp, so the deadline would land in the past and the sequence
+        /// would be swept as expired on its very first Pump and re-expire on every Pump after: a Linger
+        /// of "effectively never abandon" would produce the most aggressive possible retransmission
+        /// instead of the least. Saturating keeps the far-future deadline far in the future.
+        /// </para>
         /// </summary>
         private void Arm(int slot, long armedAt, TimeProvider time, TimeSpan effectiveRto)
         {
+            long providerTicks = ToProviderTicks(time, effectiveRto);
+            long deadline = unchecked(armedAt + providerTicks);
+
             _armed[slot] = true;
             _armedAtTimestamp[slot] = armedAt;
-            _deadlineTimestamp[slot] = armedAt + ToProviderTicks(time, effectiveRto);
+            _deadlineTimestamp[slot] = providerTicks > 0 && deadline < armedAt ? long.MaxValue : deadline;
         }
 
         /// <summary>
