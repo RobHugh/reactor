@@ -257,6 +257,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             LocalSessionId = NextSessionId(),
             LocalResumeSecret = NextResumeSecret(),
             State = HandshakeState.AwaitingCookie,
+            AckTracker = NewAckTracker(),
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
@@ -523,13 +524,22 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// two passes over the same bytes: the first confirms every record is well-formed without touching
     /// any Space, and only once the whole datagram has proven parseable does the second classify each
     /// record in turn — so an early record is never classified on the strength of a datagram whose tail
-    /// turns out to be forged. Nothing here throws, allocates or reads past <paramref name="datagram"/>.
-    /// No Session event is produced and nothing is delivered: what a Space does with an admitted record
-    /// is #173 and #6.6's, so this method's whole job ends at "classified, and counted if refused".
+    /// turns out to be forged. The header's two ack blocks are applied to <paramref name="slot"/>'s
+    /// <see cref="PeerSlot.AckTracker"/> for the two reliable Spaces only (subtask 6.3.6, issue #188)
+    /// once that same proof stands — a short or malformed datagram applies neither block, exactly as it
+    /// admits no record. Nothing here throws, allocates or reads past <paramref name="datagram"/>. No
+    /// Session event is produced and nothing is delivered: what a Space does with an admitted record is
+    /// #173 and #6.6's, so this method's whole job ends at "classified, and counted if refused".
     /// </summary>
     private void ParseDataDatagram(Source source, PeerSlot slot, ReadOnlySpan<byte> datagram)
     {
-        if (!DatagramHeaderCodec.TryReadHeader(datagram, out _, out _, out _, out _, out _))
+        if (!DatagramHeaderCodec.TryReadHeader(
+                datagram,
+                out _,
+                out uint reliableOrderedAckBase,
+                out uint reliableOrderedAckBits,
+                out uint reliableUnorderedAckBase,
+                out uint reliableUnorderedAckBits))
         {
             DiscardMalformed(source, datagram.Length);
             return;
@@ -549,6 +559,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             remainder = remainder[bytesConsumed..];
         }
 
+        slot.AckTracker.ApplyAck(PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits);
+        slot.AckTracker.ApplyAck(PacketRecordMode.ReliableUnordered, reliableUnorderedAckBase, reliableUnorderedAckBits);
+        ReconcileHorizonDeferrals(slot);
+
         remainder = body;
         while (remainder.Length > 0)
         {
@@ -558,6 +572,30 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             ClassifyRecord(slot, mode, sequence);
             remainder = remainder[bytesConsumed..];
         }
+    }
+
+    /// <summary>
+    /// Folds however much <paramref name="slot"/>'s <see cref="PeerSlot.AckTracker"/> has deferred,
+    /// since this method last read it, into <see cref="PeerSlot.Counters"/> (subtask 6.3.6, issue #188).
+    /// The tracker exposes <see cref="OutstandingReliableSequences.HorizonDeferrals"/> as a monotonic
+    /// total across both reliable Spaces, while <see cref="Core.PeerCounterSet.RecordHorizonDeferral"/>
+    /// increments by one per call, so the two shapes are reconciled here rather than at either end: the
+    /// difference between the total and <see cref="PeerSlot.ObservedHorizonDeferrals"/> is folded in one
+    /// call at a time, and nothing is folded twice because the observed figure is advanced to match.
+    /// Nothing on this ticket's live paths ever calls <see cref="OutstandingReliableSequences.RecordSent"/>,
+    /// so the difference is always zero today; this is the reconciliation 6.4/6.5's outbound send will
+    /// exercise once it does.
+    /// </summary>
+    private static void ReconcileHorizonDeferrals(PeerSlot slot)
+    {
+        ulong total = slot.AckTracker.HorizonDeferrals;
+        ulong delta = total - slot.ObservedHorizonDeferrals;
+        for (ulong i = 0; i < delta; i++)
+        {
+            slot.Counters.RecordHorizonDeferral();
+        }
+
+        slot.ObservedHorizonDeferrals = total;
     }
 
     /// <summary>
@@ -830,7 +868,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RemoteMaxMessageSize = remoteMaxMessageSize,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
             State = HandshakeState.Established,
+            AckTracker = NewAckTracker(),
         };
+
+    /// <summary>
+    /// Builds a fresh outstanding-sequence tracker for a Peer newly admitted into a Slot (subtask
+    /// 6.3.6, issue #188), timed from this Reactor's own <see cref="ReactorOptions.TimeProvider"/> and
+    /// the protocol's placeholder retransmit timeout (<see cref="DatagramSessionProtocol.DefaultRetransmitTimeout"/>) —
+    /// 6.4/6.5 owns replacing that value once a real retransmission cadence exists.
+    /// </summary>
+    private OutstandingReliableSequences NewAckTracker() =>
+        new(_options.Reactor.TimeProvider, DatagramSessionProtocol.DefaultRetransmitTimeout);
 
     private void SendAccept(UdpLink link, PeerSlot slot)
     {
@@ -1033,5 +1081,24 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// exists here only so a Peer already has the state a later slice needs.
         /// </summary>
         public OutboundSequenceSpaces OutboundSequences { get; } = new();
+
+        /// <summary>
+        /// This Peer's own tracker of outstanding reliable sequences and their ack horizon (subtask
+        /// 6.3.6, issue #188): built fresh alongside <see cref="OutboundSequences"/> at the same two
+        /// admission sites and released with the Slot, so a Slot a later Peer reuses inherits none of
+        /// the previous occupant's outstanding sequences or horizon. Time comes from this Reactor's own
+        /// <see cref="ReactorOptions.TimeProvider"/>, never the ambient clock.
+        /// </summary>
+        public required OutstandingReliableSequences AckTracker { get; init; }
+
+        /// <summary>
+        /// The value of <see cref="OutstandingReliableSequences.HorizonDeferrals"/> last folded into
+        /// <see cref="Counters"/> (subtask 6.3.6, issue #188). The tracker exposes a monotonic total
+        /// rather than a per-event signal, while <see cref="Core.PeerCounterSet.RecordHorizonDeferral"/>
+        /// increments by one per call, so reconciling the two means comparing the tracker's total
+        /// against this and folding in only the difference, once, each time the tracker's state is
+        /// consulted. Zero for a freshly built Slot, matching a tracker that has deferred nothing yet.
+        /// </summary>
+        public ulong ObservedHorizonDeferrals { get; set; }
     }
 }

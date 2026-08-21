@@ -62,10 +62,26 @@ namespace ReactorSockets;
 /// a lossy path must not fill the Sink with volume. Monotonic and never reset, exactly like
 /// <see cref="OutOfWindowPackets"/>; a freshly connected Peer reads zero.
 /// </param>
+/// <param name="HorizonDeferrals">
+/// How many sequences arrived beyond a reliable Space's ack horizon and so had their retransmit timer
+/// withheld rather than started (subtask 6.3, issue #41; ADR 0013). It measures a deferral, not a
+/// loss: the sequence is not missing and nothing was discarded, only judged too far ahead of
+/// <c>[base, base + 32]</c> for this Pump's ack blocks to describe yet, so the timer that would otherwise
+/// start ticking toward a spurious retransmission is withheld until the horizon slides over it. This
+/// is why it is a Counter and not a Diagnostic (ADR 0013): sustained load with many sequences in
+/// flight defers on every Pump, which fails the record test, and it keeps its own identity — rather
+/// than folding into <see cref="OutOfWindowPackets"/> — because counters have a per-Peer scope. Only
+/// the two reliable Spaces contribute; the unreliable Spaces have no ack horizon to sit beyond. Rises
+/// only under the horizon scenario (issue #185) and stays zero in ordinary operation, where every
+/// sequence lands inside the horizon as it arrives. Monotonic and never reset, exactly like
+/// <see cref="OutOfWindowPackets"/>: a Resume carries no counter's history away with it, and this one's
+/// lifetime is the Peer's, not the transport's. A freshly connected Peer reads zero.
+/// </param>
 public readonly record struct PeerCounters(
     ulong MessagesReceived,
     ulong RetentionHighWaterBytes,
     ulong Resumes,
     ulong OutOfWindowPackets,
     ulong DuplicatePackets,
-    ulong UnreliableLossPackets);
+    ulong UnreliableLossPackets,
+    ulong HorizonDeferrals);
