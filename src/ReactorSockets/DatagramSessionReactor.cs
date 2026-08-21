@@ -348,6 +348,72 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// Sends <paramref name="message"/> to <paramref name="peer"/> under <paramref name="mode"/> (ADR
+    /// 0009, issue #207): a reliable mode allocates the next sequence in its own Space and retains the
+    /// Message whole there, returning <see cref="SendOutcome.RetentionExhausted"/> once that Space has
+    /// no slot left; <see cref="DeliveryMode.Unreliable"/> and
+    /// <see cref="DeliveryMode.UnreliableSequenced"/> still allocate a sequence — every mode gets one,
+    /// the same as every other (<see cref="OutboundSequenceSpaces"/>) — but retain nothing, because
+    /// nothing unreliable is ever retransmitted (issue #43). This is the first public <c>Send</c> on
+    /// this profile, and it is deliberately this narrow: packing a record, fragmenting a Message too
+    /// wide for one, and flushing a Peer's coalesced Datagram are #44's and #45's, so nothing here
+    /// reaches the wire and nothing here throws for a Message a later slice will refuse as
+    /// <c>MessageTooLarge</c>.
+    /// </summary>
+    /// <remarks>
+    /// Sending to a <paramref name="peer"/> this Reactor is not currently holding open — unknown, or
+    /// already closed — returns <see cref="SendOutcome.Closed"/> rather than throwing, unlike
+    /// <see cref="CountersOf"/>: a Peer closing under a caller is an ordinary race, the same reason
+    /// <see cref="Close"/> tolerates a stale <see cref="PeerId"/>.
+    /// </remarks>
+    /// <param name="peer">The Peer to send to.</param>
+    /// <param name="mode">Which of the four delivery modes carries this Message; see <c>docs/delivery-modes.md</c>.</param>
+    /// <param name="message">
+    /// The Message payload, unframed. Throws if wider than one fragment — this call cannot yet split a
+    /// Message across more than one, so a Message wider than
+    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> has nowhere to go until #45's
+    /// fragmentation lands.
+    /// </param>
+    public SendOutcome Send(PeerId peer, DeliveryMode mode, ReadOnlySpan<byte> message)
+    {
+        EnsureUsable();
+        EnsureCallingThreadIsConstructingThread();
+
+        if (message.Length > _options.ResolvedFragmentSize)
+        {
+            throw new ArgumentException(
+                $"message of {message.Length} bytes exceeds this Reactor's fragment size of " +
+                $"{_options.ResolvedFragmentSize} bytes — a Send cannot yet split a Message across more " +
+                "than one fragment.",
+                nameof(message));
+        }
+
+        SlotHandle handle = ToHandle(peer);
+        if (_peers.TryResolve(handle) is not PeerSlot slot)
+        {
+            return SendOutcome.Closed;
+        }
+
+        PacketRecordMode recordMode = ToRecordMode(mode);
+        uint sequence = slot.OutboundSequences.Allocate(recordMode);
+
+        if (recordMode is not (PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered))
+        {
+            return SendOutcome.Sent;
+        }
+
+        int spaceIndex = ReliableSpaceIndex(recordMode);
+        RetentionSlotOutcome outcome = _retention.TryAcquire(handle.Index, spaceIndex, sequence, message);
+
+        return outcome switch
+        {
+            RetentionSlotOutcome.Committed => SendOutcome.Sent,
+            RetentionSlotOutcome.Exhausted => SendOutcome.RetentionExhausted,
+            _ => throw new InvalidOperationException($"Unrecognised {nameof(RetentionSlotOutcome)}: {outcome}."),
+        };
+    }
+
+    /// <summary>
     /// Releases every socket this Reactor bound. A Reactor owns every socket it bound, so a consumer
     /// that drops one without disposing it leaks those sockets until each <see cref="Socket"/>'s
     /// finalizer runs. No <see cref="SessionEventKind.PeerClosed"/> events are queued: nothing can
@@ -1127,6 +1193,30 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     private static SlotHandle ToHandle(PeerId peer) => peer.ToHandle();
 
+    /// <summary>The wire mode <paramref name="mode"/> names, for <see cref="Send"/> to allocate and route by.</summary>
+    private static PacketRecordMode ToRecordMode(DeliveryMode mode) => mode switch
+    {
+        DeliveryMode.Unreliable => PacketRecordMode.Unreliable,
+        DeliveryMode.UnreliableSequenced => PacketRecordMode.UnreliableSequenced,
+        DeliveryMode.ReliableUnordered => PacketRecordMode.ReliableUnordered,
+        DeliveryMode.ReliableOrdered => PacketRecordMode.ReliableOrdered,
+        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown delivery mode."),
+    };
+
+    /// <summary>
+    /// The reliable Space index <see cref="_retention"/> addresses <paramref name="mode"/> under —
+    /// <c>ReliableOrdered</c> first, <c>ReliableUnordered</c> second, the same order
+    /// <see cref="ReceiveWindowSpaces.GenerateAckBlocks"/> and <see cref="ParseDataDatagram"/>'s ack
+    /// application already use, so the send and receive sides never address the two reliable Spaces
+    /// differently.
+    /// </summary>
+    private static int ReliableSpaceIndex(PacketRecordMode mode) => mode switch
+    {
+        PacketRecordMode.ReliableOrdered => 0,
+        PacketRecordMode.ReliableUnordered => 1,
+        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Not a reliable delivery mode."),
+    };
+
     /// <summary>How far through the handshake one Peer has got.</summary>
     private enum HandshakeState
     {
@@ -1191,8 +1281,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>
         /// This Peer's four outbound sequence allocators (issue #40, #169), one per delivery mode.
-        /// Nothing allocates from it yet — the datagram profile's <c>Send</c> lands in 6.7 — so it
-        /// exists here only so a Peer already has the state a later slice needs.
+        /// <see cref="DatagramSessionReactor.Send"/> (issue #207) is what allocates from it now — one
+        /// sequence per Send, whatever the mode — though nothing built from that sequence reaches the
+        /// wire until #45's coalescing flush exists.
         /// </summary>
         public OutboundSequenceSpaces OutboundSequences { get; } = new();
 

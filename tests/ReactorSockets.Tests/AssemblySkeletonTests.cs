@@ -62,6 +62,7 @@ public class AssemblySkeletonTests
             nameof(PeerCounters),
             nameof(DisconnectReason),
             nameof(SendOutcome),
+            nameof(DeliveryMode),
             nameof(PumpIntervalObserver),
             nameof(RoundTripEstimator),
             nameof(RetransmissionTimer));

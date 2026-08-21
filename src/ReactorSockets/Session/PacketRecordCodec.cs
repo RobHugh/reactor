@@ -5,8 +5,8 @@ namespace ReactorSockets.Session;
 /// <summary>
 /// The wire value of a packet record's two mode bits (ADR 0009), named rather than left as a raw
 /// byte so a caller reading <see cref="PacketRecordCodec.TryRead"/>'s result does not have to
-/// re-derive what each bit pattern means. Not the public <c>DeliveryMode</c> enum #44 owns: that
-/// enum is this Session's user-facing vocabulary, and building it is out of scope here. This one is
+/// re-derive what each bit pattern means. Not the public <see cref="ReactorSockets.DeliveryMode"/>
+/// enum (issue #207): that enum is this Session's user-facing vocabulary. This one is
 /// scoped to <see cref="PacketRecordCodec"/> and exists only so #163's parse loop and #164 have a
 /// symbol to switch on instead of the four <see cref="DatagramSessionProtocol"/> mode constants.
 /// </summary>

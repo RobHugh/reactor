@@ -130,8 +130,8 @@ internal static class DatagramSessionProtocol
 
     /// <summary>
     /// The wire value of the <c>Unreliable</c> mode's two mode bits (ADR 0009). Not the public
-    /// <c>DeliveryMode</c> enum, which #44 owns — this is what the wire carries for that mode, named
-    /// here so the eight tickets after this one never restate the number.
+    /// <see cref="ReactorSockets.DeliveryMode"/> enum (issue #207) — this is what the wire carries for
+    /// that mode, named here so the eight tickets after this one never restate the number.
     /// </summary>
     public const byte ModeUnreliable = 0b0000_0000;
 
