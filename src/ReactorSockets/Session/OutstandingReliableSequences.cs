@@ -244,6 +244,19 @@ internal sealed class OutstandingReliableSequences
     /// </summary>
     /// <remarks>
     /// <para>
+    /// <b>Call order.</b> This method is half of a two-call sweep and does not stand alone. Per Peer,
+    /// per Pump, the order is: <see cref="CollectExpired"/> for <em>every</em> reliable Space first,
+    /// then — only if the Spaces reported something between them — one
+    /// <see cref="RetransmissionTimer.BackOff"/> and one
+    /// <see cref="RetransmissionTimer.EffectiveTimeout"/> read, then <see cref="ReArmExpired"/> for
+    /// every Space that was swept, all at that one RTO. Sweeping and re-arming one Space before
+    /// sweeping the other would put the second Space's findings behind a backoff the first Space
+    /// caused, which is the compounding this split exists to prevent. The split is what makes the
+    /// backoff one decision per Peer per Pump rather than one per Space; the cost is that the order
+    /// is a contract this type documents rather than one the signatures enforce.
+    /// <see cref="DatagramSessionReactor"/>'s per-Peer sweep is the reference caller.
+    /// </para>
+    /// <para>
     /// Each reported sequence is marked retransmitted (<see cref="MarkRetransmitted"/>) before this
     /// returns, so a later <see cref="ApplyAck"/> release feeds Karn's rule the ambiguous case rather
     /// than a clean sample. This call does <em>not</em> back off <see cref="RetransmissionTimer"/> and
@@ -285,6 +298,14 @@ internal sealed class OutstandingReliableSequences
     /// Spaces reported anything this Pump, so two reliable Spaces expiring in the same Pump share one
     /// backoff and one resulting RTO rather than compounding. A no-op if <see cref="CollectExpired"/>
     /// found nothing on this Space, or has not been called since the last re-arm.
+    /// <para>
+    /// <b>Call order.</b> This is the second half of <see cref="CollectExpired"/>'s two-call sweep and
+    /// must follow it for the same <paramref name="mode"/> within the same Pump — see
+    /// <see cref="CollectExpired"/> for the full ordering contract. A sequence this Space reported and
+    /// that is never re-armed keeps its already-passed deadline, so it is reported again on the next
+    /// Pump and on every Pump after: skipping this call does not leave a sequence un-armed, it leaves
+    /// it permanently expired.
+    /// </para>
     /// </summary>
     /// <param name="mode">Which reliable Space to re-arm the most recent sweep's findings on.</param>
     /// <param name="effectiveRto">The single RTO every re-armed sequence on <paramref name="mode"/> arms at.</param>
