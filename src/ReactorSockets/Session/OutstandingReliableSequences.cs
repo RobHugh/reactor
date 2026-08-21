@@ -70,7 +70,9 @@ namespace ReactorSockets.Session;
 /// <see cref="IsOutstanding"/> and <see cref="TryGetDeadlineTimestamp"/> allocate nothing once a
 /// Space's ring has grown to cover its steady-state outstanding count. <see cref="ApplyAck"/> never
 /// grows the ring — it only releases sequences, feeds estimator samples and moves the tracked window's
-/// edges — so it allocates nothing regardless of how many times it has been called.
+/// edges — so it allocates nothing regardless of how many times it has been called. Neither does
+/// <see cref="CollectExpired"/> (issue #198): its result is a reused scratch buffer sized alongside the
+/// ring's own arrays, including when nothing has expired.
 /// </para>
 /// </remarks>
 internal sealed class OutstandingReliableSequences
@@ -171,9 +173,9 @@ internal sealed class OutstandingReliableSequences
     /// Marks <paramref name="sequence"/> on <paramref name="mode"/>'s reliable Space as having been
     /// retransmitted at least once, so a later <see cref="ApplyAck"/> release feeds its sample to the
     /// estimator as ambiguous (Karn's rule, issue #193) rather than as a clean round trip. A no-op if
-    /// <paramref name="sequence"/> is not currently tracked — released or never sent. Internal: this
-    /// ticket does not build the expiry sweep that decides <em>when</em> to retransmit and call this
-    /// (issue #198's), only the machinery that records the fact once told.
+    /// <paramref name="sequence"/> is not currently tracked — released or never sent. Internal: called
+    /// only from <see cref="CollectExpired"/>'s own sweep (issue #198), which decides <em>when</em> a
+    /// sequence has expired and calls this once it does.
     /// </summary>
     /// <param name="mode">Which reliable Space <paramref name="sequence"/> was sent on.</param>
     /// <param name="sequence">The <c>u32</c> sequence number that was retransmitted.</param>
@@ -234,6 +236,50 @@ internal sealed class OutstandingReliableSequences
         SpaceOf(mode).ApplyAck(ackBase, ackBits, _time, effectiveRto, _timer);
 
     /// <summary>
+    /// Reports every sequence on <paramref name="mode"/>'s reliable Space whose retransmit deadline has
+    /// passed as of now (subtask 6.4.8, issue #198), so the caller knows what must be resent. A
+    /// deferred-but-outstanding sequence — outstanding but never armed, because the horizon has not slid
+    /// over it — is never reported: this reads the same armed deadline <see cref="TryGetDeadlineTimestamp"/>
+    /// does, so the horizon gate and the timer are one path, not two that happen to agree.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each reported sequence is marked retransmitted (<see cref="MarkRetransmitted"/>) before this
+    /// returns, so a later <see cref="ApplyAck"/> release feeds Karn's rule the ambiguous case rather
+    /// than a clean sample, and is re-armed at the backed-off RTO: if this call finds anything expired
+    /// on this Space, the injected <see cref="RetransmissionTimer"/>'s <see cref="RetransmissionTimer.BackOff"/>
+    /// is called exactly once, and every sequence this call reports is re-armed from now at the single
+    /// <see cref="RetransmissionTimer.EffectiveTimeout"/> that backoff produced — mirroring how a
+    /// horizon slide arms every sequence it newly covers from one shared moment and one shared RTO
+    /// (<see cref="ApplyAck"/>'s own <c>ArmNewlyCovered</c>) rather than reading the clock or the timer
+    /// once per sequence. A Space that reports nothing never calls <see cref="RetransmissionTimer.BackOff"/>
+    /// at all, so a quiet Space never inflates <see cref="RetransmissionTimer.ConsecutiveBackoffs"/> on
+    /// the other reliable Space's behalf — the two reliable Spaces stay independent even though they
+    /// share one Peer's <see cref="RetransmissionTimer"/>.
+    /// </para>
+    /// <para>
+    /// Allocates nothing: the returned span is backed by a buffer sized alongside this Space's ring and
+    /// reused by every call, exactly like <see cref="RecordSent"/> and <see cref="ApplyAck"/> allocate
+    /// nothing once the ring has grown to cover the steady-state outstanding count. The span is only
+    /// valid until the next call on this Space — copy it out before calling again if it must outlive
+    /// that.
+    /// </para>
+    /// </remarks>
+    /// <param name="mode">Which reliable Space to sweep for expired deadlines.</param>
+    /// <param name="observedPumpInterval">
+    /// The Reactor's own observed Pump cadence, forwarded to <see cref="RetransmissionTimer.EffectiveTimeout"/>
+    /// for the backed-off re-arm, read fresh at the moment of this call.
+    /// </param>
+    /// <param name="linger">The Session's own Linger, forwarded the same way.</param>
+    /// <returns>
+    /// The <c>u32</c> sequence numbers on <paramref name="mode"/>'s Space that just expired, in the
+    /// order they were originally sent. Empty when nothing has expired.
+    /// </returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
+    public ReadOnlySpan<uint> CollectExpired(PacketRecordMode mode, TimeSpan observedPumpInterval, TimeSpan linger) =>
+        SpaceOf(mode).CollectExpired(_time, _timer, observedPumpInterval, linger);
+
+    /// <summary>
     /// Resolves <paramref name="mode"/> to its reliable Space's tracker. Only the two reliable modes are
     /// valid — the two unreliable modes are never acknowledged and so are never tracked here — matching
     /// how <see cref="OutboundSequenceSpaces.Allocate"/> rejects a mode it does not recognize.
@@ -289,6 +335,16 @@ internal sealed class OutstandingReliableSequences
         private bool[] _retransmitted = new bool[InitialCapacity];
         private long[] _armedAtTimestamp = new long[InitialCapacity];
         private long[] _deadlineTimestamp = new long[InitialCapacity];
+
+        /// <summary>
+        /// Scratch buffer <see cref="CollectExpired"/> writes its result into, reused by every call and
+        /// grown alongside the other per-slot arrays in <see cref="EnsureCapacity"/> rather than sized
+        /// independently — the number of sequences one sweep can report is bounded by <see cref="_count"/>,
+        /// which is already bounded by <see cref="_capacity"/>, so no separate growth path is needed.
+        /// Its contents past the count <see cref="CollectExpired"/> last returned are meaningless.
+        /// </summary>
+        private uint[] _expiredSequences = new uint[InitialCapacity];
+
         private int _capacity = InitialCapacity;
 
         /// <summary>The ring position the oldest tracked sequence currently occupies.</summary>
@@ -375,6 +431,53 @@ internal sealed class OutstandingReliableSequences
             {
                 _retransmitted[slot] = true;
             }
+        }
+
+        /// <summary>
+        /// Sweeps every sequence still tracked on this Space for a passed retransmit deadline (see the
+        /// enclosing type's <c>CollectExpired</c> for the full contract): a deferred sequence has no
+        /// armed deadline (<see cref="TryGetDeadlineTimestamp"/> fails for it) and so is never reported,
+        /// matching the horizon rule. Every reported sequence is marked retransmitted
+        /// (<see cref="MarkRetransmitted"/>) as it is found; if anything was found at all,
+        /// <paramref name="timer"/> backs off exactly once and every reported sequence re-arms from
+        /// <paramref name="time"/>'s current moment at the single resulting
+        /// <see cref="RetransmissionTimer.EffectiveTimeout"/> — one shared arming moment and RTO for the
+        /// whole sweep, the same shape <see cref="ArmNewlyCovered"/> uses for a horizon slide covering
+        /// several sequences at once. Allocates nothing: the result is <see cref="_expiredSequences"/>,
+        /// which never grows here (see its own doc) and is simply overwritten.
+        /// </summary>
+        public ReadOnlySpan<uint> CollectExpired(TimeProvider time, RetransmissionTimer timer, TimeSpan observedPumpInterval, TimeSpan linger)
+        {
+            int expiredCount = 0;
+            if (_count > 0)
+            {
+                long now = time.GetTimestamp();
+                for (int offset = 0; offset < _count; offset++)
+                {
+                    uint sequence = unchecked(_oldest + (uint)offset);
+                    if (!TryGetDeadlineTimestamp(sequence, out long deadline) || time.GetElapsedTime(deadline, now) < TimeSpan.Zero)
+                    {
+                        continue;
+                    }
+
+                    _expiredSequences[expiredCount] = sequence;
+                    expiredCount++;
+                    MarkRetransmitted(sequence);
+                }
+
+                if (expiredCount > 0)
+                {
+                    timer.BackOff();
+                    TimeSpan effectiveRto = timer.EffectiveTimeout(observedPumpInterval, linger);
+                    for (int i = 0; i < expiredCount; i++)
+                    {
+                        TryGetSlot(_expiredSequences[i], out int slot);
+                        Arm(slot, now, time, effectiveRto);
+                    }
+                }
+            }
+
+            return _expiredSequences.AsSpan(0, expiredCount);
         }
 
         /// <summary>
@@ -579,6 +682,11 @@ internal sealed class OutstandingReliableSequences
             _retransmitted = newRetransmitted;
             _armedAtTimestamp = newArmedAtTimestamp;
             _deadlineTimestamp = newDeadlineTimestamp;
+
+            // Scratch buffer for CollectExpired: never needs its stale contents preserved across a
+            // resize, only room for as many entries as the ring can ever hold at once.
+            _expiredSequences = new uint[newCapacity];
+
             _capacity = newCapacity;
             _headSlot = 0;
         }
