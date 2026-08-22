@@ -392,8 +392,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> cannot fit in one Datagram and is
     /// reported back as <see cref="SendOutcome.MessageTooLarge"/> rather than thrown. For
     /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> the cap
-    /// is permanent: fragmenting what cannot be retransmitted multiplies the failure rate by the
-    /// number of pieces, so those two modes may only ever fragment what they can repair
+    /// is permanent, and there is no option that lifts it: you may only fragment what you can
+    /// retransmit (ADR 0004), because fragmenting what cannot be repaired multiplies the failure rate
+    /// by the number of pieces — a ten-Fragment unreliable Message on a path losing 1% of Datagrams
+    /// arrives about 90% of the time, having spent ten Datagrams of bandwidth on a coin flip
     /// (<c>docs/delivery-modes.md</c>). For <see cref="DeliveryMode.ReliableOrdered"/> and
     /// <see cref="DeliveryMode.ReliableUnordered"/> the same cap applies for now and is lifted once
     /// slice 7 gives the reliable modes fragmentation.
