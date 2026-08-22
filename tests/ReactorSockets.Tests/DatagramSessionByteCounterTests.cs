@@ -147,4 +147,60 @@ public class DatagramSessionByteCounterTests
         accepter.Reactor.CountersOf(accepterPeer).BytesReceived.Should().Be(
             bytesReceivedBefore, "a Datagram naming no Peer charges no Peer's bytes received");
     }
+
+    [Fact]
+    public void Pump_AFlushObservedOnTheWire_RaisesBytesSentByTheWholeDatagramLengthHeaderIncluded()
+    {
+        // Arrange — a WireTap (#228) holds the exact bytes the flush handed the transport, so the
+        // whole Datagram's length is an observed figure rather than header arithmetic this test
+        // would otherwise have to mirror from the protocol's internal constants (ADR 0015).
+        using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
+        using DatagramSessionReactorHarness accepter = new();
+        using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
+        PeerId diallerPeer = dialler.Reactor.Connect(tap.PublicEndPoint);
+        DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
+
+        ulong bytesSentBefore = dialler.Reactor.CountersOf(diallerPeer).BytesSent;
+
+        // Act
+        dialler.Reactor.Send(diallerPeer, DeliveryMode.Unreliable, [1, 2, 3, 4]).Should().Be(SendOutcome.Sent);
+        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
+
+        // Assert
+        byte[] flushed = tap.PayloadsInDirection(TapDirection.DiallerToAccepter).Last();
+        ulong bytesSentDelta = dialler.Reactor.CountersOf(diallerPeer).BytesSent - bytesSentBefore;
+
+        bytesSentDelta.Should().Be(
+            (ulong)flushed.Length,
+            "bytes sent counts the whole Datagram the flush handed the transport, header included");
+        bytesSentDelta.Should().BeGreaterThan(
+            4UL + 7UL,
+            "the figure exceeds the record's own 7-byte header plus its four payload bytes, so the 20-byte session header is inside it");
+    }
+
+    [Fact]
+    public void Pump_AnArrivalObservedOnTheWire_RaisesBytesReceivedByTheWholeDatagramLengthHeaderIncluded()
+    {
+        // Arrange — the same observed-length proof for the receive side: what the tap relayed is
+        // exactly what the far end must attribute to the Peer it came from.
+        using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
+        using DatagramSessionReactorHarness accepter = new();
+        using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
+        PeerId diallerPeer = dialler.Reactor.Connect(tap.PublicEndPoint);
+        PeerId accepterPeer = DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
+
+        ulong bytesReceivedBefore = accepter.Reactor.CountersOf(accepterPeer).BytesReceived;
+
+        // Act
+        dialler.Reactor.Send(diallerPeer, DeliveryMode.Unreliable, [1, 2, 3, 4]).Should().Be(SendOutcome.Sent);
+        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
+
+        // Assert
+        byte[] relayed = tap.PayloadsInDirection(TapDirection.DiallerToAccepter).Last();
+        ulong bytesReceivedDelta = accepter.Reactor.CountersOf(accepterPeer).BytesReceived - bytesReceivedBefore;
+
+        bytesReceivedDelta.Should().Be(
+            (ulong)relayed.Length,
+            "bytes received counts the whole arriving Datagram, header included");
+    }
 }

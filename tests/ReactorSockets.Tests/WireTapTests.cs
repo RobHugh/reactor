@@ -112,7 +112,8 @@ public class WireTapTests
     [Fact]
     public void Pump_ThroughTap_ProducesTheSameEventsAndCountersAsADirectDialogue()
     {
-        // Arrange — a direct dialogue between two Reactors with no tap in between, as the baseline.
+        // Arrange — two dialogues to compare: first a direct one between two Reactors with no tap in
+        // between, as the baseline, then the same dialogue relayed through a WireTap.
         using DatagramSessionReactorHarness directDialler = new(bindLoopback: false);
         using DatagramSessionReactorHarness directAccepter = new();
         PeerId directDiallerPeer = directDialler.Reactor.Connect(directAccepter.Endpoint);
@@ -148,7 +149,7 @@ public class WireTapTests
             PumpDeadline.Yield();
         }
 
-        // Arrange — the same dialogue, but relayed through a WireTap.
+        // Act — the same dialogue, but relayed through a WireTap.
         using DatagramSessionReactorHarness tappedDialler = new(bindLoopback: false);
         using DatagramSessionReactorHarness tappedAccepter = new();
         using WireTap tap = new(tappedAccepter.Endpoint, tappedDialler.TimeProvider);
