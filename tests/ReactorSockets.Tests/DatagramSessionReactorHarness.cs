@@ -300,6 +300,66 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
     }
 
     /// <summary>
+    /// Pumps a dialler, a <see cref="WireTap"/> and an accepter in a round until both ends have raised
+    /// <see cref="SessionEventKind.PeerConnected"/> — the tap's counterpart to
+    /// <see cref="PumpThroughProxyUntilConnected"/>, which is typed to
+    /// <see cref="LossyProxy"/> and so cannot drive a <see cref="WireTap"/> instead.
+    /// </summary>
+    public static PeerId PumpThroughTapUntilConnected(
+        DatagramSessionReactorHarness dialler,
+        WireTap tap,
+        DatagramSessionReactorHarness accepter,
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>? diallerEvents = null,
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>? accepterEvents = null,
+        TimeSpan? budget = null)
+    {
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        PeerId? accepterPeer = null;
+        bool diallerConnected = false;
+
+        while (true)
+        {
+            PumpRoundThroughTap(dialler, tap, accepter);
+
+            foreach ((SessionEventKind kind, PeerId peer, DisconnectReason reason) in accepter.DrainToList())
+            {
+                accepterEvents?.Add((kind, peer, reason));
+                if (kind == SessionEventKind.PeerConnected)
+                {
+                    accepterPeer = peer;
+                }
+            }
+
+            foreach ((SessionEventKind kind, PeerId peer, DisconnectReason reason) in dialler.DrainToList())
+            {
+                diallerEvents?.Add((kind, peer, reason));
+                diallerConnected |= kind == SessionEventKind.PeerConnected;
+            }
+
+            if (diallerConnected && accepterPeer is PeerId established)
+            {
+                return established;
+            }
+
+            if (deadline.Expired)
+            {
+                throw new InvalidOperationException("The tapped handshake did not complete within the Pump budget.");
+            }
+
+            PumpDeadline.Yield();
+        }
+    }
+
+    /// <summary>One round of the tapped loop: the dialler, then the tap, then the accepter, then the tap again so the accepter's reply is relayed back in the same round.</summary>
+    public static void PumpRoundThroughTap(DatagramSessionReactorHarness dialler, WireTap tap, DatagramSessionReactorHarness accepter)
+    {
+        dialler.Reactor.Pump();
+        tap.Pump();
+        accepter.Reactor.Pump();
+        tap.Pump();
+    }
+
+    /// <summary>
     /// Pumps both ends alternately until each has raised <see cref="SessionEventKind.PeerConnected"/>,
     /// which is what almost every two-Reactor test needs before it can assert anything: the handshake
     /// has completed on both sides and both ends' events are in hand.

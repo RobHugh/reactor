@@ -21,7 +21,7 @@ public class WireTapTests
         PeerId diallerPeer = dialler.Reactor.Connect(tap.PublicEndPoint);
 
         // Act
-        PeerId accepterPeer = PumpThroughTapUntilConnected(dialler, tap, accepter);
+        PeerId accepterPeer = DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
 
         byte[] fromDialler = [1, 2, 3];
         byte[] fromAccepter = [9, 8, 7, 6];
@@ -45,7 +45,7 @@ public class WireTapTests
         using DatagramSessionReactorHarness accepter = new();
         using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
         PeerId diallerPeer = dialler.Reactor.Connect(tap.PublicEndPoint);
-        PeerId accepterPeer = PumpThroughTapUntilConnected(dialler, tap, accepter);
+        PeerId accepterPeer = DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
 
         int capturedBeforeMessages = tap.Captures.Count;
         byte[] fromDialler = [11, 22, 33];
@@ -54,9 +54,9 @@ public class WireTapTests
         // Act — the accepter's reply cannot be captured until the dialler's Message has been relayed
         // and Pumped, so the two sends stay in this order rather than firing together.
         dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, fromDialler);
-        PumpRoundThroughTap(dialler, tap, accepter);
+        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
         accepter.Reactor.Send(accepterPeer, DeliveryMode.ReliableOrdered, fromAccepter);
-        PumpRoundThroughTap(dialler, tap, accepter);
+        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
 
         // Assert
         List<TapCapture> afterHandshake = tap.Captures.Skip(capturedBeforeMessages).ToList();
@@ -85,11 +85,11 @@ public class WireTapTests
         using DatagramSessionReactorHarness accepter = new();
         using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
         PeerId diallerPeer = dialler.Reactor.Connect(tap.PublicEndPoint);
-        PumpThroughTapUntilConnected(dialler, tap, accepter);
+        DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
 
         byte[] payload = [42, 42, 42];
         dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, payload);
-        PumpRoundThroughTap(dialler, tap, accepter);
+        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
 
         byte[] captured = tap.PayloadsInDirection(TapDirection.DiallerToAccepter)
             .Single(p => p.AsSpan().IndexOf(payload) >= 0);
@@ -100,7 +100,7 @@ public class WireTapTests
         // would corrupt the bytes read back below rather than leave them untouched.
         for (int i = 0; i < 5; i++)
         {
-            PumpRoundThroughTap(dialler, tap, accepter);
+            DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
         }
 
         // Assert
@@ -155,7 +155,7 @@ public class WireTapTests
         PeerId tappedDiallerPeer = tappedDialler.Reactor.Connect(tap.PublicEndPoint);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> tappedDiallerAll = [];
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> tappedAccepterAll = [];
-        PeerId tappedAccepterPeer = PumpThroughTapUntilConnected(tappedDialler, tap, tappedAccepter, tappedDiallerAll, tappedAccepterAll);
+        PeerId tappedAccepterPeer = DatagramSessionReactorHarness.PumpThroughTapUntilConnected(tappedDialler, tap, tappedAccepter, tappedDiallerAll, tappedAccepterAll);
 
         List<byte[]> tappedAccepterPayloads = [];
         foreach (byte[] message in messages)
@@ -186,66 +186,6 @@ public class WireTapTests
         tappedDialler.Reactor.CountersOf(tappedDiallerPeer).Should().Be(
             directDialler.Reactor.CountersOf(directDiallerPeer),
             "relaying through the tap must not change what the dialler's counters record");
-    }
-
-    /// <summary>
-    /// Pumps a dialler, a <see cref="WireTap"/> and an accepter in a round until both ends have raised
-    /// <see cref="SessionEventKind.PeerConnected"/> — the tap's counterpart to
-    /// <see cref="DatagramSessionReactorHarness.PumpThroughProxyUntilConnected"/>, which is typed to
-    /// <see cref="LossyProxy"/> and so cannot drive a <see cref="WireTap"/> instead.
-    /// </summary>
-    private static PeerId PumpThroughTapUntilConnected(
-        DatagramSessionReactorHarness dialler,
-        WireTap tap,
-        DatagramSessionReactorHarness accepter,
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>? diallerEvents = null,
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>? accepterEvents = null,
-        TimeSpan? budget = null)
-    {
-        PumpDeadline deadline = PumpDeadline.Start(budget);
-        PeerId? accepterPeer = null;
-        bool diallerConnected = false;
-
-        while (true)
-        {
-            PumpRoundThroughTap(dialler, tap, accepter);
-
-            foreach ((SessionEventKind kind, PeerId peer, DisconnectReason reason) in accepter.DrainToList())
-            {
-                accepterEvents?.Add((kind, peer, reason));
-                if (kind == SessionEventKind.PeerConnected)
-                {
-                    accepterPeer = peer;
-                }
-            }
-
-            foreach ((SessionEventKind kind, PeerId peer, DisconnectReason reason) in dialler.DrainToList())
-            {
-                diallerEvents?.Add((kind, peer, reason));
-                diallerConnected |= kind == SessionEventKind.PeerConnected;
-            }
-
-            if (diallerConnected && accepterPeer is PeerId established)
-            {
-                return established;
-            }
-
-            if (deadline.Expired)
-            {
-                throw new InvalidOperationException("The tapped handshake did not complete within the Pump budget.");
-            }
-
-            PumpDeadline.Yield();
-        }
-    }
-
-    /// <summary>One round of the tapped loop: the dialler, then the tap, then the accepter, then the tap again so the accepter's reply is relayed back in the same round.</summary>
-    private static void PumpRoundThroughTap(DatagramSessionReactorHarness dialler, WireTap tap, DatagramSessionReactorHarness accepter)
-    {
-        dialler.Reactor.Pump();
-        tap.Pump();
-        accepter.Reactor.Pump();
-        tap.Pump();
     }
 
     /// <summary>Whether <paramref name="needle"/> occurs anywhere in <paramref name="haystack"/> — a plain method so a predicate calling it can be used as a FluentAssertions expression tree, which cannot itself contain a <see cref="Span{T}"/> operation.</summary>
