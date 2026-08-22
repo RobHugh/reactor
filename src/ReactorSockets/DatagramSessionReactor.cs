@@ -699,6 +699,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             remainder = remainder[bytesConsumed..];
         }
 
+        // The proof above is what attributes this Datagram to slot's Peer: it names an established
+        // session id (ProcessDataDatagram's own lookup) and every record in it parses. Only from this
+        // point on is the whole Datagram's length, header included, counted against that Peer (issue
+        // #231) — a malformed one, even if it named a real session, falls to DiscardMalformed's
+        // Reactor-scope figure instead, above, and never reaches here.
+        slot.Counters.RecordBytesReceived((ulong)datagram.Length);
+
         TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits, effectiveRto);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableUnordered, reliableUnorderedAckBase, reliableUnorderedAckBits, effectiveRto);
@@ -979,6 +986,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         UdpLinkSendResult result = slot.Link.SendTo(slot.Remote, _outboundDatagramBuffer.AsSpan(0, packer.BytesWritten));
+        slot.Counters.RecordBytesSent((ulong)packer.BytesWritten);
         if (result.IsSuccess)
         {
             _counters.RecordDatagramSent();

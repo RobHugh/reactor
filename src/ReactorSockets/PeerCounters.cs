@@ -97,6 +97,33 @@ namespace ReactorSockets;
 /// is the Peer's, not the transport's, so a Resume does not zero it. Nothing increments this yet — the
 /// expiry path that does is issue #198 — so a freshly connected Peer reads zero.
 /// </param>
+/// <param name="BytesSent">
+/// The datagram bytes a flush has handed the transport for this Peer, header included (subtask 6.7.4,
+/// issue #231; ADR 0013). Incremented once per Datagram, at the size the coalescing packer actually
+/// wrote for it — the 20-byte session header plus every packet record's own header and payload —
+/// rather than per record or per payload byte, since header bytes amortising across a Pump's coalesced
+/// records is exactly what this figure exists to let a consumer see; counting payload alone would hide
+/// that amortisation. Raised regardless of whether the underlying send call reports success, since the
+/// bytes were handed to the transport at that point either way — distinct from the Reactor-scope send
+/// figure, which counts only a confirmed success. Only a data Datagram to an Established Peer moves
+/// this: a handshake's control datagrams carry no session id yet to attribute them to, so they are
+/// never counted here, on either the sent or the received side (see <see cref="BytesReceived"/>).
+/// Monotonic and never reset, exactly like <see cref="HorizonDeferrals"/>: its lifetime is the Peer's,
+/// not the transport's, so a Resume does not zero it. A freshly connected Peer reads zero.
+/// </param>
+/// <param name="BytesReceived">
+/// The datagram bytes attributed to this Peer on arrival (subtask 6.7.4, issue #231; ADR 0013).
+/// Incremented once per data Datagram that both names an established Peer's session id and proves
+/// well-formed — the same proof that gates ack application and record classification — at the whole
+/// Datagram's length, header included, mirroring <see cref="BytesSent"/>. A Datagram naming no
+/// Session, or one so malformed it cannot be attributed to the Peer it claims, charges no Peer: it
+/// lands on the Reactor-scope unknown-source figure instead, the same bucket a genuinely unknown
+/// source falls into. A handshake's control datagrams are never counted here either, for the same
+/// reason as <see cref="BytesSent"/>: at the point one arrives, no Peer's session id has been assigned
+/// yet for it to name. Monotonic and never reset, exactly like <see cref="HorizonDeferrals"/>: its
+/// lifetime is the Peer's, not the transport's, so a Resume does not zero it. A freshly connected Peer
+/// reads zero.
+/// </param>
 public readonly record struct PeerCounters(
     ulong MessagesReceived,
     ulong RetentionHighWaterBytes,
@@ -105,4 +132,6 @@ public readonly record struct PeerCounters(
     ulong DuplicatePackets,
     ulong UnreliableLossPackets,
     ulong HorizonDeferrals,
-    ulong PacketsRetransmitted);
+    ulong PacketsRetransmitted,
+    ulong BytesSent,
+    ulong BytesReceived);
