@@ -371,9 +371,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// (<see cref="OutboundSequenceSpaces"/>) — but retain nothing, because nothing unreliable is ever
     /// retransmitted (issue #43). A Message this call accepts is queued on <paramref name="peer"/>'s
     /// Slot (<see cref="PeerSlot.PendingSends"/>) and leaves as one packet record inside the next
-    /// <see cref="Pump"/>'s single coalesced Datagram to that Peer (<see cref="FlushOutboundDatagrams"/>,
-    /// issue #216) — nothing reaches the wire before that Pump runs, and a <c>Send</c> with no
-    /// following Pump puts nothing on the wire at all.
+    /// <see cref="Pump"/>'s single coalesced Datagram to that Peer, in Send order
+    /// (<see cref="FlushOutboundDatagrams"/>, issue #216) — nothing reaches the wire before that Pump
+    /// runs, and a <c>Send</c> with no following Pump puts nothing on the wire at all. That next Pump is
+    /// only the first one this record is <em>eligible</em> to leave in: if this Peer already has more
+    /// queued than one Datagram holds, a record queued behind the boundary waits for however many
+    /// further Pumps it takes to reach the front, still in the order it was Sent (issue #230).
     /// </summary>
     /// <remarks>
     /// Sending to a <paramref name="peer"/> this Reactor is not currently holding open — unknown, or
@@ -866,6 +869,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// A single scan over <see cref="_peers"/> (<see cref="ShareHolderTable{T}.OccupantAt"/>), the same
     /// shape <see cref="ReportExpiredRetransmissions"/> uses: at most <see cref="ShareHolderTable{T}.Capacity"/>
     /// array reads, and a Peer with an empty queue costs nothing more than that one read.
+    /// <see cref="FlushPeer"/> itself trims <see cref="PeerSlot.PendingSends"/> down to whatever it
+    /// could not pack this Pump (issue #230), so there is nothing left for this method to clear — a Peer
+    /// whose queue drained completely is left with an empty list by that trim, which is exactly what
+    /// makes the next Pump's <c>Count == 0</c> check above skip it and send no header-only Datagram.
     /// </remarks>
     private void FlushOutboundDatagrams()
     {
@@ -882,27 +889,43 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
 
             FlushPeer(slot);
-            slot.PendingSends.Clear();
         }
     }
 
     /// <summary>
-    /// Packs everything <paramref name="slot"/> has queued since its last flush into one data Datagram
+    /// Packs as much as fits of <paramref name="slot"/>'s queue into one data Datagram, in Send order,
     /// and sends it (issue #216): the 20-byte header — this Peer's own <see cref="PeerSlot.RemoteSessionId"/>
     /// stamped as the session, since that is the id the far end asked to be stamped on datagrams sent to
     /// it — followed by both reliable Spaces' ack blocks read fresh from
     /// <see cref="_receiveWindows"/>, so an admission this same Pump's read pass just made is reflected
-    /// in the Datagram this same Pump's flush sends. Every queued record is packed in Send order through
-    /// <see cref="DatagramRecordPacker"/>, an unreliable record's payload read back from
-    /// <see cref="PendingOutboundRecord.UnreliablePayload"/> and a reliable one's from
-    /// <see cref="_retention"/> (<see cref="TryResolvePendingPayload"/>). Splitting a Pump's queue
-    /// across more than one Datagram once it stops fitting in <see cref="_outboundDatagramBuffer"/> is
-    /// #45's coalescing; this ticket packs what fits, in order, and stops — the only records the tests
-    /// driving this method ever queue are small enough that the case never triggers. Nothing is sent at
-    /// all if nothing ended up packed, so a queue whose one record failed to resolve — read back from a
-    /// retention slot already released — costs a wasted flush rather than a header-only Datagram with no
-    /// records in it.
+    /// in the Datagram this same Pump's flush sends. A reliable record's payload is read back from
+    /// <see cref="_retention"/> and an unreliable one's from <see cref="PendingOutboundRecord.UnreliablePayload"/>
+    /// (<see cref="TryResolvePendingPayload"/>).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A record that does not fit waits for the next Pump</b> (issue #230). Packing stops at the
+    /// first record <see cref="DatagramRecordPacker.TryPackRecord"/> refuses — this Datagram is full —
+    /// and everything from there to the end of <see cref="PeerSlot.PendingSends"/>, in the order it was
+    /// queued, is left on the Slot rather than discarded: <see cref="List{T}.RemoveRange"/> trims only
+    /// the prefix this call actually consumed, so those records are exactly what the next
+    /// <see cref="FlushOutboundDatagrams"/> sees at the front of the same queue. A Datagram is flushed
+    /// once per Peer per Pump (the loop above never calls this twice in one Pump), so the remainder does
+    /// not go out as a second Datagram this Pump — it rides the next one. A record whose payload failed
+    /// to resolve — a reliable sequence already released from retention — is consumed rather than left
+    /// queued: retrying it later cannot succeed either, since nothing repopulates a released slot.
+    /// </para>
+    /// <para>
+    /// <b>Arming still happens only where the record actually reached a Datagram.</b> A record that did
+    /// not fit is not sent, so it must not start its retransmit deadline — the loop below only reaches
+    /// the <see cref="OutstandingReliableSequences.RecordSent"/> call for a record
+    /// <see cref="DatagramRecordPacker.TryPackRecord"/> just accepted, never for the one that broke the
+    /// loop, so a queued-but-unsent record is armed on whichever later Pump actually packs it (subtask
+    /// 6.6.8, issue #218). Nothing is sent at all if nothing ended up packed, so a queue whose one
+    /// record failed to resolve costs a wasted flush rather than a header-only Datagram with no records
+    /// in it.
+    /// </para>
+    /// </remarks>
     private void FlushPeer(PeerSlot slot)
     {
         ((uint Base, uint Bits) reliableOrdered, (uint Base, uint Bits) reliableUnordered) =
@@ -916,10 +939,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             reliableUnordered.Base,
             reliableUnordered.Bits);
 
+        int consumed = 0;
         foreach (PendingOutboundRecord pending in slot.PendingSends)
         {
             if (!TryResolvePendingPayload(slot, pending, out ReadOnlySpan<byte> payload))
             {
+                consumed++;
                 continue;
             }
 
@@ -927,6 +952,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             {
                 break;
             }
+
+            consumed++;
 
             // Arming happens here, at the moment the record actually reaches a Datagram, rather than in
             // Send: a sequence queued but not yet flushed has not been transmitted, and starting its
@@ -943,6 +970,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                     slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger));
             }
         }
+
+        slot.PendingSends.RemoveRange(0, consumed);
 
         if (packer.RecordsPacked == 0)
         {
