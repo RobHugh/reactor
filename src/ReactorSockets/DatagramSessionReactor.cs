@@ -308,6 +308,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         slot.Handle = handle;
         _receiveWindows[handle.Index].Reset();
+        _retention.ResetShareHolder(handle.Index);
         _dialsByNonce[slot.ClientNonce] = handle;
 
         ControlDatagramCodec.WriteHello(_sendBuffer, DatagramSessionProtocol.Version, slot.ClientNonce);
@@ -1148,12 +1149,36 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// counted as a duplicate exactly as one the receive window caught is.
     /// </para>
     /// <para>
-    /// Holding a <c>ReliableOrdered</c> record behind a gap is #220's; for the two reliable modes this
-    /// method still delivers whatever the window admitted.
+    /// <b><c>ReliableOrdered</c>'s rule is send order</b> (subtask 6.6.10, issue #220): the record goes
+    /// through this Peer's <see cref="PeerSlot.OrderedDelivery"/> queue, which holds it whenever an
+    /// earlier sequence in that Space has not arrived and releases the whole contiguous run behind the
+    /// gap the moment it fills. Held bytes reach the consumer only when they drain, so a Message waiting
+    /// on a hole is not counted as received until it does. The queue is per-Peer and per-Space, so a
+    /// hole here stalls nothing in the other three Spaces — that is what the four-Space decision buys.
+    /// <c>ReliableUnordered</c> takes no queue at all and is delivered exactly as the window admitted it.
     /// </para>
     /// </remarks>
     private void DeliverAdmittedRecord(PeerSlot slot, PacketRecordMode mode, uint sequence, ReadOnlySpan<byte> payload)
     {
+        if (mode == PacketRecordMode.ReliableOrdered)
+        {
+            if (!slot.OrderedDelivery.Admit(sequence, payload))
+            {
+                // Held behind a gap, or a duplicate of a sequence already released. Either way nothing
+                // reaches the consumer for this record now; a held one drains on the Pump that fills
+                // the hole ahead of it.
+                return;
+            }
+
+            DeliverToConsumer(slot, payload);
+            while (slot.OrderedDelivery.TryReleaseNext(out ReadOnlyMemory<byte> released))
+            {
+                DeliverToConsumer(slot, released.Span);
+            }
+
+            return;
+        }
+
         if (mode == PacketRecordMode.UnreliableSequenced)
         {
             if (slot.HighestDeliveredUnreliableSequenced is uint highest
@@ -1169,6 +1194,24 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             slot.HighestDeliveredUnreliableSequenced = sequence;
         }
 
+        DeliverToConsumer(slot, payload);
+    }
+
+    /// <summary>
+    /// The last step every mode's delivery rule ends at: copy the payload into the shared frame arena
+    /// under this Peer's own share-holder identity (ADR 0014), queue it as a pending
+    /// <see cref="SessionEventKind.MessageReceived"/>, and raise this Peer's
+    /// <see cref="PeerCounters.MessagesReceived"/>. Split out from
+    /// <see cref="DeliverAdmittedRecord"/> so a <c>ReliableOrdered</c> run released from behind a gap
+    /// reaches the consumer through exactly the same three steps, in the same order, as a record
+    /// delivered the moment it arrived (subtask 6.6.10, issue #220).
+    /// </summary>
+    /// <remarks>
+    /// A Message the arena had no room for is not counted as received; the reasoning is on
+    /// <see cref="DeliverAdmittedRecord"/>, which is where every caller of this comes from.
+    /// </remarks>
+    private void DeliverToConsumer(PeerSlot slot, ReadOnlySpan<byte> payload)
+    {
         int payloadOffset = _arena.BytesUsed;
         ArenaReservation reservation = _arena.Reserve(slot.Handle.Index, payload);
 
@@ -1293,6 +1336,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         slot.Handle = handle;
         _receiveWindows[handle.Index].Reset();
+        _retention.ResetShareHolder(handle.Index);
         _peersBySessionId[slot.LocalSessionId] = handle;
         _acceptedHandshakes[(source, clientNonce)] = handle;
         _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(handle) });
@@ -1780,5 +1824,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// later Peer occupies never inherits the previous occupant's suppression state.
         /// </summary>
         public UnreliableDuplicateWindow UnreliableDuplicates { get; } = new();
+
+        /// <summary>
+        /// This Peer's send-order release queue for its <c>ReliableOrdered</c> Space (subtask 6.6.10,
+        /// issue #220). One queue, for that Space alone: the other three Spaces have none, which is what
+        /// confines head-of-line blocking to this Space by construction rather than by convention. Built
+        /// with the Slot and released with it, so a Slot a later Peer occupies never inherits the
+        /// previous occupant's held run or its next expected sequence.
+        /// </summary>
+        public OrderedDeliveryQueue OrderedDelivery { get; } = new();
     }
 }

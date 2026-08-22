@@ -168,6 +168,34 @@ internal sealed class RetentionPool
     }
 
     /// <summary>
+    /// Frees every slot <paramref name="shareHolderId"/> holds across all of its reliable Spaces and
+    /// clears both its retained-byte total and its <see cref="HighWaterBytes"/> figure, so a
+    /// share-holder region admitting a new occupant starts empty. Called when a capacity Slot is
+    /// admitted into rather than when one is vacated, matching how the receive windows are reset —
+    /// the pool is owned by the Slot and outlives whichever Peer occupies it (issue #206), so without
+    /// this a new Peer would inherit its predecessor's occupied slots and could be refused with
+    /// <see cref="RetentionSlotOutcome.Exhausted"/> before it ever sent anything, and would read its
+    /// predecessor's high-water rather than zero (issue #205).
+    /// </summary>
+    /// <remarks>
+    /// Like <see cref="RetentionArena.ResetShareHolder"/>, this resets the bookkeeping and not the
+    /// backing bytes: a slot's contents are only ever read back through <see cref="TryRead"/>, which
+    /// reaches nothing an occupied flag does not name, so stale bytes below a cleared flag are
+    /// unreachable.
+    /// </remarks>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    public void ResetShareHolder(int shareHolderId)
+    {
+        ValidateShareHolderId(shareHolderId);
+
+        int regionBase = shareHolderId * ReliableSpaceCount * SlotsPerSpace;
+        Array.Clear(_occupied, regionBase, ReliableSpaceCount * SlotsPerSpace);
+
+        _retainedBytes[shareHolderId] = 0;
+        _highWaterBytes[shareHolderId] = 0;
+    }
+
+    /// <summary>
     /// The fixed-size slot for <paramref name="slotIndex"/> within <paramref name="shareHolderId"/>'s
     /// <paramref name="spaceIndex"/>th reliable Space run. Nothing here clears a slot's previous
     /// contents on reuse; a caller that reuses a share-holder's region for a new connection is
