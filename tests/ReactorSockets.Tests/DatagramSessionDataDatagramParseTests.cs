@@ -261,9 +261,14 @@ public class DatagramSessionDataDatagramParseTests
     public void Pump_DatagramMixingUnfragmentedAndFragmentRecords_ParsesEveryRecordWithItsOwnFieldsIntact()
     {
         // Arrange — the mixed case the acceptance criteria calls out as the one a naive parser gets
-        // wrong: unfragmented records and Fragments interleaved, across three different modes, each
-        // carrying a payload distinct enough that a record misattributed to the wrong shape's byte
-        // count would show up as a missing, duplicated or corrupted payload rather than a passing test.
+        // wrong: unfragmented records and Fragments interleaved, each carrying a payload distinct enough
+        // that a record misattributed to the wrong shape's byte count would show up as a missing,
+        // duplicated or corrupted payload rather than a passing test. Every Fragment here is reliable
+        // (ADR 0004: fragmentation is reliable-only); the two unfragmented records at sequences 2 and 5
+        // still exercise a second mode, including plain Unreliable, since nothing about ADR 0004 restricts
+        // an unfragmented record's mode. The two Fragments' groups (firstSeq 1 and firstSeq 3) are
+        // deliberately far enough apart that their declared ranges — [1,2] and [3,4] — do not overlap:
+        // #256's declared-range check would otherwise (rightly) reject this datagram.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -275,9 +280,9 @@ public class DatagramSessionDataDatagramParseTests
             .. BuildRecord(ModeReliableUnordered, sequence: 0, payload: [0xA0]),
             .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 0, fragmentCount: 2, payload: [0xB1]),
             .. BuildRecord(ModeReliableUnordered, sequence: 2, payload: [0xA2]),
-            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 1, fragmentCount: 2, payload: [0xB3]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 0, fragmentCount: 2, payload: [0xB3]),
             .. BuildRecord(ModeUnreliable, sequence: 5, payload: [0xE5]),
-            .. BuildFragmentRecord(ModeUnreliableSequenced, sequence: 6, fragmentIndex: 0, fragmentCount: 2, payload: [0xF6]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 6, fragmentIndex: 0, fragmentCount: 2, payload: [0xF6]),
         ];
 
         // Act
@@ -448,30 +453,54 @@ public class DatagramSessionDataDatagramParseTests
         // Arrange — issue #253's boundaries either side of the refused combinations: a count of two at
         // both its legal indexes, an index one below its count, and a count at the 16-bit maximum. Each
         // is asserted rather than assumed, so a future change to the refusal cannot silently start
-        // rejecting a legal Fragment.
+        // rejecting a legal Fragment. Each boundary case travels in its own datagram (issue #256): index
+        // 999 of count 1000 and a lone Fragment of count 65535 are independent boundary cases whose
+        // declared ranges genuinely overlap each other and the two-Fragment group above when packed into
+        // one datagram together — a real declared-range collision #256's overlap check is right to
+        // reject, not a reason to weaken it.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
 
-        byte[] datagram =
-        [
-            .. BuildHeader(sessionId),
-            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]),
-            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02]),
-            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 999, fragmentCount: 1000, payload: [0x03]),
-            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 0, fragmentCount: 65535, payload: [0x04]),
-        ];
-
         // Act
-        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
-        List<byte[]> payloads = accepter.DrainPayloads();
+        List<byte[]> payloads = [];
+        payloads.AddRange(SendOneDatagramAndDrain(
+            accepter, client, clientLink, sessionId,
+            BuildFragmentRecord(ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]),
+            BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02])));
+        payloads.AddRange(SendOneDatagramAndDrain(
+            accepter, client, clientLink, sessionId,
+            BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 999, fragmentCount: 1000, payload: [0x03])));
+        payloads.AddRange(SendOneDatagramAndDrain(
+            accepter, client, clientLink, sessionId,
+            BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 0, fragmentCount: 65535, payload: [0x04])));
 
         // Assert
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         payloads.Should().BeEquivalentTo(
             new[] { new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 } });
+    }
+
+    /// <summary>
+    /// Builds one datagram from <paramref name="records"/> behind <paramref name="sessionId"/>'s header,
+    /// sends it, pumps until the accepter has received it, and returns the payloads drained. Lets a test
+    /// drive several boundary cases each in their own datagram without repeating the send-pump-drain
+    /// dance for every one (issue #256's split of what used to be one datagram).
+    /// </summary>
+    private static List<byte[]> SendOneDatagramAndDrain(
+        DatagramSessionReactorHarness accepter, RawReactor client, LinkId clientLink, uint sessionId, params byte[][] records)
+    {
+        List<byte> datagram = [.. BuildHeader(sessionId)];
+        foreach (byte[] record in records)
+        {
+            datagram.AddRange(record);
+        }
+
+        ulong receivedBefore = accepter.Reactor.Counters.DatagramsReceived;
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), [.. datagram]);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > receivedBefore);
+        return accepter.DrainPayloads();
     }
 
     [Fact]
@@ -482,11 +511,12 @@ public class DatagramSessionDataDatagramParseTests
         // as far as it goes (2 of a declared 4, sequences 200-201, indices 2 and 3 simply absent from
         // this datagram), and a second, wholly separate 2-Fragment set (sequences 300-301) whose range
         // does not come near either other group's. None of this is a violation: #256 only refuses a gap
-        // within one claimed group's own indices or two groups whose ranges overlap. Plain Unreliable
-        // mode delivers regardless of the receive window's verdict, so a large sequence gap between
-        // groups (chosen to keep their ranges far apart) never gets refused as out-of-window — this
-        // test is about the fragment-set check, not the window's.
-        using DatagramSessionReactorHarness accepter = new();
+        // within one claimed group's own indices or two groups whose declared ranges overlap, and none
+        // of these three groups' declared ranges — [100,102], [200,203], [300,301] — come near each
+        // other. Every Fragment is ReliableUnordered (ADR 0004: fragmentation is reliable-only), so the
+        // receive window is sized generously above the highest sequence used here — the window's own
+        // verdict is not what this test is about.
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 400);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
@@ -494,14 +524,14 @@ public class DatagramSessionDataDatagramParseTests
         byte[] datagram =
         [
             .. BuildHeader(sessionId),
-            .. BuildFragmentRecord(ModeUnreliable, sequence: 100, fragmentIndex: 0, fragmentCount: 3, payload: [0x01]),
-            .. BuildFragmentRecord(ModeUnreliable, sequence: 101, fragmentIndex: 1, fragmentCount: 3, payload: [0x02]),
-            .. BuildFragmentRecord(ModeUnreliable, sequence: 102, fragmentIndex: 2, fragmentCount: 3, payload: [0x03]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 100, fragmentIndex: 0, fragmentCount: 3, payload: [0x01]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 101, fragmentIndex: 1, fragmentCount: 3, payload: [0x02]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 102, fragmentIndex: 2, fragmentCount: 3, payload: [0x03]),
             .. BuildRecord(ModeUnreliable, sequence: 103, payload: [0x04]),
-            .. BuildFragmentRecord(ModeUnreliable, sequence: 200, fragmentIndex: 0, fragmentCount: 4, payload: [0x05]),
-            .. BuildFragmentRecord(ModeUnreliable, sequence: 201, fragmentIndex: 1, fragmentCount: 4, payload: [0x06]),
-            .. BuildFragmentRecord(ModeUnreliable, sequence: 300, fragmentIndex: 0, fragmentCount: 2, payload: [0x07]),
-            .. BuildFragmentRecord(ModeUnreliable, sequence: 301, fragmentIndex: 1, fragmentCount: 2, payload: [0x08]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 200, fragmentIndex: 0, fragmentCount: 4, payload: [0x05]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 201, fragmentIndex: 1, fragmentCount: 4, payload: [0x06]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 300, fragmentIndex: 0, fragmentCount: 2, payload: [0x07]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 301, fragmentIndex: 1, fragmentCount: 2, payload: [0x08]),
         ];
 
         // Act

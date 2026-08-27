@@ -108,6 +108,28 @@ public class DatagramSessionHostileFragmentDiscardTests
     }
 
     [Fact]
+    public void Pump_HostileFragmentGroupsClaimingOverlappingDeclaredRangesWithNoObservedCollision_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
+    {
+        // Arrange — issue #256: the overlap check must compare DECLARED ranges, not merely the
+        // sequences actually observed. Group firstSeq=100 declares 5 Fragments (100..104) but only
+        // two of them (100, 101) are present in this datagram; group firstSeq=103 declares 2
+        // Fragments (103..104), both present. No single wire sequence is claimed twice by an
+        // Fragment actually seen — 101 and 103 never collide — but sequence 104 is claimed by
+        // BOTH groups' declared ranges: it would be index 4 of the first group or index 1 of the
+        // second, depending on which Fragment happens to arrive there later. An overlap check built
+        // only on observed spans (100-101 vs 103-103) would wrongly call these disjoint and admit
+        // the forgery.
+        byte[] forgedTail =
+        [
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 100, fragmentIndex: 0, fragmentCount: 5, payload: [0xE0]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 101, fragmentIndex: 1, fragmentCount: 5, payload: [0xE1]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 103, fragmentIndex: 0, fragmentCount: 2, payload: [0xE3]),
+        ];
+
+        AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
+    }
+
+    [Fact]
     public void Pump_HostileFragmentGroupNonContiguousAcrossTheSequenceWrap_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
     {
         // Arrange — proves FragmentGroup.FirstSequenceOf's group identity is correct at the u32 wrap
