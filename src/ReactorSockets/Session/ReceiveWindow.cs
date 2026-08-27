@@ -215,6 +215,59 @@ internal sealed class ReceiveWindow
     }
 
     /// <summary>
+    /// Describes this window's current state as an ack block (issue #183, ADR 0009): the cumulative
+    /// base it has reached, plus a 32-bit field describing the 32 sequences above that base — bit 0
+    /// for the first sequence above the base (<c>Base + 1</c>), up to bit 31 for the thirty-second
+    /// (<c>Base + 32</c>). A sequence more than 32 above the base has no bit to hold it and is simply
+    /// not described; the horizon rule that governs what a caller does with that fact (issue #41) is
+    /// not this method's concern.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A pure read: it classifies nothing, admits nothing, and moves no base. It is generated fresh
+    /// from <see cref="_admitted"/>, <see cref="_base"/> and <see cref="_baseSlot"/> on every call
+    /// rather than accumulated, so a window that has just retired a hole through
+    /// <see cref="AdvanceBase"/> describes the new base and the bitfield that goes with it, never the
+    /// state from before that call.
+    /// </para>
+    /// <para>
+    /// Wrap correctness is inherited, not reinvented: <see cref="_base"/> and <see cref="_baseSlot"/>
+    /// already track the window correctly across the <c>u32</c> wrap — that is what
+    /// <see cref="SequenceNumber.IsNewerThan"/> inside <see cref="Classify"/> establishes — so this
+    /// method only ever walks ring positions relative to <see cref="_baseSlot"/> and never compares
+    /// sequence numbers itself.
+    /// </para>
+    /// <para>
+    /// Allocation-free: the returned tuple is a value type, and the only storage touched is the
+    /// <see cref="_admitted"/> span already backing this window.
+    /// </para>
+    /// </remarks>
+    /// <returns>
+    /// <see cref="Base"/> is a window's current base sequence, and a bitfield whose bit <c>n</c>
+    /// (0-based) is set exactly when <c>Base + n + 1</c> has been admitted. Bits beyond
+    /// <see cref="Capacity"/><c> - 1</c> sequences above the base are always clear, since the window
+    /// itself cannot hold anything that far ahead.
+    /// </returns>
+    internal (uint Base, uint Bits) DescribeAsAckBlock()
+    {
+        Span<byte> admitted = _admitted.Span;
+        int reachable = Capacity - 1 < 32 ? Capacity - 1 : 32;
+
+        uint bits = 0;
+        for (int offset = 1; offset <= reachable; offset++)
+        {
+            int slot = _baseSlot + offset;
+            slot = slot >= Capacity ? slot - Capacity : slot;
+            if (admitted[slot] != 0)
+            {
+                bits |= 1u << (offset - 1);
+            }
+        }
+
+        return (_base, bits);
+    }
+
+    /// <summary>
     /// Clears this window's admission run, and resets <see cref="Base"/>, its ring position and
     /// <see cref="LastSlideLoss"/> to their construction-time values. The arena storage a window is
     /// built over outlives the Peer that used it (#179): a Slot a new Peer reuses must classify from a

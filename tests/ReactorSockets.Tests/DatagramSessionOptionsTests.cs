@@ -365,6 +365,45 @@ public class DatagramSessionOptionsTests
     }
 
     [Fact]
+    public void RetentionSlots_BoundDividesEvenly_ReturnsExactQuotient()
+    {
+        // Arrange — 4 fragments of 1200 bytes each, no remainder.
+        DatagramSessionOptions options = CreateOptions(retentionBytes: 4800, fragmentSize: 1200);
+
+        // Act
+        int slots = options.RetentionSlots;
+
+        // Assert
+        slots.Should().Be(4);
+    }
+
+    [Fact]
+    public void RetentionSlots_BoundLeavesRemainder_Truncates()
+    {
+        // Arrange — 2 whole fragments and 500 bytes over, which is not a whole slot.
+        DatagramSessionOptions options = CreateOptions(retentionBytes: 2900, fragmentSize: 1200);
+
+        // Act
+        int slots = options.RetentionSlots;
+
+        // Assert
+        slots.Should().Be(2);
+    }
+
+    [Fact]
+    public void RetentionSlots_BoundEqualsOneFragment_ReturnsOne()
+    {
+        // Arrange — the minimum retention Validate allows: exactly one fragment.
+        DatagramSessionOptions options = CreateOptions(retentionBytes: 1200, fragmentSize: 1200);
+
+        // Act
+        int slots = options.RetentionSlots;
+
+        // Assert
+        slots.Should().Be(1);
+    }
+
+    [Fact]
     public void ResolvedAdmissionCap_AdmissionCapUnset_DefaultsToCapacity()
     {
         // Arrange

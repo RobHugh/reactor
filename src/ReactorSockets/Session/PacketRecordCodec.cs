@@ -5,8 +5,8 @@ namespace ReactorSockets.Session;
 /// <summary>
 /// The wire value of a packet record's two mode bits (ADR 0009), named rather than left as a raw
 /// byte so a caller reading <see cref="PacketRecordCodec.TryRead"/>'s result does not have to
-/// re-derive what each bit pattern means. Not the public <c>DeliveryMode</c> enum #44 owns: that
-/// enum is this Session's user-facing vocabulary, and building it is out of scope here. This one is
+/// re-derive what each bit pattern means. Not the public <see cref="ReactorSockets.DeliveryMode"/>
+/// enum (issue #207): that enum is this Session's user-facing vocabulary. This one is
 /// scoped to <see cref="PacketRecordCodec"/> and exists only so #163's parse loop and #164 have a
 /// symbol to switch on instead of the four <see cref="DatagramSessionProtocol"/> mode constants.
 /// </summary>
@@ -26,20 +26,23 @@ internal enum PacketRecordMode : byte
 }
 
 /// <summary>
-/// The single place a packet record (ADR 0009) is read out of a datagram. A datagram is a container
-/// of as many records as fit, so this class reads exactly one record positioned at the start of the
-/// span it is given and reports how many bytes it consumed — the caller (#163's parse loop)
-/// re-slices past that count to read the next one. This subtask covers reading only; writing a
-/// record belongs to whichever ticket first needs to send one.
+/// The single place a packet record (ADR 0009) is read from or written to a datagram. A datagram is a
+/// container of as many records as fit, so this class reads or writes exactly one record positioned at
+/// the start of the span it is given and reports how many bytes it consumed or produced — the caller
+/// (#163's parse loop for reading, <see cref="DatagramRecordPacker"/> for writing) re-slices past that
+/// count to move on to the next one.
 /// </summary>
 /// <remarks>
 /// Allocation-free and total by construction, the same discipline <see cref="ControlDatagramCodec"/>
-/// follows for control datagrams: every member works over <see cref="ReadOnlySpan{T}"/>, no path
-/// throws, and every length is checked against what remains before it is read, never after. Unknown
-/// flag bits are a protocol violation rather than something to tolerate (ADR 0009) — a spare bit set
-/// or the fragment bit set both fail the read outright, the same as a record too short to hold its
-/// declared shape or a length that would run past the datagram. Multi-byte integers are big-endian,
-/// matched by every reader here rather than left to the host's native order.
+/// follows for control datagrams: every member works over <see cref="ReadOnlySpan{T}"/> or
+/// <see cref="Span{T}"/>, no path throws for an ordinary and expected outcome, and every length is
+/// checked against what remains before it is read or written, never after. Unknown flag bits are a
+/// protocol violation rather than something to tolerate (ADR 0009) — a spare bit set or the fragment
+/// bit set both fail the read outright, the same as a record too short to hold its declared shape or a
+/// length that would run past the datagram. <see cref="TryWrite"/> mirrors that on the way out: it
+/// never sets a spare bit or the fragment bit, because it only ever writes the unfragmented shape.
+/// Multi-byte integers are big-endian, matched by every reader and writer here rather than left to the
+/// host's native order.
 /// </remarks>
 internal static class PacketRecordCodec
 {
@@ -112,6 +115,67 @@ internal static class PacketRecordCodec
         sequence = BinaryPrimitives.ReadUInt32BigEndian(record[DatagramSessionProtocol.RecordSequenceOffset..]);
         length = candidateLength;
         bytesConsumed = shape.RecordSize + candidateLength;
+        return true;
+    }
+
+    /// <summary>
+    /// Writes one unfragmented packet record — flags byte, <c>u32</c> sequence, <c>u16</c> length,
+    /// then the payload itself — to the start of <paramref name="destination"/>. The counterpart to
+    /// <see cref="TryRead"/>, used by <see cref="DatagramRecordPacker"/> to pack a Peer's Sent records
+    /// into an outbound datagram. Only the unfragmented shape is written; the fragment shape has no
+    /// writer until slice 7 gives it one, matching <see cref="PacketRecordLegality"/> only ever
+    /// processing the unfragmented shape today.
+    /// </summary>
+    /// <param name="destination">
+    /// The bytes to write into, positioned at the record's first byte. Never partially written: a
+    /// <paramref name="destination"/> too short to hold this record's header plus
+    /// <paramref name="payload"/> fails without writing anything, the same as a caller finding the
+    /// remaining space in a datagram already spent.
+    /// </param>
+    /// <param name="mode">The record's delivery mode, written into the flags byte's two mode bits. No other bit in the flags byte is ever set — never a spare bit, never the fragment bit.</param>
+    /// <param name="sequence">The record's <c>u32</c> sequence number.</param>
+    /// <param name="payload">
+    /// The record's payload bytes, copied verbatim after the record's fixed header. Its length becomes
+    /// the record's <c>u16</c> length field.
+    /// </param>
+    /// <param name="bytesWritten">
+    /// The total bytes written — the record's header plus <paramref name="payload"/> — so the caller
+    /// can advance past it. Valid only when this method returns <see langword="true"/>.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="payload"/> is longer than <see cref="ushort.MaxValue"/>. The wire format's
+    /// length field cannot represent it, and a payload this size is always chosen by our own code, so
+    /// this is our bug, not a remote sender's — unlike a short <paramref name="destination"/>, which is
+    /// an ordinary and expected outcome reported by a <see langword="false"/> return.
+    /// </exception>
+    public static bool TryWrite(
+        Span<byte> destination,
+        PacketRecordMode mode,
+        uint sequence,
+        ReadOnlySpan<byte> payload,
+        out int bytesWritten)
+    {
+        bytesWritten = default;
+
+        if (payload.Length > ushort.MaxValue)
+        {
+            throw new ArgumentException(
+                $"A packet record's payload cannot exceed {ushort.MaxValue} bytes.",
+                nameof(payload));
+        }
+
+        int recordSize = DatagramSessionProtocol.UnfragmentedRecordSize + payload.Length;
+        if (destination.Length < recordSize)
+        {
+            return false;
+        }
+
+        destination[0] = (byte)mode;
+        BinaryPrimitives.WriteUInt32BigEndian(destination[DatagramSessionProtocol.RecordSequenceOffset..], sequence);
+        BinaryPrimitives.WriteUInt16BigEndian(destination[DatagramSessionProtocol.RecordLengthOffset..], (ushort)payload.Length);
+        payload.CopyTo(destination[DatagramSessionProtocol.UnfragmentedRecordSize..]);
+
+        bytesWritten = recordSize;
         return true;
     }
 }

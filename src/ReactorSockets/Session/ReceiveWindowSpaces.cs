@@ -84,6 +84,35 @@ internal sealed class ReceiveWindowSpaces
     }
 
     /// <summary>
+    /// Generates both ack blocks for this Peer, fresh from the current state of the two reliable
+    /// Spaces' windows (issue #186, ADR 0009): <c>ReliableOrdered</c>'s block first, then
+    /// <c>ReliableUnordered</c>'s — the order <see cref="DatagramHeaderCodec.WriteHeader"/> lays
+    /// them out in. Both are always produced, whatever has been received: the wire format has no
+    /// field to say one is absent, so a Peer with nothing yet admitted in a Space still gets that
+    /// Space's zeroed block rather than no block at all. The two unreliable Spaces are observed,
+    /// never acknowledged, and play no part in either block.
+    /// </summary>
+    /// <remarks>
+    /// A pure read, delegating to <see cref="ReceiveWindow.DescribeAsAckBlock"/> on each of the two
+    /// reliable windows: nothing here classifies, admits, or moves a base, and nothing is
+    /// accumulated across calls — every call reflects only the two windows' present state, so an
+    /// admission in either Space between two calls shows up immediately and an unchanged Space
+    /// reports the identical block again. The two reliable windows are independent (#40): an
+    /// admission in one changes neither the base nor the bits this method reports for the other.
+    /// Allocation-free, since each block is <see cref="ReceiveWindow.DescribeAsAckBlock"/>'s
+    /// value-typed result.
+    /// </remarks>
+    /// <returns>
+    /// The <c>ReliableOrdered</c> Space's ack block, then the <c>ReliableUnordered</c> Space's —
+    /// each a cumulative base plus the 32-bit field describing the sequences above it, per
+    /// <see cref="ReceiveWindow.DescribeAsAckBlock"/>.
+    /// </returns>
+    public ((uint Base, uint Bits) ReliableOrdered, (uint Base, uint Bits) ReliableUnordered) GenerateAckBlocks()
+    {
+        return (_reliableOrdered.DescribeAsAckBlock(), _reliableUnordered.DescribeAsAckBlock());
+    }
+
+    /// <summary>
     /// Resets all four windows (<see cref="ReceiveWindow.Reset"/>) so a Slot a new Peer reuses
     /// classifies from a clean state, inheriting none of the previous occupant's admissions (#179).
     /// Called at both admission sites — <see cref="DatagramSessionReactor.Connect"/> and the

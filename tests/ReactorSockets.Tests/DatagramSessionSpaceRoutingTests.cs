@@ -71,13 +71,17 @@ public class DatagramSessionSpaceRoutingTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
 
-        // Assert — each of the four Spaces admitted sequence 0 independently: no duplicate and no
-        // out-of-window counted, nothing logged, and nothing delivered (delivery is not this ticket).
+        // Assert — each of the four Spaces admitted sequence 1 independently: no duplicate and no
+        // out-of-window counted, and nothing logged. Three of the four deliver, since an admitted
+        // record now delivers (#217, #219); the ReliableOrdered one is held behind the hole this test
+        // deliberately left at sequence 0, because that Space delivers in send order (#220). Admission
+        // is what this test is about and all four Spaces admitted — what each Space then does with an
+        // admitted record is its own mode's rule.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.DuplicatePackets.Should().Be(0);
         counters.OutOfWindowPackets.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
-        drained.Should().BeEmpty();
+        drained.Should().HaveCount(3).And.OnlyContain(e => e.Kind == SessionEventKind.MessageReceived);
 
         // Act again — the same four records, resent. If each mode kept its own window, all four are
         // now duplicates; if any two modes shared a window, fewer than four would show as new.
@@ -86,11 +90,17 @@ public class DatagramSessionSpaceRoutingTests
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), secondArrival);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
 
-        // Assert — all four Spaces independently flagged their own repeat.
-        accepter.Reactor.CountersOf(accepterPeer).DuplicatePackets.Should().Be(4);
-        accepter.Reactor.CountersOf(accepterPeer).OutOfWindowPackets.Should().Be(0);
+        // Assert — all four Spaces independently flagged their own repeat, and a duplicate reaches
+        // neither the arena nor the received count (#217): suppressing it is the window's whole
+        // purpose, so delivering one would make the suppression invisible in the figure a consumer
+        // reads to check it.
+        PeerCounters afterResend = accepter.Reactor.CountersOf(accepterPeer);
+        afterResend.DuplicatePackets.Should().Be(4);
+        afterResend.OutOfWindowPackets.Should().Be(0);
+        afterResend.MessagesReceived.Should().Be(
+            3, "three of the four first arrivals delivered, the ReliableOrdered one is still held behind its hole, and no duplicate delivered");
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().BeEmpty("a duplicate delivers nothing");
     }
 
     [Fact]
@@ -113,12 +123,14 @@ public class DatagramSessionSpaceRoutingTests
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), farAhead);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
 
-        // Assert — discarded and counted once, nothing logged, nothing delivered.
+        // Assert — discarded and counted once, nothing logged, nothing delivered: an out-of-window
+        // record reaches neither the arena nor the received count (#217).
         PeerCounters afterDiscard = accepter.Reactor.CountersOf(accepterPeer);
         afterDiscard.OutOfWindowPackets.Should().Be(1);
         afterDiscard.DuplicatePackets.Should().Be(0);
+        afterDiscard.MessagesReceived.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().BeEmpty("an out-of-window record delivers nothing");
 
         // Act — sequence 3, the far edge still inside the untouched window. Left as a gap below it
         // (0, 1 and 2 never arrive), this stays classifiable below rather than being immediately
@@ -145,7 +157,9 @@ public class DatagramSessionSpaceRoutingTests
         accepter.Reactor.CountersOf(accepterPeer).DuplicatePackets.Should().Be(1);
         accepter.Reactor.CountersOf(accepterPeer).OutOfWindowPackets.Should().Be(1);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -180,7 +194,9 @@ public class DatagramSessionSpaceRoutingTests
         counters.DuplicatePackets.Should().Be(2);
         counters.OutOfWindowPackets.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -224,7 +240,9 @@ public class DatagramSessionSpaceRoutingTests
         counters.OutOfWindowPackets.Should().Be(1);
         counters.DuplicatePackets.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -264,7 +282,9 @@ public class DatagramSessionSpaceRoutingTests
         afterAdmit.OutOfWindowPackets.Should().Be(1);
         afterAdmit.DuplicatePackets.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -301,7 +321,9 @@ public class DatagramSessionSpaceRoutingTests
         counters.OutOfWindowPackets.Should().Be(3);
         counters.DuplicatePackets.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -333,7 +355,9 @@ public class DatagramSessionSpaceRoutingTests
         counters.OutOfWindowPackets.Should().Be(0);
         counters.DuplicatePackets.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -382,7 +406,9 @@ public class DatagramSessionSpaceRoutingTests
         counters.OutOfWindowPackets.Should().Be(4);
         counters.DuplicatePackets.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -428,7 +454,9 @@ public class DatagramSessionSpaceRoutingTests
         secondPeerCounters.OutOfWindowPackets.Should().Be(0);
         secondPeerCounters.DuplicatePackets.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     /// <summary>

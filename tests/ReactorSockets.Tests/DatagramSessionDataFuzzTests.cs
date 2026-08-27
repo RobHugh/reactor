@@ -92,12 +92,13 @@ public class DatagramSessionDataFuzzTests
         fuzz.Should().NotThrow();
 
         // Assert — no Session event the format does not justify. Every datagram in the corpus is
-        // either a mutation of a well-formed shape (which this ticket ends parsing at, per #163 —
-        // parsing a record admits nothing into a Space and raises no event) or outright noise, so the
-        // drain from a live Session must stay empty throughout: a PeerConnected already happened
-        // during the handshake and nothing here should raise PeerDisconnected, PeerClosed or any other
-        // kind.
-        allDrained.Should().BeEmpty();
+        // either a mutation of a well-formed shape or outright noise. A mutation that happens to stay
+        // well-formed can now be admitted and delivered (#217, #219), so MessageReceived is justified;
+        // a PeerConnected already happened during the handshake, and nothing here may raise
+        // PeerDisconnected, PeerClosed or any other kind.
+        allDrained.Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "a fuzzed datagram may deliver a Message but must never close or disconnect the Peer");
 
         // Assert — every datagram either parsed (silently, per #163) or was counted as a malformed
         // discard; nothing vanished unaccounted for.

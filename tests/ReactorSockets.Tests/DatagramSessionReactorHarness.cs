@@ -88,6 +88,39 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
     }
 
     /// <summary>
+    /// Drains the current Frame and copies out every <see cref="SessionEventKind.MessageReceived"/>
+    /// payload. The copy is what makes the bytes outlive the Frame they aliased, which is the only way
+    /// a test can assert on them after the next Pump (#219).
+    /// </summary>
+    public List<byte[]> DrainPayloads()
+    {
+        List<byte[]> payloads = [];
+        foreach (SessionEvent evt in Reactor.Drain())
+        {
+            if (evt.Kind == SessionEventKind.MessageReceived)
+            {
+                payloads.Add(evt.Payload.ToArray());
+            }
+        }
+
+        return payloads;
+    }
+
+    /// <summary>
+    /// Drains the current Frame and keeps nothing. What an allocation measurement uses in place of
+    /// <see cref="DrainToList"/>: that helper's own list grows with the number of Events drained, so a
+    /// phase delivering more Messages than another would appear to allocate more inside the Reactor
+    /// when the difference is the test's list (#217).
+    /// </summary>
+    public void DrainAndDiscard()
+    {
+        foreach (SessionEvent evt in Reactor.Drain())
+        {
+            _ = evt.Kind;
+        }
+    }
+
+    /// <summary>
     /// Pumps exactly <paramref name="pumps"/> times, accumulating everything drained. For asserting
     /// that something does <em>not</em> happen: a fixed count of Pumps bounds syscalls, not time, so
     /// it is not a way to wait for something to arrive — see <see cref="PumpDeadline"/> and use
@@ -203,6 +236,127 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
 
             PumpDeadline.Yield();
         }
+    }
+
+    /// <summary>
+    /// Pumps a dialler, a <see cref="LossyProxy"/> and an accepter in a round until both ends have
+    /// raised <see cref="SessionEventKind.PeerConnected"/> — the three-party equivalent of
+    /// <see cref="PumpBothUntilConnected"/>, for the delivery-mode tests that need faults scripted
+    /// between two live Sessions (#218 and the promise tests that follow it). The proxy relays toward
+    /// the accepter, so the dialler must have been pointed at <see cref="LossyProxy.PublicEndPoint"/>.
+    /// </summary>
+    public static PeerId PumpThroughProxyUntilConnected(
+        DatagramSessionReactorHarness dialler,
+        LossyProxy proxy,
+        DatagramSessionReactorHarness accepter,
+        TimeSpan? budget = null)
+    {
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        PeerId? accepterPeer = null;
+        bool diallerConnected = false;
+
+        while (true)
+        {
+            PumpRoundThroughProxy(dialler, proxy, accepter);
+
+            foreach ((SessionEventKind kind, PeerId peer, DisconnectReason _) in accepter.DrainToList())
+            {
+                if (kind == SessionEventKind.PeerConnected)
+                {
+                    accepterPeer = peer;
+                }
+            }
+
+            diallerConnected |= dialler.DrainToList().Any(e => e.Kind == SessionEventKind.PeerConnected);
+
+            if (diallerConnected && accepterPeer is PeerId established)
+            {
+                return established;
+            }
+
+            if (deadline.Expired)
+            {
+                throw new InvalidOperationException("The proxied handshake did not complete within the Pump budget.");
+            }
+
+            PumpDeadline.Yield();
+        }
+    }
+
+    /// <summary>
+    /// One round of the proxied loop: the dialler, then the proxy, then the accepter, then the proxy
+    /// again so the accepter's reply is relayed back in the same round. Drains nothing — a caller
+    /// asserting on Events drains for itself.
+    /// </summary>
+    public static void PumpRoundThroughProxy(
+        DatagramSessionReactorHarness dialler,
+        LossyProxy proxy,
+        DatagramSessionReactorHarness accepter)
+    {
+        dialler.Reactor.Pump();
+        proxy.Pump();
+        accepter.Reactor.Pump();
+        proxy.Pump();
+    }
+
+    /// <summary>
+    /// Pumps a dialler, a <see cref="WireTap"/> and an accepter in a round until both ends have raised
+    /// <see cref="SessionEventKind.PeerConnected"/> — the tap's counterpart to
+    /// <see cref="PumpThroughProxyUntilConnected"/>, which is typed to
+    /// <see cref="LossyProxy"/> and so cannot drive a <see cref="WireTap"/> instead.
+    /// </summary>
+    public static PeerId PumpThroughTapUntilConnected(
+        DatagramSessionReactorHarness dialler,
+        WireTap tap,
+        DatagramSessionReactorHarness accepter,
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>? diallerEvents = null,
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>? accepterEvents = null,
+        TimeSpan? budget = null)
+    {
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        PeerId? accepterPeer = null;
+        bool diallerConnected = false;
+
+        while (true)
+        {
+            PumpRoundThroughTap(dialler, tap, accepter);
+
+            foreach ((SessionEventKind kind, PeerId peer, DisconnectReason reason) in accepter.DrainToList())
+            {
+                accepterEvents?.Add((kind, peer, reason));
+                if (kind == SessionEventKind.PeerConnected)
+                {
+                    accepterPeer = peer;
+                }
+            }
+
+            foreach ((SessionEventKind kind, PeerId peer, DisconnectReason reason) in dialler.DrainToList())
+            {
+                diallerEvents?.Add((kind, peer, reason));
+                diallerConnected |= kind == SessionEventKind.PeerConnected;
+            }
+
+            if (diallerConnected && accepterPeer is PeerId established)
+            {
+                return established;
+            }
+
+            if (deadline.Expired)
+            {
+                throw new InvalidOperationException("The tapped handshake did not complete within the Pump budget.");
+            }
+
+            PumpDeadline.Yield();
+        }
+    }
+
+    /// <summary>One round of the tapped loop: the dialler, then the tap, then the accepter, then the tap again so the accepter's reply is relayed back in the same round.</summary>
+    public static void PumpRoundThroughTap(DatagramSessionReactorHarness dialler, WireTap tap, DatagramSessionReactorHarness accepter)
+    {
+        dialler.Reactor.Pump();
+        tap.Pump();
+        accepter.Reactor.Pump();
+        tap.Pump();
     }
 
     /// <summary>

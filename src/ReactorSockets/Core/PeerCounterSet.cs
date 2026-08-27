@@ -104,11 +104,85 @@ internal sealed class PeerCounterSet
     public ulong UnreliableLossPackets { get; private set; }
 
     /// <summary>
+    /// Records that one sequence arrived beyond a reliable Space's ack horizon, so its retransmit timer
+    /// was withheld rather than started (subtask 6.3, issue #41; ADR 0013). Called from the horizon
+    /// gate (issue #185) once a record classifies as beyond <c>[base, base + 32]</c> for the Space it
+    /// belongs to; nothing calls this yet. No Diagnostic accompanies this — a deferral can recur every
+    /// Pump under sustained load, which is exactly why this is a Counter (ADR 0013).
+    /// </summary>
+    public void RecordHorizonDeferral() => HorizonDeferrals++;
+
+    /// <summary>
+    /// The live count of horizon deferrals so far — the same figure <see cref="Snapshot"/> exposes as
+    /// <see cref="PeerCounters.HorizonDeferrals"/>. Monotonic and never reset, exactly like
+    /// <see cref="MessagesReceived"/>.
+    /// </summary>
+    public ulong HorizonDeferrals { get; private set; }
+
+    /// <summary>
+    /// Records <paramref name="count"/> packet records this Peer has resent (subtask 6.4.6, issue #196;
+    /// ADR 0013). Nothing calls this yet — the expiry path that does is issue #198. Takes a count rather
+    /// than being called once per record for the same reason as <see cref="RecordUnreliableLoss"/>: one
+    /// Pump's sweep can report many expired sequences retransmitted at once, and adding the whole figure
+    /// in one op keeps the hot path a single add regardless of how many sequences it covered.
+    /// </summary>
+    public void RecordPacketsRetransmitted(ulong count) => PacketsRetransmitted += count;
+
+    /// <summary>
+    /// The live count of packet records retransmitted so far — the same figure <see cref="Snapshot"/>
+    /// exposes as <see cref="PeerCounters.PacketsRetransmitted"/>. Monotonic and never reset, exactly
+    /// like <see cref="MessagesReceived"/>.
+    /// </summary>
+    public ulong PacketsRetransmitted { get; private set; }
+
+    /// <summary>
+    /// Records <paramref name="length"/> bytes of one Datagram a flush has handed the transport for
+    /// this Peer, header included (subtask 6.7.4, issue #231; ADR 0013). Called from
+    /// <see cref="DatagramSessionReactor"/>'s <c>FlushPeer</c> at the size the coalescing packer
+    /// actually wrote, regardless of whether the send call reports success — the bytes were handed to
+    /// the transport either way.
+    /// </summary>
+    public void RecordBytesSent(ulong length) => BytesSent += length;
+
+    /// <summary>
+    /// The live count of bytes sent to this Peer so far — the same figure <see cref="Snapshot"/>
+    /// exposes as <see cref="PeerCounters.BytesSent"/>. Monotonic and never reset, exactly like
+    /// <see cref="MessagesReceived"/>.
+    /// </summary>
+    public ulong BytesSent { get; private set; }
+
+    /// <summary>
+    /// Records <paramref name="length"/> bytes of one Datagram attributed to this Peer on arrival
+    /// (subtask 6.7.4, issue #231; ADR 0013). Called from <see cref="DatagramSessionReactor"/>'s
+    /// <c>ParseDataDatagram</c> once a Datagram both names this Peer's session id and proves
+    /// well-formed — the same proof that gates ack application and record classification — at the
+    /// whole Datagram's length, header included.
+    /// </summary>
+    public void RecordBytesReceived(ulong length) => BytesReceived += length;
+
+    /// <summary>
+    /// The live count of bytes received from this Peer so far — the same figure <see cref="Snapshot"/>
+    /// exposes as <see cref="PeerCounters.BytesReceived"/>. Monotonic and never reset, exactly like
+    /// <see cref="MessagesReceived"/>.
+    /// </summary>
+    public ulong BytesReceived { get; private set; }
+
+    /// <summary>
     /// Takes a point-in-time snapshot of every counter belonging to this Peer.
     /// <paramref name="retentionHighWaterBytes"/> is pulled fresh from <see cref="RetentionArena"/> by
     /// the caller (ADR 0005 — Counters are pulled, not pushed) rather than held here, since this set
     /// holds only what a Peer increments on its own hot path.
     /// </summary>
     public PeerCounters Snapshot(ulong retentionHighWaterBytes) =>
-        new(MessagesReceived, retentionHighWaterBytes, Resumes, OutOfWindowPackets, DuplicatePackets, UnreliableLossPackets);
+        new(
+            MessagesReceived,
+            retentionHighWaterBytes,
+            Resumes,
+            OutOfWindowPackets,
+            DuplicatePackets,
+            UnreliableLossPackets,
+            HorizonDeferrals,
+            PacketsRetransmitted,
+            BytesSent,
+            BytesReceived);
 }
