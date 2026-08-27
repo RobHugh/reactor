@@ -474,6 +474,51 @@ public class DatagramSessionDataDatagramParseTests
             new[] { new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 } });
     }
 
+    [Fact]
+    public void Pump_WellFormedFragmentSetsCompletePartialAndNonOverlapping_AllParseAndDeliver()
+    {
+        // Arrange — issue #256's positive cases in one datagram: a complete contiguous 3-Fragment set
+        // (sequences 100-102), an unfragmented record between the groups, a partial set contiguous only
+        // as far as it goes (2 of a declared 4, sequences 200-201, indices 2 and 3 simply absent from
+        // this datagram), and a second, wholly separate 2-Fragment set (sequences 300-301) whose range
+        // does not come near either other group's. None of this is a violation: #256 only refuses a gap
+        // within one claimed group's own indices or two groups whose ranges overlap. Plain Unreliable
+        // mode delivers regardless of the receive window's verdict, so a large sequence gap between
+        // groups (chosen to keep their ranges far apart) never gets refused as out-of-window — this
+        // test is about the fragment-set check, not the window's.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeUnreliable, sequence: 100, fragmentIndex: 0, fragmentCount: 3, payload: [0x01]),
+            .. BuildFragmentRecord(ModeUnreliable, sequence: 101, fragmentIndex: 1, fragmentCount: 3, payload: [0x02]),
+            .. BuildFragmentRecord(ModeUnreliable, sequence: 102, fragmentIndex: 2, fragmentCount: 3, payload: [0x03]),
+            .. BuildRecord(ModeUnreliable, sequence: 103, payload: [0x04]),
+            .. BuildFragmentRecord(ModeUnreliable, sequence: 200, fragmentIndex: 0, fragmentCount: 4, payload: [0x05]),
+            .. BuildFragmentRecord(ModeUnreliable, sequence: 201, fragmentIndex: 1, fragmentCount: 4, payload: [0x06]),
+            .. BuildFragmentRecord(ModeUnreliable, sequence: 300, fragmentIndex: 0, fragmentCount: 2, payload: [0x07]),
+            .. BuildFragmentRecord(ModeUnreliable, sequence: 301, fragmentIndex: 1, fragmentCount: 2, payload: [0x08]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> payloads = accepter.DrainPayloads();
+
+        // Assert
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        payloads.Should().BeEquivalentTo(
+            new[]
+            {
+                new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 },
+                new byte[] { 0x05 }, new byte[] { 0x06 }, new byte[] { 0x07 }, new byte[] { 0x08 },
+            });
+    }
+
     /// <summary>
     /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
     /// <see cref="RawReactor"/>, exactly what <see cref="HostilePeer"/> is built from — and returns the

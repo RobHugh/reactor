@@ -716,6 +716,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             remainder = remainder[bytesConsumed..];
         }
 
+        // Every record on its own proved legal above (issue #253), but a Fragment's index and count are
+        // only half the story: this checks the claimed sets those individually-legal Fragments form
+        // (issue #256), still before any Space is touched, so a forged set is refused exactly like a
+        // malformed record rather than reaching classification.
+        if (!FragmentSetsAreWellFormed(body))
+        {
+            DiscardMalformed(source, datagram.Length);
+            return;
+        }
+
         // The proof above is what attributes this Datagram to slot's Peer: it names an established
         // session id (ProcessDataDatagram's own lookup) and every record in it parses. Only from this
         // point on is the whole Datagram's length, header included, counted against that Peer (issue
@@ -741,6 +751,167 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             ClassifyRecord(slot, mode, sequence, payload);
             remainder = remainder[bytesConsumed..];
         }
+    }
+
+    /// <summary>
+    /// Checks every Fragment in <paramref name="body"/> as part of the set it claims to belong to, not
+    /// only individually (issue #256; ADR 0009). Contiguity stands in for a message ID no wire byte
+    /// carries, so two shapes of forgery break it: Fragments naming the same group via
+    /// <see cref="FragmentGroup.FirstSequenceOf"/> whose actually-present indices leave a gap
+    /// (<see cref="GroupObservedIndicesAreContiguous"/>), and two distinct claimed groups whose
+    /// actually-present sequences overlap, so one sequence in <paramref name="body"/> could be read as
+    /// belonging to either (<see cref="NoOtherGroupOverlapsObservedSpan"/>). Every record here already
+    /// proved individually legal in the pass above (issue #253) — an index at or beyond its own count,
+    /// a count of zero, or a count of one already discarded the datagram before this method is reached
+    /// — so this is where a datagram whose individually-legal Fragments lie about which set each belongs
+    /// to is refused instead.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Scope is this one datagram.</b> A group that arrives split across more than one datagram, or
+    /// one a later datagram contradicts, needs state only reassembly owns (a future sub-slice); this
+    /// method holds nothing across calls and knows nothing beyond <paramref name="body"/>'s own bytes.
+    /// A partial set — fewer Fragments than <see cref="PacketRecordCodec.TryRead"/>'s
+    /// <c>fragmentCount</c> promises, so long as the indices actually present are contiguous — is not a
+    /// violation: an honest sender's Fragments of one group may simply be spread across datagrams.
+    /// </para>
+    /// <para>
+    /// <b>Overlap is judged on what is actually present, not on a group's declared count.</b> A lone
+    /// Fragment claiming a huge <c>fragmentCount</c> would make an overlap check built on the declared
+    /// range reject datagrams no forger produced —
+    /// the declared range of a single-member group can wrap the whole sequence space and brush past
+    /// unrelated Fragments that were never really in conflict. Building the check on each group's
+    /// observed span instead means two groups can only truly overlap when some one sequence number is
+    /// actually claimed by two Fragments under two different indices — the literal ambiguity the
+    /// acceptance criteria describe — which is exactly what a forger can produce and an honest sender
+    /// never would.
+    /// </para>
+    /// <para>
+    /// <b>Allocates nothing.</b> No table of groups is held across records: each Fragment's claimed
+    /// group is checked by re-walking <paramref name="body"/> rather than accumulating state sized to
+    /// the datagram's record count, matching every other check in this parse pass. That costs an
+    /// O(n²) walk in the datagram's record count rather than a scratch buffer sized off an
+    /// attacker-chosen datagram length — the right trade on a path that must not allocate and must not
+    /// size a stack buffer from untrusted input.
+    /// </para>
+    /// </remarks>
+    private static bool FragmentSetsAreWellFormed(ReadOnlySpan<byte> body)
+    {
+        ReadOnlySpan<byte> outer = body;
+        while (outer.Length > 0)
+        {
+            PacketRecordCodec.TryRead(
+                outer, out _, out uint outerSequence, out _, out bool outerIsFragment,
+                out ushort outerIndex, out ushort outerCount, out int outerConsumed);
+
+            if (outerIsFragment)
+            {
+                uint groupFirstSequence = FragmentGroup.FirstSequenceOf(outerSequence, outerIndex);
+
+                if (!GroupObservedIndicesAreContiguous(body, groupFirstSequence, outerCount, out ushort minIndex, out ushort maxIndex))
+                {
+                    return false;
+                }
+
+                if (!NoOtherGroupOverlapsObservedSpan(body, groupFirstSequence, minIndex, maxIndex))
+                {
+                    return false;
+                }
+            }
+
+            outer = outer[outerConsumed..];
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Whether every Fragment in <paramref name="body"/> that resolves to <paramref name="groupFirstSequence"/>
+    /// (<see cref="FragmentGroup.FirstSequenceOf"/>) agrees on <paramref name="declaredFragmentCount"/>
+    /// and, taken together, occupies indices with no gap — <paramref name="minIndexSeen"/> through
+    /// <paramref name="maxIndexSeen"/> accounts for exactly as many Fragments as were actually found.
+    /// A group's Fragments disagreeing on the count they claim makes the set's shape ambiguous, the
+    /// same forgery as a literal gap: neither describes a set an honest sender, which uses one count
+    /// per Message, could ever produce.
+    /// </summary>
+    private static bool GroupObservedIndicesAreContiguous(
+        ReadOnlySpan<byte> body, uint groupFirstSequence, ushort declaredFragmentCount, out ushort minIndexSeen, out ushort maxIndexSeen)
+    {
+        minIndexSeen = ushort.MaxValue;
+        maxIndexSeen = 0;
+        int occurrences = 0;
+
+        ReadOnlySpan<byte> remainder = body;
+        while (remainder.Length > 0)
+        {
+            PacketRecordCodec.TryRead(
+                remainder, out _, out uint sequence, out _, out bool isFragment,
+                out ushort index, out ushort count, out int bytesConsumed);
+
+            if (isFragment && FragmentGroup.FirstSequenceOf(sequence, index) == groupFirstSequence)
+            {
+                if (count != declaredFragmentCount)
+                {
+                    return false;
+                }
+
+                occurrences++;
+                minIndexSeen = Math.Min(minIndexSeen, index);
+                maxIndexSeen = Math.Max(maxIndexSeen, index);
+            }
+
+            remainder = remainder[bytesConsumed..];
+        }
+
+        return maxIndexSeen - minIndexSeen + 1 == occurrences;
+    }
+
+    /// <summary>
+    /// Whether every other claimed group in <paramref name="body"/> — every Fragment whose
+    /// <see cref="FragmentGroup.FirstSequenceOf"/> differs from <paramref name="groupFirstSequence"/> —
+    /// has an observed span disjoint from this group's own <c>[groupFirstSequence + minIndexSeen,
+    /// groupFirstSequence + maxIndexSeen]</c>, using <see cref="SequenceNumber.IsNewerThan"/> for the
+    /// wrap-aware comparison every other "before or after" decision in this data path goes through.
+    /// </summary>
+    private static bool NoOtherGroupOverlapsObservedSpan(
+        ReadOnlySpan<byte> body, uint groupFirstSequence, ushort minIndexSeen, ushort maxIndexSeen)
+    {
+        uint groupObservedFirst = unchecked(groupFirstSequence + minIndexSeen);
+        uint groupObservedLast = unchecked(groupFirstSequence + maxIndexSeen);
+
+        ReadOnlySpan<byte> remainder = body;
+        while (remainder.Length > 0)
+        {
+            PacketRecordCodec.TryRead(
+                remainder, out _, out uint sequence, out _, out bool isFragment,
+                out ushort index, out ushort count, out int bytesConsumed);
+
+            if (isFragment)
+            {
+                uint otherFirstSequence = FragmentGroup.FirstSequenceOf(sequence, index);
+
+                if (otherFirstSequence != groupFirstSequence)
+                {
+                    // count is at least 2 for any Fragment that passed PacketRecordCodec.TryRead
+                    // (issue #253), so this record's own observed point is a valid stand-in for its
+                    // group's span even before that group's full contiguity is (redundantly) checked
+                    // elsewhere in the outer walk.
+                    uint otherObservedPoint = unchecked(otherFirstSequence + index);
+
+                    bool disjoint = SequenceNumber.IsNewerThan(otherObservedPoint, groupObservedLast)
+                        || SequenceNumber.IsNewerThan(groupObservedFirst, otherObservedPoint);
+
+                    if (!disjoint)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            remainder = remainder[bytesConsumed..];
+        }
+
+        return true;
     }
 
     /// <summary>

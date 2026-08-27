@@ -6,11 +6,13 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #255: the codec's refusal of impossible Fragment metadata (#253), proved against a live
-/// Session rather than in isolation — a real attacker sits at a hostile peer driving an established
-/// Session, not at a unit test calling the codec directly. Every datagram here is built and sent by
-/// hand over a bare <see cref="RawReactor"/> — the same instrument <see cref="HostilePeer"/> is built
-/// from, and the one <see cref="DatagramSessionDataDatagramParseTests"/> and
+/// Issue #255: the codec's refusal of impossible Fragment metadata (#253); issue #256 extends this
+/// file with the claimed-set forgeries a Fragment can pass #253 individually and still commit — a
+/// non-contiguous group and two groups whose ranges overlap. Both are proved against a live Session
+/// rather than in isolation — a real attacker sits at a hostile peer driving an established Session,
+/// not at a unit test calling the codec directly. Every datagram here is built and sent by hand over a
+/// bare <see cref="RawReactor"/> — the same instrument <see cref="HostilePeer"/> is built from, and the
+/// one <see cref="DatagramSessionDataDatagramParseTests"/> and
 /// <see cref="DatagramSessionUnreliableDuplicateTests"/> already use for a live Session's data path,
 /// since establishing a Session and then addressing it needs the bidirectional handshake exchange a
 /// bare Reactor gives a test, not the fire-and-forget <see cref="HostilePeer.SendDatagram"/>.
@@ -75,14 +77,78 @@ public class DatagramSessionHostileFragmentDiscardTests
             fragmentIndex: 0, fragmentCount: 1);
     }
 
+    [Fact]
+    public void Pump_HostileFragmentGroupWithANonContiguousGap_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
+    {
+        // Arrange — issue #256: both Fragments are individually legal (#253) and both resolve to the
+        // same group (firstSeq = 1: 1 - 0 = 1, and 3 - 2 = 1), but index 1 is missing between them — a
+        // gap no honest sender, which fills a group's indices in order, could ever produce.
+        byte[] forgedTail =
+        [
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 0, fragmentCount: 3, payload: [0xB0]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 3, fragmentIndex: 2, fragmentCount: 3, payload: [0xB2]),
+        ];
+
+        AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
+    }
+
+    [Fact]
+    public void Pump_HostileFragmentGroupsClaimingOverlappingRanges_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
+    {
+        // Arrange — issue #256: two Fragments both name sequence 11, one as index 1 of a group starting
+        // at 10 and the other as index 0 of a group starting at 11 — the same wire sequence claimed by
+        // two different groups, exactly the ambiguity contiguity exists to rule out.
+        byte[] forgedTail =
+        [
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 11, fragmentIndex: 1, fragmentCount: 3, payload: [0xC0]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 11, fragmentIndex: 0, fragmentCount: 2, payload: [0xC1]),
+        ];
+
+        AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
+    }
+
+    [Fact]
+    public void Pump_HostileFragmentGroupNonContiguousAcrossTheSequenceWrap_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
+    {
+        // Arrange — proves FragmentGroup.FirstSequenceOf's group identity is correct at the u32 wrap
+        // (carried over from #254), through the only seam a test may use: a set that reads as
+        // non-contiguous ONLY if the wrap is handled correctly is refused. Sequence uint.MaxValue - 1 at
+        // index 0 and sequence 0 at index 2 both name firstSeq = uint.MaxValue - 1 under wrap-aware
+        // unsigned subtraction, and index 1 between them is missing — a gap. A naive, non-wrap-aware
+        // subtraction would compute two unrelated first-sequences instead, and each lone Fragment would
+        // trivially "pass" as its own one-member group — so this datagram is only ever discarded if the
+        // wrap is handled correctly.
+        byte[] forgedTail =
+        [
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: uint.MaxValue - 1, fragmentIndex: 0, fragmentCount: 3, payload: [0xD0]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 2, fragmentCount: 3, payload: [0xD2]),
+        ];
+
+        AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
+    }
+
     /// <summary>
-    /// The shared body every case above drives: a hostile datagram carrying one well-formed record at
-    /// sequence 0 ahead of a Fragment whose <paramref name="fragmentIndex"/> and
-    /// <paramref name="fragmentCount"/> the codec refuses (#253), then a genuinely well-formed datagram
-    /// that resends sequence 0 alone — proving the window never saw the first one.
+    /// The index/count-refusal cases above build their own single-record forged tail (#253) and drive
+    /// it through the shared body every case in this file uses.
     /// </summary>
     private static void AssertMalformedFragmentDiscardsWholeDatagramAndLeavesWindowUntouched(
         ushort fragmentIndex, ushort fragmentCount)
+    {
+        byte[] malformedFragmentRecord = BuildFragmentRecord(
+            ModeReliableOrdered, sequence: 1, fragmentIndex, fragmentCount, payload: [0xBB]);
+
+        AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(malformedFragmentRecord);
+    }
+
+    /// <summary>
+    /// The shared body every case in this file drives: a hostile datagram carrying one well-formed
+    /// record at sequence 0 ahead of <paramref name="forgedFragmentTail"/> — one or more Fragment
+    /// records that are each individually legal (#253) but forge the set the whole tail claims to be
+    /// (#256), or a single record #253 refuses outright — then a genuinely well-formed datagram that
+    /// resends sequence 0 alone, proving the window never saw the first one.
+    /// </summary>
+    private static void AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(
+        byte[] forgedFragmentTail)
     {
         // Arrange
         using DatagramSessionReactorHarness accepter = new();
@@ -94,10 +160,8 @@ public class DatagramSessionHostileFragmentDiscardTests
         PeerCounters before = accepter.Reactor.CountersOf(accepterPeer);
 
         byte[] wellFormedRecord = BuildRecord(ModeReliableOrdered, sequence: 0, payload: [0xAA]);
-        byte[] malformedFragmentRecord = BuildFragmentRecord(
-            ModeReliableOrdered, sequence: 1, fragmentIndex, fragmentCount, payload: [0xBB]);
         byte[] hostileDatagram =
-            [.. BuildHeader(sessionId), .. wellFormedRecord, .. malformedFragmentRecord];
+            [.. BuildHeader(sessionId), .. wellFormedRecord, .. forgedFragmentTail];
 
         // Act — the hostile datagram, sent from a bare RawReactor exactly as HostilePeer is built to
         // send from.
