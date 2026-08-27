@@ -370,6 +370,110 @@ public class DatagramSessionDataDatagramParseTests
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
     }
 
+    [Fact]
+    public void Pump_FragmentRecordWithIndexAtOrBeyondItsCount_DiscardsTheWholeDatagram()
+    {
+        // Arrange — issue #253: an index equal to its count names a piece one past the end of the set
+        // it claims, which is impossible for any Fragment we would ever send.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] wellFormedRecord = BuildRecord(ModeUnreliable, sequence: 1, payload: [0x11]);
+        byte[] outOfRangeFragmentRecord = BuildFragmentRecord(
+            ModeReliableOrdered, sequence: 0, fragmentIndex: 2, fragmentCount: 2, payload: [0x22]);
+
+        byte[] datagram = [.. BuildHeader(sessionId), .. wellFormedRecord, .. outOfRangeFragmentRecord];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+
+        // Assert
+        AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
+    }
+
+    [Fact]
+    public void Pump_FragmentRecordWithCountOfZero_DiscardsTheWholeDatagram()
+    {
+        // Arrange — issue #253: a count of zero has no index that could describe a piece of it.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] wellFormedRecord = BuildRecord(ModeUnreliable, sequence: 1, payload: [0x11]);
+        byte[] zeroCountFragmentRecord = BuildFragmentRecord(
+            ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 0, payload: [0x22]);
+
+        byte[] datagram = [.. BuildHeader(sessionId), .. wellFormedRecord, .. zeroCountFragmentRecord];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+
+        // Assert
+        AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
+    }
+
+    [Fact]
+    public void Pump_FragmentRecordWithCountOfOne_DiscardsTheWholeDatagram()
+    {
+        // Arrange — issue #253: a one-piece Message is unfragmented and should never have carried the
+        // fragment shape at all, so a count of one is refused rather than treated as a degenerate but
+        // legal set.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] wellFormedRecord = BuildRecord(ModeUnreliable, sequence: 1, payload: [0x11]);
+        byte[] oneCountFragmentRecord = BuildFragmentRecord(
+            ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 1, payload: [0x22]);
+
+        byte[] datagram = [.. BuildHeader(sessionId), .. wellFormedRecord, .. oneCountFragmentRecord];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+
+        // Assert
+        AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
+    }
+
+    [Fact]
+    public void Pump_FragmentRecordsAtTheValidBoundaries_AllParseSuccessfully()
+    {
+        // Arrange — issue #253's boundaries either side of the refused combinations: a count of two at
+        // both its legal indexes, an index one below its count, and a count at the 16-bit maximum. Each
+        // is asserted rather than assumed, so a future change to the refusal cannot silently start
+        // rejecting a legal Fragment.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 999, fragmentCount: 1000, payload: [0x03]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 0, fragmentCount: 65535, payload: [0x04]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> payloads = accepter.DrainPayloads();
+
+        // Assert
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        payloads.Should().BeEquivalentTo(
+            new[] { new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 } });
+    }
+
     /// <summary>
     /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
     /// <see cref="RawReactor"/>, exactly what <see cref="HostilePeer"/> is built from — and returns the

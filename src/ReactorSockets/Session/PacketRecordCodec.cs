@@ -56,11 +56,17 @@ internal static class PacketRecordCodec
     /// an unfragmented record, whose <paramref name="isFragment"/> comes back <see langword="false"/>
     /// with <paramref name="fragmentIndex"/> and <paramref name="fragmentCount"/> left unset, since a
     /// complete Message has no fragment to index into; or a Fragment, whose two extra fields are read
-    /// and reported alongside it. This method reads the shape only — it does not judge whether a
-    /// Fragment's index and count describe a legal set (issue #253). Fails without reading past
-    /// <paramref name="record"/> when: any spare bit (<see cref="DatagramSessionProtocol.SpareBitsMask"/>)
-    /// is set; fewer bytes remain than the record's shape needs; or <paramref name="length"/> would
-    /// exceed the bytes left in the datagram after the record header.
+    /// and reported alongside it. This method reads the shape and, for a Fragment, judges whether its
+    /// index and count describe a set that could ever legally exist (issue #253): an index at or beyond
+    /// its count names a piece outside the set it claims; a count of zero has no valid index at all; and
+    /// a count of one is refused too, because a one-piece Message is unfragmented and should never have
+    /// carried the fragment shape — treating it as a degenerate but legal set would let the fragment bit
+    /// mean two different things for the same content. Fails without reading past <paramref
+    /// name="record"/> when: any spare bit (<see cref="DatagramSessionProtocol.SpareBitsMask"/>) is set;
+    /// fewer bytes remain than the record's shape needs; <paramref name="length"/> would exceed the
+    /// bytes left in the datagram after the record header; or a Fragment's index and count form one of
+    /// the impossible combinations above. A malformed Fragment fails exactly as a record too short for
+    /// its shape does — the caller has no new failure case to handle.
     /// </summary>
     /// <param name="record">
     /// The datagram's bytes from this record's first byte onward. Its length is the bytes remaining
@@ -76,12 +82,16 @@ internal static class PacketRecordCodec
     /// <param name="fragmentIndex">
     /// The record's <c>u16</c> fragment index, valid only when this method returns
     /// <see langword="true"/> and <paramref name="isFragment"/> is <see langword="true"/>. Unset — and
-    /// meaningless — for an unfragmented record.
+    /// meaningless — for an unfragmented record. Always less than <paramref name="fragmentCount"/> when
+    /// valid: a record whose index is at or beyond its count fails the read instead.
     /// </param>
     /// <param name="fragmentCount">
     /// The record's <c>u16</c> fragment count, valid only when this method returns
     /// <see langword="true"/> and <paramref name="isFragment"/> is <see langword="true"/>. Unset — and
-    /// meaningless — for an unfragmented record.
+    /// meaningless — for an unfragmented record. Always at least 2 when valid: a count of zero has no
+    /// index that could describe a piece of it, and a count of one describes a Message that is whole in
+    /// one piece — i.e. unfragmented — so the fragment shape should never have been used to carry it; a
+    /// record claiming either fails the read rather than being treated as a degenerate one-piece set.
     /// </param>
     /// <param name="bytesConsumed">
     /// The total bytes this record occupies in the datagram — its header plus its payload — so the
@@ -146,8 +156,26 @@ internal static class PacketRecordCodec
         isFragment = (flags & DatagramSessionProtocol.FragmentBit) != 0;
         if (isFragment)
         {
-            fragmentIndex = BinaryPrimitives.ReadUInt16BigEndian(record[DatagramSessionProtocol.RecordFragmentIndexOffset..]);
-            fragmentCount = BinaryPrimitives.ReadUInt16BigEndian(record[DatagramSessionProtocol.RecordFragmentCountOffset..]);
+            ushort candidateFragmentIndex = BinaryPrimitives.ReadUInt16BigEndian(record[DatagramSessionProtocol.RecordFragmentIndexOffset..]);
+            ushort candidateFragmentCount = BinaryPrimitives.ReadUInt16BigEndian(record[DatagramSessionProtocol.RecordFragmentCountOffset..]);
+
+            // A count of zero has no index that could be valid; an index at or beyond its count names a
+            // piece outside the set it claims to belong to; and a count of one is a set with nothing to
+            // be contiguous with, i.e. a complete Message that should never have carried the fragment
+            // shape at all — issue #253 refuses all three rather than let a stranger's impossible
+            // metadata reach the contiguity logic downstream. Reset here first so a caller cannot read
+            // an isFragment left true alongside default'd-but-uninspected index and count.
+            if (candidateFragmentCount <= 1 || candidateFragmentIndex >= candidateFragmentCount)
+            {
+                isFragment = default;
+                mode = default;
+                sequence = default;
+                length = default;
+                return false;
+            }
+
+            fragmentIndex = candidateFragmentIndex;
+            fragmentCount = candidateFragmentCount;
         }
 
         bytesConsumed = shape.RecordSize + candidateLength;
