@@ -549,6 +549,81 @@ public class DatagramSessionDataDatagramParseTests
             });
     }
 
+    [Fact]
+    public void Pump_ReliableOrderedAndReliableUnorderedFragmentGroupsStartingAtTheSameSequence_ParsesFullyAndDeliversBoth()
+    {
+        // Arrange — issue #47/#256 false-positive fix: ReceiveWindowSpaces keeps one independent Space
+        // per PacketRecordMode (ADR 0009), so a ReliableOrdered group and a ReliableUnordered group both
+        // starting at firstSeq 0 are not the same group at all — they live in different Spaces and can
+        // never collide. FragmentSetsAreWellFormed must key group identity on (mode, firstSequence), not
+        // firstSequence alone, or it folds these two legitimate groups into one and sees index 0 claimed
+        // twice. Both groups start at sequence 0 in their own Space (ReliableOrdered's OrderedDelivery
+        // queue only releases a contiguous run from its own Space's own zero, so this is also what lets
+        // both groups' Fragments reach the consumer rather than sit held behind a gap).
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x03]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x04]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> payloads = accepter.DrainPayloads();
+
+        // Assert — this is not a group conflict: both groups parse and both deliver.
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        payloads.Should().BeEquivalentTo(
+            new[] { new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 } },
+            "the two groups share a first sequence but live in independent Spaces, one per delivery mode");
+    }
+
+    [Fact]
+    public void Pump_FragmentGroupsInDifferentModesWithDeclaredRangesThatWouldOverlapIgnoringMode_ParsesFullyAndDeliversBoth()
+    {
+        // Arrange — issue #47/#256 false-positive fix: a ReliableOrdered group declaring range [0,4]
+        // and a ReliableUnordered group declaring range [2,6] cannot overlap — they are different
+        // Spaces (ReceiveWindowSpaces, ADR 0009) — even though the raw sequence numbers collide.
+        // NoTwoDeclaredRangesOverlap must only ever compare two groups in the same mode. Only two of
+        // each group's five declared Fragments are actually sent (issue #256: a partial set contiguous
+        // only as far as it goes is not itself a violation), and the ReliableOrdered pair starts at its
+        // own Space's sequence 0 so OrderedDelivery releases it immediately rather than holding it
+        // behind a gap.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 5, payload: [0x01]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 1, fragmentCount: 5, payload: [0x02]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 0, fragmentCount: 5, payload: [0x03]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 1, fragmentCount: 5, payload: [0x04]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> payloads = accepter.DrainPayloads();
+
+        // Assert — the declared ranges [0,4] and [2,6] would overlap if mode were ignored, but they
+        // belong to different Spaces, so this is not a violation.
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        payloads.Should().BeEquivalentTo(
+            new[] { new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 } },
+            "declared ranges can only collide within one mode's Space");
+    }
+
     /// <summary>
     /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
     /// <see cref="RawReactor"/>, exactly what <see cref="HostilePeer"/> is built from — and returns the

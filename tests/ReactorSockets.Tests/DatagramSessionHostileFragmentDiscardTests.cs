@@ -46,6 +46,7 @@ public class DatagramSessionHostileFragmentDiscardTests
     private const int UnfragmentedRecordSize = 7;
     private const int FragmentRecordSize = 11;
 
+    private const byte ModeReliableUnordered = 0b0000_0010;
     private const byte ModeReliableOrdered = 0b0000_0011;
     private const byte FragmentBit = 0b0000_0100;
 
@@ -144,6 +145,26 @@ public class DatagramSessionHostileFragmentDiscardTests
         [
             .. BuildFragmentRecord(ModeReliableOrdered, sequence: uint.MaxValue - 1, fragmentIndex: 0, fragmentCount: 3, payload: [0xD0]),
             .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 2, fragmentCount: 3, payload: [0xD2]),
+        ];
+
+        AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
+    }
+
+    [Fact]
+    public void Pump_HostileFragmentGroupsClaimingOverlappingDeclaredRangesInTheSameModeAlongsideALegitimateOtherModeGroup_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
+    {
+        // Arrange — issue #47: fixing the false-positive (two different-mode groups must never be
+        // compared) must not weaken the genuine check — two groups in the SAME mode whose declared
+        // ranges overlap (firstSeq 10 declaring count 5, range 10..14; firstSeq 13 declaring count 2,
+        // range 13..14) are still a real forgery, whether or not a legitimate, unrelated group in a
+        // different mode also rides in the same datagram.
+        byte[] forgedTail =
+        [
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 10, fragmentIndex: 0, fragmentCount: 5, payload: [0xF0]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 11, fragmentIndex: 1, fragmentCount: 5, payload: [0xF1]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 13, fragmentIndex: 0, fragmentCount: 2, payload: [0xF3]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 10, fragmentIndex: 0, fragmentCount: 2, payload: [0xF4]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 11, fragmentIndex: 1, fragmentCount: 2, payload: [0xF5]),
         ];
 
         AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
