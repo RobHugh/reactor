@@ -170,6 +170,46 @@ public class DatagramSessionHostileFragmentDiscardTests
         AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
     }
 
+    [Fact]
+    public void Pump_HostileFragmentGroupsWhoseOverlapIsHiddenByADecoyGroupsAnchor_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
+    {
+        // Arrange — issue #47: the overlap sweep orders a mode's groups relative to an anchor, and an
+        // anchor taken from the numerically smallest sequence is one a peer can move. Groups 0x7FFFFFFF
+        // and 0x80000000 genuinely overlap: the first declares 0x7FFFFFFF..0x80000000, the second
+        // declares 0x80000000..0x80000001, so sequence 0x80000000 is claimed twice. The group at 0 is a
+        // decoy that claims nothing either of them claims — its only job is to drag the anchor to 0,
+        // which pushes the two overlapping groups to opposite ends of the sorted slice so a single
+        // forward sweep never compares them. The anchor must be derived from the sequences themselves
+        // rather than taken from whichever happens to be numerically smallest.
+        byte[] forgedTail =
+        [
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0x0000_0000, fragmentIndex: 0, fragmentCount: 2, payload: [0xC0]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0x7FFF_FFFF, fragmentIndex: 0, fragmentCount: 2, payload: [0xC1]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0x8000_0000, fragmentIndex: 0, fragmentCount: 2, payload: [0xC2]),
+        ];
+
+        AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
+    }
+
+    [Fact]
+    public void Pump_HostileFragmentGroupsSpanningMoreThanHalfTheSequenceSpace_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
+    {
+        // Arrange — issue #47: "forward around the circle" is only well defined for sequences spanning
+        // less than half the u32 space, the same boundary SequenceNumber names. These three groups span
+        // more than that however the circle is cut, so no ordering of them is meaningful and none can be
+        // trusted to place them. An honest sender cannot produce this — a Peer's receive window is
+        // smaller than 2^31 by many orders of magnitude — so the datagram is refused rather than swept
+        // in whatever order the peer's choice of sequences happens to produce.
+        byte[] forgedTail =
+        [
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0x0000_0000, fragmentIndex: 0, fragmentCount: 2, payload: [0xA0]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0x6000_0000, fragmentIndex: 0, fragmentCount: 2, payload: [0xA1]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0xC000_0000, fragmentIndex: 0, fragmentCount: 2, payload: [0xA2]),
+        ];
+
+        AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
+    }
+
     /// <summary>
     /// The index/count-refusal cases above build their own single-record forged tail (#253) and drive
     /// it through the shared body every case in this file uses.

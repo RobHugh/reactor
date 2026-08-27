@@ -141,12 +141,22 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// the same order the runs above were closed in; the O(g log g) sweep that finds a declared-range
     /// overlap is run once per mode's own contiguous slice of that array via
     /// <see cref="_distinctGroupSortKey"/> — each group's declared range start relative to an anchor
-    /// chosen fresh for that mode's slice — so a comparison across two different modes' groups never
+    /// derived fresh for that mode's slice — so a comparison across two different modes' groups never
     /// happens at all.
+    /// Four arrays of <see cref="MaxFragmentRecordsPerDatagram"/> entries costs about 140 KB per Reactor,
+    /// paid once at construction and never again: the point of sizing them off a bound fixed at
+    /// construction is that a peer's choice of datagram can never move it.
     /// Reused across every datagram parsed — never cleared, since every read is bounded by a count
     /// computed fresh for that datagram, and never resized, since the bound above is fixed at
     /// construction. Single-threaded like every other field this Reactor's Pump touches (ADR 0002).
     /// </summary>
+    /// <remarks>
+    /// <see cref="OneSequenceSpace"/> sits beside these because the sweep they feed measures distances
+    /// around the <c>u32</c> sequence circle, and 2^32 does not fit in the <see cref="uint"/> that circle
+    /// is counted in.
+    /// </remarks>
+    private const ulong OneSequenceSpace = 1UL << 32;
+
     private const int MaxFragmentRecordsPerDatagram =
         (MaxUdpDatagramSize - DatagramSessionProtocol.DatagramHeaderSize) / DatagramSessionProtocol.FragmentRecordSize;
 
@@ -1045,12 +1055,38 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// The declared-range overlap sweep proper, run over one mode's own contiguous slice
     /// <c>[sliceStart, sliceEnd)</c> of <see cref="_distinctGroupFirstSequenceAndCount"/> — every group in
     /// that slice is already known to share one mode, so comparing any two of them is meaningful. Sorts
-    /// the slice by declared range start, relative to an anchor chosen fresh from the slice's own first
-    /// entry using the same wrap-aware unsigned subtraction <see cref="SequenceNumber.IsNewerThan"/> is
-    /// built on, then sweeps once tracking the furthest declared end seen so far within the slice — the
-    /// standard O(k log k) interval-overlap check for a slice of <c>k</c> groups, correct for nested as
-    /// well as merely adjacent ranges, in place of an O(k²) all-pairs comparison.
+    /// the slice by declared range start, relative to a wrap-aware anchor, then sweeps once tracking the
+    /// furthest declared end seen so far within the slice — the standard O(k log k) interval-overlap check
+    /// for a slice of <c>k</c> groups, correct for nested as well as merely adjacent ranges, in place of an
+    /// O(k²) all-pairs comparison.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The anchor is derived, not assumed.</b> Ordering <c>u32</c> sequences that may straddle the wrap
+    /// needs a point to measure from, and taking the slice's numerically smallest value is wrong: a hostile
+    /// peer adds one decoy group to drag that point away, which splits a genuinely overlapping pair to
+    /// opposite ends of the sorted slice, and the linear sweep then never compares them. The anchor is
+    /// therefore the slice's <em>wrap-aware</em> minimum — the value immediately after the largest circular
+    /// gap between consecutive first sequences, the wrap gap from the largest value back to the smallest
+    /// included. Every offset measured from it is then a genuine distance forward around the circle, so the
+    /// sort key is a consistent total order and the sweep compares the pairs it must.
+    /// </para>
+    /// <para>
+    /// <b>A slice too wide to order is refused, not guessed at.</b> No wrap-aware order exists over
+    /// sequences spanning more than half the space (2^31): past that, "forward around the circle" stops
+    /// being well defined, which is the same boundary <see cref="SequenceNumber"/> names. An honest sender
+    /// cannot produce such a datagram — a Peer's receive window is smaller than 2^31 by many orders of
+    /// magnitude — so a slice whose circular span exceeds it is discarded exactly as any other violation
+    /// here is. The assumption is enforced rather than relied upon, because on this path the span is a
+    /// value the attacker chooses.
+    /// </para>
+    /// <para>
+    /// Offsets are carried as <see cref="long"/> rather than <see cref="int"/>: a declared range's end is
+    /// its start plus up to <see cref="ushort.MaxValue"/>, which a slice already spanning close to 2^31
+    /// would push past <see cref="int.MaxValue"/> and wrap to a negative, defeating the very comparison the
+    /// sweep exists to make.
+    /// </para>
+    /// </remarks>
     private bool NoTwoDeclaredRangesOverlapWithinOneMode(int sliceStart, int sliceEnd)
     {
         int sliceCount = sliceEnd - sliceStart;
@@ -1059,7 +1095,38 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return true;
         }
 
-        uint anchor = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[sliceStart]);
+        // The slice arrived in ascending numeric first-sequence order, and its groups are distinct, so the
+        // largest circular gap is found by one pass over adjacent pairs plus the wrap gap that closes the
+        // circle from the last value back to the first.
+        uint smallest = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[sliceStart]);
+        uint largest = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[sliceEnd - 1]);
+
+        ulong largestGap = OneSequenceSpace - largest + smallest;
+        uint anchor = smallest;
+
+        for (int i = sliceStart + 1; i < sliceEnd; i++)
+        {
+            uint previous = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i - 1]);
+            uint current = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i]);
+            ulong gap = current - previous;
+            if (gap > largestGap)
+            {
+                largestGap = gap;
+                anchor = current;
+            }
+        }
+
+        // The circular span is whatever the largest gap does not cover. At half the space or wider, no
+        // ordering of these groups is meaningful, so the datagram is refused rather than swept in an order
+        // the peer chose. The bound is "at or wider", not merely "wider": a span of exactly 2^31 puts the
+        // furthest group at an offset of 2^31 from the anchor, which is one past what the sort key below
+        // can hold, and it would wrap to a negative and sort to the wrong end — the very reordering this
+        // check exists to prevent.
+        if (OneSequenceSpace - largestGap >= OneSequenceSpace / 2)
+        {
+            return false;
+        }
+
         for (int i = sliceStart; i < sliceEnd; i++)
         {
             uint firstSequence = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i]);
@@ -1068,14 +1135,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         Array.Sort(_distinctGroupSortKey, _distinctGroupFirstSequenceAndCount, sliceStart, sliceCount);
 
-        int maxDeclaredEndSoFar = int.MinValue;
+        long maxDeclaredEndSoFar = long.MinValue;
         for (int i = sliceStart; i < sliceEnd; i++)
         {
             uint firstSequence = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i]);
             ushort declaredCount = UnpackDeclaredCount(_distinctGroupFirstSequenceAndCount[i]);
 
-            int start = unchecked((int)(firstSequence - anchor));
-            int end = unchecked((int)(unchecked(firstSequence + declaredCount - 1u) - anchor));
+            long start = unchecked(firstSequence - anchor);
+            long end = start + declaredCount - 1;
 
             if (i > sliceStart && start <= maxDeclaredEndSoFar)
             {
