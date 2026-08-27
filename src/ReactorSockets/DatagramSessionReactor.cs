@@ -430,10 +430,23 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// further Pumps it takes to reach the front, still in the order it was Sent (issue #230).
     /// </summary>
     /// <remarks>
+    /// <b><see cref="SendOutcome.RetentionExhausted"/> is reachable from one <c>Send</c> call</b> (issue
+    /// #247, ADR 0004's "one Message can fill the send window alone"): the retention budget is sized in
+    /// Fragments, not Messages, so a single Message cut into more Fragments than its Space has free
+    /// slots for exhausts that Space by itself, with nothing else needing to have sent anything first.
+    /// The refusal is whole, not partial — this checks the Space's free-slot count against the Fragment
+    /// count the Message needs <em>before</em> retaining or sequencing a single Fragment, so a refused
+    /// Send leaves retention holding no Fragment of that Message and leaves the Space's next sequence
+    /// exactly where <see cref="Send"/> found it, the same "spend nothing on a refusal" contract issue
+    /// #244 established for a whole small Message. A half-retained Message would be unrepairable: the
+    /// receiver's reassembly waits forever for a set that was never cut in full. A smaller Message that
+    /// fits the Space's free slots still succeeds afterward — the refusal costs the Space nothing.
+    /// <para>
     /// Sending to a <paramref name="peer"/> this Reactor is not currently holding open — unknown, or
     /// already closed — returns <see cref="SendOutcome.Closed"/> rather than throwing, unlike
     /// <see cref="CountersOf"/>: a Peer closing under a caller is an ordinary race, the same reason
     /// <see cref="Close"/> tolerates a stale <see cref="PeerId"/>.
+    /// </para>
     /// </remarks>
     /// <param name="peer">The Peer to send to.</param>
     /// <param name="mode">Which of the four delivery modes carries this Message; see <c>docs/delivery-modes.md</c>.</param>
@@ -497,6 +510,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         int spaceIndex = ReliableSpaceIndex(recordMode);
         int fragmentCount = FragmentPlan.Resolve(message.Length, _options.ResolvedFragmentSize, mode).FragmentCount;
 
+        // A Message's Fragments are committed as one unit (issue #247): the retention budget is sized
+        // in Fragments, not Messages, so a Message wide enough to need more Fragments than the Space has
+        // free slots for must be refused whole rather than left half-retained — the receiver can never
+        // reassemble a set that was never cut in full. Checked before anything is touched, because
+        // neither this pool nor OutboundSequenceSpaces can roll a partial commit back (issue #244): the
+        // slot count and the sequence space are both left exactly where they were on a refusal.
+        if (_retention.FreeSlotCount(handle.Index, spaceIndex) < fragmentCount)
+        {
+            return SendOutcome.RetentionExhausted;
+        }
+
         if (fragmentCount == 1)
         {
             // The sequence is read before retention is attempted and only spent once retention commits.
@@ -526,11 +550,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // same Space with nothing else able to interleave. Reassembly's firstSeq = seq - fragmentIndex
         // depends on that contiguity, so it is asserted below rather than merely trusted.
         //
-        // The all-or-nothing refusal that would roll a partial cut back to nothing (so a Message whose
-        // Fragments do not all fit is refused whole, spending no sequence) is issue #247's job. This
-        // loop stops at the first Fragment that does not fit and reports RetentionExhausted, leaving
-        // whatever already committed retained, sequenced and queued: an incomplete set the receiver's
-        // window holds open rather than a rollback.
+        // The FreeSlotCount check above already guarantees every TryAcquire below commits: nothing else
+        // can shrink this Space's free slots between that check and this loop, because Send only ever
+        // runs on the constructing thread (EnsureCallingThreadIsConstructingThread). A commit failing
+        // here would mean the two disagreed, which is a bug in this method, not a runtime outcome to
+        // report through SendOutcome (issue #247).
         int fragmentSize = _options.ResolvedFragmentSize;
         uint? previousSequence = null;
 
@@ -543,10 +567,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             uint sequence = slot.OutboundSequences.Peek(recordMode);
             RetentionSlotOutcome outcome = _retention.TryAcquire(handle.Index, spaceIndex, sequence, fragmentPayload);
 
-            if (outcome != RetentionSlotOutcome.Committed)
-            {
-                return SendOutcome.RetentionExhausted;
-            }
+            Debug.Assert(
+                outcome == RetentionSlotOutcome.Committed,
+                "the FreeSlotCount check above already reserved enough slots for every Fragment in this Message.");
 
             Debug.Assert(
                 previousSequence is null || sequence == previousSequence.Value + 1,

@@ -222,6 +222,38 @@ internal sealed class RetentionPool
     }
 
     /// <summary>
+    /// The number of unoccupied slots in <paramref name="shareHolderId"/>'s <paramref name="spaceIndex"/>th
+    /// reliable Space run right now — how many further <see cref="TryAcquire"/> calls that Space could
+    /// commit before one returns <see cref="RetentionSlotOutcome.Exhausted"/>. A caller that must commit
+    /// several slots as one unit (issue #247: a Message cut into more Fragments than fit is refused
+    /// whole rather than partially retained) checks this first and commits nothing when it falls short,
+    /// rather than committing some and rolling the rest back — this pool has no rollback, and the
+    /// outbound sequence Space it is paired with has none either (issue #244).
+    /// </summary>
+    /// <remarks>
+    /// A linear scan over <see cref="SlotsPerSpace"/> entries, for the same reason <see cref="TryAcquire"/>'s
+    /// is: <see cref="SlotsPerSpace"/> is small and bounded, so the scan is cheaper than maintaining a
+    /// separate running counter would be worth, and it can never drift from <see cref="_occupied"/>.
+    /// </remarks>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    /// <param name="spaceIndex">A zero-based index below <see cref="ReliableSpaceCount"/>.</param>
+    public int FreeSlotCount(int shareHolderId, int spaceIndex)
+    {
+        int regionBase = ValidateRegion(shareHolderId, spaceIndex);
+
+        int freeSlots = 0;
+        for (int slotIndex = 0; slotIndex < SlotsPerSpace; slotIndex++)
+        {
+            if (!_occupied[regionBase + slotIndex])
+            {
+                freeSlots++;
+            }
+        }
+
+        return freeSlots;
+    }
+
+    /// <summary>
     /// Attempts to copy <paramref name="payload"/> into a free slot of <paramref name="shareHolderId"/>'s
     /// <paramref name="spaceIndex"/>th reliable Space run, recording <paramref name="sequenceNumber"/>
     /// and the byte length written against that slot. Refused as <see cref="RetentionSlotOutcome.Exhausted"/>,
