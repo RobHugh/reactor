@@ -111,7 +111,9 @@ public class DatagramSessionSequenceWrapTests
         afterOlder.OutOfWindowPackets.Should().Be(afterWalk.OutOfWindowPackets + 1);
         afterOlder.DuplicatePackets.Should().Be(afterWalk.DuplicatePackets);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -161,7 +163,9 @@ public class DatagramSessionSequenceWrapTests
         after.DuplicatePackets.Should().Be(straddling.DuplicatePackets + 4);
         after.OutOfWindowPackets.Should().Be(straddling.OutOfWindowPackets + 1);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -233,7 +237,9 @@ public class DatagramSessionSequenceWrapTests
         (after.OutOfWindowPackets - beforeFuzz.OutOfWindowPackets).Should().Be(expectedOutOfWindow);
         (after.UnreliableLossPackets - beforeFuzz.UnreliableLossPackets).Should().Be(expectedLoss);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
 
         // Assert — each production window's own base really is where the reference says it is, and so
         // really is past the wrap: the counter sums above are aggregates, and only this pins the two

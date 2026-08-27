@@ -42,4 +42,22 @@ internal sealed class OutboundSequenceSpaces
         PacketRecordMode.ReliableOrdered => unchecked(_reliableOrdered++),
         _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown delivery mode."),
     };
+
+    /// <summary>
+    /// The value the next <see cref="Allocate"/> in <paramref name="mode"/>'s Space will return,
+    /// without advancing anything. A caller that can still refuse the Send it is preparing needs the
+    /// sequence number before it commits to spending it: a refused Send must leave the Space exactly
+    /// where it found it, or the receiver's window waits on a number nothing will ever send (issue
+    /// #244). Repeated calls return the same value until an <see cref="Allocate"/> intervenes.
+    /// </summary>
+    /// <param name="mode">Which of the four Spaces to read.</param>
+    /// <returns>The sequence number the next allocation in that Space would claim.</returns>
+    public uint Peek(PacketRecordMode mode) => mode switch
+    {
+        PacketRecordMode.Unreliable => _unreliable,
+        PacketRecordMode.UnreliableSequenced => _unreliableSequenced,
+        PacketRecordMode.ReliableUnordered => _reliableUnordered,
+        PacketRecordMode.ReliableOrdered => _reliableOrdered,
+        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown delivery mode."),
+    };
 }

@@ -69,7 +69,9 @@ public class DatagramSessionUnreliableLossTests
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(1);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -99,7 +101,9 @@ public class DatagramSessionUnreliableLossTests
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -136,7 +140,9 @@ public class DatagramSessionUnreliableLossTests
         counters.DuplicatePackets.Should().Be(1);
         counters.UnreliableLossPackets.Should().Be(1);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -180,7 +186,9 @@ public class DatagramSessionUnreliableLossTests
         counters.UnreliableLossPackets.Should().Be(1);
         counters.OutOfWindowPackets.Should().Be(2);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -209,7 +217,9 @@ public class DatagramSessionUnreliableLossTests
         counters.UnreliableLossPackets.Should().Be(1);
         counters.OutOfWindowPackets.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -241,7 +251,9 @@ public class DatagramSessionUnreliableLossTests
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(2);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -278,7 +290,9 @@ public class DatagramSessionUnreliableLossTests
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(2);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -308,7 +322,9 @@ public class DatagramSessionUnreliableLossTests
         counters.OutOfWindowPackets.Should().Be(0);
         counters.DuplicatePackets.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     [Fact]
@@ -346,7 +362,9 @@ public class DatagramSessionUnreliableLossTests
         counters.UnreliableLossPackets.Should().Be(1);
         counters.DuplicatePackets.Should().Be(0);
         accepter.Sink.Received.Should().BeEmpty();
-        accepter.DrainToList().Should().BeEmpty();
+        accepter.DrainToList().Should().NotContain(
+            e => e.Kind != SessionEventKind.MessageReceived,
+            "an admitted record now delivers a Message (#217, #219); no other event is justified here");
     }
 
     /// <summary>

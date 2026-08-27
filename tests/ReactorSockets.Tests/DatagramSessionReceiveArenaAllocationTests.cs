@@ -379,7 +379,7 @@ public class DatagramSessionReceiveArenaAllocationTests
         ulong before = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, destination, datagram);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
-        accepter.DrainToList();
+        accepter.DrainAndDiscard();
     }
 
     /// <summary>
@@ -421,7 +421,7 @@ public class DatagramSessionReceiveArenaAllocationTests
             client.SendTo(clientLink, destination, [.. evenDatagram]);
             accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
 
-            accepter.DrainToList();
+            accepter.DrainAndDiscard();
             cycleBase += (uint)capacity;
         }
 

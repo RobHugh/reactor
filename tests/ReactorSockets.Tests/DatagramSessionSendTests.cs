@@ -179,10 +179,15 @@ public class DatagramSessionSendTests
         outcome.Should().Be(SendOutcome.Closed);
     }
 
-    [Fact]
-    public void Send_AMessageWiderThanOneFragment_Throws()
+    [Theory]
+    [InlineData(DeliveryMode.Unreliable)]
+    [InlineData(DeliveryMode.UnreliableSequenced)]
+    [InlineData(DeliveryMode.ReliableUnordered)]
+    [InlineData(DeliveryMode.ReliableOrdered)]
+    public void Send_AMessageWiderThanOneFragment_ReturnsMessageTooLargeInEveryMode(DeliveryMode mode)
     {
-        // Arrange
+        // Arrange — subtask 6.6.2 (issue #215): a Message too wide for one Datagram is a checked
+        // outcome the caller can branch on, in every one of the four modes, not an exception.
         const int fragmentSize = 600;
         using DatagramSessionReactorHarness harness = new(
             bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
@@ -191,9 +196,103 @@ public class DatagramSessionSendTests
         byte[] tooWide = new byte[fragmentSize + 1];
 
         // Act
-        Action send = () => harness.Reactor.Send(peer, DeliveryMode.ReliableOrdered, tooWide);
+        SendOutcome outcome = harness.Reactor.Send(peer, mode, tooWide);
 
         // Assert
-        send.Should().Throw<ArgumentException>().WithParameterName("message");
+        outcome.Should().Be(SendOutcome.MessageTooLarge);
+    }
+
+    [Fact]
+    public void Send_AMessageExactlyAtTheFragmentSizeCap_ReturnsSent()
+    {
+        // Arrange — the cap is "wider than one Datagram", so a Message that exactly fills one must
+        // still be accepted (issue #215).
+        const int fragmentSize = 600;
+        using DatagramSessionReactorHarness harness = new(
+            bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
+        using DatagramSessionReactorHarness remote = new();
+        PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+        byte[] exactlyAtCap = new byte[fragmentSize];
+
+        // Act
+        SendOutcome outcome = harness.Reactor.Send(peer, DeliveryMode.ReliableOrdered, exactlyAtCap);
+
+        // Assert
+        outcome.Should().Be(SendOutcome.Sent);
+    }
+
+    [Fact]
+    public void Send_ARefusedOversizedMessage_TakesNoRetentionSlotFromItsSpace()
+    {
+        // Arrange — issue #215's "no retention is taken" half of the no-footprint promise. Retention
+        // is directly observable through the public seam (a full Space answers RetentionExhausted, the
+        // same proof #43's own interference tests already use); a rejected oversized Send must not have
+        // spent the Space's one slot before the two ordinary Sends that follow it.
+        const int fragmentSize = 600;
+        using DatagramSessionReactorHarness harness = new(
+            bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
+        using DatagramSessionReactorHarness remote = new();
+        PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+        byte[] tooWide = new byte[fragmentSize + 1];
+        byte[] message = [1, 2, 3];
+
+        // Act
+        SendOutcome refused = harness.Reactor.Send(peer, DeliveryMode.ReliableOrdered, tooWide);
+        SendOutcome first = harness.Reactor.Send(peer, DeliveryMode.ReliableOrdered, message);
+        SendOutcome second = harness.Reactor.Send(peer, DeliveryMode.ReliableOrdered, message);
+
+        // Assert
+        refused.Should().Be(SendOutcome.MessageTooLarge);
+        first.Should().Be(SendOutcome.Sent, "the refused Send took no retention slot, so the Space's one slot is still free");
+        second.Should().Be(SendOutcome.RetentionExhausted, "the Space genuinely holds only one slot");
+    }
+
+    [Fact]
+    public void Send_ARefusedOversizedMessage_TakesNoSequenceFromItsSpace()
+    {
+        // Arrange — issue #215's "no sequence is allocated" half, proven the only way the public seam
+        // allows: no member of this Reactor ever surfaces a sequence number, so this drives the record
+        // all the way to a second, connected Reactor and reads the outcome off ITS receive window
+        // instead. With ReceiveWindowFragments pinned to 1, that window admits only the exact sequence
+        // it is currently based at (0 for a fresh Peer) and refuses anything past it as
+        // OutOfWindowPackets — the receive window never advances past the pinned base 1 slot lets it
+        // hold, so a correct Send that allocates sequence 0 is silently admitted (Admitted raises no
+        // counter), while a bug that let the refused Send steal sequence 0 would arrive as sequence 1
+        // and be refused as out of window, moving PeerCounters.OutOfWindowPackets off zero. This is
+        // #216's flush and #215's no-footprint promise proven together, because nothing shows a
+        // sequence number without a Datagram genuinely leaving the wire.
+        const int fragmentSize = 600;
+        using DatagramSessionReactorHarness sender = new(
+            bindLoopback: false,
+            fragmentSize: fragmentSize,
+            retentionBytes: fragmentSize,
+            maxMessageSize: fragmentSize,
+            receiveWindowFragments: 1);
+        using DatagramSessionReactorHarness receiver = new(
+            fragmentSize: fragmentSize,
+            retentionBytes: fragmentSize,
+            maxMessageSize: fragmentSize,
+            receiveWindowFragments: 1);
+
+        PeerId senderPeer = sender.Reactor.Connect(receiver.Endpoint);
+        (var _, var receiverEvents) = DatagramSessionReactorHarness.PumpBothUntilConnected(sender, receiver);
+        PeerId receiverPeer = receiverEvents.First(e => e.Kind == SessionEventKind.PeerConnected).Peer;
+
+        byte[] tooWide = new byte[fragmentSize + 1];
+        byte[] message = [1, 2, 3];
+
+        // Act
+        SendOutcome refused = sender.Reactor.Send(senderPeer, DeliveryMode.ReliableOrdered, tooWide);
+        SendOutcome accepted = sender.Reactor.Send(senderPeer, DeliveryMode.ReliableOrdered, message);
+        sender.Reactor.Pump();
+        receiver.PumpUntil(() => receiver.Reactor.Counters.DatagramsReceived > 0);
+
+        PeerCounters receiverCounters = receiver.Reactor.CountersOf(receiverPeer);
+
+        // Assert
+        refused.Should().Be(SendOutcome.MessageTooLarge);
+        accepted.Should().Be(SendOutcome.Sent);
+        receiverCounters.OutOfWindowPackets.Should().Be(
+            0UL, "the accepted Send must have carried sequence 0, the only sequence this pinned window ever admits");
     }
 }

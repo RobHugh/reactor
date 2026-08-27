@@ -108,6 +108,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     private readonly byte[] _scratchBuffer = new byte[MaxUdpDatagramSize];
     private readonly byte[] _sendBuffer = new byte[DatagramSessionProtocol.ControlDatagramSize];
+
+    /// <summary>
+    /// The scratch buffer <see cref="FlushPeer"/> packs one Peer's data Datagram into (issue #216),
+    /// separate from <see cref="_scratchBuffer"/> — which is read-side and reused within one
+    /// <see cref="OnLinkReadable"/> call — and from <see cref="_sendBuffer"/>, which is sized for a
+    /// control datagram only and far too small for a coalesced data one. Sized at
+    /// <see cref="MaxUdpDatagramSize"/> like <see cref="_scratchBuffer"/> so it can hold whatever a
+    /// Pump packs into it; reused across every Peer flushed by one Pump rather than allocated per Peer.
+    /// </summary>
+    private readonly byte[] _outboundDatagramBuffer = new byte[MaxUdpDatagramSize];
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
     private int _capDiscardsThisFrame;
@@ -239,6 +249,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             _capacityDiscardsThisFrame = 0;
             _dispatcher.Pump();
             ReportExpiredRetransmissions();
+            FlushOutboundDatagrams();
             ReportDeclinedAdmissions();
         }
         finally
@@ -351,16 +362,25 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Sends <paramref name="message"/> to <paramref name="peer"/> under <paramref name="mode"/> (ADR
-    /// 0009, issue #207): a reliable mode allocates the next sequence in its own Space and retains the
-    /// Message whole there, returning <see cref="SendOutcome.RetentionExhausted"/> once that Space has
-    /// no slot left; <see cref="DeliveryMode.Unreliable"/> and
-    /// <see cref="DeliveryMode.UnreliableSequenced"/> still allocate a sequence — every mode gets one,
-    /// the same as every other (<see cref="OutboundSequenceSpaces"/>) — but retain nothing, because
-    /// nothing unreliable is ever retransmitted (issue #43). This is the first public <c>Send</c> on
-    /// this profile, and it is deliberately this narrow: packing a record, fragmenting a Message too
-    /// wide for one, and flushing a Peer's coalesced Datagram are #44's and #45's, so nothing here
-    /// reaches the wire and nothing here throws for a Message a later slice will refuse as
-    /// <c>MessageTooLarge</c>.
+    /// 0009, issues #207, #215, #216). A Message wider than one Datagram is refused up front as
+    /// <see cref="SendOutcome.MessageTooLarge"/>, before anything else happens: no sequence is
+    /// allocated and no retention is taken, so a rejected Send leaves no trace on the Session. Past
+    /// that gate, a reliable mode allocates the next sequence in its own Space and retains the Message
+    /// whole there, returning <see cref="SendOutcome.RetentionExhausted"/> once that Space has no slot
+    /// left — and that refusal spends nothing either: the sequence is claimed only once retention has
+    /// committed, so a refused reliable Send leaves the Space's next sequence exactly where it was
+    /// (issue #244), rather than opening a gap the receiver's window would wait on for a record that
+    /// is never sent; <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/>
+    /// still allocate a sequence — every mode gets one, the same as every other
+    /// (<see cref="OutboundSequenceSpaces"/>) — but retain nothing, because nothing unreliable is ever
+    /// retransmitted (issue #43). A Message this call accepts is queued on <paramref name="peer"/>'s
+    /// Slot (<see cref="PeerSlot.PendingSends"/>) and leaves as one packet record inside the next
+    /// <see cref="Pump"/>'s single coalesced Datagram to that Peer, in Send order
+    /// (<see cref="FlushOutboundDatagrams"/>, issue #216) — nothing reaches the wire before that Pump
+    /// runs, and a <c>Send</c> with no following Pump puts nothing on the wire at all. That next Pump is
+    /// only the first one this record is <em>eligible</em> to leave in: if this Peer already has more
+    /// queued than one Datagram holds, a record queued behind the boundary waits for however many
+    /// further Pumps it takes to reach the front, still in the order it was Sent (issue #230).
     /// </summary>
     /// <remarks>
     /// Sending to a <paramref name="peer"/> this Reactor is not currently holding open — unknown, or
@@ -371,10 +391,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <param name="peer">The Peer to send to.</param>
     /// <param name="mode">Which of the four delivery modes carries this Message; see <c>docs/delivery-modes.md</c>.</param>
     /// <param name="message">
-    /// The Message payload, unframed. Throws if wider than one fragment — this call cannot yet split a
-    /// Message across more than one, so a Message wider than
-    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> has nowhere to go until #45's
-    /// fragmentation lands.
+    /// The Message payload, unframed. The bytes are copied before this call returns — into
+    /// <see cref="_retention"/> for a reliable mode, into the queued record for an unreliable one — so
+    /// the caller owns its buffer again the instant <c>Send</c> returns and may overwrite or reuse it
+    /// without changing what is eventually put on the wire (issue #244). A Message wider than
+    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> cannot fit in one Datagram and is
+    /// reported back as <see cref="SendOutcome.MessageTooLarge"/> rather than thrown. For
+    /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> the cap
+    /// is permanent, and there is no option that lifts it: you may only fragment what you can
+    /// retransmit (ADR 0004), because fragmenting what cannot be repaired multiplies the failure rate
+    /// by the number of pieces — a ten-Fragment unreliable Message on a path losing 1% of Datagrams
+    /// arrives about 90% of the time, having spent ten Datagrams of bandwidth on a coin flip
+    /// (<c>docs/delivery-modes.md</c>). For <see cref="DeliveryMode.ReliableOrdered"/> and
+    /// <see cref="DeliveryMode.ReliableUnordered"/> the same cap applies for now and is lifted once
+    /// slice 7 gives the reliable modes fragmentation.
     /// </param>
     public SendOutcome Send(PeerId peer, DeliveryMode mode, ReadOnlySpan<byte> message)
     {
@@ -383,11 +413,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         if (message.Length > _options.ResolvedFragmentSize)
         {
-            throw new ArgumentException(
-                $"message of {message.Length} bytes exceeds this Reactor's fragment size of " +
-                $"{_options.ResolvedFragmentSize} bytes — a Send cannot yet split a Message across more " +
-                "than one fragment.",
-                nameof(message));
+            return SendOutcome.MessageTooLarge;
         }
 
         SlotHandle handle = ToHandle(peer);
@@ -397,15 +423,31 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         PacketRecordMode recordMode = ToRecordMode(mode);
-        uint sequence = slot.OutboundSequences.Allocate(recordMode);
 
         if (recordMode is not (PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered))
         {
+            slot.PendingSends.Add(new PendingOutboundRecord
+            {
+                Mode = recordMode,
+                Sequence = slot.OutboundSequences.Allocate(recordMode),
+                UnreliablePayload = message.ToArray(),
+            });
             return SendOutcome.Sent;
         }
 
+        // The sequence is read before retention is attempted and only spent once retention commits.
+        // TryAcquire refuses an exhausted Space without touching the pool, so a refusal here has to
+        // leave the Space where it found it too: a burned sequence is a hole the receiver's window
+        // waits on for a record that will never be sent (issue #244), and a Space has no rewind.
         int spaceIndex = ReliableSpaceIndex(recordMode);
+        uint sequence = slot.OutboundSequences.Peek(recordMode);
         RetentionSlotOutcome outcome = _retention.TryAcquire(handle.Index, spaceIndex, sequence, message);
+
+        if (outcome == RetentionSlotOutcome.Committed)
+        {
+            slot.OutboundSequences.Allocate(recordMode);
+            slot.PendingSends.Add(new PendingOutboundRecord { Mode = recordMode, Sequence = sequence });
+        }
 
         return outcome switch
         {
@@ -449,8 +491,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     SessionEvent ISessionEventSource.GetPendingEvent(int index)
     {
         PendingEvent pending = _pendingEvents[index];
-        return pending.Kind.TryCreateCommonSessionEvent(pending.Peer, pending.Reason, out SessionEvent sessionEvent)
-            ? sessionEvent
+        if (pending.Kind.TryCreateCommonSessionEvent(pending.Peer, pending.Reason, out SessionEvent sessionEvent))
+        {
+            return sessionEvent;
+        }
+
+        // The one kind this profile queues that the shared half cannot build, because it alone needs
+        // the arena the payload was committed to (subtask 6.6.6, issue #219). The span is handed out
+        // aliasing the arena directly, so it is valid for this Frame only — the same contract the
+        // stream profile's own MessageReceived carries.
+        return pending.Kind == SessionEventKind.MessageReceived
+            ? SessionEvent.ForMessageReceived(pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength))
             : throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind.");
     }
 
@@ -662,6 +713,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             remainder = remainder[bytesConsumed..];
         }
 
+        // The proof above is what attributes this Datagram to slot's Peer: it names an established
+        // session id (ProcessDataDatagram's own lookup) and every record in it parses. Only from this
+        // point on is the whole Datagram's length, header included, counted against that Peer (issue
+        // #231) — a malformed one, even if it named a real session, falls to DiscardMalformed's
+        // Reactor-scope figure instead, above, and never reaches here.
+        slot.Counters.RecordBytesReceived((ulong)datagram.Length);
+
         TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits, effectiveRto);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableUnordered, reliableUnorderedAckBase, reliableUnorderedAckBits, effectiveRto);
@@ -672,8 +730,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             // Every record in this span already proved well-formed in the pass above, so this read
             // cannot fail — the return value is not re-checked.
-            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out _, out int bytesConsumed);
-            ClassifyRecord(slot, mode, sequence);
+            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out ushort length, out int bytesConsumed);
+
+            // The payload is the tail of what this record consumed, so it is sliced from the record's
+            // own span rather than re-derived from a header width this method would then have to know.
+            ReadOnlySpan<byte> payload = remainder.Slice(bytesConsumed - length, length);
+            ClassifyRecord(slot, mode, sequence, payload);
             remainder = remainder[bytesConsumed..];
         }
     }
@@ -748,9 +810,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            int reliableOrderedExpired = slot.AckTracker.CollectExpired(PacketRecordMode.ReliableOrdered).Length;
-            int reliableUnorderedExpired = slot.AckTracker.CollectExpired(PacketRecordMode.ReliableUnordered).Length;
-            int expiredCount = reliableOrderedExpired + reliableUnorderedExpired;
+            // Each Space keeps its own scratch buffer, so holding both spans across the second call is
+            // safe — they are not the same array.
+            ReadOnlySpan<uint> reliableOrderedExpired = slot.AckTracker.CollectExpired(PacketRecordMode.ReliableOrdered);
+            ReadOnlySpan<uint> reliableUnorderedExpired = slot.AckTracker.CollectExpired(PacketRecordMode.ReliableUnordered);
+            int expiredCount = reliableOrderedExpired.Length + reliableUnorderedExpired.Length;
 
             if (expiredCount == 0)
             {
@@ -758,6 +822,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
 
             slot.Counters.RecordPacketsRetransmitted((ulong)expiredCount);
+
+            // Queued, not sent: the record joins whatever this Peer's PendingSends already holds and
+            // rides the same Pump's flush, alongside records Sent this Frame. That is what makes
+            // retransmission byte-identical at packet-record granularity and not at Datagram
+            // granularity — the record is repacked into whatever container goes out next, and no
+            // attempt is made to reproduce the Datagram it originally travelled in.
+            QueueForRetransmission(slot, PacketRecordMode.ReliableOrdered, reliableOrderedExpired);
+            QueueForRetransmission(slot, PacketRecordMode.ReliableUnordered, reliableUnorderedExpired);
 
             slot.RetransmitTimer.BackOff();
             TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
@@ -775,14 +847,212 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Classifies one already-validated record against its mode's Space and counts what the window
-    /// refused, plus whatever the touched window's slide just retired un-admitted (issues #173, #176).
-    /// Admission itself otherwise needs no counting: the window's <see cref="ReceiveWindowOutcome.Admitted"/>
-    /// case is a well-formed record simply taking effect,
-    /// and this ticket ends at "classified, and counted if refused or lost" — delivering an admitted
-    /// record is 6.6's.
+    /// Whether <paramref name="mode"/> is one of the two Spaces that retain, acknowledge and retransmit
+    /// — the single place that question is asked, so the reliable half of the four modes is named once.
     /// </summary>
-    private void ClassifyRecord(PeerSlot slot, PacketRecordMode mode, uint sequence)
+    private static bool IsReliable(PacketRecordMode mode) =>
+        mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered;
+
+    /// <summary>
+    /// Queues every sequence <see cref="ReportExpiredRetransmissions"/> found expired on one reliable
+    /// Space back onto <paramref name="slot"/>'s <see cref="PeerSlot.PendingSends"/>, so the same
+    /// Pump's <see cref="FlushOutboundDatagrams"/> packs it (subtask 6.6.8, issue #218). No payload
+    /// copy is made or needed: a reliable record's bytes are in <see cref="_retention"/> from the
+    /// moment <see cref="Send"/> committed them, and <see cref="TryResolvePendingPayload"/> reads them
+    /// back at flush time — which is also what makes the resent bytes identical to the original
+    /// without this method holding anything to compare them against.
+    /// </summary>
+    /// <remarks>
+    /// A sequence whose retention slot has already been released resolves to nothing at flush time and
+    /// is skipped there rather than guarded against here. That is the right place for it: releasing a
+    /// slot is what an arriving acknowledgement does, so a sequence acked between this queueing and
+    /// the flush is one that no longer needs resending, and dropping it silently is the outcome
+    /// wanted.
+    /// </remarks>
+    private static void QueueForRetransmission(PeerSlot slot, PacketRecordMode mode, ReadOnlySpan<uint> sequences)
+    {
+        foreach (uint sequence in sequences)
+        {
+            slot.PendingSends.Add(new PendingOutboundRecord { Mode = mode, Sequence = sequence, IsRetransmission = true });
+        }
+    }
+
+    /// <summary>
+    /// Puts every Established Peer's Sent-since-last-flush records on the wire, once per
+    /// <see cref="Pump"/> (issue #216): a Peer with nothing queued in
+    /// <see cref="PeerSlot.PendingSends"/> is skipped entirely, so a Pump following no <see cref="Send"/>
+    /// puts nothing on the wire for that Peer. A Peer still mid-handshake has nothing to flush to
+    /// either — <see cref="Send"/> can queue against it, but nothing here reaches it until it reaches
+    /// <see cref="HandshakeState.Established"/>, the same restriction <see cref="ReportExpiredRetransmissions"/>
+    /// already applies to its own per-Peer sweep.
+    /// </summary>
+    /// <remarks>
+    /// A single scan over <see cref="_peers"/> (<see cref="ShareHolderTable{T}.OccupantAt"/>), the same
+    /// shape <see cref="ReportExpiredRetransmissions"/> uses: at most <see cref="ShareHolderTable{T}.Capacity"/>
+    /// array reads, and a Peer with an empty queue costs nothing more than that one read.
+    /// <see cref="FlushPeer"/> itself trims <see cref="PeerSlot.PendingSends"/> down to whatever it
+    /// could not pack this Pump (issue #230), so there is nothing left for this method to clear — a Peer
+    /// whose queue drained completely is left with an empty list by that trim, which is exactly what
+    /// makes the next Pump's <c>Count == 0</c> check above skip it and send no header-only Datagram.
+    /// </remarks>
+    private void FlushOutboundDatagrams()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            {
+                continue;
+            }
+
+            if (slot.PendingSends.Count == 0)
+            {
+                continue;
+            }
+
+            FlushPeer(slot);
+        }
+    }
+
+    /// <summary>
+    /// Packs as much as fits of <paramref name="slot"/>'s queue into one data Datagram, in Send order,
+    /// and sends it (issue #216): the 20-byte header — this Peer's own <see cref="PeerSlot.RemoteSessionId"/>
+    /// stamped as the session, since that is the id the far end asked to be stamped on datagrams sent to
+    /// it — followed by both reliable Spaces' ack blocks read fresh from
+    /// <see cref="_receiveWindows"/>, so an admission this same Pump's read pass just made is reflected
+    /// in the Datagram this same Pump's flush sends. A reliable record's payload is read back from
+    /// <see cref="_retention"/> and an unreliable one's from <see cref="PendingOutboundRecord.UnreliablePayload"/>
+    /// (<see cref="TryResolvePendingPayload"/>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A record that does not fit waits for the next Pump</b> (issue #230). Packing stops at the
+    /// first record <see cref="DatagramRecordPacker.TryPackRecord"/> refuses — this Datagram is full —
+    /// and everything from there to the end of <see cref="PeerSlot.PendingSends"/>, in the order it was
+    /// queued, is left on the Slot rather than discarded: <see cref="List{T}.RemoveRange"/> trims only
+    /// the prefix this call actually consumed, so those records are exactly what the next
+    /// <see cref="FlushOutboundDatagrams"/> sees at the front of the same queue. A Datagram is flushed
+    /// once per Peer per Pump (the loop above never calls this twice in one Pump), so the remainder does
+    /// not go out as a second Datagram this Pump — it rides the next one. A record whose payload failed
+    /// to resolve — a reliable sequence already released from retention — is consumed rather than left
+    /// queued: retrying it later cannot succeed either, since nothing repopulates a released slot.
+    /// </para>
+    /// <para>
+    /// <b>Arming still happens only where the record actually reached a Datagram.</b> A record that did
+    /// not fit is not sent, so it must not start its retransmit deadline — the loop below only reaches
+    /// the <see cref="OutstandingReliableSequences.RecordSent"/> call for a record
+    /// <see cref="DatagramRecordPacker.TryPackRecord"/> just accepted, never for the one that broke the
+    /// loop, so a queued-but-unsent record is armed on whichever later Pump actually packs it (subtask
+    /// 6.6.8, issue #218). Nothing is sent at all if nothing ended up packed, so a queue whose one
+    /// record failed to resolve costs a wasted flush rather than a header-only Datagram with no records
+    /// in it.
+    /// </para>
+    /// </remarks>
+    private void FlushPeer(PeerSlot slot)
+    {
+        ((uint Base, uint Bits) reliableOrdered, (uint Base, uint Bits) reliableUnordered) =
+            _receiveWindows[slot.Handle.Index].GenerateAckBlocks();
+
+        DatagramRecordPacker packer = new(
+            _outboundDatagramBuffer,
+            slot.RemoteSessionId,
+            reliableOrdered.Base,
+            reliableOrdered.Bits,
+            reliableUnordered.Base,
+            reliableUnordered.Bits);
+
+        int consumed = 0;
+        foreach (PendingOutboundRecord pending in slot.PendingSends)
+        {
+            if (!TryResolvePendingPayload(slot, pending, out ReadOnlySpan<byte> payload))
+            {
+                consumed++;
+                continue;
+            }
+
+            if (!packer.TryPackRecord(pending.Mode, pending.Sequence, payload))
+            {
+                break;
+            }
+
+            consumed++;
+
+            // Arming happens here, at the moment the record actually reaches a Datagram, rather than in
+            // Send: a sequence queued but not yet flushed has not been transmitted, and starting its
+            // retransmit deadline before it leaves would spend part of that deadline on this end's own
+            // queue (subtask 6.6.8, issue #218). A resend is skipped — ReArmExpired has already given it
+            // this Pump's single backed-off deadline. The horizon gate lives inside RecordSent, so a
+            // sequence too far ahead of the ack horizon still has its timer withheld rather than
+            // started, exactly as #185 requires.
+            if (!pending.IsRetransmission && IsReliable(pending.Mode))
+            {
+                slot.AckTracker.RecordSent(
+                    pending.Mode,
+                    pending.Sequence,
+                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger));
+            }
+        }
+
+        slot.PendingSends.RemoveRange(0, consumed);
+
+        if (packer.RecordsPacked == 0)
+        {
+            return;
+        }
+
+        UdpLinkSendResult result = slot.Link.SendTo(slot.Remote, _outboundDatagramBuffer.AsSpan(0, packer.BytesWritten));
+        slot.Counters.RecordBytesSent((ulong)packer.BytesWritten);
+        if (result.IsSuccess)
+        {
+            _counters.RecordDatagramSent();
+        }
+    }
+
+    /// <summary>
+    /// The bytes one queued record's flush should pack: <paramref name="pending"/>'s own copy for an
+    /// unreliable record, since nothing else retains it; otherwise a read back from
+    /// <see cref="_retention"/> at the reliable Space <paramref name="pending"/>'s mode addresses.
+    /// Fails — nothing to pack — only if a reliable sequence was already released from retention
+    /// between being queued and this flush, which no path on this ticket's live traffic does yet.
+    /// </summary>
+    private bool TryResolvePendingPayload(PeerSlot slot, PendingOutboundRecord pending, out ReadOnlySpan<byte> payload)
+    {
+        if (pending.UnreliablePayload is byte[] bytes)
+        {
+            payload = bytes;
+            return true;
+        }
+
+        int spaceIndex = ReliableSpaceIndex(pending.Mode);
+        return _retention.TryRead(slot.Handle.Index, spaceIndex, pending.Sequence, out payload);
+    }
+
+    /// <summary>
+    /// Classifies one already-validated record against its mode's Space, counts what the window
+    /// refused plus whatever the touched window's slide just retired un-admitted (issues #173, #176),
+    /// and delivers what it admitted (subtask 6.6.5, issue #217).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// For three of the four Spaces, only an admitted record is delivered: a duplicate or an
+    /// out-of-window record reaches neither the frame arena nor
+    /// <see cref="PeerCounters.MessagesReceived"/>, because suppressing a duplicate is the window's
+    /// whole purpose and counting one as received would make the suppression invisible in the figure a
+    /// consumer reads to check it.
+    /// </para>
+    /// <para>
+    /// <b>Plain <c>Unreliable</c> is the exception</b> (subtask 6.6.12, issue #222; ADR 0017). Its
+    /// promise is that a late arrival is delivered and that duplicate suppression is bounded at 64
+    /// sequences, and the receive window can keep neither: it refuses everything below its base
+    /// outright, so a repeat delayed past 64 would be discarded rather than delivered, and its capacity
+    /// is a consumer option rather than the protocol's 64. So for that Space the receive window still
+    /// classifies — that is what counts loss from the gaps it slides past, and what its ack bookkeeping
+    /// needs — while the delivery decision comes from
+    /// <see cref="PeerSlot.UnreliableDuplicates"/> alone. The receive window's own refusals are not
+    /// counted for this Space, since the 64-entry window is the authority on what was a duplicate here
+    /// and counting both would count one repeat twice.
+    /// </para>
+    /// </remarks>
+    private void ClassifyRecord(PeerSlot slot, PacketRecordMode mode, uint sequence, ReadOnlySpan<byte> payload)
     {
         ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
         ReceiveWindowOutcome outcome = windows.Classify(mode, sequence);
@@ -798,6 +1068,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 break;
         }
 
+        if (mode == PacketRecordMode.Unreliable)
+        {
+            DeliverUnreliableRecord(slot, sequence, payload, alreadyCountedAsRefused: outcome != ReceiveWindowOutcome.Admitted);
+        }
+        else if (outcome == ReceiveWindowOutcome.Admitted)
+        {
+            DeliverAdmittedRecord(slot, mode, sequence, payload);
+        }
+
         // No mode test guards this (#176): a window reports a nonzero LastSlideLoss only if it slid,
         // and only the two unreliable Spaces' windows are built to slide, so this counts both of them
         // and neither reliable Space without restating which Spaces slide. ReceiveWindowSpaces'
@@ -806,6 +1085,171 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             slot.Counters.RecordUnreliableLoss(windows.LastSlideLoss);
         }
+    }
+
+    /// <summary>
+    /// The plain <c>Unreliable</c> Space's delivery decision (subtask 6.6.12, issue #222; ADR 0017):
+    /// deliver unless this Peer's own 64-entry <see cref="UnreliableDuplicateWindow"/> has already seen
+    /// <paramref name="sequence"/>. A repeat inside those 64 sequences is suppressed and counted as a
+    /// duplicate; a repeat delayed past them is delivered, because suppression here is bounded rather
+    /// than absolute and pretending otherwise would promise something a 64-entry window cannot keep.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The receive window's own verdict does not decide delivery here. That window refuses everything
+    /// below its base, which for this Space would discard exactly the late arrival the mode promises to
+    /// deliver, and its capacity is a consumer option rather than the protocol's 64. It still runs and
+    /// is still counted, for the loss its slides retire and the refusals a consumer reads off
+    /// <see cref="PeerCounters.OutOfWindowPackets"/>; it simply is not what says whether a Message
+    /// reaches the consumer.
+    /// </para>
+    /// <para>
+    /// <paramref name="alreadyCountedAsRefused"/> is what keeps one repeat from counting twice. A
+    /// record the receive window already refused has raised a counter of its own, so suppressing it
+    /// here raises nothing further; only a record that window admitted, and that this one recognises,
+    /// is a duplicate this Space would otherwise never have counted.
+    /// </para>
+    /// </remarks>
+    private void DeliverUnreliableRecord(
+        PeerSlot slot, uint sequence, ReadOnlySpan<byte> payload, bool alreadyCountedAsRefused)
+    {
+        if (!slot.UnreliableDuplicates.TryAdmit(sequence))
+        {
+            if (!alreadyCountedAsRefused)
+            {
+                slot.Counters.RecordDuplicatePacket();
+            }
+
+            return;
+        }
+
+        DeliverAdmittedRecord(slot, PacketRecordMode.Unreliable, sequence, payload);
+    }
+
+    /// <summary>
+    /// Copies an admitted record's payload into the shared frame arena under this Peer's own
+    /// share-holder identity (ADR 0014), queues it as a pending
+    /// <see cref="SessionEventKind.MessageReceived"/>, and raises this Peer's
+    /// <see cref="PeerCounters.MessagesReceived"/> — the same three steps, in the same order, that
+    /// <c>StreamSessionReactor.DeliverCompleteMessages</c> takes, so the two profiles report a received
+    /// Message identically (subtask 6.6.5, issue #217).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A Message the arena had no room for is not counted as received.</b> The counter moves only
+    /// where the bytes did, which is what makes a share exhaustion visible: a Frame in which records
+    /// plainly arrived but this figure did not move is a Message the arena refused, not one the network
+    /// lost. Unlike the stream profile, nothing is buffered for a retry — a datagram's bytes are gone
+    /// once the parse loop passes them, and the reliable modes recover a refused record through
+    /// retransmission rather than through a re-reservation this end schedules for itself.
+    /// </para>
+    /// <para>
+    /// <b>The one rule applied here is <c>UnreliableSequenced</c>'s</b> (subtask 6.6.11, issue #221):
+    /// a record is delivered only if it is strictly newer than the highest that Space has already
+    /// delivered. Admission and delivery part company for this mode alone — a record reordered behind a
+    /// newer one is a perfectly ordinary arrival as far as the receive window is concerned, and
+    /// discarding it is the whole reason the mode exists. There is deliberately no tolerance window for
+    /// recovering such a record: the rule is stated in a sentence with no exceptions — you never
+    /// receive an older update after a newer one — and a tolerance would break that sentence to
+    /// recover exactly what the mode is for discarding.
+    /// </para>
+    /// <para>
+    /// <b>Plain <c>Unreliable</c>'s rule is bounded duplicate suppression</b> (subtask 6.6.12, issue
+    /// #222; ADR 0017): a record the Peer's own <see cref="UnreliableDuplicateWindow"/> has already
+    /// seen is suppressed, and one delayed past that window's 64 sequences is delivered. That window
+    /// is deliberately not the receive window — 64 is a protocol constant, while the receive window's
+    /// capacity is a consumer option — so the two are asked separately and a suppression here is
+    /// counted as a duplicate exactly as one the receive window caught is.
+    /// </para>
+    /// <para>
+    /// <b><c>ReliableOrdered</c>'s rule is send order</b> (subtask 6.6.10, issue #220): the record goes
+    /// through this Peer's <see cref="PeerSlot.OrderedDelivery"/> queue, which holds it whenever an
+    /// earlier sequence in that Space has not arrived and releases the whole contiguous run behind the
+    /// gap the moment it fills. Held bytes reach the consumer only when they drain, so a Message waiting
+    /// on a hole is not counted as received until it does. The queue is per-Peer and per-Space, so a
+    /// hole here stalls nothing in the other three Spaces — that is what the four-Space decision buys.
+    /// <c>ReliableUnordered</c> takes no queue at all and is delivered exactly as the window admitted it.
+    /// </para>
+    /// </remarks>
+    private void DeliverAdmittedRecord(PeerSlot slot, PacketRecordMode mode, uint sequence, ReadOnlySpan<byte> payload)
+    {
+        if (mode == PacketRecordMode.ReliableOrdered)
+        {
+            if (!slot.OrderedDelivery.Admit(sequence, payload))
+            {
+                // Held behind a gap, or a duplicate of a sequence already released. Either way nothing
+                // reaches the consumer for this record now; a held one drains on the Pump that fills
+                // the hole ahead of it.
+                return;
+            }
+
+            DeliverToConsumer(slot, payload);
+            while (slot.OrderedDelivery.TryReleaseNext(out ReadOnlyMemory<byte> released))
+            {
+                DeliverToConsumer(slot, released.Span);
+            }
+
+            return;
+        }
+
+        if (mode == PacketRecordMode.UnreliableSequenced)
+        {
+            if (slot.HighestDeliveredUnreliableSequenced is uint highest
+                && !SequenceNumber.IsNewerThan(sequence, highest))
+            {
+                return;
+            }
+
+            // Advanced before the delivery attempt, not after it: a record this Space has decided is
+            // the newest stays the newest whether or not the arena had room for it. Advancing only on a
+            // successful reservation would let a Message refused for room be superseded by an older one
+            // that happened to fit, which is the one thing the mode promises cannot happen.
+            slot.HighestDeliveredUnreliableSequenced = sequence;
+        }
+
+        DeliverToConsumer(slot, payload);
+    }
+
+    /// <summary>
+    /// The last step every mode's delivery rule ends at: copy the payload into the shared frame arena
+    /// under this Peer's own share-holder identity (ADR 0014), queue it as a pending
+    /// <see cref="SessionEventKind.MessageReceived"/>, and raise this Peer's
+    /// <see cref="PeerCounters.MessagesReceived"/>. Split out from
+    /// <see cref="DeliverAdmittedRecord"/> so a <c>ReliableOrdered</c> run released from behind a gap
+    /// reaches the consumer through exactly the same three steps, in the same order, as a record
+    /// delivered the moment it arrived (subtask 6.6.10, issue #220).
+    /// </summary>
+    /// <remarks>
+    /// A Message the arena had no room for is not counted as received; the reasoning is on
+    /// <see cref="DeliverAdmittedRecord"/>, which is where every caller of this comes from.
+    /// </remarks>
+    private void DeliverToConsumer(PeerSlot slot, ReadOnlySpan<byte> payload)
+    {
+        int payloadOffset = _arena.BytesUsed;
+        ArenaReservation reservation = _arena.Reserve(slot.Handle.Index, payload);
+
+        if (reservation.Outcome != ArenaReservationOutcome.Committed)
+        {
+            if (reservation.Outcome == ArenaReservationOutcome.ArenaExhausted && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(
+                    ToPeerId(slot.Handle),
+                    reservation.BytesRequested,
+                    reservation.BytesFree));
+            }
+
+            return;
+        }
+
+        _pendingEvents.Add(new PendingEvent
+        {
+            Kind = SessionEventKind.MessageReceived,
+            Peer = ToPeerId(slot.Handle),
+            PayloadOffset = payloadOffset,
+            PayloadLength = payload.Length,
+        });
+
+        slot.Counters.RecordMessageReceived();
     }
 
     /// <summary>
@@ -1220,6 +1664,44 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Not a reliable delivery mode."),
     };
 
+    /// <summary>
+    /// One record <see cref="Send"/> queued on a Peer's Slot, awaiting that Peer's next flush
+    /// (<see cref="FlushOutboundDatagrams"/>, issue #216): the wire mode and sequence
+    /// <see cref="Send"/> already allocated, plus — only for the two unreliable modes — a copy of the
+    /// Message's bytes. A reliable record carries no copy of its own: its bytes already live in
+    /// <see cref="_retention"/> from the moment <see cref="Send"/> committed them, and
+    /// <see cref="TryResolvePendingPayload"/> reads them back from there at flush time instead of
+    /// duplicating them here. Nothing retains an unreliable Send's bytes anywhere else — plain
+    /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> take no
+    /// retention slot at all (issue #43) — so this is the simplest place that can hold them until the
+    /// Pump that finally needs them: one small copy per unreliable Send, released the moment that
+    /// Pump's flush clears <see cref="PeerSlot.PendingSends"/>.
+    /// </summary>
+    private readonly struct PendingOutboundRecord
+    {
+        /// <summary>The wire mode this record was allocated under.</summary>
+        public required PacketRecordMode Mode { get; init; }
+
+        /// <summary>The sequence number <see cref="Send"/> allocated for this record.</summary>
+        public required uint Sequence { get; init; }
+
+        /// <summary>
+        /// Whether this queue entry is a resend rather than a first transmission (subtask 6.6.8, issue
+        /// #218). What it decides at flush time is one thing: a first transmission arms its retransmit
+        /// deadline through <see cref="OutstandingReliableSequences.RecordSent"/>, while a resend has
+        /// already been re-armed by <see cref="OutstandingReliableSequences.ReArmExpired"/> at the single
+        /// RTO its Peer's one backoff for that Pump produced. Recording a resend as newly sent would
+        /// overwrite that deadline with a second one and count the sequence as outstanding twice.
+        /// </summary>
+        public bool IsRetransmission { get; init; }
+
+        /// <summary>
+        /// A copy of the Message's bytes for an unreliable record; <see langword="null"/> for a
+        /// reliable one, whose bytes live in <see cref="_retention"/> instead.
+        /// </summary>
+        public byte[]? UnreliablePayload { get; init; }
+    }
+
     /// <summary>How far through the handshake one Peer has got.</summary>
     private enum HandshakeState
     {
@@ -1291,6 +1773,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         public OutboundSequenceSpaces OutboundSequences { get; } = new();
 
         /// <summary>
+        /// Records this Peer has Sent since its last flush, in Send order (issue #216): appended to by
+        /// <see cref="DatagramSessionReactor.Send"/> once a record is accepted, packed into one data
+        /// Datagram by <see cref="FlushPeer"/> on the next <see cref="Pump"/> that finds this
+        /// non-empty, and cleared immediately after by <see cref="FlushOutboundDatagrams"/>. A fresh
+        /// Slot always starts with an empty queue — <see cref="Connect"/> and the accepted-Peer path in
+        /// <see cref="OnHelloWithCookie"/> both construct a brand new <see cref="PeerSlot"/> rather than
+        /// reusing one, so a Slot a later Peer occupies never inherits a previous occupant's queue.
+        /// </summary>
+        public List<PendingOutboundRecord> PendingSends { get; } = [];
+
+        /// <summary>
         /// This Peer's own tracker of outstanding reliable sequences and their ack horizon (subtask
         /// 6.3.6, issue #188): built fresh alongside <see cref="OutboundSequences"/> at the same two
         /// admission sites and released with the Slot, so a Slot a later Peer reuses inherits none of
@@ -1321,5 +1814,37 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// consulted. Zero for a freshly built Slot, matching a tracker that has deferred nothing yet.
         /// </summary>
         public ulong ObservedHorizonDeferrals { get; set; }
+
+        /// <summary>
+        /// The highest sequence this Peer has delivered in its <c>UnreliableSequenced</c> Space, or
+        /// <see langword="null"/> if it has delivered none (subtask 6.6.11, issue #221). What the mode's
+        /// whole rule is stated against: a record is delivered only if it is strictly newer than this,
+        /// so a Message superseded before it arrived is discarded rather than delivered late.
+        /// </summary>
+        /// <remarks>
+        /// Nullable rather than a zero default, because zero is a real sequence a Session's first
+        /// UnreliableSequenced Send uses: without the distinction that first Message would have to be
+        /// strictly newer than itself to be delivered. Compared with
+        /// <see cref="SequenceNumber.IsNewerThan"/> rather than <c>&gt;</c>, so the comparison stays
+        /// correct across the <c>u32</c> wrap.
+        /// </remarks>
+        public uint? HighestDeliveredUnreliableSequenced { get; set; }
+
+        /// <summary>
+        /// This Peer's bounded duplicate suppression for the plain <c>Unreliable</c> Space (subtask
+        /// 6.6.12, issue #222; ADR 0017): 64 sequences wide, a protocol constant rather than anything
+        /// derived from this Reactor's options. Built with the Slot and released with it, so a Slot a
+        /// later Peer occupies never inherits the previous occupant's suppression state.
+        /// </summary>
+        public UnreliableDuplicateWindow UnreliableDuplicates { get; } = new();
+
+        /// <summary>
+        /// This Peer's send-order release queue for its <c>ReliableOrdered</c> Space (subtask 6.6.10,
+        /// issue #220). One queue, for that Space alone: the other three Spaces have none, which is what
+        /// confines head-of-line blocking to this Space by construction rather than by convention. Built
+        /// with the Slot and released with it, so a Slot a later Peer occupies never inherits the
+        /// previous occupant's held run or its next expected sequence.
+        /// </summary>
+        public OrderedDeliveryQueue OrderedDelivery { get; } = new();
     }
 }

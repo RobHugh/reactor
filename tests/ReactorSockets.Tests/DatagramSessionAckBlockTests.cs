@@ -49,6 +49,18 @@ namespace ReactorSockets.Tests;
 /// design signal to note in this ticket's report, not a gap to paper over with a test that only looks
 /// like it covers it (tests/CLAUDE.md, ADR 0015).
 /// </para>
+/// <para>
+/// <b>That last paragraph has since been overtaken.</b> Slice 6.4/6.5's outbound data send landed, so
+/// <c>FlushPeer</c> now calls <c>RecordSent</c> for every reliable record it packs, and a sequence can
+/// be recorded as sent through <see cref="DatagramSessionReactor.Send"/> alone. What was unreachable
+/// when this file was written is reachable now, and <see cref="DatagramSessionHorizonTests"/> asserts
+/// it: the horizon withholding deadlines, an arriving ack block releasing outstanding sequences, and a
+/// slide arming what it newly covers, all read through
+/// <see cref="PeerCounters.PacketsRetransmitted"/> and
+/// <see cref="PeerCounters.HorizonDeferrals"/>. The tests in this file keep their own value —
+/// they are the untrusted-input and parse-robustness half — and their zero-deferral assertions still
+/// hold, because nothing here ever Sends.
+/// </para>
 /// </remarks>
 public class DatagramSessionAckBlockTests
 {
