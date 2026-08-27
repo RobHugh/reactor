@@ -268,6 +268,26 @@ internal static class PacketRecordCodec
     /// The Message's <c>u16</c> total piece count, written verbatim. Must be at least 2; see the
     /// exception below.
     /// </param>
+    /// <remarks>
+    /// <para>
+    /// <strong>Neither fragment field has a path that varies with its magnitude</strong>, and issue
+    /// #243 closed its "index and count at their maximum" criterion on that basis rather than on a
+    /// test, by ADR 0015's criterion 3: the code is already such that the invariant is trivially true.
+    /// Both parameters are <see cref="ushort"/>, so the type bounds the domain; both are written by a
+    /// single fixed-width big-endian primitive that is total over that domain; and the only two
+    /// branches reading them — <paramref name="fragmentCount"/> against 1 and
+    /// <paramref name="fragmentIndex"/> against <paramref name="fragmentCount"/> — are relational
+    /// rather than magnitude-dependent, and are pinned at the boundaries that actually separate their
+    /// arms. A test at 65535 would therefore exercise the same path as a test at 2 and assert the
+    /// compiler's type bounds rather than this method's behaviour.
+    /// </para>
+    /// <para>
+    /// The reading half of the boundary is a different matter and <em>is</em> covered, because a
+    /// hostile peer can put any <c>u16</c> on the wire whatever this writer would have chosen:
+    /// <c>DatagramSessionDataDatagramParseTests.Pump_FragmentRecordsAtTheValidBoundaries_AllParseSuccessfully</c>
+    /// drives a count of 65535 through <see cref="TryRead"/> (issue #252).
+    /// </para>
+    /// </remarks>
     /// <param name="payload">
     /// The record's payload bytes, copied verbatim after the record's fixed header. Its length becomes
     /// the record's <c>u16</c> length field.
