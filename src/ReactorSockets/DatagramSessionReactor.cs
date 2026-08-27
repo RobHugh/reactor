@@ -669,9 +669,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// Reads the 20-byte header, then packet records until the datagram is exhausted (issue #163), and
     /// routes every record that parses into <paramref name="slot"/>'s Space for its mode (issue #172).
     /// A datagram is a container, not a Message: one bad record — a short header, a bad flags byte, a
-    /// spare or fragment bit set, a length running past the end, or truncation inside a record —
-    /// discards the whole datagram rather than whatever records parsed before it, because a partial
-    /// admission would let a forged tail poison an otherwise legitimate send. Parsing therefore runs in
+    /// spare bit set, a length running past the end, or truncation inside a record — discards the
+    /// whole datagram rather than whatever records parsed before it, because a partial admission would
+    /// let a forged tail poison an otherwise legitimate send. A record with the fragment bit set is not
+    /// by itself bad: <see cref="PacketRecordCodec.TryRead"/> reads the Fragment shape same as the
+    /// unfragmented one, and this method routes it into its Space the same way, fragment index and
+    /// count unused until #173 assembles Messages from them. Parsing therefore runs in
     /// two passes over the same bytes: the first confirms every record is well-formed without touching
     /// any Space, and only once the whole datagram has proven parseable does the second classify each
     /// record in turn — so an early record is never classified on the strength of a datagram whose tail
@@ -704,7 +707,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ReadOnlySpan<byte> remainder = body;
         while (remainder.Length > 0)
         {
-            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out int bytesConsumed))
+            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
             {
                 DiscardMalformed(source, datagram.Length);
                 return;
@@ -730,7 +733,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             // Every record in this span already proved well-formed in the pass above, so this read
             // cannot fail — the return value is not re-checked.
-            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out ushort length, out int bytesConsumed);
+            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out ushort length, out _, out _, out _, out int bytesConsumed);
 
             // The payload is the tail of what this record consumed, so it is sliced from the record's
             // own span rather than re-derived from a header width this method would then have to know.

@@ -6,9 +6,9 @@ namespace ReactorSockets.Session;
 /// copies that can drift apart.
 /// </summary>
 /// <param name="IsProcessed">
-/// Whether this slice does anything with a record of this shape. The fragment shape is on the wire
-/// format (ADR 0009) but not implemented until slice 7, so it is <see langword="false"/> here and
-/// rejected exactly as an unrecognised shape would be — the wire is not the place to advertise an
+/// Whether this slice reads a record of this shape at all. Both wire shapes ADR 0009 defines are
+/// <see langword="true"/> here; only a shape not on the roster falls through to the discard arm and
+/// is rejected exactly as an unrecognised shape would be — the wire is not the place to advertise an
 /// unfinished feature.
 /// </param>
 /// <param name="RecordSize">
@@ -32,14 +32,13 @@ internal static class PacketRecordLegality
     /// </summary>
     public static PacketRecordShape ShapeOf(byte flags) => (flags & DatagramSessionProtocol.FragmentBit) switch
     {
-        // The unfragmented shape: flags(1) + seq(4) + length(2). The only shape this slice processes.
+        // The unfragmented shape: flags(1) + seq(4) + length(2). A complete Message.
         0 => new PacketRecordShape(true, DatagramSessionProtocol.UnfragmentedRecordSize),
 
         // The fragment shape: the unfragmented shape's bytes followed by fragIndex(2) + fragCount(2).
-        // On the roster because ADR 0009 defines it; not implemented until slice 7, and therefore
-        // rejected here rather than half-parsed — the two parse shapes exist as a contract from the
-        // start even though only one of them does anything yet.
-        DatagramSessionProtocol.FragmentBit => new PacketRecordShape(false, DatagramSessionProtocol.FragmentRecordSize),
+        // One piece of a larger Message; what those two extra fields mean is judged elsewhere
+        // (issue #253), not here — this table only says the shape is read.
+        DatagramSessionProtocol.FragmentBit => new PacketRecordShape(true, DatagramSessionProtocol.FragmentRecordSize),
 
         // The discard arm refuses. Masking flags against FragmentBit only ever produces one of the two
         // values named above, but the compiler cannot prove that, so this arm stays reachable in its

@@ -37,12 +37,14 @@ internal enum PacketRecordMode : byte
 /// follows for control datagrams: every member works over <see cref="ReadOnlySpan{T}"/> or
 /// <see cref="Span{T}"/>, no path throws for an ordinary and expected outcome, and every length is
 /// checked against what remains before it is read or written, never after. Unknown flag bits are a
-/// protocol violation rather than something to tolerate (ADR 0009) — a spare bit set or the fragment
-/// bit set both fail the read outright, the same as a record too short to hold its declared shape or a
-/// length that would run past the datagram. <see cref="TryWrite"/> mirrors that on the way out: it
-/// never sets a spare bit or the fragment bit, because it only ever writes the unfragmented shape.
-/// Multi-byte integers are big-endian, matched by every reader and writer here rather than left to the
-/// host's native order.
+/// protocol violation rather than something to tolerate (ADR 0009) — a spare bit set fails the read
+/// outright, the same as a record too short to hold its declared shape or a length that would run past
+/// the datagram. Two shapes are on the wire (<see cref="PacketRecordLegality"/>): an unfragmented
+/// record, a complete Message; and a Fragment, one piece of a larger Message, which carries a fragment
+/// index and fragment count no unfragmented record has room for or needs. <see cref="TryWrite"/> does
+/// not yet mirror that on the way out: it only ever writes the unfragmented shape, since nothing sends
+/// Fragments until slice 7 gives the fragment shape a writer. Multi-byte integers are big-endian,
+/// matched by every reader and writer here rather than left to the host's native order.
 /// </remarks>
 internal static class PacketRecordCodec
 {
@@ -50,11 +52,15 @@ internal static class PacketRecordCodec
     /// Reads one packet record from the start of <paramref name="record"/>, which is positioned at
     /// the record's first byte and extends to the end of the bytes remaining in the datagram —
     /// callers do not pass a separate remaining-length parameter because <paramref name="record"/>'s
-    /// own length already is that count. Fails without reading past <paramref name="record"/> when:
-    /// any spare bit (<see cref="DatagramSessionProtocol.SpareBitsMask"/>) is set; the fragment bit
-    /// is set, since the fragment shape is rejected until slice 7 implements it
-    /// (<see cref="PacketRecordLegality"/>); fewer bytes remain than the record's shape needs; or
-    /// <paramref name="length"/> would exceed the bytes left in the datagram after the record header.
+    /// own length already is that count. Reads either wire shape (<see cref="PacketRecordLegality"/>):
+    /// an unfragmented record, whose <paramref name="isFragment"/> comes back <see langword="false"/>
+    /// with <paramref name="fragmentIndex"/> and <paramref name="fragmentCount"/> left unset, since a
+    /// complete Message has no fragment to index into; or a Fragment, whose two extra fields are read
+    /// and reported alongside it. This method reads the shape only — it does not judge whether a
+    /// Fragment's index and count describe a legal set (issue #253). Fails without reading past
+    /// <paramref name="record"/> when: any spare bit (<see cref="DatagramSessionProtocol.SpareBitsMask"/>)
+    /// is set; fewer bytes remain than the record's shape needs; or <paramref name="length"/> would
+    /// exceed the bytes left in the datagram after the record header.
     /// </summary>
     /// <param name="record">
     /// The datagram's bytes from this record's first byte onward. Its length is the bytes remaining
@@ -63,6 +69,20 @@ internal static class PacketRecordCodec
     /// <param name="mode">The record's delivery mode, valid only when this method returns <see langword="true"/>.</param>
     /// <param name="sequence">The record's <c>u32</c> sequence number, valid only when this method returns <see langword="true"/>.</param>
     /// <param name="length">The record's declared payload length in bytes, valid only when this method returns <see langword="true"/>.</param>
+    /// <param name="isFragment">
+    /// Whether this record carries the fragment shape, valid only when this method returns
+    /// <see langword="true"/>. <see langword="false"/> for an unfragmented record.
+    /// </param>
+    /// <param name="fragmentIndex">
+    /// The record's <c>u16</c> fragment index, valid only when this method returns
+    /// <see langword="true"/> and <paramref name="isFragment"/> is <see langword="true"/>. Unset — and
+    /// meaningless — for an unfragmented record.
+    /// </param>
+    /// <param name="fragmentCount">
+    /// The record's <c>u16</c> fragment count, valid only when this method returns
+    /// <see langword="true"/> and <paramref name="isFragment"/> is <see langword="true"/>. Unset — and
+    /// meaningless — for an unfragmented record.
+    /// </param>
     /// <param name="bytesConsumed">
     /// The total bytes this record occupies in the datagram — its header plus its payload — so the
     /// caller can slice past it to read the next record. Valid only when this method returns
@@ -73,11 +93,17 @@ internal static class PacketRecordCodec
         out PacketRecordMode mode,
         out uint sequence,
         out ushort length,
+        out bool isFragment,
+        out ushort fragmentIndex,
+        out ushort fragmentCount,
         out int bytesConsumed)
     {
         mode = default;
         sequence = default;
         length = default;
+        isFragment = default;
+        fragmentIndex = default;
+        fragmentCount = default;
         bytesConsumed = default;
 
         // Nothing to read the shape from: a record needs at least its flags byte before the legality
@@ -95,8 +121,8 @@ internal static class PacketRecordCodec
             return false;
         }
 
-        // The fragment shape rejects here, through the table rather than through a second bit test, so
-        // the shape a record claims and the bytes it is read against can never disagree.
+        // The shape a record claims comes from the table, not from a second bit test here, so the
+        // shape and the bytes it is read against can never disagree.
         PacketRecordShape shape = PacketRecordLegality.ShapeOf(flags);
         if (!shape.IsProcessed || record.Length < shape.RecordSize)
         {
@@ -114,6 +140,16 @@ internal static class PacketRecordCodec
         mode = (PacketRecordMode)(flags & DatagramSessionProtocol.ModeMask);
         sequence = BinaryPrimitives.ReadUInt32BigEndian(record[DatagramSessionProtocol.RecordSequenceOffset..]);
         length = candidateLength;
+
+        // The fragment fields exist only on the longer shape, so they are read only when the flags
+        // byte claims it — reading them off an unfragmented record would read into its payload.
+        isFragment = (flags & DatagramSessionProtocol.FragmentBit) != 0;
+        if (isFragment)
+        {
+            fragmentIndex = BinaryPrimitives.ReadUInt16BigEndian(record[DatagramSessionProtocol.RecordFragmentIndexOffset..]);
+            fragmentCount = BinaryPrimitives.ReadUInt16BigEndian(record[DatagramSessionProtocol.RecordFragmentCountOffset..]);
+        }
+
         bytesConsumed = shape.RecordSize + candidateLength;
         return true;
     }

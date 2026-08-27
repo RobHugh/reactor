@@ -96,18 +96,29 @@ internal static class DatagramSessionProtocol
 
     /// <summary>
     /// The exact size in bytes of a packet record carrying the unfragmented shape (ADR 0009): one flags
-    /// byte, a four-byte sequence, and a two-byte length. This is the only shape until slice 7, when
-    /// <see cref="FragmentBit"/> admits the longer one.
+    /// byte, a four-byte sequence, and a two-byte length. A complete Message pays only this — no
+    /// fragment index, no fragment count — since those two fields exist only to locate one piece
+    /// within a larger Message, which an unfragmented record never is.
     /// </summary>
     public const int UnfragmentedRecordSize = sizeof(byte) + sizeof(uint) + sizeof(ushort);
 
     /// <summary>
     /// The exact size in bytes of a packet record carrying the fragment shape (ADR 0009): the
     /// unfragmented record's bytes followed by a two-byte fragment index and a two-byte fragment count.
-    /// Defined now so the two parse shapes exist as a contract from the start; a record with
-    /// <see cref="FragmentBit"/> set is rejected until slice 7 implements it.
+    /// The two extra fields are what let a receiver place this piece within its Message and know when
+    /// every piece has arrived, in place of a message id no fragment shape carries — see
+    /// <see cref="FragmentBit"/>.
     /// </summary>
     public const int FragmentRecordSize = UnfragmentedRecordSize + sizeof(ushort) + sizeof(ushort);
+
+    /// <summary>
+    /// The offset of a Fragment record's <c>u16</c> fragment index, immediately after the unfragmented
+    /// shape's bytes. Meaningless — and unread — on an unfragmented record, which does not carry it.
+    /// </summary>
+    public const int RecordFragmentIndexOffset = UnfragmentedRecordSize;
+
+    /// <summary>The offset of a Fragment record's <c>u16</c> fragment count, immediately after its fragment index.</summary>
+    public const int RecordFragmentCountOffset = RecordFragmentIndexOffset + sizeof(ushort);
 
     /// <summary>
     /// The offset of a packet record's <c>u32</c> sequence, immediately after the flags byte. Named
@@ -146,8 +157,10 @@ internal static class DatagramSessionProtocol
 
     /// <summary>
     /// The bit marking a packet record as a fragment of a larger Message rather than a complete one
-    /// (ADR 0004, ADR 0009). Only the two reliable modes ever set it; this subtask defines the bit and
-    /// leaves it rejected-if-set until slice 7 implements the fragment record shape.
+    /// (ADR 0004, ADR 0009). Only the two reliable modes ever set it. Setting it grows the record by
+    /// the fragment index and fragment count that follow the length field — an unfragmented Message
+    /// pays one bit rather than the four bytes those fields would cost every record if they were
+    /// always present.
     /// </summary>
     public const byte FragmentBit = 0b0000_0100;
 
