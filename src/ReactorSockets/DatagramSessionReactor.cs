@@ -348,6 +348,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             State = HandshakeState.AwaitingCookie,
             AckTracker = NewAckTracker(retransmitTimer),
             RetransmitTimer = retransmitTimer,
+            FragmentSize = _options.ResolvedFragmentSize,
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
@@ -464,10 +465,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// having spent ten Datagrams of bandwidth on a coin flip (<c>docs/delivery-modes.md</c>). For
     /// <see cref="DeliveryMode.ReliableOrdered"/> and <see cref="DeliveryMode.ReliableUnordered"/> the
     /// single-Datagram cap does not apply: a Message up to <see cref="DatagramSessionOptions.MaxMessageSize"/>
-    /// is cut into <c>ceil(length / ResolvedFragmentSize)</c> Fragments (issue #245), each retained and
+    /// is cut into <c>ceil(length / fragmentSize)</c> Fragments (issue #245), each retained and
     /// sequenced as its own ordinary reliable packet, and only a Message wider than
     /// <see cref="DatagramSessionOptions.MaxMessageSize"/> is refused with
-    /// <see cref="SendOutcome.MessageTooLarge"/>.
+    /// <see cref="SendOutcome.MessageTooLarge"/>. That <c>fragmentSize</c> is this Peer's own
+    /// <see cref="PeerSlot.FragmentSize"/>, captured from <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
+    /// once when the Peer was admitted (issue #248) — not re-read from options on this or any later
+    /// call. Fragment size is unilateral, per-direction, and decided once, at <c>Send</c> (ADR 0004): a
+    /// retransmit re-sends bytes already cut rather than re-deciding anything, so two Messages sent to
+    /// the same Peer at different times, and every retransmit of either, are always cut with the same
+    /// size. It is never announced in the handshake, because a receiver reassembles a Fragment set by
+    /// <c>fragmentIndex</c> and <c>fragmentCount</c> alone and never needs to know the sender's choice.
     /// </param>
     public SendOutcome Send(PeerId peer, DeliveryMode mode, ReadOnlySpan<byte> message)
     {
@@ -508,7 +516,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         int spaceIndex = ReliableSpaceIndex(recordMode);
-        int fragmentCount = FragmentPlan.Resolve(message.Length, _options.ResolvedFragmentSize, mode).FragmentCount;
+
+        // The fragment size used to cut this Message is this Peer's own, captured on the Slot at
+        // admission (issue #248, ADR 0004) rather than read from _options here — fragment size is
+        // decided once, per Peer, and Send only ever consults what was already decided.
+        int fragmentSize = slot.FragmentSize;
+        int fragmentCount = FragmentPlan.Resolve(message.Length, fragmentSize, mode).FragmentCount;
 
         // A Message's Fragments are committed as one unit (issue #247): the retention budget is sized
         // in Fragments, not Messages, so a Message wide enough to need more Fragments than the Space has
@@ -555,7 +568,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // runs on the constructing thread (EnsureCallingThreadIsConstructingThread). A commit failing
         // here would mean the two disagreed, which is a bug in this method, not a runtime outcome to
         // report through SendOutcome (issue #247).
-        int fragmentSize = _options.ResolvedFragmentSize;
         uint? previousSequence = null;
 
         for (int fragmentIndex = 0; fragmentIndex < fragmentCount; fragmentIndex++)
@@ -1998,6 +2010,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             State = HandshakeState.Established,
             AckTracker = NewAckTracker(retransmitTimer),
             RetransmitTimer = retransmitTimer,
+            FragmentSize = _options.ResolvedFragmentSize,
         };
     }
 
@@ -2267,6 +2280,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>The largest Message the remote said it will accept.</summary>
         public uint RemoteMaxMessageSize { get; set; }
+
+        /// <summary>
+        /// This Peer's own fragment size, resolved from <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
+        /// once at admission and stored here rather than read afresh from options on every
+        /// <see cref="DatagramSessionReactor.Send"/> (issue #248). Fragment size is unilateral and
+        /// per-direction (ADR 0004): it is decided once, when this Peer opens, and nothing consulted
+        /// later — a config change, a handshake reply, a Resume — can move it for a Session already in
+        /// flight. Every Fragment a Message is cut into and every retransmit of one uses this same
+        /// value for that Peer's whole lifetime.
+        /// </summary>
+        public required int FragmentSize { get; init; }
 
         /// <summary>The secret the remote will require before it resumes this Session. Stored, unused until Resume lands.</summary>
         public byte[] RemoteResumeSecret { get; set; } = [];
