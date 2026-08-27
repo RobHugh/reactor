@@ -367,7 +367,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// allocated and no retention is taken, so a rejected Send leaves no trace on the Session. Past
     /// that gate, a reliable mode allocates the next sequence in its own Space and retains the Message
     /// whole there, returning <see cref="SendOutcome.RetentionExhausted"/> once that Space has no slot
-    /// left; <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/>
+    /// left — and that refusal spends nothing either: the sequence is claimed only once retention has
+    /// committed, so a refused reliable Send leaves the Space's next sequence exactly where it was
+    /// (issue #244), rather than opening a gap the receiver's window would wait on for a record that
+    /// is never sent; <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/>
     /// still allocate a sequence — every mode gets one, the same as every other
     /// (<see cref="OutboundSequenceSpaces"/>) — but retain nothing, because nothing unreliable is ever
     /// retransmitted (issue #43). A Message this call accepts is queued on <paramref name="peer"/>'s
@@ -417,24 +420,29 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         PacketRecordMode recordMode = ToRecordMode(mode);
-        uint sequence = slot.OutboundSequences.Allocate(recordMode);
 
         if (recordMode is not (PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered))
         {
             slot.PendingSends.Add(new PendingOutboundRecord
             {
                 Mode = recordMode,
-                Sequence = sequence,
+                Sequence = slot.OutboundSequences.Allocate(recordMode),
                 UnreliablePayload = message.ToArray(),
             });
             return SendOutcome.Sent;
         }
 
+        // The sequence is read before retention is attempted and only spent once retention commits.
+        // TryAcquire refuses an exhausted Space without touching the pool, so a refusal here has to
+        // leave the Space where it found it too: a burned sequence is a hole the receiver's window
+        // waits on for a record that will never be sent (issue #244), and a Space has no rewind.
         int spaceIndex = ReliableSpaceIndex(recordMode);
+        uint sequence = slot.OutboundSequences.Peek(recordMode);
         RetentionSlotOutcome outcome = _retention.TryAcquire(handle.Index, spaceIndex, sequence, message);
 
         if (outcome == RetentionSlotOutcome.Committed)
         {
+            slot.OutboundSequences.Allocate(recordMode);
             slot.PendingSends.Add(new PendingOutboundRecord { Mode = recordMode, Sequence = sequence });
         }
 
