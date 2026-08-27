@@ -82,6 +82,47 @@ public class PumpIntervalObserverTests
     }
 
     [Fact]
+    public void Interval_WallClockJumpedForwardAndBackBetweenTwoObserveCalls_ReadsTheMonotonicGapAndNothingElse()
+    {
+        // Arrange — the criterion issue #191 states for the datagram Reactor's own cadence reading:
+        // only monotonic timestamps are consulted, so moving the wall clock changes nothing. A
+        // FakeTimeProvider cannot prove it, because advancing it moves its timestamp and its UtcNow
+        // together; this provider moves them apart, which is exactly the divergence a machine's clock
+        // adjustment produces and the one that would otherwise let a single adjustment fire every
+        // timer in the library at once.
+        DivergentClockTimeProvider timeProvider = new();
+        PumpIntervalObserver observer = new(timeProvider);
+
+        // Act
+        observer.Observe();
+        timeProvider.AdvanceTimestamp(TimeSpan.FromMilliseconds(25));
+        timeProvider.SetUtcNow(timeProvider.GetUtcNow() + TimeSpan.FromHours(3));
+        timeProvider.SetUtcNow(timeProvider.GetUtcNow() - TimeSpan.FromDays(2));
+        observer.Observe();
+
+        // Assert
+        observer.Interval.Should().Be(TimeSpan.FromMilliseconds(25));
+    }
+
+    [Fact]
+    public void Interval_WallClockJumpedWithNoTimestampMovementAtAll_ReadsZeroRatherThanTheWallClockJump()
+    {
+        // Arrange — the other half of the same claim: a wall-clock jump on its own is not a cadence.
+        // Two Pumps at the same monotonic instant are two Pumps with no gap between them, however far
+        // the machine's clock moved in between.
+        DivergentClockTimeProvider timeProvider = new();
+        PumpIntervalObserver observer = new(timeProvider);
+
+        // Act
+        observer.Observe();
+        timeProvider.SetUtcNow(timeProvider.GetUtcNow() + TimeSpan.FromHours(6));
+        observer.Observe();
+
+        // Assert
+        observer.Interval.Should().Be(TimeSpan.Zero);
+    }
+
+    [Fact]
     public void Constructor_NullTimeProvider_ThrowsArgumentNullException()
     {
         // Act
@@ -108,5 +149,31 @@ public class PumpIntervalObserverTests
             nameof(PumpIntervalObserver.Interval),
             $"get_{nameof(PumpIntervalObserver.Interval)}",
             nameof(PumpIntervalObserver.Observe));
+    }
+
+    /// <summary>
+    /// A <see cref="TimeProvider"/> whose monotonic timestamp and whose wall clock move
+    /// independently, so a test can move one without the other. <see cref="FakeTimeProvider"/> ties
+    /// the two together — <c>Advance</c> moves both — which makes it unable to distinguish code that
+    /// reads <see cref="TimeProvider.GetTimestamp"/> from code that reads
+    /// <see cref="TimeProvider.GetUtcNow"/>. This is a test double for a BCL abstraction the
+    /// production code already takes, not an abstraction inserted for testability (ADR 0015).
+    /// </summary>
+    private sealed class DivergentClockTimeProvider : TimeProvider
+    {
+        private long _timestamp;
+        private DateTimeOffset _utcNow = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp() => _timestamp;
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+
+        /// <summary>Moves the monotonic timestamp forward, leaving the wall clock where it is.</summary>
+        public void AdvanceTimestamp(TimeSpan by) => _timestamp += by.Ticks;
+
+        /// <summary>Moves the wall clock anywhere at all, leaving the monotonic timestamp where it is.</summary>
+        public void SetUtcNow(DateTimeOffset utcNow) => _utcNow = utcNow;
     }
 }
