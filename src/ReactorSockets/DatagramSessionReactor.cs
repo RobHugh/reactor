@@ -442,23 +442,37 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="_retention"/> for a reliable mode, into the queued record for an unreliable one — so
     /// the caller owns its buffer again the instant <c>Send</c> returns and may overwrite or reuse it
     /// without changing what is eventually put on the wire (issue #244). A Message wider than
-    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> cannot fit in one Datagram and is
-    /// reported back as <see cref="SendOutcome.MessageTooLarge"/> rather than thrown. For
-    /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> the cap
-    /// is permanent, and there is no option that lifts it: you may only fragment what you can
-    /// retransmit (ADR 0004), because fragmenting what cannot be repaired multiplies the failure rate
-    /// by the number of pieces — a ten-Fragment unreliable Message on a path losing 1% of Datagrams
-    /// arrives about 90% of the time, having spent ten Datagrams of bandwidth on a coin flip
-    /// (<c>docs/delivery-modes.md</c>). For <see cref="DeliveryMode.ReliableOrdered"/> and
-    /// <see cref="DeliveryMode.ReliableUnordered"/> the same cap applies for now and is lifted once
-    /// slice 7 gives the reliable modes fragmentation.
+    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> cannot fit in one Datagram, and for
+    /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> that cap
+    /// is reported back as <see cref="SendOutcome.MessageTooLarge"/> rather than thrown, and it is
+    /// permanent — no option lifts it: you may only fragment what you can retransmit (ADR 0004), because
+    /// fragmenting what cannot be repaired multiplies the failure rate by the number of pieces — a
+    /// ten-Fragment unreliable Message on a path losing 1% of Datagrams arrives about 90% of the time,
+    /// having spent ten Datagrams of bandwidth on a coin flip (<c>docs/delivery-modes.md</c>). For
+    /// <see cref="DeliveryMode.ReliableOrdered"/> and <see cref="DeliveryMode.ReliableUnordered"/> the
+    /// single-Datagram cap does not apply: a Message up to <see cref="DatagramSessionOptions.MaxMessageSize"/>
+    /// is cut into <c>ceil(length / ResolvedFragmentSize)</c> Fragments (issue #245), each retained and
+    /// sequenced as its own ordinary reliable packet, and only a Message wider than
+    /// <see cref="DatagramSessionOptions.MaxMessageSize"/> is refused with
+    /// <see cref="SendOutcome.MessageTooLarge"/>.
     /// </param>
     public SendOutcome Send(PeerId peer, DeliveryMode mode, ReadOnlySpan<byte> message)
     {
         EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
 
-        if (message.Length > _options.ResolvedFragmentSize)
+        PacketRecordMode recordMode = ToRecordMode(mode);
+        bool isReliable = recordMode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered;
+
+        // Unreliable modes stay capped at exactly one Fragment (ADR 0004): nothing ever retransmits an
+        // unreliable Fragment, so cutting one only spends bandwidth on a coin flip. Reliable modes are
+        // capped at MaxMessageSize instead, checked next.
+        if (!isReliable && message.Length > _options.ResolvedFragmentSize)
+        {
+            return SendOutcome.MessageTooLarge;
+        }
+
+        if (isReliable && message.Length > _options.MaxMessageSize)
         {
             return SendOutcome.MessageTooLarge;
         }
@@ -469,9 +483,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return SendOutcome.Closed;
         }
 
-        PacketRecordMode recordMode = ToRecordMode(mode);
-
-        if (recordMode is not (PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered))
+        if (!isReliable)
         {
             slot.PendingSends.Add(new PendingOutboundRecord
             {
@@ -482,26 +494,77 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return SendOutcome.Sent;
         }
 
-        // The sequence is read before retention is attempted and only spent once retention commits.
-        // TryAcquire refuses an exhausted Space without touching the pool, so a refusal here has to
-        // leave the Space where it found it too: a burned sequence is a hole the receiver's window
-        // waits on for a record that will never be sent (issue #244), and a Space has no rewind.
         int spaceIndex = ReliableSpaceIndex(recordMode);
-        uint sequence = slot.OutboundSequences.Peek(recordMode);
-        RetentionSlotOutcome outcome = _retention.TryAcquire(handle.Index, spaceIndex, sequence, message);
+        int fragmentCount = FragmentPlan.Resolve(message.Length, _options.ResolvedFragmentSize, mode).FragmentCount;
 
-        if (outcome == RetentionSlotOutcome.Committed)
+        if (fragmentCount == 1)
         {
-            slot.OutboundSequences.Allocate(recordMode);
-            slot.PendingSends.Add(new PendingOutboundRecord { Mode = recordMode, Sequence = sequence });
+            // The sequence is read before retention is attempted and only spent once retention commits.
+            // TryAcquire refuses an exhausted Space without touching the pool, so a refusal here has to
+            // leave the Space where it found it too: a burned sequence is a hole the receiver's window
+            // waits on for a record that will never be sent (issue #244), and a Space has no rewind.
+            uint sequence = slot.OutboundSequences.Peek(recordMode);
+            RetentionSlotOutcome outcome = _retention.TryAcquire(handle.Index, spaceIndex, sequence, message);
+
+            if (outcome == RetentionSlotOutcome.Committed)
+            {
+                slot.OutboundSequences.Allocate(recordMode);
+                slot.PendingSends.Add(new PendingOutboundRecord { Mode = recordMode, Sequence = sequence });
+            }
+
+            return outcome switch
+            {
+                RetentionSlotOutcome.Committed => SendOutcome.Sent,
+                RetentionSlotOutcome.Exhausted => SendOutcome.RetentionExhausted,
+                _ => throw new InvalidOperationException($"Unrecognised {nameof(RetentionSlotOutcome)}: {outcome}."),
+            };
         }
 
-        return outcome switch
+        // Cutting a Message into Fragments (issue #245, ADR 0004): each Fragment is retained and
+        // sequenced exactly as a whole small Message would be above, one at a time in order, so their
+        // sequence numbers fall out contiguous and ascending as a consequence of allocating from the
+        // same Space with nothing else able to interleave. Reassembly's firstSeq = seq - fragmentIndex
+        // depends on that contiguity, so it is asserted below rather than merely trusted.
+        //
+        // The all-or-nothing refusal that would roll a partial cut back to nothing (so a Message whose
+        // Fragments do not all fit is refused whole, spending no sequence) is issue #247's job. This
+        // loop stops at the first Fragment that does not fit and reports RetentionExhausted, leaving
+        // whatever already committed retained, sequenced and queued: an incomplete set the receiver's
+        // window holds open rather than a rollback.
+        int fragmentSize = _options.ResolvedFragmentSize;
+        uint? previousSequence = null;
+
+        for (int fragmentIndex = 0; fragmentIndex < fragmentCount; fragmentIndex++)
         {
-            RetentionSlotOutcome.Committed => SendOutcome.Sent,
-            RetentionSlotOutcome.Exhausted => SendOutcome.RetentionExhausted,
-            _ => throw new InvalidOperationException($"Unrecognised {nameof(RetentionSlotOutcome)}: {outcome}."),
-        };
+            int offset = fragmentIndex * fragmentSize;
+            int length = Math.Min(fragmentSize, message.Length - offset);
+            ReadOnlySpan<byte> fragmentPayload = message.Slice(offset, length);
+
+            uint sequence = slot.OutboundSequences.Peek(recordMode);
+            RetentionSlotOutcome outcome = _retention.TryAcquire(handle.Index, spaceIndex, sequence, fragmentPayload);
+
+            if (outcome != RetentionSlotOutcome.Committed)
+            {
+                return SendOutcome.RetentionExhausted;
+            }
+
+            Debug.Assert(
+                previousSequence is null || sequence == previousSequence.Value + 1,
+                "a Message's Fragments must occupy contiguous, ascending sequence numbers (ADR 0004).");
+            previousSequence = sequence;
+
+            slot.OutboundSequences.Allocate(recordMode);
+            slot.PendingSends.Add(new PendingOutboundRecord
+            {
+                Mode = recordMode,
+                Sequence = sequence,
+                IsFragment = true,
+                FragmentIndex = (ushort)fragmentIndex,
+                FragmentCount = (ushort)fragmentCount,
+            });
+        }
+
+        return SendOutcome.Sent;
     }
 
     /// <summary>
@@ -1384,7 +1447,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            if (!packer.TryPackRecord(pending.Mode, pending.Sequence, payload))
+            bool packed = pending.IsFragment
+                ? packer.TryPackFragmentRecord(pending.Mode, pending.Sequence, pending.FragmentIndex, pending.FragmentCount, payload)
+                : packer.TryPackRecord(pending.Mode, pending.Sequence, payload);
+
+            if (!packed)
             {
                 break;
             }
@@ -2115,6 +2182,25 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// reliable one, whose bytes live in <see cref="_retention"/> instead.
         /// </summary>
         public byte[]? UnreliablePayload { get; init; }
+
+        /// <summary>
+        /// Whether this record is one piece of a Message <see cref="Send"/> cut into Fragments (issue
+        /// #245), rather than a whole Message in one record. <see langword="false"/> for every
+        /// unreliable record, since only reliable modes ever fragment (ADR 0004).
+        /// </summary>
+        public bool IsFragment { get; init; }
+
+        /// <summary>
+        /// This piece's position within its Message, valid only when <see cref="IsFragment"/> is
+        /// <see langword="true"/>.
+        /// </summary>
+        public ushort FragmentIndex { get; init; }
+
+        /// <summary>
+        /// The Message's total piece count, valid only when <see cref="IsFragment"/> is
+        /// <see langword="true"/>.
+        /// </summary>
+        public ushort FragmentCount { get; init; }
     }
 
     /// <summary>How far through the handshake one Peer has got.</summary>
