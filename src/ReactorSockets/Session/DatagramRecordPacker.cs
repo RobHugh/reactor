@@ -11,7 +11,8 @@ namespace ReactorSockets.Session;
 /// <remarks>
 /// A ref struct wrapping the caller's own destination buffer, so packing one datagram allocates
 /// nothing: <see cref="TryPackRecord"/> writes straight into the span passed to the constructor
-/// through <see cref="PacketRecordCodec.TryWrite"/>, and <see cref="BytesWritten"/> /
+/// through <see cref="PacketRecordCodec.TryWrite(Span{byte}, PacketRecordMode, uint, ReadOnlySpan{byte}, out int)"/>,
+/// and <see cref="BytesWritten"/> /
 /// <see cref="RecordsPacked"/> are running counts rather than anything collected afterward. The
 /// header is written once, at construction, through <see cref="DatagramHeaderCodec.WriteHeader"/> —
 /// both ack blocks always appear, even when the Peer has received nothing, matching that codec's own
@@ -76,7 +77,8 @@ internal ref struct DatagramRecordPacker
 
     /// <summary>
     /// Appends one packet record — mode, sequence and payload — immediately after the bytes already
-    /// packed, through <see cref="PacketRecordCodec.TryWrite"/>. Only the record's two mode bits are
+    /// packed, through <see cref="PacketRecordCodec.TryWrite(Span{byte}, PacketRecordMode, uint, ReadOnlySpan{byte}, out int)"/>.
+    /// Only the record's two mode bits are
     /// ever set in its flags byte: no spare bit, no fragment bit, because this packer only ever writes
     /// the unfragmented shape.
     /// </summary>

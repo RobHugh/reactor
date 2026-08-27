@@ -41,10 +41,11 @@ internal enum PacketRecordMode : byte
 /// outright, the same as a record too short to hold its declared shape or a length that would run past
 /// the datagram. Two shapes are on the wire (<see cref="PacketRecordLegality"/>): an unfragmented
 /// record, a complete Message; and a Fragment, one piece of a larger Message, which carries a fragment
-/// index and fragment count no unfragmented record has room for or needs. <see cref="TryWrite"/> does
-/// not yet mirror that on the way out: it only ever writes the unfragmented shape, since nothing sends
-/// Fragments until slice 7 gives the fragment shape a writer. Multi-byte integers are big-endian,
-/// matched by every reader and writer here rather than left to the host's native order.
+/// index and fragment count no unfragmented record has room for or needs. <see cref="TryWrite(Span{byte}, PacketRecordMode, uint, ReadOnlySpan{byte}, out int)"/>
+/// now mirrors that on the way out with one overload per shape — a complete Message has no index or count
+/// to give, so the unfragmented overload simply carries no parameters for them rather than accepting
+/// values it would ignore. Multi-byte integers are big-endian, matched by every reader and writer here
+/// rather than left to the host's native order.
 /// </remarks>
 internal static class PacketRecordCodec
 {
@@ -185,10 +186,10 @@ internal static class PacketRecordCodec
     /// <summary>
     /// Writes one unfragmented packet record — flags byte, <c>u32</c> sequence, <c>u16</c> length,
     /// then the payload itself — to the start of <paramref name="destination"/>. The counterpart to
-    /// <see cref="TryRead"/>, used by <see cref="DatagramRecordPacker"/> to pack a Peer's Sent records
-    /// into an outbound datagram. Only the unfragmented shape is written; the fragment shape has no
-    /// writer until slice 7 gives it one, matching <see cref="PacketRecordLegality"/> only ever
-    /// processing the unfragmented shape today.
+    /// <see cref="TryRead"/>'s unfragmented shape, used by <see cref="DatagramRecordPacker"/> to pack a
+    /// Peer's Sent records into an outbound datagram. A complete Message needs no fragment index or
+    /// fragment count — it is not a piece of anything larger — so this overload has no parameters for
+    /// them; the overload that takes a fragment index and count writes the other shape.
     /// </summary>
     /// <param name="destination">
     /// The bytes to write into, positioned at the record's first byte. Never partially written: a
@@ -238,6 +239,101 @@ internal static class PacketRecordCodec
         BinaryPrimitives.WriteUInt32BigEndian(destination[DatagramSessionProtocol.RecordSequenceOffset..], sequence);
         BinaryPrimitives.WriteUInt16BigEndian(destination[DatagramSessionProtocol.RecordLengthOffset..], (ushort)payload.Length);
         payload.CopyTo(destination[DatagramSessionProtocol.UnfragmentedRecordSize..]);
+
+        bytesWritten = recordSize;
+        return true;
+    }
+
+    /// <summary>
+    /// Writes one Fragment record — flags byte with the fragment bit set, <c>u32</c> sequence,
+    /// <c>u16</c> length, <c>u16</c> fragment index, <c>u16</c> fragment count, then the payload itself
+    /// — to the start of <paramref name="destination"/>. The counterpart to <see cref="TryRead"/>'s
+    /// Fragment shape: a Fragment is one piece of a larger Message, so unlike the unfragmented overload
+    /// it carries the two extra fields a receiver needs to place this piece and know when every piece
+    /// has arrived — fields a complete Message has no use for and never pays for.
+    /// </summary>
+    /// <param name="destination">
+    /// The bytes to write into, positioned at the record's first byte. Never partially written: a
+    /// <paramref name="destination"/> too short to hold this record's header plus
+    /// <paramref name="payload"/> fails without writing anything, the same as a caller finding the
+    /// remaining space in a datagram already spent.
+    /// </param>
+    /// <param name="mode">The record's delivery mode, written into the flags byte's two mode bits. No other bit in the flags byte is ever set except <see cref="DatagramSessionProtocol.FragmentBit"/> — never a spare bit.</param>
+    /// <param name="sequence">The record's <c>u32</c> sequence number.</param>
+    /// <param name="fragmentIndex">
+    /// This piece's <c>u16</c> position within its Message, written verbatim. Must be less than
+    /// <paramref name="fragmentCount"/>; see the exception below.
+    /// </param>
+    /// <param name="fragmentCount">
+    /// The Message's <c>u16</c> total piece count, written verbatim. Must be at least 2; see the
+    /// exception below.
+    /// </param>
+    /// <param name="payload">
+    /// The record's payload bytes, copied verbatim after the record's fixed header. Its length becomes
+    /// the record's <c>u16</c> length field.
+    /// </param>
+    /// <param name="bytesWritten">
+    /// The total bytes written — the record's header plus <paramref name="payload"/> — so the caller
+    /// can advance past it. Valid only when this method returns <see langword="true"/>.
+    /// </param>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="payload"/> is longer than <see cref="ushort.MaxValue"/>; or
+    /// <paramref name="fragmentCount"/> is 0 or 1; or <paramref name="fragmentIndex"/> is greater than
+    /// or equal to <paramref name="fragmentCount"/>. All three are refused the same way <see
+    /// cref="TryRead"/> refuses them on the way in (issue #253) — a count of zero has no valid index, a
+    /// count of one describes a Message that is whole in one piece and should never carry the fragment
+    /// shape, and an index at or beyond its count names a piece outside the set it claims. The
+    /// difference from a short <paramref name="destination"/>, which is an ordinary and expected outcome
+    /// reported by a <see langword="false"/> return, is who chose the bad value: a remote peer chooses
+    /// what arrives over the wire, but this method's caller chooses what it hands to the writer, so
+    /// metadata that could never legally round-trip is this library's own bug, not a remote sender's —
+    /// the same distinction the payload-length check above already draws.
+    /// </exception>
+    public static bool TryWrite(
+        Span<byte> destination,
+        PacketRecordMode mode,
+        uint sequence,
+        ushort fragmentIndex,
+        ushort fragmentCount,
+        ReadOnlySpan<byte> payload,
+        out int bytesWritten)
+    {
+        bytesWritten = default;
+
+        if (payload.Length > ushort.MaxValue)
+        {
+            throw new ArgumentException(
+                $"A packet record's payload cannot exceed {ushort.MaxValue} bytes.",
+                nameof(payload));
+        }
+
+        if (fragmentCount <= 1)
+        {
+            throw new ArgumentException(
+                $"A Fragment's count must be at least 2; {fragmentCount} describes a Message that is " +
+                "whole in one piece and should never carry the fragment shape.",
+                nameof(fragmentCount));
+        }
+
+        if (fragmentIndex >= fragmentCount)
+        {
+            throw new ArgumentException(
+                $"A Fragment's index ({fragmentIndex}) must be less than its count ({fragmentCount}).",
+                nameof(fragmentIndex));
+        }
+
+        int recordSize = DatagramSessionProtocol.FragmentRecordSize + payload.Length;
+        if (destination.Length < recordSize)
+        {
+            return false;
+        }
+
+        destination[0] = (byte)((byte)mode | DatagramSessionProtocol.FragmentBit);
+        BinaryPrimitives.WriteUInt32BigEndian(destination[DatagramSessionProtocol.RecordSequenceOffset..], sequence);
+        BinaryPrimitives.WriteUInt16BigEndian(destination[DatagramSessionProtocol.RecordLengthOffset..], (ushort)payload.Length);
+        BinaryPrimitives.WriteUInt16BigEndian(destination[DatagramSessionProtocol.RecordFragmentIndexOffset..], fragmentIndex);
+        BinaryPrimitives.WriteUInt16BigEndian(destination[DatagramSessionProtocol.RecordFragmentCountOffset..], fragmentCount);
+        payload.CopyTo(destination[DatagramSessionProtocol.FragmentRecordSize..]);
 
         bytesWritten = recordSize;
         return true;
