@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -118,6 +119,52 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// Pump packs into it; reused across every Peer flushed by one Pump rather than allocated per Peer.
     /// </summary>
     private readonly byte[] _outboundDatagramBuffer = new byte[MaxUdpDatagramSize];
+
+    /// <summary>
+    /// <see cref="FragmentSetsAreWellFormed"/>'s scratch, sized once at construction from
+    /// <see cref="MaxUdpDatagramSize"/> — the largest datagram this Reactor ever reads — divided by the
+    /// smallest a Fragment record can be (<see cref="DatagramSessionProtocol.FragmentRecordSize"/>), so
+    /// no datagram this Reactor accepts can ever hold more Fragments than these arrays hold entries for
+    /// (issue #256, DoS follow-up). A group's identity is the pair (mode, first sequence), never first
+    /// sequence alone (issue #47): <see cref="ReceiveWindowSpaces"/>'s own doc states the reason — each
+    /// <see cref="PacketRecordMode"/> is an independent Space, so a sequence admitted under one mode says
+    /// nothing about the same sequence under another, and two groups in different modes can never
+    /// conflict, however their first sequences or declared ranges happen to line up. One entry per
+    /// Fragment actually found in the datagram being parsed: <see cref="_fragmentGroupKey"/> packs each
+    /// Fragment's mode into its high bits and its first sequence into its low bits
+    /// (<see cref="PackModeAndFirstSequence"/>), and is sorted together with
+    /// <see cref="_fragmentGroupIndexAndCount"/> by that combined key so every Fragment of one (mode,
+    /// first sequence) group becomes one contiguous run in O(n log n) instead of re-walking the datagram
+    /// once per Fragment — sorting by mode first is what keeps one mode's runs from ever interleaving
+    /// with another's. <see cref="_distinctGroupFirstSequenceAndCount"/> then holds one entry per
+    /// distinct group (mode, first sequence and declared count all packed together), grouped by mode in
+    /// the same order the runs above were closed in; the O(g log g) sweep that finds a declared-range
+    /// overlap is run once per mode's own contiguous slice of that array via
+    /// <see cref="_distinctGroupSortKey"/> — each group's declared range start relative to an anchor
+    /// derived fresh for that mode's slice — so a comparison across two different modes' groups never
+    /// happens at all.
+    /// Four arrays of <see cref="MaxFragmentRecordsPerDatagram"/> entries costs about 140 KB per Reactor,
+    /// paid once at construction and never again: the point of sizing them off a bound fixed at
+    /// construction is that a peer's choice of datagram can never move it.
+    /// Reused across every datagram parsed — never cleared, since every read is bounded by a count
+    /// computed fresh for that datagram, and never resized, since the bound above is fixed at
+    /// construction. Single-threaded like every other field this Reactor's Pump touches (ADR 0002).
+    /// </summary>
+    /// <remarks>
+    /// <see cref="OneSequenceSpace"/> sits beside these because the sweep they feed measures distances
+    /// around the <c>u32</c> sequence circle, and 2^32 does not fit in the <see cref="uint"/> that circle
+    /// is counted in.
+    /// </remarks>
+    private const ulong OneSequenceSpace = 1UL << 32;
+
+    private const int MaxFragmentRecordsPerDatagram =
+        (MaxUdpDatagramSize - DatagramSessionProtocol.DatagramHeaderSize) / DatagramSessionProtocol.FragmentRecordSize;
+
+    private readonly ulong[] _fragmentGroupKey = new ulong[MaxFragmentRecordsPerDatagram];
+    private readonly uint[] _fragmentGroupIndexAndCount = new uint[MaxFragmentRecordsPerDatagram];
+    private readonly ulong[] _distinctGroupFirstSequenceAndCount = new ulong[MaxFragmentRecordsPerDatagram];
+    private readonly int[] _distinctGroupSortKey = new int[MaxFragmentRecordsPerDatagram];
+
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
     private int _capDiscardsThisFrame;
@@ -669,9 +716,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// Reads the 20-byte header, then packet records until the datagram is exhausted (issue #163), and
     /// routes every record that parses into <paramref name="slot"/>'s Space for its mode (issue #172).
     /// A datagram is a container, not a Message: one bad record — a short header, a bad flags byte, a
-    /// spare or fragment bit set, a length running past the end, or truncation inside a record —
-    /// discards the whole datagram rather than whatever records parsed before it, because a partial
-    /// admission would let a forged tail poison an otherwise legitimate send. Parsing therefore runs in
+    /// spare bit set, a length running past the end, or truncation inside a record — discards the
+    /// whole datagram rather than whatever records parsed before it, because a partial admission would
+    /// let a forged tail poison an otherwise legitimate send. A record with the fragment bit set is not
+    /// by itself bad: <see cref="PacketRecordCodec.TryRead"/> reads the Fragment shape same as the
+    /// unfragmented one, and this method routes it into its Space the same way, fragment index and
+    /// count unused until #173 assembles Messages from them. Parsing therefore runs in
     /// two passes over the same bytes: the first confirms every record is well-formed without touching
     /// any Space, and only once the whole datagram has proven parseable does the second classify each
     /// record in turn — so an early record is never classified on the strength of a datagram whose tail
@@ -704,13 +754,23 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ReadOnlySpan<byte> remainder = body;
         while (remainder.Length > 0)
         {
-            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out int bytesConsumed))
+            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
             {
                 DiscardMalformed(source, datagram.Length);
                 return;
             }
 
             remainder = remainder[bytesConsumed..];
+        }
+
+        // Every record on its own proved legal above (issue #253), but a Fragment's index and count are
+        // only half the story: this checks the claimed sets those individually-legal Fragments form
+        // (issue #256), still before any Space is touched, so a forged set is refused exactly like a
+        // malformed record rather than reaching classification.
+        if (!FragmentSetsAreWellFormed(body))
+        {
+            DiscardMalformed(source, datagram.Length);
+            return;
         }
 
         // The proof above is what attributes this Datagram to slot's Peer: it names an established
@@ -730,7 +790,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             // Every record in this span already proved well-formed in the pass above, so this read
             // cannot fail — the return value is not re-checked.
-            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out ushort length, out int bytesConsumed);
+            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out ushort length, out _, out _, out _, out int bytesConsumed);
 
             // The payload is the tail of what this record consumed, so it is sliced from the record's
             // own span rather than re-derived from a header width this method would then have to know.
@@ -738,6 +798,361 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             ClassifyRecord(slot, mode, sequence, payload);
             remainder = remainder[bytesConsumed..];
         }
+    }
+
+    /// <summary>
+    /// Checks every Fragment in <paramref name="body"/> as part of the set it claims to belong to, not
+    /// only individually (issue #256; ADR 0009). Contiguity stands in for a message ID no wire byte
+    /// carries, so two shapes of forgery break it: Fragments naming the same group — the pair of that
+    /// group's mode and <see cref="FragmentGroup.FirstSequenceOf"/> — whose actually-present indices
+    /// leave a gap, and two distinct claimed groups <em>in the same mode</em> whose <em>declared</em>
+    /// ranges overlap — some one wire sequence that could be read as belonging to either, whether or not
+    /// a Fragment has actually arrived there yet. Every record here already proved individually legal in
+    /// the pass above (issue #253) — an index at or beyond its own count, a count of zero, or a count of
+    /// one already discarded the datagram before this method is reached — so this is where a datagram
+    /// whose individually-legal Fragments lie about which set each belongs to is refused instead.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A group is identified by (mode, first sequence), not first sequence alone (issue #47).</b>
+    /// <see cref="ReceiveWindowSpaces"/> keeps one independent <see cref="ReceiveWindow"/> per
+    /// <see cref="PacketRecordMode"/> — its own doc states why: a sequence admitted under one mode says
+    /// nothing about the same sequence under another. A <c>ReliableOrdered</c> group starting at sequence
+    /// 100 and a <c>ReliableUnordered</c> group also starting at sequence 100 are unrelated groups in
+    /// unrelated Spaces; folding them into one first-sequence-only namespace, as an earlier shape of this
+    /// check did, sees two Fragments both claiming index 0 of what it wrongly believes is one group and
+    /// discards a datagram no attacker forged. The same is true of the declared-range overlap sweep: two
+    /// groups in different modes can never conflict, however their declared ranges happen to line up, so
+    /// that sweep only ever compares two groups already known to share a mode.
+    /// </para>
+    /// <para>
+    /// <b>Scope is this one datagram.</b> A group that arrives split across more than one datagram, or
+    /// one a later datagram contradicts, needs state only reassembly owns (a future sub-slice); this
+    /// method holds nothing across calls beyond its own preallocated scratch (below) and knows nothing
+    /// beyond <paramref name="body"/>'s own bytes. A partial set — fewer Fragments than
+    /// <see cref="PacketRecordCodec.TryRead"/>'s <c>fragmentCount</c> promises, so long as the indices
+    /// actually present are contiguous — is not a violation: an honest sender's Fragments of one group
+    /// may simply be spread across datagrams.
+    /// </para>
+    /// <para>
+    /// <b>Overlap is judged on each same-mode group's DECLARED range, not on what is merely observed.</b>
+    /// Two Fragments in one mode — firstSeq 100 declaring count 5 (range 100..104), and firstSeq 103
+    /// declaring count 2 (range 103..104) — can arrive with only sequences 100, 101 and 103 actually
+    /// present, so their observed points (100-101 vs 103) never collide. Sequence 104 is still claimed by
+    /// both groups: a later Fragment landing there is index 4 of the first group or index 1 of the second
+    /// depending on which group is believed, and nothing observed so far can tell them apart. Judging the
+    /// check on declared ranges is what catches this before either group is trusted.
+    /// </para>
+    /// <para>
+    /// <b>Bounded cost, no per-datagram allocation (DoS follow-up to issue #256).</b> Re-deriving every
+    /// Fragment's group by re-walking <paramref name="body"/> once per Fragment — the previous shape of
+    /// this check — is O(n²) in the datagram's record count on a path a remote peer's datagram length
+    /// alone controls: at the wire floor of 11 bytes per Fragment, a maximum-size 65,507-byte UDP
+    /// datagram holds <see cref="MaxFragmentRecordsPerDatagram"/> (5,953) of them, and two O(n²) walks
+    /// over that many records is tens of millions of <see cref="PacketRecordCodec.TryRead"/> calls for
+    /// one datagram on the single-threaded Pump. Instead, one linear pass collects each Fragment's
+    /// (mode, first sequence) key and index into <see cref="_fragmentGroupKey"/> and
+    /// <see cref="_fragmentGroupIndexAndCount"/>, both sorted by that combined key
+    /// (<see cref="Array.Sort(Array, Array, int, int)"/> over ulong/uint keys, no comparer allocated,
+    /// mode occupying the key's high bits so one mode's entries never interleave with another's) so
+    /// every Fragment of one (mode, first sequence) group becomes one contiguous
+    /// run — O(n log n) rather than O(n) group lookups each costing O(n). Each run is checked for a
+    /// gap in one further linear pass and, if it passes, contributes one entry to
+    /// <see cref="_distinctGroupFirstSequenceAndCount"/> (<see cref="TryCloseContiguousRun"/>), which
+    /// packs that group's mode alongside its first sequence and declared count. Because the runs above
+    /// were closed in (mode, first sequence) order, the distinct groups already sit in contiguous
+    /// per-mode slices; the declared-range overlap sweep (<see cref="NoTwoDeclaredRangesOverlap"/>) walks
+    /// those slices one mode at a time and only ever sorts and sweeps within one slice
+    /// (<see cref="_distinctGroupSortKey"/>) — an interval-scheduling sweep, O(g log g) overall in the
+    /// number of distinct groups (the per-mode sweeps' costs sum to at most that bound) rather than the
+    /// O(g²) an all-pairs comparison would cost, and a comparison between two different modes' groups
+    /// never happens at all. Every array here is preallocated once at construction from
+    /// <see cref="MaxUdpDatagramSize"/> (see the scratch fields' own remarks) and reused datagram after
+    /// datagram: nothing is allocated, resized or cleared on this path, only bounded by a count freshly
+    /// computed for the datagram being parsed.
+    /// </para>
+    /// <para>
+    /// <b>Each per-mode sweep's sort key is relative to an anchor chosen fresh for that mode's slice,
+    /// using the same unsigned wrap-aware subtraction <see cref="SequenceNumber.IsNewerThan"/> is built
+    /// on.</b> This assumes, as every "newer than" decision on this data path already does, that the
+    /// groups actually present in one datagram never span more than half the sequence space (2^31) — true
+    /// of anything an honest sender produces, and the same boundary this whole design accepts elsewhere
+    /// rather than treating as a hazard to defend against (see <see cref="SequenceNumber"/>'s own
+    /// remarks). Each mode's own anchor keeps this assumption scoped to that mode's own groups, exactly as
+    /// their sequence Spaces already are.
+    /// </para>
+    /// </remarks>
+    private bool FragmentSetsAreWellFormed(ReadOnlySpan<byte> body)
+    {
+        int fragmentCount = 0;
+        ReadOnlySpan<byte> remainder = body;
+        while (remainder.Length > 0)
+        {
+            PacketRecordCodec.TryRead(
+                remainder, out PacketRecordMode mode, out uint sequence, out _, out bool isFragment,
+                out ushort index, out ushort count, out int bytesConsumed);
+
+            if (isFragment)
+            {
+                // Cannot happen: MaxFragmentRecordsPerDatagram is this Reactor's own scratch bound,
+                // derived from the largest datagram it ever reads (MaxUdpDatagramSize) divided by the
+                // smallest a Fragment record can be, so no datagram this method is ever called with can
+                // produce more Fragments than the scratch below has room for.
+                Debug.Assert(fragmentCount < MaxFragmentRecordsPerDatagram, "More Fragments than the scratch was sized for.");
+
+                _fragmentGroupKey[fragmentCount] = PackModeAndFirstSequence(mode, FragmentGroup.FirstSequenceOf(sequence, index));
+                _fragmentGroupIndexAndCount[fragmentCount] = PackIndexAndCount(index, count);
+                fragmentCount++;
+            }
+
+            remainder = remainder[bytesConsumed..];
+        }
+
+        if (fragmentCount == 0)
+        {
+            return true;
+        }
+
+        Array.Sort(_fragmentGroupKey, _fragmentGroupIndexAndCount, 0, fragmentCount);
+
+        int distinctGroupCount = 0;
+        int runStart = 0;
+        for (int i = 1; i <= fragmentCount; i++)
+        {
+            if (i == fragmentCount || _fragmentGroupKey[i] != _fragmentGroupKey[runStart])
+            {
+                if (!TryCloseContiguousRun(runStart, i, ref distinctGroupCount))
+                {
+                    return false;
+                }
+
+                runStart = i;
+            }
+        }
+
+        return NoTwoDeclaredRangesOverlap(distinctGroupCount);
+    }
+
+    /// <summary>
+    /// Packs a Fragment's group identity for <see cref="_fragmentGroupKey"/>: <paramref name="mode"/> in
+    /// the key's high bits, <paramref name="firstSequence"/> in its low 32 bits. Mode dominates the sort
+    /// order this key drives, so every Fragment of one mode sorts before every Fragment of the next —
+    /// two groups in different modes can never end up in the same contiguous run.
+    /// </summary>
+    private static ulong PackModeAndFirstSequence(PacketRecordMode mode, uint firstSequence) =>
+        ((ulong)(byte)mode << 32) | firstSequence;
+
+    private static byte UnpackMode(ulong modeAndFirstSequence) => (byte)(modeAndFirstSequence >> 32);
+
+    private static uint UnpackFirstSequenceFromGroupKey(ulong modeAndFirstSequence) => (uint)modeAndFirstSequence;
+
+    /// <summary>Packs a Fragment's index and count into one <c>uint</c> for <see cref="_fragmentGroupIndexAndCount"/>.</summary>
+    private static uint PackIndexAndCount(ushort index, ushort count) => ((uint)index << 16) | count;
+
+    private static ushort UnpackIndex(uint indexAndCount) => (ushort)(indexAndCount >> 16);
+
+    private static ushort UnpackCount(uint indexAndCount) => (ushort)indexAndCount;
+
+    /// <summary>
+    /// Closes the run <c>[runStart, runEnd)</c> of <see cref="_fragmentGroupKey"/> and
+    /// <see cref="_fragmentGroupIndexAndCount"/> — every Fragment the datagram's walk found that shares
+    /// one group's mode and first sequence, now contiguous in the sorted arrays — checking that every
+    /// member agrees on its declared count and that the indices actually present leave no gap, exactly
+    /// as the pre-sort double-walk did. A group's Fragments disagreeing on the count they claim makes
+    /// the set's shape ambiguous, the same forgery as a literal gap: neither describes a set an honest
+    /// sender, which uses one count per Message, could ever produce. On success, appends one entry to
+    /// <see cref="_distinctGroupFirstSequenceAndCount"/> — mode, first sequence and declared count all
+    /// packed together — for the per-mode overlap sweep that follows.
+    /// </summary>
+    private bool TryCloseContiguousRun(int runStart, int runEnd, ref int distinctGroupCount)
+    {
+        ushort declaredCount = UnpackCount(_fragmentGroupIndexAndCount[runStart]);
+        ushort minIndexSeen = ushort.MaxValue;
+        ushort maxIndexSeen = 0;
+
+        for (int i = runStart; i < runEnd; i++)
+        {
+            ushort index = UnpackIndex(_fragmentGroupIndexAndCount[i]);
+            ushort count = UnpackCount(_fragmentGroupIndexAndCount[i]);
+
+            if (count != declaredCount)
+            {
+                return false;
+            }
+
+            minIndexSeen = Math.Min(minIndexSeen, index);
+            maxIndexSeen = Math.Max(maxIndexSeen, index);
+        }
+
+        int occurrences = runEnd - runStart;
+        if (maxIndexSeen - minIndexSeen + 1 != occurrences)
+        {
+            return false;
+        }
+
+        byte mode = UnpackMode(_fragmentGroupKey[runStart]);
+        uint firstSequence = UnpackFirstSequenceFromGroupKey(_fragmentGroupKey[runStart]);
+        _distinctGroupFirstSequenceAndCount[distinctGroupCount] =
+            PackGroupIdentity(mode, firstSequence, declaredCount);
+        distinctGroupCount++;
+        return true;
+    }
+
+    /// <summary>
+    /// Packs one distinct group's identity for <see cref="_distinctGroupFirstSequenceAndCount"/>:
+    /// <paramref name="mode"/> in bits 48-55, <paramref name="firstSequence"/> in bits 16-47, and
+    /// <paramref name="declaredCount"/> in bits 0-15.
+    /// </summary>
+    private static ulong PackGroupIdentity(byte mode, uint firstSequence, ushort declaredCount) =>
+        ((ulong)mode << 48) | ((ulong)firstSequence << 16) | declaredCount;
+
+    private static byte UnpackGroupMode(ulong groupIdentity) => (byte)(groupIdentity >> 48);
+
+    // Truncating to uint after the >>16 shift drops the mode bits above bit 31 along with it, leaving
+    // exactly the first-sequence bits PackGroupIdentity placed at 16-47.
+    private static uint UnpackFirstSequence(ulong groupIdentity) => (uint)(groupIdentity >> 16);
+
+    private static ushort UnpackDeclaredCount(ulong groupIdentity) => (ushort)groupIdentity;
+
+    /// <summary>
+    /// Sweeps <see cref="_distinctGroupFirstSequenceAndCount"/>'s first <paramref name="groupCount"/>
+    /// entries for a declared-range overlap — the second forgery #256 rejects, judged on each group's
+    /// full <c>[firstSequence, firstSequence + declaredCount)</c> range rather than only the sequences a
+    /// Fragment has actually claimed so far (see this class's <see cref="FragmentSetsAreWellFormed"/>
+    /// remarks for why) — but only ever between two groups sharing one mode (issue #47): two groups in
+    /// different modes live in different <see cref="ReceiveWindowSpaces"/> Spaces and can never conflict,
+    /// whatever their declared ranges happen to be. Because <see cref="TryCloseContiguousRun"/> appends
+    /// groups in the (mode, first sequence) order <see cref="FragmentSetsAreWellFormed"/> sorted
+    /// Fragments into, this array already sits in contiguous per-mode slices; this method finds each
+    /// slice's boundary in one linear pass and delegates the actual sweep, unchanged in shape from before
+    /// this fix, to <see cref="NoTwoDeclaredRangesOverlapWithinOneMode"/> for each slice in turn.
+    /// </summary>
+    private bool NoTwoDeclaredRangesOverlap(int groupCount)
+    {
+        if (groupCount == 0)
+        {
+            return true;
+        }
+
+        int sliceStart = 0;
+        for (int i = 1; i <= groupCount; i++)
+        {
+            if (i == groupCount || UnpackGroupMode(_distinctGroupFirstSequenceAndCount[i]) != UnpackGroupMode(_distinctGroupFirstSequenceAndCount[sliceStart]))
+            {
+                if (!NoTwoDeclaredRangesOverlapWithinOneMode(sliceStart, i))
+                {
+                    return false;
+                }
+
+                sliceStart = i;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The declared-range overlap sweep proper, run over one mode's own contiguous slice
+    /// <c>[sliceStart, sliceEnd)</c> of <see cref="_distinctGroupFirstSequenceAndCount"/> — every group in
+    /// that slice is already known to share one mode, so comparing any two of them is meaningful. Sorts
+    /// the slice by declared range start, relative to a wrap-aware anchor, then sweeps once tracking the
+    /// furthest declared end seen so far within the slice — the standard O(k log k) interval-overlap check
+    /// for a slice of <c>k</c> groups, correct for nested as well as merely adjacent ranges, in place of an
+    /// O(k²) all-pairs comparison.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The anchor is derived, not assumed.</b> Ordering <c>u32</c> sequences that may straddle the wrap
+    /// needs a point to measure from, and taking the slice's numerically smallest value is wrong: a hostile
+    /// peer adds one decoy group to drag that point away, which splits a genuinely overlapping pair to
+    /// opposite ends of the sorted slice, and the linear sweep then never compares them. The anchor is
+    /// therefore the slice's <em>wrap-aware</em> minimum — the value immediately after the largest circular
+    /// gap between consecutive first sequences, the wrap gap from the largest value back to the smallest
+    /// included. Every offset measured from it is then a genuine distance forward around the circle, so the
+    /// sort key is a consistent total order and the sweep compares the pairs it must.
+    /// </para>
+    /// <para>
+    /// <b>A slice too wide to order is refused, not guessed at.</b> No wrap-aware order exists over
+    /// sequences spanning more than half the space (2^31): past that, "forward around the circle" stops
+    /// being well defined, which is the same boundary <see cref="SequenceNumber"/> names. An honest sender
+    /// cannot produce such a datagram — a Peer's receive window is smaller than 2^31 by many orders of
+    /// magnitude — so a slice whose circular span exceeds it is discarded exactly as any other violation
+    /// here is. The assumption is enforced rather than relied upon, because on this path the span is a
+    /// value the attacker chooses.
+    /// </para>
+    /// <para>
+    /// Offsets are carried as <see cref="long"/> rather than <see cref="int"/>: a declared range's end is
+    /// its start plus up to <see cref="ushort.MaxValue"/>, which a slice already spanning close to 2^31
+    /// would push past <see cref="int.MaxValue"/> and wrap to a negative, defeating the very comparison the
+    /// sweep exists to make.
+    /// </para>
+    /// </remarks>
+    private bool NoTwoDeclaredRangesOverlapWithinOneMode(int sliceStart, int sliceEnd)
+    {
+        int sliceCount = sliceEnd - sliceStart;
+        if (sliceCount <= 1)
+        {
+            return true;
+        }
+
+        // The slice arrived in ascending numeric first-sequence order, and its groups are distinct, so the
+        // largest circular gap is found by one pass over adjacent pairs plus the wrap gap that closes the
+        // circle from the last value back to the first.
+        uint smallest = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[sliceStart]);
+        uint largest = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[sliceEnd - 1]);
+
+        ulong largestGap = OneSequenceSpace - largest + smallest;
+        uint anchor = smallest;
+
+        for (int i = sliceStart + 1; i < sliceEnd; i++)
+        {
+            uint previous = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i - 1]);
+            uint current = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i]);
+            ulong gap = current - previous;
+            if (gap > largestGap)
+            {
+                largestGap = gap;
+                anchor = current;
+            }
+        }
+
+        // The circular span is whatever the largest gap does not cover. At half the space or wider, no
+        // ordering of these groups is meaningful, so the datagram is refused rather than swept in an order
+        // the peer chose. The bound is "at or wider", not merely "wider": a span of exactly 2^31 puts the
+        // furthest group at an offset of 2^31 from the anchor, which is one past what the sort key below
+        // can hold, and it would wrap to a negative and sort to the wrong end — the very reordering this
+        // check exists to prevent.
+        if (OneSequenceSpace - largestGap >= OneSequenceSpace / 2)
+        {
+            return false;
+        }
+
+        for (int i = sliceStart; i < sliceEnd; i++)
+        {
+            uint firstSequence = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i]);
+            _distinctGroupSortKey[i] = unchecked((int)(firstSequence - anchor));
+        }
+
+        Array.Sort(_distinctGroupSortKey, _distinctGroupFirstSequenceAndCount, sliceStart, sliceCount);
+
+        long maxDeclaredEndSoFar = long.MinValue;
+        for (int i = sliceStart; i < sliceEnd; i++)
+        {
+            uint firstSequence = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i]);
+            ushort declaredCount = UnpackDeclaredCount(_distinctGroupFirstSequenceAndCount[i]);
+
+            long start = unchecked(firstSequence - anchor);
+            long end = start + declaredCount - 1;
+
+            if (i > sliceStart && start <= maxDeclaredEndSoFar)
+            {
+                return false;
+            }
+
+            maxDeclaredEndSoFar = Math.Max(maxDeclaredEndSoFar, end);
+        }
+
+        return true;
     }
 
     /// <summary>

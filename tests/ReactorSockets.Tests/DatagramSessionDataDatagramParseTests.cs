@@ -8,12 +8,13 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #163: the datagram parse loop on the Reactor's data path. A datagram naming a live Session is
 /// parsed header-first, then packet records until the datagram is exhausted, exactly as the parent
-/// slice spec (#39) fixes the wire. Every malformed shape here — a short header, a spare or fragment
-/// bit set, a record whose length runs past the end, or truncation inside a record — must discard the
+/// slice spec (#39) fixes the wire. Every malformed shape here — a short header, a spare bit set, a
+/// record whose length runs past the end, or truncation inside a record — must discard the
 /// <em>whole</em> datagram and log <see cref="DiagnosticId.DatagramMalformed"/>, the same treatment
-/// <see cref="DatagramSessionMalformedInputTests"/> already proves for the control path. This ticket
-/// ends at "the datagram parsed, or it did not": no Session event is ever produced here, so every test
-/// asserts the drain stays empty whatever the input.
+/// <see cref="DatagramSessionMalformedInputTests"/> already proves for the control path. Most of this
+/// file ends at "the datagram parsed, or it did not", asserting the drain stays empty whatever the
+/// input; issue #252 adds the fragment shape as a second thing a record can legally be, so the tests
+/// for it also drain and check the payloads a well-formed Fragment delivers.
 /// </summary>
 /// <remarks>
 /// A live Session id is not exposed by the public surface — <see cref="PeerId"/> is an opaque handle,
@@ -41,6 +42,7 @@ public class DatagramSessionDataDatagramParseTests
 
     private const int DatagramHeaderSize = 20;
     private const int UnfragmentedRecordSize = 7;
+    private const int FragmentRecordSize = 11;
 
     private const byte ModeUnreliable = 0b0000_0000;
     private const byte ModeUnreliableSequenced = 0b0000_0001;
@@ -197,20 +199,149 @@ public class DatagramSessionDataDatagramParseTests
     }
 
     [Fact]
-    public void Pump_RecordWithTheFragmentBitSet_DiscardsTheWholeDatagramAndEarlierRecordsTakeNoEffect()
+    public void Pump_RecordWithAWellFormedFragmentShape_ParsesSuccessfullyAndDeliversBothRecords()
     {
-        // Arrange — the fragment shape is on the wire format but rejected until slice 7 implements it,
-        // so a record with the bit set is a violation exactly like a spare bit, and an earlier
-        // well-formed record still takes no effect.
+        // Arrange — the fragment shape reads now (issue #252): a record with the bit set and a
+        // complete 11-byte header no longer discards the datagram, and an earlier well-formed record
+        // still takes effect, the opposite of what this test asserted before the shape was readable.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
 
         byte[] wellFormedRecord = BuildRecord(ModeUnreliableSequenced, sequence: 5, payload: [0x9A, 0x9B]);
-        byte[] fragmentRecord = BuildRecord(ModeReliableOrdered, sequence: 6, payload: [], extraFlags: FragmentBit);
+        byte[] fragmentRecord = BuildFragmentRecord(
+            ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]);
 
         byte[] datagram = [.. BuildHeader(sessionId), .. wellFormedRecord, .. fragmentRecord];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> payloads = accepter.DrainPayloads();
+
+        // Assert — neither record is discarded and both payloads reach the consumer. Whether the
+        // Fragment's index and count describe a legal set is #253's question, not this one's.
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        payloads.Should().BeEquivalentTo(
+            new[] { new byte[] { 0x9A, 0x9B }, new byte[] { 0x01 } },
+            "the well-formed record and the Fragment both parse and both are delivered");
+    }
+
+    [Fact]
+    public void Pump_DatagramOfOnlyFragmentRecords_ParsesToExhaustionAndDeliversEveryPayload()
+    {
+        // Arrange — one datagram carrying nothing but Fragments, the second case the acceptance
+        // criteria names alongside "only unfragmented" and "mixed".
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 3, payload: [0x01]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 3, payload: [0x02, 0x02]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 2, fragmentCount: 3, payload: [0x03, 0x03, 0x03]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> payloads = accepter.DrainPayloads();
+
+        // Assert
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        payloads.Should().BeEquivalentTo(
+            new[] { new byte[] { 0x01 }, new byte[] { 0x02, 0x02 }, new byte[] { 0x03, 0x03, 0x03 } });
+    }
+
+    [Fact]
+    public void Pump_DatagramMixingUnfragmentedAndFragmentRecords_ParsesEveryRecordWithItsOwnFieldsIntact()
+    {
+        // Arrange — the mixed case the acceptance criteria calls out as the one a naive parser gets
+        // wrong: unfragmented records and Fragments interleaved, each carrying a payload distinct enough
+        // that a record misattributed to the wrong shape's byte count would show up as a missing,
+        // duplicated or corrupted payload rather than a passing test. Every Fragment here is reliable
+        // (ADR 0004: fragmentation is reliable-only); the two unfragmented records at sequences 2 and 5
+        // still exercise a second mode, including plain Unreliable, since nothing about ADR 0004 restricts
+        // an unfragmented record's mode. The two Fragments' groups (firstSeq 1 and firstSeq 3) are
+        // deliberately far enough apart that their declared ranges — [1,2] and [3,4] — do not overlap:
+        // #256's declared-range check would otherwise (rightly) reject this datagram.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildRecord(ModeReliableUnordered, sequence: 0, payload: [0xA0]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 0, fragmentCount: 2, payload: [0xB1]),
+            .. BuildRecord(ModeReliableUnordered, sequence: 2, payload: [0xA2]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 0, fragmentCount: 2, payload: [0xB3]),
+            .. BuildRecord(ModeUnreliable, sequence: 5, payload: [0xE5]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 6, fragmentIndex: 0, fragmentCount: 2, payload: [0xF6]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> payloads = accepter.DrainPayloads();
+
+        // Assert — every record parsed, and every payload reached the consumer exactly once.
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        payloads.Should().BeEquivalentTo(
+            new[]
+            {
+                new byte[] { 0xA0 }, new byte[] { 0xB1 }, new byte[] { 0xA2 },
+                new byte[] { 0xB3 }, new byte[] { 0xE5 }, new byte[] { 0xF6 },
+            });
+    }
+
+    [Fact]
+    public void Pump_FragmentRecordWithTheFullElevenByteHeaderAndNoPayload_ParsesSuccessfully()
+    {
+        // Arrange — pins the Fragment shape's header at exactly 11 bytes: flags(1) + seq(4) + length(2)
+        // + fragIndex(2) + fragCount(2), against the unfragmented shape's 7 the sibling test below
+        // pins.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] fragmentHeader = BuildFragmentRecord(
+            ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: []);
+        fragmentHeader.Length.Should().Be(FragmentRecordSize);
+
+        byte[] datagram = [.. BuildHeader(sessionId), .. fragmentHeader];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+
+        // Assert
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+    }
+
+    [Fact]
+    public void Pump_FragmentRecordOneByteShortOfItsElevenByteHeader_DiscardsTheWholeDatagram()
+    {
+        // Arrange — one byte short of the Fragment shape's 11-byte header (the fragment count's low
+        // byte is missing). An unfragmented record this short would still be four bytes over its own
+        // 7-byte requirement, so this only fails because the Fragment shape, not the unfragmented one,
+        // is what the flags byte claims.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] wellFormedRecord = BuildRecord(ModeUnreliable, sequence: 1, payload: [0x11]);
+        byte[] truncatedFragmentHeader = BuildFragmentRecord(
+            ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [])[..(FragmentRecordSize - 1)];
+
+        byte[] datagram = [.. BuildHeader(sessionId), .. wellFormedRecord, .. truncatedFragmentHeader];
 
         // Act
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
@@ -218,6 +349,279 @@ public class DatagramSessionDataDatagramParseTests
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
+    }
+
+    [Fact]
+    public void Pump_FragmentRecordWithASpareBitSet_DiscardsTheWholeDatagramAndEarlierRecordsTakeNoEffect()
+    {
+        // Arrange — a spare bit still fails the read on the Fragment shape exactly as it does on the
+        // unfragmented one; only the fragment bit itself stopped being a violation.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] wellFormedRecord = BuildRecord(ModeReliableOrdered, sequence: 1, payload: [0x01]);
+        byte[] spareBitFragmentRecord = BuildFragmentRecord(
+            ModeUnreliable, sequence: 2, fragmentIndex: 0, fragmentCount: 2, payload: [], extraFlags: OneSpareBit);
+
+        byte[] datagram = [.. BuildHeader(sessionId), .. wellFormedRecord, .. spareBitFragmentRecord];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+
+        // Assert
+        AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
+    }
+
+    [Fact]
+    public void Pump_FragmentRecordWithIndexAtOrBeyondItsCount_DiscardsTheWholeDatagram()
+    {
+        // Arrange — issue #253: an index equal to its count names a piece one past the end of the set
+        // it claims, which is impossible for any Fragment we would ever send.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] wellFormedRecord = BuildRecord(ModeUnreliable, sequence: 1, payload: [0x11]);
+        byte[] outOfRangeFragmentRecord = BuildFragmentRecord(
+            ModeReliableOrdered, sequence: 0, fragmentIndex: 2, fragmentCount: 2, payload: [0x22]);
+
+        byte[] datagram = [.. BuildHeader(sessionId), .. wellFormedRecord, .. outOfRangeFragmentRecord];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+
+        // Assert
+        AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
+    }
+
+    [Fact]
+    public void Pump_FragmentRecordWithCountOfZero_DiscardsTheWholeDatagram()
+    {
+        // Arrange — issue #253: a count of zero has no index that could describe a piece of it.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] wellFormedRecord = BuildRecord(ModeUnreliable, sequence: 1, payload: [0x11]);
+        byte[] zeroCountFragmentRecord = BuildFragmentRecord(
+            ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 0, payload: [0x22]);
+
+        byte[] datagram = [.. BuildHeader(sessionId), .. wellFormedRecord, .. zeroCountFragmentRecord];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+
+        // Assert
+        AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
+    }
+
+    [Fact]
+    public void Pump_FragmentRecordWithCountOfOne_DiscardsTheWholeDatagram()
+    {
+        // Arrange — issue #253: a one-piece Message is unfragmented and should never have carried the
+        // fragment shape at all, so a count of one is refused rather than treated as a degenerate but
+        // legal set.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] wellFormedRecord = BuildRecord(ModeUnreliable, sequence: 1, payload: [0x11]);
+        byte[] oneCountFragmentRecord = BuildFragmentRecord(
+            ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 1, payload: [0x22]);
+
+        byte[] datagram = [.. BuildHeader(sessionId), .. wellFormedRecord, .. oneCountFragmentRecord];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+
+        // Assert
+        AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
+    }
+
+    [Fact]
+    public void Pump_FragmentRecordsAtTheValidBoundaries_AllParseSuccessfully()
+    {
+        // Arrange — issue #253's boundaries either side of the refused combinations: a count of two at
+        // both its legal indexes, an index one below its count, and a count at the 16-bit maximum. Each
+        // is asserted rather than assumed, so a future change to the refusal cannot silently start
+        // rejecting a legal Fragment. Each boundary case travels in its own datagram (issue #256): index
+        // 999 of count 1000 and a lone Fragment of count 65535 are independent boundary cases whose
+        // declared ranges genuinely overlap each other and the two-Fragment group above when packed into
+        // one datagram together — a real declared-range collision #256's overlap check is right to
+        // reject, not a reason to weaken it.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        // Act
+        List<byte[]> payloads = [];
+        payloads.AddRange(SendOneDatagramAndDrain(
+            accepter, client, clientLink, sessionId,
+            BuildFragmentRecord(ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]),
+            BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02])));
+        payloads.AddRange(SendOneDatagramAndDrain(
+            accepter, client, clientLink, sessionId,
+            BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 999, fragmentCount: 1000, payload: [0x03])));
+        payloads.AddRange(SendOneDatagramAndDrain(
+            accepter, client, clientLink, sessionId,
+            BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 0, fragmentCount: 65535, payload: [0x04])));
+
+        // Assert
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        payloads.Should().BeEquivalentTo(
+            new[] { new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 } });
+    }
+
+    /// <summary>
+    /// Builds one datagram from <paramref name="records"/> behind <paramref name="sessionId"/>'s header,
+    /// sends it, pumps until the accepter has received it, and returns the payloads drained. Lets a test
+    /// drive several boundary cases each in their own datagram without repeating the send-pump-drain
+    /// dance for every one (issue #256's split of what used to be one datagram).
+    /// </summary>
+    private static List<byte[]> SendOneDatagramAndDrain(
+        DatagramSessionReactorHarness accepter, RawReactor client, LinkId clientLink, uint sessionId, params byte[][] records)
+    {
+        List<byte> datagram = [.. BuildHeader(sessionId)];
+        foreach (byte[] record in records)
+        {
+            datagram.AddRange(record);
+        }
+
+        ulong receivedBefore = accepter.Reactor.Counters.DatagramsReceived;
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), [.. datagram]);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > receivedBefore);
+        return accepter.DrainPayloads();
+    }
+
+    [Fact]
+    public void Pump_WellFormedFragmentSetsCompletePartialAndNonOverlapping_AllParseAndDeliver()
+    {
+        // Arrange — issue #256's positive cases in one datagram: a complete contiguous 3-Fragment set
+        // (sequences 100-102), an unfragmented record between the groups, a partial set contiguous only
+        // as far as it goes (2 of a declared 4, sequences 200-201, indices 2 and 3 simply absent from
+        // this datagram), and a second, wholly separate 2-Fragment set (sequences 300-301) whose range
+        // does not come near either other group's. None of this is a violation: #256 only refuses a gap
+        // within one claimed group's own indices or two groups whose declared ranges overlap, and none
+        // of these three groups' declared ranges — [100,102], [200,203], [300,301] — come near each
+        // other. Every Fragment is ReliableUnordered (ADR 0004: fragmentation is reliable-only), so the
+        // receive window is sized generously above the highest sequence used here — the window's own
+        // verdict is not what this test is about.
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 400);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 100, fragmentIndex: 0, fragmentCount: 3, payload: [0x01]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 101, fragmentIndex: 1, fragmentCount: 3, payload: [0x02]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 102, fragmentIndex: 2, fragmentCount: 3, payload: [0x03]),
+            .. BuildRecord(ModeUnreliable, sequence: 103, payload: [0x04]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 200, fragmentIndex: 0, fragmentCount: 4, payload: [0x05]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 201, fragmentIndex: 1, fragmentCount: 4, payload: [0x06]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 300, fragmentIndex: 0, fragmentCount: 2, payload: [0x07]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 301, fragmentIndex: 1, fragmentCount: 2, payload: [0x08]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> payloads = accepter.DrainPayloads();
+
+        // Assert
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        payloads.Should().BeEquivalentTo(
+            new[]
+            {
+                new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 },
+                new byte[] { 0x05 }, new byte[] { 0x06 }, new byte[] { 0x07 }, new byte[] { 0x08 },
+            });
+    }
+
+    [Fact]
+    public void Pump_ReliableOrderedAndReliableUnorderedFragmentGroupsStartingAtTheSameSequence_ParsesFullyAndDeliversBoth()
+    {
+        // Arrange — issue #47/#256 false-positive fix: ReceiveWindowSpaces keeps one independent Space
+        // per PacketRecordMode (ADR 0009), so a ReliableOrdered group and a ReliableUnordered group both
+        // starting at firstSeq 0 are not the same group at all — they live in different Spaces and can
+        // never collide. FragmentSetsAreWellFormed must key group identity on (mode, firstSequence), not
+        // firstSequence alone, or it folds these two legitimate groups into one and sees index 0 claimed
+        // twice. Both groups start at sequence 0 in their own Space (ReliableOrdered's OrderedDelivery
+        // queue only releases a contiguous run from its own Space's own zero, so this is also what lets
+        // both groups' Fragments reach the consumer rather than sit held behind a gap).
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x03]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x04]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> payloads = accepter.DrainPayloads();
+
+        // Assert — this is not a group conflict: both groups parse and both deliver.
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        payloads.Should().BeEquivalentTo(
+            new[] { new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 } },
+            "the two groups share a first sequence but live in independent Spaces, one per delivery mode");
+    }
+
+    [Fact]
+    public void Pump_FragmentGroupsInDifferentModesWithDeclaredRangesThatWouldOverlapIgnoringMode_ParsesFullyAndDeliversBoth()
+    {
+        // Arrange — issue #47/#256 false-positive fix: a ReliableOrdered group declaring range [0,4]
+        // and a ReliableUnordered group declaring range [2,6] cannot overlap — they are different
+        // Spaces (ReceiveWindowSpaces, ADR 0009) — even though the raw sequence numbers collide.
+        // NoTwoDeclaredRangesOverlap must only ever compare two groups in the same mode. Only two of
+        // each group's five declared Fragments are actually sent (issue #256: a partial set contiguous
+        // only as far as it goes is not itself a violation), and the ReliableOrdered pair starts at its
+        // own Space's sequence 0 so OrderedDelivery releases it immediately rather than holding it
+        // behind a gap.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 5, payload: [0x01]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 1, fragmentCount: 5, payload: [0x02]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 0, fragmentCount: 5, payload: [0x03]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 1, fragmentCount: 5, payload: [0x04]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> payloads = accepter.DrainPayloads();
+
+        // Assert — the declared ranges [0,4] and [2,6] would overlap if mode were ignored, but they
+        // belong to different Spaces, so this is not a violation.
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        payloads.Should().BeEquivalentTo(
+            new[] { new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 } },
+            "declared ranges can only collide within one mode's Space");
     }
 
     /// <summary>
@@ -334,6 +738,25 @@ public class DatagramSessionDataDatagramParseTests
         BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(1, 4), sequence);
         BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(5, 2), (ushort)payload.Length);
         payload.CopyTo(record.AsSpan(UnfragmentedRecordSize));
+        return record;
+    }
+
+    /// <summary>
+    /// Builds one Fragment record: the unfragmented shape's bytes with the fragment bit set, followed
+    /// by a two-byte fragment index and a two-byte fragment count, then the payload. <paramref
+    /// name="extraFlags"/> is ORed in alongside the fragment bit so a test can additionally set a
+    /// spare bit without building the header by hand.
+    /// </summary>
+    private static byte[] BuildFragmentRecord(
+        byte modeBits, uint sequence, ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload, byte extraFlags = 0)
+    {
+        byte[] record = new byte[FragmentRecordSize + payload.Length];
+        record[0] = (byte)(modeBits | FragmentBit | extraFlags);
+        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(1, 4), sequence);
+        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(5, 2), (ushort)payload.Length);
+        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(7, 2), fragmentIndex);
+        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(9, 2), fragmentCount);
+        payload.CopyTo(record.AsSpan(FragmentRecordSize));
         return record;
     }
 
