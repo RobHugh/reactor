@@ -28,6 +28,7 @@ public class FragmentPlanTests
     [MemberData(nameof(ReliableModes))]
     public void Resolve_ReliableModeOneByte_ReturnsOneFragment(DeliveryMode mode)
     {
+        // Arrange
         // Act
         FragmentPlanResult result = FragmentPlan.Resolve(1, FragmentSize, mode);
 
@@ -40,6 +41,7 @@ public class FragmentPlanTests
     [MemberData(nameof(ReliableModes))]
     public void Resolve_ReliableModeExactlyOneFragmentSize_ReturnsOneFragment(DeliveryMode mode)
     {
+        // Arrange
         // Act
         FragmentPlanResult result = FragmentPlan.Resolve(FragmentSize, FragmentSize, mode);
 
@@ -52,6 +54,7 @@ public class FragmentPlanTests
     [MemberData(nameof(ReliableModes))]
     public void Resolve_ReliableModeOneByteOverOneFragmentSize_ReturnsTwoFragments(DeliveryMode mode)
     {
+        // Arrange
         // Act
         FragmentPlanResult result = FragmentPlan.Resolve(FragmentSize + 1, FragmentSize, mode);
 
@@ -64,6 +67,7 @@ public class FragmentPlanTests
     [MemberData(nameof(ReliableModes))]
     public void Resolve_ReliableModeExactMultipleOfFragmentSize_ReturnsExactQuotient(DeliveryMode mode)
     {
+        // Arrange
         // Act
         FragmentPlanResult result = FragmentPlan.Resolve(FragmentSize * 5, FragmentSize, mode);
 
@@ -92,6 +96,7 @@ public class FragmentPlanTests
     [MemberData(nameof(ReliableModes))]
     public void Resolve_ReliableModeZeroLengthMessage_ReturnsOneFragmentRatherThanZero(DeliveryMode mode)
     {
+        // Arrange
         // Act
         FragmentPlanResult result = FragmentPlan.Resolve(0, FragmentSize, mode);
 
@@ -105,6 +110,7 @@ public class FragmentPlanTests
     [MemberData(nameof(UnreliableModes))]
     public void Resolve_UnreliableModeZeroLengthMessage_ReturnsOneFragment(DeliveryMode mode)
     {
+        // Arrange
         // Act
         FragmentPlanResult result = FragmentPlan.Resolve(0, FragmentSize, mode);
 
@@ -117,6 +123,7 @@ public class FragmentPlanTests
     [MemberData(nameof(UnreliableModes))]
     public void Resolve_UnreliableModeAtTheCap_ReturnsOneFragment(DeliveryMode mode)
     {
+        // Arrange
         // Act
         FragmentPlanResult result = FragmentPlan.Resolve(FragmentSize, FragmentSize, mode);
 
@@ -129,6 +136,7 @@ public class FragmentPlanTests
     [MemberData(nameof(UnreliableModes))]
     public void Resolve_UnreliableModeOneByteOverTheCap_ReturnsMessageTooLarge(DeliveryMode mode)
     {
+        // Arrange
         // Act
         FragmentPlanResult result = FragmentPlan.Resolve(FragmentSize + 1, FragmentSize, mode);
 

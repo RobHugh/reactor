@@ -410,9 +410,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Sends <paramref name="message"/> to <paramref name="peer"/> under <paramref name="mode"/> (ADR
-    /// 0009, issues #207, #215, #216). A Message wider than one Datagram is refused up front as
-    /// <see cref="SendOutcome.MessageTooLarge"/>, before anything else happens: no sequence is
-    /// allocated and no retention is taken, so a rejected Send leaves no trace on the Session. Past
+    /// 0009, issues #207, #215, #216). A Message too wide for its mode to carry is refused as
+    /// <see cref="SendOutcome.MessageTooLarge"/> before any work is done on it: no sequence is
+    /// allocated and no retention is taken, so a rejected Send leaves no trace on the Session. How
+    /// wide is too wide depends on the mode and is decided by <see cref="FragmentPlan.Resolve"/>, the
+    /// one place the rule is stated: an unreliable mode is capped at a single Datagram, while a
+    /// reliable mode is capped at <see cref="DatagramSessionOptions.MaxMessageSize"/> and fragments
+    /// below it (ADR 0004). That gate sits behind the <paramref name="peer"/> lookup rather than in
+    /// front of it, because the cap it measures against is the Peer's own captured fragment size
+    /// (issue #248) — so a Peer this Reactor is not holding open returns
+    /// <see cref="SendOutcome.Closed"/> whatever the Message's width. Past
     /// that gate, a reliable mode allocates the next sequence in its own Space and retains the Message
     /// whole there, returning <see cref="SendOutcome.RetentionExhausted"/> once that Space has no slot
     /// left — and that refusal spends nothing either: the sequence is claimed only once retention has
@@ -485,23 +492,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         PacketRecordMode recordMode = ToRecordMode(mode);
         bool isReliable = recordMode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered;
 
-        // Unreliable modes stay capped at exactly one Fragment (ADR 0004): nothing ever retransmits an
-        // unreliable Fragment, so cutting one only spends bandwidth on a coin flip. Reliable modes are
-        // capped at MaxMessageSize instead, checked next.
-        if (!isReliable && message.Length > _options.ResolvedFragmentSize)
-        {
-            return SendOutcome.MessageTooLarge;
-        }
-
-        if (isReliable && message.Length > _options.MaxMessageSize)
-        {
-            return SendOutcome.MessageTooLarge;
-        }
-
         SlotHandle handle = ToHandle(peer);
         if (_peers.TryResolve(handle) is not PeerSlot slot)
         {
             return SendOutcome.Closed;
+        }
+
+        // The fragment size used to cut this Message is this Peer's own, captured on the Slot at
+        // admission (issue #248, ADR 0004) rather than read from _options here — fragment size is
+        // decided once, per Peer, and Send only ever consults what was already decided. One call to
+        // FragmentPlan.Resolve states the too-large rule exactly once: unreliable modes refuse above
+        // one Fragment's worth, reliable modes refuse above MaxMessageSize (ADR 0004).
+        FragmentPlanResult plan = FragmentPlan.Resolve(message.Length, slot.FragmentSize, mode, _options.MaxMessageSize);
+        if (plan.IsMessageTooLarge)
+        {
+            return SendOutcome.MessageTooLarge;
         }
 
         if (!isReliable)
@@ -516,12 +521,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         int spaceIndex = ReliableSpaceIndex(recordMode);
-
-        // The fragment size used to cut this Message is this Peer's own, captured on the Slot at
-        // admission (issue #248, ADR 0004) rather than read from _options here — fragment size is
-        // decided once, per Peer, and Send only ever consults what was already decided.
         int fragmentSize = slot.FragmentSize;
-        int fragmentCount = FragmentPlan.Resolve(message.Length, fragmentSize, mode).FragmentCount;
+        int fragmentCount = plan.FragmentCount;
 
         // A Message's Fragments are committed as one unit (issue #247): the retention budget is sized
         // in Fragments, not Messages, so a Message wide enough to need more Fragments than the Space has

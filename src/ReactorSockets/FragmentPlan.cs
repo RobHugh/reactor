@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace ReactorSockets;
 
 /// <summary>
@@ -29,8 +31,13 @@ public readonly record struct FragmentPlanResult
     /// </summary>
     public int FragmentCount { get; }
 
-    /// <summary>Builds a success carrying <paramref name="fragmentCount"/> Fragments.</summary>
-    internal static FragmentPlanResult ForFragmentCount(int fragmentCount) => new(false, fragmentCount);
+    /// <summary>
+    /// Builds a success carrying <paramref name="fragmentCount"/> Fragments. Public because the type
+    /// itself is (ADR 0015): a consumer that can observe this result through <see cref="FragmentPlan.Resolve"/> must
+    /// be able to construct one, the same coherence <see cref="MessageTooLarge"/> already has as a
+    /// public singleton.
+    /// </summary>
+    public static FragmentPlanResult ForFragmentCount(int fragmentCount) => new(false, fragmentCount);
 
     /// <summary>The refusal: the Message cannot be carried by the mode it was sent on.</summary>
     public static FragmentPlanResult MessageTooLarge { get; } = new(true, 0);
@@ -41,7 +48,7 @@ public readonly record struct FragmentPlanResult
 /// (issue #242, part of #48's slice-7 fragmentation work) so the boundary conditions — one byte,
 /// exactly one Fragment, one byte over, an exact multiple, the cap — are fast unit tests rather than
 /// something only a live Session and a live Peer could exercise. <see cref="Resolve"/> needs no
-/// Session, no Peer and no reactor: it is total over its three inputs and never throws for a
+/// Session, no Peer and no reactor: it is total over its four inputs and never throws for a
 /// <see cref="DeliveryMode"/> a caller could actually construct.
 /// </summary>
 /// <remarks>
@@ -54,9 +61,11 @@ public readonly record struct FragmentPlanResult
 /// </para>
 /// <para>
 /// <b>Fragmentation is reliable-only (ADR 0004).</b> <see cref="DeliveryMode.ReliableOrdered"/> and
-/// <see cref="DeliveryMode.ReliableUnordered"/> cut a Message of <c>n</c> bytes into
-/// <c>ceil(n / fragmentSize)</c> Fragments, because a lost Fragment is repaired by the same
-/// retransmit machinery that repairs a lost small Message. <see cref="DeliveryMode.Unreliable"/> and
+/// <see cref="DeliveryMode.ReliableUnordered"/> cut a Message of <c>n</c> bytes at or under
+/// <c>maxMessageLength</c> into <c>ceil(n / fragmentSize)</c> Fragments, because a lost Fragment is
+/// repaired by the same retransmit machinery that repairs a lost small Message; a Message wider than
+/// <c>maxMessageLength</c> is refused with <see cref="FragmentPlanResult.MessageTooLarge"/> regardless
+/// of mode, the one statement of that rule. <see cref="DeliveryMode.Unreliable"/> and
 /// <see cref="DeliveryMode.UnreliableSequenced"/> never fragment: a Message that already fits in one
 /// Datagram's worth of payload is exactly one Fragment, and anything wider is refused outright with
 /// <see cref="FragmentPlanResult.MessageTooLarge"/> rather than cut, because nothing retransmits an
@@ -87,24 +96,37 @@ public static class FragmentPlan
     /// reaches here, so it is asserted rather than reported through the return value.
     /// </param>
     /// <param name="mode">The delivery mode the Message is sent under.</param>
+    /// <param name="maxMessageLength">
+    /// The reliable receive limit a Message is checked against (<see cref="DatagramSessionOptions.MaxMessageSize"/>).
+    /// Ignored by the two unreliable modes, which are capped at <paramref name="fragmentSize"/> instead.
+    /// Defaults to <see cref="int.MaxValue"/> — effectively no cap — so a caller with no reliable limit
+    /// to enforce (every existing caller of this overload before issue #242's too-large rule moved here)
+    /// does not have to invent one.
+    /// </param>
     /// <returns>
     /// A <see cref="FragmentPlanResult"/> carrying the Fragment count, or
     /// <see cref="FragmentPlanResult.MessageTooLarge"/> when <paramref name="mode"/> cannot carry a
     /// Message this large.
     /// </returns>
-    public static FragmentPlanResult Resolve(int messageLength, int fragmentSize, DeliveryMode mode)
+    public static FragmentPlanResult Resolve(
+        int messageLength, int fragmentSize, DeliveryMode mode, int maxMessageLength = int.MaxValue)
     {
-        System.Diagnostics.Debug.Assert(messageLength >= 0, "a Message length is never negative.");
-        System.Diagnostics.Debug.Assert(fragmentSize >= 1, "a fragment size of zero could never carry a byte.");
+        Debug.Assert(messageLength >= 0, "a Message length is never negative.");
+        Debug.Assert(fragmentSize >= 1, "a fragment size of zero could never carry a byte.");
+        Debug.Assert(maxMessageLength >= 0, "a maximum message length is never negative.");
 
         return mode switch
         {
-            // Reliable modes divide: every Fragment beyond the first is repaired the same way a lost
-            // small Message is, so there is no width this could refuse. Long math avoids overflow for
-            // a messageLength near int.MaxValue before the division brings the result back down.
+            // Reliable modes divide, but only up to the receive limit the peer announced: past it there
+            // is no width the mode could carry, however many Fragments cut it, so this is the one
+            // statement of the reliable too-large rule (issue #48's standards fix — Send used to repeat
+            // it as its own message.Length > MaxMessageSize check). Long math avoids overflow for a
+            // messageLength near int.MaxValue before the division brings the result back down.
             DeliveryMode.ReliableOrdered or DeliveryMode.ReliableUnordered =>
-                FragmentPlanResult.ForFragmentCount(
-                    messageLength == 0 ? 1 : (int)(((long)messageLength + fragmentSize - 1) / fragmentSize)),
+                messageLength > maxMessageLength
+                    ? FragmentPlanResult.MessageTooLarge
+                    : FragmentPlanResult.ForFragmentCount(
+                        messageLength == 0 ? 1 : (int)(((long)messageLength + fragmentSize - 1) / fragmentSize)),
 
             // Unreliable modes never fragment (ADR 0004): at or under the cap is exactly one Fragment,
             // and anything over it is refused rather than cut, because a lost Fragment here is never
