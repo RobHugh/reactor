@@ -391,7 +391,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <param name="peer">The Peer to send to.</param>
     /// <param name="mode">Which of the four delivery modes carries this Message; see <c>docs/delivery-modes.md</c>.</param>
     /// <param name="message">
-    /// The Message payload, unframed. A Message wider than
+    /// The Message payload, unframed. The bytes are copied before this call returns — into
+    /// <see cref="_retention"/> for a reliable mode, into the queued record for an unreliable one — so
+    /// the caller owns its buffer again the instant <c>Send</c> returns and may overwrite or reuse it
+    /// without changing what is eventually put on the wire (issue #244). A Message wider than
     /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> cannot fit in one Datagram and is
     /// reported back as <see cref="SendOutcome.MessageTooLarge"/> rather than thrown. For
     /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> the cap
