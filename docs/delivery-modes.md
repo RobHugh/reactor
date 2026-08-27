@@ -53,6 +53,12 @@ having spent ten Datagrams to do it. You may only fragment what you can repair.
 | `UnreliableSequenced` | maybe | newest only | suppressed | discarded if superseded | no |
 | `Unreliable` | maybe | no | suppressed within 64 | delivered | no |
 
+Fragmentation amplifies the head-of-line blocking from question 2. A 57-Fragment `ReliableOrdered`
+Message blocks every later Message in that ordering domain until all its Fragments arrive. This is
+inherent to ordered delivery, not to fragmentation, but fragmentation makes the stall proportionally
+longer: the wait is now the time to deliver the whole Message, not one Datagram. It is the strongest
+practical argument for `ReliableUnordered`, which is the answer for bulk transfer.
+
 ## Modes do not interfere with each other
 
 Each mode has its own Space, so a hole in one cannot stall another. A large `ReliableOrdered` transfer

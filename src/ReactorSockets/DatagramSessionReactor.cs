@@ -577,7 +577,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             ReadOnlySpan<byte> fragmentPayload = message.Slice(offset, length);
 
             uint sequence = slot.OutboundSequences.Peek(recordMode);
-            RetentionSlotOutcome outcome = _retention.TryAcquire(handle.Index, spaceIndex, sequence, fragmentPayload);
+
+            // The Fragment's shape — that it is one, its index, its count — is handed to retention here
+            // and nowhere else (issue #250): TryRead hands it straight back to a retransmit, so the
+            // shape is decided once and never rebuilt from a PendingOutboundRecord.
+            RetentionSlotOutcome outcome = _retention.TryAcquire(
+                handle.Index, spaceIndex, sequence, fragmentPayload, isFragment: true, (ushort)fragmentIndex, (ushort)fragmentCount);
 
             Debug.Assert(
                 outcome == RetentionSlotOutcome.Committed,
@@ -589,14 +594,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             previousSequence = sequence;
 
             slot.OutboundSequences.Allocate(recordMode);
-            slot.PendingSends.Add(new PendingOutboundRecord
-            {
-                Mode = recordMode,
-                Sequence = sequence,
-                IsFragment = true,
-                FragmentIndex = (ushort)fragmentIndex,
-                FragmentCount = (ushort)fragmentCount,
-            });
+            slot.PendingSends.Add(new PendingOutboundRecord { Mode = recordMode, Sequence = sequence });
         }
 
         return SendOutcome.Sent;
@@ -1370,10 +1368,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// Queues every sequence <see cref="ReportExpiredRetransmissions"/> found expired on one reliable
     /// Space back onto <paramref name="slot"/>'s <see cref="PeerSlot.PendingSends"/>, so the same
     /// Pump's <see cref="FlushOutboundDatagrams"/> packs it (subtask 6.6.8, issue #218). No payload
-    /// copy is made or needed: a reliable record's bytes are in <see cref="_retention"/> from the
-    /// moment <see cref="Send"/> committed them, and <see cref="TryResolvePendingPayload"/> reads them
-    /// back at flush time — which is also what makes the resent bytes identical to the original
-    /// without this method holding anything to compare them against.
+    /// copy is made or needed: a reliable record's bytes, and its record shape — whole or one Fragment
+    /// of a cut Message, index and count included — are in <see cref="_retention"/> from the moment
+    /// <see cref="Send"/> committed them, and <see cref="TryResolvePendingPayload"/> reads both back at
+    /// flush time (issue #250). That is what makes the resent bytes identical to the original: this
+    /// queue entry carries nothing of its own for <see cref="FlushPeer"/> to rebuild the shape from —
+    /// <see cref="_retention"/> is the only place it is ever decided.
     /// </summary>
     /// <remarks>
     /// A sequence whose retention slot has already been released resolves to nothing at flush time and
@@ -1476,14 +1476,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         int consumed = 0;
         foreach (PendingOutboundRecord pending in slot.PendingSends)
         {
-            if (!TryResolvePendingPayload(slot, pending, out ReadOnlySpan<byte> payload))
+            if (!TryResolvePendingPayload(
+                slot, pending, out ReadOnlySpan<byte> payload, out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount))
             {
                 consumed++;
                 continue;
             }
 
-            bool packed = pending.IsFragment
-                ? packer.TryPackFragmentRecord(pending.Mode, pending.Sequence, pending.FragmentIndex, pending.FragmentCount, payload)
+            bool packed = isFragment
+                ? packer.TryPackFragmentRecord(pending.Mode, pending.Sequence, fragmentIndex, fragmentCount, payload)
                 : packer.TryPackRecord(pending.Mode, pending.Sequence, payload);
 
             if (!packed)
@@ -1525,22 +1526,41 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// The bytes one queued record's flush should pack: <paramref name="pending"/>'s own copy for an
-    /// unreliable record, since nothing else retains it; otherwise a read back from
-    /// <see cref="_retention"/> at the reliable Space <paramref name="pending"/>'s mode addresses.
-    /// Fails — nothing to pack — only if a reliable sequence was already released from retention
-    /// between being queued and this flush, which no path on this ticket's live traffic does yet.
+    /// The bytes, and the record shape, one queued record's flush should pack: <paramref name="pending"/>'s
+    /// own copy for an unreliable record, since nothing else retains it, and never a Fragment (ADR 0004
+    /// — only reliable modes ever fragment); otherwise both are read back from <see cref="_retention"/>
+    /// at the reliable Space <paramref name="pending"/>'s mode addresses, which is where <see cref="Send"/>
+    /// recorded them and the only place a retransmit — <paramref name="pending"/> itself carries nothing
+    /// of the shape — can recover them from (issue #250). Fails — nothing to pack — only if a reliable
+    /// sequence was already released from retention between being queued and this flush, which no path
+    /// on this ticket's live traffic does yet.
     /// </summary>
-    private bool TryResolvePendingPayload(PeerSlot slot, PendingOutboundRecord pending, out ReadOnlySpan<byte> payload)
+    /// <param name="slot">The Peer this record was queued against.</param>
+    /// <param name="pending">The queued record whose bytes and shape are being resolved.</param>
+    /// <param name="payload">The resolved record's payload bytes.</param>
+    /// <param name="isFragment">Whether the record is one piece of a Message cut into Fragments.</param>
+    /// <param name="fragmentIndex">This piece's position within its Message, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
+    /// <param name="fragmentCount">The Message's total piece count, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
+    private bool TryResolvePendingPayload(
+        PeerSlot slot,
+        PendingOutboundRecord pending,
+        out ReadOnlySpan<byte> payload,
+        out bool isFragment,
+        out ushort fragmentIndex,
+        out ushort fragmentCount)
     {
         if (pending.UnreliablePayload is byte[] bytes)
         {
             payload = bytes;
+            isFragment = false;
+            fragmentIndex = 0;
+            fragmentCount = 0;
             return true;
         }
 
         int spaceIndex = ReliableSpaceIndex(pending.Mode);
-        return _retention.TryRead(slot.Handle.Index, spaceIndex, pending.Sequence, out payload);
+        return _retention.TryRead(
+            slot.Handle.Index, spaceIndex, pending.Sequence, out payload, out isFragment, out fragmentIndex, out fragmentCount);
     }
 
     /// <summary>
@@ -2186,14 +2206,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// One record <see cref="Send"/> queued on a Peer's Slot, awaiting that Peer's next flush
     /// (<see cref="FlushOutboundDatagrams"/>, issue #216): the wire mode and sequence
     /// <see cref="Send"/> already allocated, plus — only for the two unreliable modes — a copy of the
-    /// Message's bytes. A reliable record carries no copy of its own: its bytes already live in
-    /// <see cref="_retention"/> from the moment <see cref="Send"/> committed them, and
-    /// <see cref="TryResolvePendingPayload"/> reads them back from there at flush time instead of
-    /// duplicating them here. Nothing retains an unreliable Send's bytes anywhere else — plain
-    /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> take no
-    /// retention slot at all (issue #43) — so this is the simplest place that can hold them until the
-    /// Pump that finally needs them: one small copy per unreliable Send, released the moment that
-    /// Pump's flush clears <see cref="PeerSlot.PendingSends"/>.
+    /// Message's bytes. A reliable record carries no copy of its own and no record shape of its own
+    /// either: its bytes, and whether it is a whole Message or one Fragment of a cut one (with which
+    /// index and count), already live in <see cref="_retention"/> from the moment <see cref="Send"/>
+    /// committed them, and <see cref="TryResolvePendingPayload"/> reads both back from there at flush
+    /// time instead of duplicating them here (issue #250) — a queue entry rebuilding the shape itself
+    /// is exactly the bug that ticket fixed. Nothing retains an unreliable Send's bytes anywhere else —
+    /// plain <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/>
+    /// take no retention slot at all (issue #43) and are never a Fragment (ADR 0004) — so this is the
+    /// simplest place that can hold them until the Pump that finally needs them: one small copy per
+    /// unreliable Send, released the moment that Pump's flush clears <see cref="PeerSlot.PendingSends"/>.
     /// </summary>
     private readonly struct PendingOutboundRecord
     {
@@ -2218,25 +2240,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// reliable one, whose bytes live in <see cref="_retention"/> instead.
         /// </summary>
         public byte[]? UnreliablePayload { get; init; }
-
-        /// <summary>
-        /// Whether this record is one piece of a Message <see cref="Send"/> cut into Fragments (issue
-        /// #245), rather than a whole Message in one record. <see langword="false"/> for every
-        /// unreliable record, since only reliable modes ever fragment (ADR 0004).
-        /// </summary>
-        public bool IsFragment { get; init; }
-
-        /// <summary>
-        /// This piece's position within its Message, valid only when <see cref="IsFragment"/> is
-        /// <see langword="true"/>.
-        /// </summary>
-        public ushort FragmentIndex { get; init; }
-
-        /// <summary>
-        /// The Message's total piece count, valid only when <see cref="IsFragment"/> is
-        /// <see langword="true"/>.
-        /// </summary>
-        public ushort FragmentCount { get; init; }
     }
 
     /// <summary>How far through the handshake one Peer has got.</summary>

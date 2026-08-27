@@ -38,6 +38,27 @@ internal sealed class RetentionPool
     private readonly int[] _slotLength;
 
     /// <summary>
+    /// Whether the slot at a given per-slot index holds one piece of a Message cut into Fragments
+    /// (issue #245), rather than a whole Message retained as a single record — the shape
+    /// <see cref="TryAcquire"/> was given, valid only where <see cref="_occupied"/> is set. A
+    /// retransmit reads this back through <see cref="TryRead"/> instead of recomputing it, so a
+    /// resend packs the same record shape — fragmented or not — as the original transmission
+    /// (issue #250): the shape was decided once, at <see cref="TryAcquire"/>, and this pool is its
+    /// only home from then on.
+    /// </summary>
+    private readonly bool[] _slotIsFragment;
+
+    /// <summary>
+    /// The Fragment index written into a slot, valid only where <see cref="_slotIsFragment"/> is set.
+    /// </summary>
+    private readonly ushort[] _slotFragmentIndex;
+
+    /// <summary>
+    /// The Fragment count written into a slot, valid only where <see cref="_slotIsFragment"/> is set.
+    /// </summary>
+    private readonly ushort[] _slotFragmentCount;
+
+    /// <summary>
     /// The bytes a share-holder currently has retained, summed across both reliable Spaces — one entry
     /// per share-holder, not per Space, since <see cref="HighWaterBytes"/> answers a question about one
     /// share-holder's memory (issue #43) rather than one Space's bound. Kept as a running total rather
@@ -129,6 +150,9 @@ internal sealed class RetentionPool
         _occupied = new bool[slotCount];
         _slotSequence = new uint[slotCount];
         _slotLength = new int[slotCount];
+        _slotIsFragment = new bool[slotCount];
+        _slotFragmentIndex = new ushort[slotCount];
+        _slotFragmentCount = new ushort[slotCount];
 
         _retainedBytes = new int[capacity];
         _highWaterBytes = new ulong[capacity];
@@ -273,8 +297,24 @@ internal sealed class RetentionPool
     /// more than the fragment size it declared is a programming error, not an exhaustion outcome, so
     /// this throws rather than truncating or overflowing into the neighbouring slot.
     /// </param>
+    /// <param name="isFragment">
+    /// Whether <paramref name="payload"/> is one piece of a Message cut into Fragments (issue #245),
+    /// rather than a whole Message retained as a single record. <see langword="false"/> by default —
+    /// every unreliable record and every single-Fragment reliable Message. Recorded against the slot
+    /// so <see cref="TryRead"/> can hand a retransmit the same shape back (issue #250): a Fragment's
+    /// shape is decided once, here, and never recomputed.
+    /// </param>
+    /// <param name="fragmentIndex">This piece's position within its Message, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
+    /// <param name="fragmentCount">The Message's total piece count, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
     /// <exception cref="ArgumentException"><paramref name="payload"/> is longer than <see cref="FragmentSize"/>.</exception>
-    public RetentionSlotOutcome TryAcquire(int shareHolderId, int spaceIndex, uint sequenceNumber, ReadOnlySpan<byte> payload)
+    public RetentionSlotOutcome TryAcquire(
+        int shareHolderId,
+        int spaceIndex,
+        uint sequenceNumber,
+        ReadOnlySpan<byte> payload,
+        bool isFragment = false,
+        ushort fragmentIndex = 0,
+        ushort fragmentCount = 0)
     {
         int regionBase = ValidateRegion(shareHolderId, spaceIndex);
 
@@ -307,6 +347,9 @@ internal sealed class RetentionPool
         _occupied[stateIndex] = true;
         _slotSequence[stateIndex] = sequenceNumber;
         _slotLength[stateIndex] = payload.Length;
+        _slotIsFragment[stateIndex] = isFragment;
+        _slotFragmentIndex[stateIndex] = fragmentIndex;
+        _slotFragmentCount[stateIndex] = fragmentCount;
 
         _retainedBytes[shareHolderId] += payload.Length;
         if ((ulong)_retainedBytes[shareHolderId] > _highWaterBytes[shareHolderId])
@@ -371,7 +414,22 @@ internal sealed class RetentionPool
     /// On success, the retained bytes as a read-only span of exactly the length written. On a miss,
     /// an empty span.
     /// </param>
-    public bool TryRead(int shareHolderId, int spaceIndex, uint sequenceNumber, out ReadOnlySpan<byte> payload)
+    /// <param name="isFragment">
+    /// On success, whether this record was retained as one piece of a Message cut into Fragments
+    /// (the shape <see cref="TryAcquire"/> was given for this slot). On a miss, <see langword="false"/>.
+    /// A retransmit reads this back rather than recomputing it, so it packs the same shape the
+    /// original transmission did (issue #250).
+    /// </param>
+    /// <param name="fragmentIndex">On success, this piece's position within its Message, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>. On a miss, 0.</param>
+    /// <param name="fragmentCount">On success, the Message's total piece count, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>. On a miss, 0.</param>
+    public bool TryRead(
+        int shareHolderId,
+        int spaceIndex,
+        uint sequenceNumber,
+        out ReadOnlySpan<byte> payload,
+        out bool isFragment,
+        out ushort fragmentIndex,
+        out ushort fragmentCount)
     {
         int regionBase = ValidateRegion(shareHolderId, spaceIndex);
 
@@ -382,11 +440,17 @@ internal sealed class RetentionPool
             {
                 int offset = stateIndex * FragmentSize;
                 payload = _buffer.AsSpan(offset, _slotLength[stateIndex]);
+                isFragment = _slotIsFragment[stateIndex];
+                fragmentIndex = _slotFragmentIndex[stateIndex];
+                fragmentCount = _slotFragmentCount[stateIndex];
                 return true;
             }
         }
 
         payload = ReadOnlySpan<byte>.Empty;
+        isFragment = false;
+        fragmentIndex = 0;
+        fragmentCount = 0;
         return false;
     }
 
