@@ -12,22 +12,26 @@ namespace ReactorSockets.Tests;
 /// unnecessary for this purpose in the first place: a Session is identified by its wire token rather
 /// than by the address or link a datagram arrived on
 /// (<see cref="DatagramSessionReactor.ProcessDataDatagram"/>'s remarks). An "interruption" here is
-/// therefore a real transport-level outage — a sustained stretch with nothing crossing the wire in
-/// either direction — rather than a protocol event, and "resume" is nothing more than the outage
-/// ending: no handshake, no counter exchange, nothing this library has to do to make the Slot's
-/// captured <c>RemoteMaxMessageSize</c> still be there afterwards.
+/// therefore a real transport-level outage — a sustained run of dropped Datagrams in both directions,
+/// through the same <see cref="LossyProxy"/> <see cref="DatagramSessionFragmentSurvivesInterruptionTests"/>
+/// uses — rather than a protocol event, and "resume" is nothing more than the outage ending: no
+/// handshake, no counter exchange, nothing this library has to do to make the Slot's captured
+/// <c>RemoteMaxMessageSize</c> still be there afterwards.
 /// </summary>
 /// <remarks>
 /// Every test drives two real <see cref="DatagramSessionReactor"/>s through a <see cref="WireTap"/>
 /// chained ahead of a <see cref="LossyProxy"/> (dialler -&gt; tap -&gt; proxy -&gt; accepter), the same
-/// composition <see cref="DatagramSessionFragmentSurvivesInterruptionTests"/> uses. No fault is ever
-/// queued on the proxy here, unlike that file: this profile raises no heartbeat or other idle traffic
-/// of its own (<c>MissedHeartbeats</c> is a Stream-profile-only setting — nothing in
-/// <see cref="DatagramSessionReactor"/> reads it), so once the handshake is done, nothing crosses the
-/// wire at all until this file's own Send does. For this profile a "sustained run of dropped
-/// datagrams" and a "sustained silence" are the same outage: there is nothing to drop. What is proved
-/// below is what survives that silence — the tap and proxy stay in the composition purely to match the
-/// established topology, not because either does anything during the gap.
+/// composition <see cref="DatagramSessionFragmentSurvivesInterruptionTests"/> uses. Before the
+/// limit-boundary Send under test, the fixture drives one ordinary Message to completion — proving the
+/// connection is not merely handshaken but has actually carried application data — then puts a second
+/// Message in flight and interrupts it for real. That Message cuts into two Fragments, but at this
+/// <see cref="FragmentSize"/> both always ride the same Datagram: <c>DatagramSessionReactor.FlushPeer</c>
+/// packs a whole Peer's send queue into one Datagram per Pump, so there is no smaller unit than "the
+/// Datagram" for the proxy to drop. The outage drops that Datagram's first transmission attempt and its
+/// first retransmission outbound, and a further accepter Send inbound, so real Datagrams are lost in
+/// both directions, not merely withheld, across more than one retransmit deadline. Recovery is asserted,
+/// not assumed — the interrupted Message must arrive whole once the drops stop, or the fixture itself
+/// fails before either limit-boundary test gets to its own Act.
 /// </remarks>
 /// <remarks>
 /// The dialler and the accepter are given deliberately different <c>MaxMessageSize</c> values. Every
@@ -56,18 +60,38 @@ public class DatagramSessionResumedRemoteMessageSizeTests
     /// </summary>
     private const int DiallerMaxMessageSize = FragmentSize * 20;
 
-    /// <summary>Enough retention on the dialler to hold every Fragment one at-limit Send cuts into, plus headroom.</summary>
-    private const int DiallerRetentionBytes = FragmentSize * 4;
+    /// <summary>Well under one Fragment, sent and delivered before the outage as the connection's genuine pre-interruption traffic.</summary>
+    private const int WarmupMessageSize = 3;
 
-    /// <summary>Comfortably longer than any timer this profile owns, so the gap is a genuine sustained outage rather than a merely slow round trip.</summary>
-    private static readonly TimeSpan _interruptionDuration = TimeSpan.FromMinutes(5);
+    /// <summary>
+    /// One full Fragment plus a short remainder: the interrupted Message cuts into two Fragments. At
+    /// this <see cref="FragmentSize"/>, <see cref="DatagramSessionReactor"/>'s per-Pump flush packs a
+    /// whole Peer's queue into one Datagram (<c>FlushPeer</c>'s own remarks), so both Fragments always
+    /// ride the same Datagram — the outage below drops that Datagram and its retransmissions, not one
+    /// Fragment carved out of the other.
+    /// </summary>
+    private const int InterruptionLastFragmentRemainder = 100;
+
+    /// <summary>The interrupted Message's size: one full Fragment plus <see cref="InterruptionLastFragmentRemainder"/>.</summary>
+    private const int InterruptionMessageSize = FragmentSize + InterruptionLastFragmentRemainder;
+
+    /// <summary>
+    /// Enough retention on the dialler to permanently hold the warm-up Message's one Fragment, the
+    /// interrupted Message's two Fragments, and the at-limit boundary Message's three Fragments —
+    /// retention slots are never released for a Datagram Peer's send-side pool once occupied — plus two
+    /// spare slots.
+    /// </summary>
+    private const int DiallerRetentionBytes = FragmentSize * 8;
+
+    /// <summary>Comfortably past the RTO, whose ceiling is the harness's one-second Linger.</summary>
+    private static readonly TimeSpan _pastTheRetransmitDeadline = TimeSpan.FromSeconds(3);
 
     [Fact]
     public void Send_AfterAResumedPeersInterruption_AMessageAtThePeersAnnouncedLimitIsAcceptedAndArrivesWhole()
     {
         // Arrange
         using Fixture fixture = Fixture.Build();
-        fixture.LetTheConnectionSitInterruptedThenResume();
+        fixture.DriveGenuineTrafficThenSurviveARealOutage();
 
         byte[] message = new byte[AccepterMaxMessageSize];
         for (int i = 0; i < message.Length; i++)
@@ -75,15 +99,14 @@ public class DatagramSessionResumedRemoteMessageSizeTests
             message[i] = (byte)i;
         }
 
-        // Act — the send-side proof: a Slot that had lost the announced value (fallen back to zero)
-        // would refuse this too, so the outcome alone is not yet decisive.
+        // Act
         SendOutcome outcome = fixture.Dialler.Reactor.Send(fixture.DiallerPeer, DeliveryMode.ReliableOrdered, message);
-
-        // Assert — the outcome, then the delivery: only a Message that actually arrives whole at the
-        // far end proves the Slot still held the real limit, not zero, through the interruption.
-        outcome.Should().Be(SendOutcome.Sent, "the resumed Peer's Slot still holds the peer's real announced limit, not zero");
-
         List<byte[]> delivered = fixture.PumpRoundsCollectingPayloads(rounds: 12);
+
+        // Assert — the outcome, then the delivery: a Slot that had lost the announced value (fallen
+        // back to zero) would refuse this Send outright, so only a Message that actually arrives whole
+        // at the far end proves the Slot still held the real limit through the outage.
+        outcome.Should().Be(SendOutcome.Sent, "the resumed Peer's Slot still holds the peer's real announced limit, not zero");
         delivered.Should().ContainSingle(
                 "a Slot that had lost the announced value would have refused the Send outright, so nothing would ever reach the wire")
             .Which.Should().Equal(message, "the whole Message must arrive intact, not merely be accepted at the call");
@@ -94,11 +117,11 @@ public class DatagramSessionResumedRemoteMessageSizeTests
     {
         // Arrange
         using Fixture fixture = Fixture.Build();
-        fixture.LetTheConnectionSitInterruptedThenResume();
+        fixture.DriveGenuineTrafficThenSurviveARealOutage();
         byte[] tooLarge = new byte[AccepterMaxMessageSize + 1];
 
         // Act — well under the dialler's own DiallerMaxMessageSize, so only validation against the
-        // peer's own announced limit, still held after the interruption, can refuse this.
+        // peer's own announced limit, still held after the outage, can refuse this.
         SendOutcome outcome = fixture.Dialler.Reactor.Send(fixture.DiallerPeer, DeliveryMode.ReliableOrdered, tooLarge);
 
         // Assert
@@ -110,7 +133,7 @@ public class DatagramSessionResumedRemoteMessageSizeTests
     /// <summary>
     /// The fixture both tests share: a dialler and an accepter, with deliberately different
     /// <see cref="MaxMessageSize"/>s, connected through a <see cref="WireTap"/> chained ahead of a
-    /// <see cref="LossyProxy"/>, plus the interruption-then-resume choreography.
+    /// <see cref="LossyProxy"/>, plus the genuine-traffic-then-outage choreography.
     /// </summary>
     private sealed class Fixture : IDisposable
     {
@@ -147,20 +170,58 @@ public class DatagramSessionResumedRemoteMessageSizeTests
         }
 
         /// <summary>
-        /// The interruption: nothing crosses the wire for <see cref="_interruptionDuration"/> — this
-        /// profile raises no idle traffic of its own, so simulating the outage is nothing more than
-        /// advancing the clock while pumping every party with nothing queued to send (matching how
-        /// <see cref="DatagramSessionFragmentSurvivesInterruptionTests"/>'s own dual-Space test
-        /// simulates silence). The resume that follows is equally uneventful: no handshake, no counter
-        /// exchange, just the clock moving on and traffic being allowed to flow again.
+        /// Drives one ordinary Message to completion first, then puts a second Message in flight and
+        /// interrupts it for real: the still-missing Fragment's retransmissions are dropped outbound
+        /// and a further accepter Send is dropped inbound, so the outage runs in both directions, not
+        /// merely as silence. Ends by letting the drops stop and asserting the interrupted Message
+        /// arrives whole — the fixture fails here, not in a test's own Act, if resuming does not
+        /// actually work.
         /// </summary>
-        public void LetTheConnectionSitInterruptedThenResume()
+        public void DriveGenuineTrafficThenSurviveARealOutage()
         {
-            Dialler.TimeProvider.Advance(_interruptionDuration);
-            for (int i = 0; i < 5; i++)
+            byte[] warmup = new byte[WarmupMessageSize];
+            for (int i = 0; i < warmup.Length; i++)
             {
-                PumpRelayRound();
+                warmup[i] = (byte)(i + 1);
             }
+
+            Dialler.Reactor.Send(DiallerPeer, DeliveryMode.ReliableOrdered, warmup).Should().Be(SendOutcome.Sent);
+            PumpRoundsCollectingPayloads(rounds: 6).Should().ContainSingle(
+                    "the connection must actually carry a Message before the outage, not merely complete a handshake")
+                .Which.Should().Equal(warmup);
+
+            byte[] interrupted = new byte[InterruptionMessageSize];
+            for (int i = 0; i < interrupted.Length; i++)
+            {
+                interrupted[i] = (byte)(i + 1);
+            }
+
+            // The outage starts before this Message ever reaches the wire: its own first transmission
+            // attempt, and its first retransmission, are both dropped outbound. A further accepter Send
+            // is dropped inbound in the same window, so real Datagrams are lost in both directions, not
+            // merely withheld.
+            Dialler.Reactor.Send(DiallerPeer, DeliveryMode.ReliableOrdered, interrupted).Should().Be(SendOutcome.Sent);
+            Proxy.DropNext(RelayDirection.ClientToUpstream);
+            Proxy.DropNext(RelayDirection.ClientToUpstream);
+            Proxy.DropNext(RelayDirection.UpstreamToClient);
+            Accepter.Reactor.Send(AccepterPeer, DeliveryMode.Unreliable, [1]).Should().Be(SendOutcome.Sent);
+
+            PumpRelayRound();
+            Accepter.DrainPayloads().Should().BeEmpty("the interrupted Message's first transmission attempt was dropped, not delivered");
+            Dialler.DrainPayloads().Should().BeEmpty("the accepter's own Send in this window was dropped too; the loss runs in both directions");
+
+            Dialler.TimeProvider.Advance(_pastTheRetransmitDeadline);
+            PumpRelayRound();
+            Accepter.DrainPayloads().Should().BeEmpty("the outage is still ongoing; the first retransmission was dropped as well");
+
+            // The outage ends: nothing further is dropped. Recovery is asserted, not assumed — a Resume
+            // that had failed to keep the Fragment reassembly state, or a Send path that never retried,
+            // would leave this empty and fail the fixture here, before either limit-boundary test gets
+            // to its own Act.
+            Dialler.TimeProvider.Advance(_pastTheRetransmitDeadline);
+            PumpRoundsCollectingPayloads(rounds: 12).Should().ContainSingle(
+                    "the outage has ended and the interrupted Message's next retransmission finally lands")
+                .Which.Should().Equal(interrupted);
         }
 
         public List<byte[]> PumpRoundsCollectingPayloads(int rounds)

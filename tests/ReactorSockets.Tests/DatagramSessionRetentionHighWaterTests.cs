@@ -19,6 +19,11 @@ namespace ReactorSockets.Tests;
 /// starts at zero, rises with what is retained, sums across both reliable Spaces, and does not fall
 /// once a Space is exhausted and further Sends are refused.
 /// </remarks>
+/// <remarks>
+/// A reliable Send is refused unless the Peer has learned the remote's announced
+/// <c>MaxMessageSize</c> (issue #284), so every test below pumps a real handshake to completion
+/// before Sending.
+/// </remarks>
 public class DatagramSessionRetentionHighWaterTests
 {
     private const int FragmentSize = 600;
@@ -46,9 +51,6 @@ public class DatagramSessionRetentionHighWaterTests
         using DatagramSessionReactorHarness harness = new(bindLoopback: false, fragmentSize: FragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
-
-        // A reliable Send is refused unless the Peer has learned the remote's announced
-        // MaxMessageSize (issue #284), so the handshake must actually complete first.
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
 
         // Act
@@ -66,9 +68,6 @@ public class DatagramSessionRetentionHighWaterTests
         using DatagramSessionReactorHarness harness = new(bindLoopback: false, fragmentSize: FragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
-
-        // A reliable Send is refused unless the Peer has learned the remote's announced
-        // MaxMessageSize (issue #284), so the handshake must actually complete first.
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
 
         // Act
@@ -87,9 +86,6 @@ public class DatagramSessionRetentionHighWaterTests
             bindLoopback: false, fragmentSize: FragmentSize, retentionBytes: FragmentSize * 3, maxMessageSize: FragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
-
-        // A reliable Send is refused unless the Peer has learned the remote's announced
-        // MaxMessageSize (issue #284), so the handshake must actually complete first.
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
 
         // Act
@@ -114,9 +110,6 @@ public class DatagramSessionRetentionHighWaterTests
             bindLoopback: false, fragmentSize: FragmentSize, retentionBytes: FragmentSize * 2, maxMessageSize: FragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
-
-        // A reliable Send is refused unless the Peer has learned the remote's announced
-        // MaxMessageSize (issue #284), so the handshake must actually complete first.
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
 
         harness.Reactor.Send(peer, DeliveryMode.ReliableOrdered, new byte[50]);
@@ -141,9 +134,6 @@ public class DatagramSessionRetentionHighWaterTests
             bindLoopback: false, capacity: 1, fragmentSize: FragmentSize, retentionBytes: FragmentSize, maxMessageSize: FragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId first = harness.Reactor.Connect(remote.Endpoint);
-
-        // A reliable Send is refused unless the Peer has learned the remote's announced
-        // MaxMessageSize (issue #284), so each Peer here must complete a real handshake before it Sends.
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, new byte[40]);
         harness.Reactor.Close(first);
@@ -167,9 +157,6 @@ public class DatagramSessionRetentionHighWaterTests
             bindLoopback: false, capacity: 1, fragmentSize: FragmentSize, retentionBytes: FragmentSize, maxMessageSize: FragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId first = harness.Reactor.Connect(remote.Endpoint);
-
-        // A reliable Send is refused unless the Peer has learned the remote's announced
-        // MaxMessageSize (issue #284), so each Peer here must complete a real handshake before it Sends.
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, new byte[400]);
         harness.Reactor.Close(first);
@@ -192,9 +179,6 @@ public class DatagramSessionRetentionHighWaterTests
             bindLoopback: false, capacity: 1, fragmentSize: FragmentSize, retentionBytes: FragmentSize, maxMessageSize: FragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId first = harness.Reactor.Connect(remote.Endpoint);
-
-        // A reliable Send is refused unless the Peer has learned the remote's announced
-        // MaxMessageSize (issue #284), so the handshake must actually complete first.
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, new byte[400]);
         harness.Reactor.Close(first);
@@ -219,9 +203,6 @@ public class DatagramSessionRetentionHighWaterTests
         using DatagramSessionReactorHarness secondRemote = new();
         PeerId first = harness.Reactor.Connect(firstRemote.Endpoint);
         PeerId second = harness.Reactor.Connect(secondRemote.Endpoint);
-
-        // A reliable Send is refused unless its Peer has learned the remote's announced
-        // MaxMessageSize (issue #284), so both Peers here must complete a real handshake before they Send.
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, firstRemote);
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, secondRemote);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, new byte[300]);

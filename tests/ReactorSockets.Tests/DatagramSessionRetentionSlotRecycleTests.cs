@@ -16,6 +16,10 @@ namespace ReactorSockets.Tests;
 /// second Peer inherits the first's occupied slots, and a Peer that has sent nothing is refused with
 /// <see cref="SendOutcome.RetentionExhausted"/> on its very first reliable Send.
 /// </remarks>
+/// <remarks>
+/// A reliable Send is refused unless its Peer has learned the remote's announced
+/// <c>MaxMessageSize</c> (issue #284), so every Peer below completes a real handshake before Sending.
+/// </remarks>
 public class DatagramSessionRetentionSlotRecycleTests
 {
     [Fact]
@@ -33,8 +37,6 @@ public class DatagramSessionRetentionSlotRecycleTests
         using DatagramSessionReactorHarness firstRemote = new();
         using DatagramSessionReactorHarness secondRemote = new();
 
-        // A reliable Send is refused unless its Peer has learned the remote's announced MaxMessageSize
-        // (issue #284), so each Peer here must complete a real handshake before it can Send.
         PeerId first = harness.Reactor.Connect(firstRemote.Endpoint);
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, firstRemote);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, [1, 2, 3]).Should().Be(SendOutcome.Sent);
@@ -68,8 +70,6 @@ public class DatagramSessionRetentionSlotRecycleTests
         using DatagramSessionReactorHarness firstRemote = new();
         using DatagramSessionReactorHarness secondRemote = new();
 
-        // A reliable Send is refused unless its Peer has learned the remote's announced MaxMessageSize
-        // (issue #284), so the first Peer must complete a real handshake before it can Send.
         PeerId first = harness.Reactor.Connect(firstRemote.Endpoint);
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, firstRemote);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, [1, 2, 3]).Should().Be(SendOutcome.Sent);

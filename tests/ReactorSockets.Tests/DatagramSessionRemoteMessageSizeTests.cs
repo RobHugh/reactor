@@ -33,17 +33,11 @@ public class DatagramSessionRemoteMessageSizeTests
         // would be accepted under the dialler's own (unused) limit too, so the case that actually proves
         // the boundary is remote-owned is the one immediately below; this one pins that the boundary is
         // inclusive rather than exclusive.
-        using DatagramSessionReactorHarness dialler = new(
-            bindLoopback: false, maxMessageSize: DiallerMaxMessageSize, retentionBytes: RetentionBytes, fragmentSize: FragmentSize);
-        using DatagramSessionReactorHarness accepter = new(
-            maxMessageSize: AccepterMaxMessageSize, retentionBytes: RetentionBytes, fragmentSize: FragmentSize);
-        PeerId diallerPeer = dialler.Reactor.Connect(accepter.Endpoint);
-        DatagramSessionReactorHarness.PumpBothUntilConnected(dialler, accepter);
-
+        using Fixture fixture = Fixture.Build();
         byte[] exactlyAtLimit = new byte[AccepterMaxMessageSize];
 
         // Act
-        SendOutcome outcome = dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, exactlyAtLimit);
+        SendOutcome outcome = fixture.Dialler.Reactor.Send(fixture.DiallerPeer, DeliveryMode.ReliableOrdered, exactlyAtLimit);
 
         // Assert
         outcome.Should().Be(SendOutcome.Sent, "a Message of exactly the peer's announced limit is one the design promises can complete");
@@ -55,17 +49,11 @@ public class DatagramSessionRemoteMessageSizeTests
         // Arrange — the decisive case: 601 bytes is over the accepter's announced 600 but well under the
         // dialler's own 4096. A Reactor still checking its own MaxMessageSize would accept this; only
         // checking the peer's announced limit refuses it.
-        using DatagramSessionReactorHarness dialler = new(
-            bindLoopback: false, maxMessageSize: DiallerMaxMessageSize, retentionBytes: RetentionBytes, fragmentSize: FragmentSize);
-        using DatagramSessionReactorHarness accepter = new(
-            maxMessageSize: AccepterMaxMessageSize, retentionBytes: RetentionBytes, fragmentSize: FragmentSize);
-        PeerId diallerPeer = dialler.Reactor.Connect(accepter.Endpoint);
-        DatagramSessionReactorHarness.PumpBothUntilConnected(dialler, accepter);
-
+        using Fixture fixture = Fixture.Build();
         byte[] oneByteOver = new byte[AccepterMaxMessageSize + 1];
 
         // Act
-        SendOutcome outcome = dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, oneByteOver);
+        SendOutcome outcome = fixture.Dialler.Reactor.Send(fixture.DiallerPeer, DeliveryMode.ReliableOrdered, oneByteOver);
 
         // Assert
         outcome.Should().Be(
@@ -79,22 +67,16 @@ public class DatagramSessionRemoteMessageSizeTests
         // Arrange — same mismatched limits as above. An accepted small Send establishes a non-zero
         // high-water mark; the refusal in between must leave it exactly where that Send left it, because
         // the figure is monotonic and a refusal that took even one Fragment's worth would move it.
-        using DatagramSessionReactorHarness dialler = new(
-            bindLoopback: false, maxMessageSize: DiallerMaxMessageSize, retentionBytes: RetentionBytes, fragmentSize: FragmentSize);
-        using DatagramSessionReactorHarness accepter = new(
-            maxMessageSize: AccepterMaxMessageSize, retentionBytes: RetentionBytes, fragmentSize: FragmentSize);
-        PeerId diallerPeer = dialler.Reactor.Connect(accepter.Endpoint);
-        DatagramSessionReactorHarness.PumpBothUntilConnected(dialler, accepter);
-
+        using Fixture fixture = Fixture.Build();
         byte[] small = [1, 2, 3];
         byte[] oneByteOver = new byte[AccepterMaxMessageSize + 1];
 
         // Act
-        dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, small).Should().Be(SendOutcome.Sent);
-        ulong beforeRefusal = dialler.Reactor.CountersOf(diallerPeer).RetentionHighWaterBytes;
+        fixture.Dialler.Reactor.Send(fixture.DiallerPeer, DeliveryMode.ReliableOrdered, small).Should().Be(SendOutcome.Sent);
+        ulong beforeRefusal = fixture.Dialler.Reactor.CountersOf(fixture.DiallerPeer).RetentionHighWaterBytes;
 
-        SendOutcome refused = dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, oneByteOver);
-        ulong afterRefusal = dialler.Reactor.CountersOf(diallerPeer).RetentionHighWaterBytes;
+        SendOutcome refused = fixture.Dialler.Reactor.Send(fixture.DiallerPeer, DeliveryMode.ReliableOrdered, oneByteOver);
+        ulong afterRefusal = fixture.Dialler.Reactor.CountersOf(fixture.DiallerPeer).RetentionHighWaterBytes;
 
         // Assert
         refused.Should().Be(SendOutcome.RemoteMessageTooLarge);
@@ -104,38 +86,32 @@ public class DatagramSessionRemoteMessageSizeTests
     [Fact]
     public void Send_RefusedAsRemoteMessageTooLarge_ConsumesNoSequenceAndLeavesThePeerAbleToSendASmallerMessageWhole()
     {
-        // Arrange — same mismatched limits. A send, a refusal, and a second send: if the refusal had
-        // burned a sequence number, the second accepted record would carry sequence 1 instead of the
-        // sequence 0 immediately after the first accepted one — decoded straight off the wire, the same
-        // way DatagramSessionRefusedSendTraceTests reads it, because nothing on the public seam surfaces
-        // a sequence number directly. The refused Send also queues no record, so only two records — the
-        // accepted ones — ever reach the wire, and the second one's payload is what proves the Peer
-        // "untouched" claim: it must arrive whole at the accepter, not merely be accepted at the call.
-        using DatagramSessionReactorHarness dialler = new(
-            bindLoopback: false, maxMessageSize: DiallerMaxMessageSize, retentionBytes: RetentionBytes, fragmentSize: FragmentSize);
-        using DatagramSessionReactorHarness accepter = new(
-            maxMessageSize: AccepterMaxMessageSize, retentionBytes: RetentionBytes, fragmentSize: FragmentSize);
-        using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
-        PeerId diallerPeer = dialler.Reactor.Connect(tap.PublicEndPoint);
-        DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
-
+        // Arrange — same mismatched limits, but through a WireTap so the wire itself can be decoded. A
+        // send, a refusal, and a second send: if the refusal had burned a sequence number, the second
+        // accepted record would carry sequence 1 instead of the sequence 0 immediately after the first
+        // accepted one — decoded straight off the wire, the same way DatagramSessionRefusedSendTraceTests
+        // reads it, because nothing on the public seam surfaces a sequence number directly. The refused
+        // Send also queues no record, so only two records — the accepted ones — ever reach the wire, and
+        // the second one's payload is what proves the Peer "untouched" claim: it must arrive whole at the
+        // accepter, not merely be accepted at the call.
+        using Fixture fixture = Fixture.Build(withTap: true);
         byte[] first = [1, 2, 3];
         byte[] oneByteOver = new byte[AccepterMaxMessageSize + 1];
         byte[] second = [4, 5, 6, 7];
 
         // Act
-        SendOutcome accepted1 = dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, first);
-        SendOutcome refused = dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, oneByteOver);
-        SendOutcome accepted2 = dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, second);
-        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
-        List<byte[]> delivered = accepter.DrainPayloads();
+        SendOutcome accepted1 = fixture.Dialler.Reactor.Send(fixture.DiallerPeer, DeliveryMode.ReliableOrdered, first);
+        SendOutcome refused = fixture.Dialler.Reactor.Send(fixture.DiallerPeer, DeliveryMode.ReliableOrdered, oneByteOver);
+        SendOutcome accepted2 = fixture.Dialler.Reactor.Send(fixture.DiallerPeer, DeliveryMode.ReliableOrdered, second);
+        DatagramSessionReactorHarness.PumpRoundThroughTap(fixture.Dialler, fixture.Tap!, fixture.Accepter);
+        List<byte[]> delivered = fixture.Accepter.DrainPayloads();
 
         // Assert
         accepted1.Should().Be(SendOutcome.Sent);
         refused.Should().Be(SendOutcome.RemoteMessageTooLarge);
         accepted2.Should().Be(SendOutcome.Sent, "the refusal did not touch the Peer, so a smaller Message sends immediately afterwards");
 
-        DecodedDatagram datagram = DecodeFirstDataDatagram(tap);
+        DecodedDatagram datagram = DecodeFirstDataDatagram(fixture.Tap!);
         datagram.Records.Should().HaveCount(2, "the refused Send queued no record to carry");
         datagram.Records[0].Sequence.Should().Be(0U, "the first accepted Send is this Space's first allocation");
         datagram.Records[0].Payload.Should().Equal(first);
@@ -158,5 +134,46 @@ public class DatagramSessionRemoteMessageSizeTests
         DatagramDecodeResult decoded = DatagramDecoder.TryDecode(payload);
         decoded.IsSuccess.Should().BeTrue(decoded.Error);
         return decoded.Datagram!;
+    }
+
+    /// <summary>
+    /// The dialler and accepter every test in this file shares, with the accepter's own mismatched
+    /// <see cref="AccepterMaxMessageSize"/> and <see cref="DiallerMaxMessageSize"/>, connected and
+    /// handshaken. <see cref="Build"/> connects directly; passing <c>withTap: true</c> routes the
+    /// connection through a <see cref="WireTap"/> instead, for the one test that decodes the wire.
+    /// </summary>
+    private sealed class Fixture : IDisposable
+    {
+        public required DatagramSessionReactorHarness Dialler { get; init; }
+        public required DatagramSessionReactorHarness Accepter { get; init; }
+        public required PeerId DiallerPeer { get; init; }
+        public WireTap? Tap { get; init; }
+
+        public static Fixture Build(bool withTap = false)
+        {
+            DatagramSessionReactorHarness dialler = new(
+                bindLoopback: false, maxMessageSize: DiallerMaxMessageSize, retentionBytes: RetentionBytes, fragmentSize: FragmentSize);
+            DatagramSessionReactorHarness accepter = new(
+                maxMessageSize: AccepterMaxMessageSize, retentionBytes: RetentionBytes, fragmentSize: FragmentSize);
+
+            if (!withTap)
+            {
+                PeerId directPeer = dialler.Reactor.Connect(accepter.Endpoint);
+                DatagramSessionReactorHarness.PumpBothUntilConnected(dialler, accepter);
+                return new Fixture { Dialler = dialler, Accepter = accepter, DiallerPeer = directPeer };
+            }
+
+            WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
+            PeerId tappedPeer = dialler.Reactor.Connect(tap.PublicEndPoint);
+            DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
+            return new Fixture { Dialler = dialler, Accepter = accepter, DiallerPeer = tappedPeer, Tap = tap };
+        }
+
+        public void Dispose()
+        {
+            Dialler.Dispose();
+            Accepter.Dispose();
+            Tap?.Dispose();
+        }
     }
 }

@@ -280,7 +280,10 @@ internal static class ControlDatagramCodec
     /// <summary>
     /// Reads a <see cref="DatagramControlType.HelloWithCookie"/>'s body. Fails when
     /// <paramref name="cookie"/> or <paramref name="resumeSecret"/> is not exactly its wire length,
-    /// for the same reason <see cref="TryReadCookie"/> does.
+    /// for the same reason <see cref="TryReadCookie"/> does, and when the announced
+    /// <paramref name="maxMessageSize"/> is zero — as meaningless off the wire as a local
+    /// <see cref="DatagramSessionOptions.MaxMessageSize"/> of zero is by
+    /// <see cref="DatagramSessionOptions.Validate"/> (issue #287).
     /// </summary>
     public static bool TryReadHelloWithCookie(
         ReadOnlySpan<byte> datagram,
@@ -318,6 +321,17 @@ internal static class ControlDatagramCodec
         offset += sizeof(uint);
         maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
         offset += sizeof(uint);
+
+        if (maxMessageSize == 0)
+        {
+            version = default;
+            clientNonce = default;
+            epoch = default;
+            sessionIdForMe = default;
+            maxMessageSize = default;
+            return false;
+        }
+
         datagram.Slice(offset, DatagramSessionProtocol.ResumeSecretLength).CopyTo(resumeSecret);
         return true;
     }
@@ -325,7 +339,9 @@ internal static class ControlDatagramCodec
     /// <summary>
     /// Reads a <see cref="DatagramControlType.Accept"/>'s body. Fails when
     /// <paramref name="resumeSecret"/> is not exactly its wire length, for the same reason
-    /// <see cref="TryReadCookie"/> does for a cookie.
+    /// <see cref="TryReadCookie"/> does for a cookie, and when the announced
+    /// <paramref name="maxMessageSize"/> is zero, for the same reason
+    /// <see cref="TryReadHelloWithCookie"/> does.
     /// </summary>
     public static bool TryReadAccept(
         ReadOnlySpan<byte> datagram,
@@ -351,6 +367,15 @@ internal static class ControlDatagramCodec
         offset += sizeof(uint);
         maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
         offset += sizeof(uint);
+
+        if (maxMessageSize == 0)
+        {
+            clientNonce = default;
+            sessionIdForMe = default;
+            maxMessageSize = default;
+            return false;
+        }
+
         datagram.Slice(offset, DatagramSessionProtocol.ResumeSecretLength).CopyTo(resumeSecret);
         return true;
     }
