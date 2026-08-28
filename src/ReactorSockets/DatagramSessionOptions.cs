@@ -97,6 +97,21 @@ public sealed class DatagramSessionOptions
     internal const int SpaceCount = 4;
 
     /// <summary>
+    /// The bytes one receive-arena length slot occupies for a retaining Space (issue #257): a
+    /// <c>u16</c> recording how many payload bytes the Fragment held in a slot actually occupies, wide
+    /// enough for any <see cref="ResolvedFragmentSize"/> up to the largest a UDP payload can carry.
+    /// Internal so <see cref="Core.ReceiveArena"/> sizes its length region against the same constant
+    /// this budget is computed from, rather than a second literal 2 that could drift from it.
+    /// </summary>
+    internal const int FragmentLengthBytes = 2;
+
+    /// <summary>
+    /// Bytes one waiting-Fragment-group entry occupies in the receive arena: a <c>u32</c> first
+    /// sequence and a <c>u16</c> declared Fragment count, the pair that names a group (issue #259).
+    /// </summary>
+    internal const int PendingGroupEntryBytes = 6;
+
+    /// <summary>
     /// The shared L0 budget: capacity, admission cap, arena size, time source and Diagnostic Sink.
     /// Required — a Reactor cannot be built without one, and its <see cref="ReactorOptions.Capacity"/>
     /// has no default of its own.
@@ -217,17 +232,30 @@ public sealed class DatagramSessionOptions
     /// silently wraps through.
     /// </summary>
     /// <remarks>
-    /// Two things per Peer scale with the window, and this figure covers both (issue #174). Payload
-    /// slots — <see cref="ResolvedFragmentSize"/> bytes each — exist only for the
+    /// Three things per Peer scale with the window, and this figure covers all three (issue #174,
+    /// #257). Payload slots — <see cref="ResolvedFragmentSize"/> bytes each — exist only for the
     /// <see cref="ReliableSpaceCount"/> Spaces that hold fragments until a Message is whole. The
     /// one-byte-per-slot admission record a receive window classifies against exists for all
-    /// <see cref="SpaceCount"/> Spaces, because all four classify whether or not they retain. Nothing
-    /// on the receive side is allocated outside this figure, so it is an exact statement of what a
-    /// Reactor takes, not a floor it sits above.
+    /// <see cref="SpaceCount"/> Spaces, because all four classify whether or not they retain.
+    /// <see cref="FragmentLengthBytes"/> per slot records how many bytes of a held Fragment's payload
+    /// are actually occupied, and exists only for the same <see cref="ReliableSpaceCount"/> Spaces as
+    /// the payload it describes — this is the receive window's own reassembly bookkeeping (issue
+    /// #257), not a separate buffer. Nothing on the receive side is allocated outside this figure, so
+    /// it is an exact statement of what a Reactor takes, not a floor it sits above.
     /// </remarks>
     public long ReceiveBudgetBytes =>
-        (long)Reactor.Capacity * ResolvedReceiveWindowFragments
-        * (((long)ReliableSpaceCount * ResolvedFragmentSize) + SpaceCount);
+        ((long)Reactor.Capacity * ResolvedReceiveWindowFragments
+            * (((long)ReliableSpaceCount * (ResolvedFragmentSize + FragmentLengthBytes)) + SpaceCount))
+        + ((long)Reactor.Capacity * ReliableSpaceCount * PendingGroupsPerSpace * PendingGroupEntryBytes);
+
+    /// <summary>
+    /// The completed Fragment groups one reliable Space can have waiting for delivery at once: half
+    /// <see cref="ResolvedReceiveWindowFragments"/>, never fewer than one. A group is at least two
+    /// Fragments wide and holds its slots until it is delivered, so the window's own size is what
+    /// bounds this — see <see cref="Session.PendingFragmentGroups"/>.
+    /// </summary>
+    internal int PendingGroupsPerSpace =>
+        ResolvedReceiveWindowFragments / 2 < 1 ? 1 : ResolvedReceiveWindowFragments / 2;
 
     /// <summary>The send line of the memory bill in bytes, reported the same way.</summary>
     public long SendBudgetBytes =>
@@ -371,9 +399,10 @@ public sealed class DatagramSessionOptions
             throw new ArgumentException(
                 $"these options ask for {total} bytes of preallocation, which cannot be allocated. " +
                 $"Receive is Capacity {Reactor.Capacity} × {ResolvedReceiveWindowFragments} fragments × " +
-                $"({ReliableSpaceCount} reliable Spaces × {ResolvedFragmentSize} payload bytes + {SpaceCount} Spaces × " +
-                $"1 admission byte) = {receive}; send is Capacity {Reactor.Capacity} × {ReliableSpaceCount} reliable " +
-                $"Spaces × {RetentionBytes} bytes = {send}. Lower Capacity, MaxMessageSize, ReceiveWindowFragments or RetentionBytes.",
+                $"({ReliableSpaceCount} reliable Spaces × ({ResolvedFragmentSize} payload bytes + {FragmentLengthBytes} " +
+                $"length bytes) + {SpaceCount} Spaces × 1 admission byte) = {receive}; send is Capacity " +
+                $"{Reactor.Capacity} × {ReliableSpaceCount} reliable Spaces × {RetentionBytes} bytes = {send}. " +
+                "Lower Capacity, MaxMessageSize, ReceiveWindowFragments or RetentionBytes.",
                 nameof(Reactor));
         }
     }

@@ -295,6 +295,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             _capDiscardsThisFrame = 0;
             _capacityDiscardsThisFrame = 0;
             _dispatcher.Pump();
+            RetryPendingFragmentDeliveries();
             ReportExpiredRetransmissions();
             FlushOutboundDatagrams();
             ReportDeclinedAdmissions();
@@ -817,8 +818,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// whole datagram rather than whatever records parsed before it, because a partial admission would
     /// let a forged tail poison an otherwise legitimate send. A record with the fragment bit set is not
     /// by itself bad: <see cref="PacketRecordCodec.TryRead"/> reads the Fragment shape same as the
-    /// unfragmented one, and this method routes it into its Space the same way, fragment index and
-    /// count unused until #173 assembles Messages from them. Parsing therefore runs in
+    /// unfragmented one, and this method routes it into its Space the same way — <see cref="ClassifyRecord"/>
+    /// is what diverts an admitted Fragment away from delivery and into its Space's receive-window slot
+    /// instead (issue #257). Parsing therefore runs in
     /// two passes over the same bytes: the first confirms every record is well-formed without touching
     /// any Space, and only once the whole datagram has proven parseable does the second classify each
     /// record in turn — so an early record is never classified on the strength of a datagram whose tail
@@ -886,13 +888,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         while (remainder.Length > 0)
         {
             // Every record in this span already proved well-formed in the pass above, so this read
-            // cannot fail — the return value is not re-checked.
-            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out ushort length, out _, out _, out _, out int bytesConsumed);
+            // cannot fail — the return value is not re-checked. fragmentIndex and fragmentCount are
+            // read here (issue #258): a held Fragment's group first sequence, and so its completeness,
+            // is derived from them the moment it is held.
+            PacketRecordCodec.TryRead(
+                remainder, out PacketRecordMode mode, out uint sequence, out ushort length,
+                out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount, out int bytesConsumed);
 
             // The payload is the tail of what this record consumed, so it is sliced from the record's
             // own span rather than re-derived from a header width this method would then have to know.
             ReadOnlySpan<byte> payload = remainder.Slice(bytesConsumed - length, length);
-            ClassifyRecord(slot, mode, sequence, payload);
+            ClassifyRecord(slot, mode, sequence, isFragment, fragmentIndex, fragmentCount, payload);
             remainder = remainder[bytesConsumed..];
         }
     }
@@ -1589,11 +1595,26 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// counted for this Space, since the 64-entry window is the authority on what was a duplicate here
     /// and counting both would count one repeat twice.
     /// </para>
+    /// <para>
+    /// <b>An admitted Fragment is diverted, not delivered</b> (issue #257, ADR 0004). A Fragment is one
+    /// piece of a Message, not a Message, so an admitted one is held in its Space's receive-window slot
+    /// instead — <see cref="HoldFragment"/> — rather than reaching <see cref="DeliverAdmittedRecord"/>:
+    /// no frame-arena reservation, no pending <see cref="SessionEventKind.MessageReceived"/>, and
+    /// <see cref="PeerCounters.MessagesReceived"/> does not rise. <see cref="HoldFragment"/> also
+    /// derives the held Fragment's group first sequence and answers whether its group is now complete
+    /// (issue #258); a complete group is handed to <see cref="TryDeliverOrDeferFragmentGroup"/>, which
+    /// delivers it as one Message or defers it if delivery cannot happen yet (issue #259). Only
+    /// <c>ReliableOrdered</c> and <c>ReliableUnordered</c> ever carry the fragment shape (ADR 0004);
+    /// <paramref name="isFragment"/> is otherwise ignored exactly as it always was, so a stray fragment
+    /// bit on an unreliable-mode record changes nothing this method does.
+    /// </para>
     /// </remarks>
-    private void ClassifyRecord(PeerSlot slot, PacketRecordMode mode, uint sequence, ReadOnlySpan<byte> payload)
+    private void ClassifyRecord(
+        PeerSlot slot, PacketRecordMode mode, uint sequence, bool isFragment,
+        ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload)
     {
         ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
-        ReceiveWindowOutcome outcome = windows.Classify(mode, sequence);
+        ReceiveWindowOutcome outcome = windows.Classify(mode, sequence, out int ringSlot);
 
         switch (outcome)
         {
@@ -1612,7 +1633,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
         else if (outcome == ReceiveWindowOutcome.Admitted)
         {
-            DeliverAdmittedRecord(slot, mode, sequence, payload);
+            if (isFragment && mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
+            {
+                bool groupComplete = HoldFragment(slot, mode, sequence, ringSlot, fragmentIndex, fragmentCount, payload);
+                if (groupComplete)
+                {
+                    uint groupFirstSequence = FragmentGroup.FirstSequenceOf(sequence, fragmentIndex);
+                    TryDeliverOrDeferFragmentGroup(slot, mode, groupFirstSequence, fragmentCount);
+                }
+            }
+            else
+            {
+                DeliverAdmittedRecord(slot, mode, sequence, payload);
+            }
         }
 
         // No mode test guards this (#176): a window reports a nonzero LastSlideLoss only if it slid,
@@ -1662,6 +1695,307 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         DeliverAdmittedRecord(slot, PacketRecordMode.Unreliable, sequence, payload);
+    }
+
+    /// <summary>
+    /// Diverts an admitted Fragment away from delivery and into its Space's receive-window slot for
+    /// <paramref name="ringSlot"/> instead (issue #257, ADR 0004): copies its payload into the
+    /// fixed-size slot the receive arena preallocated for that ring position, and records the payload's
+    /// byte length on the window so a later Pump can tell a held Fragment apart from an empty slot.
+    /// Nothing is reserved in the frame arena, no pending <see cref="SessionEventKind.MessageReceived"/>
+    /// is queued, and <see cref="PeerCounters.MessagesReceived"/> does not rise — a Fragment is a piece
+    /// of a Message, not a Message, so none of the three steps <see cref="DeliverToConsumer"/> takes
+    /// apply to it. Once the length is recorded, this derives the held piece's group first sequence
+    /// (issue #258) and answers whether every piece of that group is now held.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// There is no separate reassembly buffer to copy into instead (ADR 0004): the receive window this
+    /// Fragment was already admitted into <em>is</em> the reassembly storage, by design rather than by
+    /// omission. A dedicated buffer would be new attack surface — a sender flooding partial Fragment
+    /// sets would fill memory taken solely for that purpose — while this design lets such a sender only
+    /// ever fill the same receive window an honest sender's traffic already bounds and this Reactor
+    /// already defends. <paramref name="ringSlot"/> comes from
+    /// <see cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/>'s own call in
+    /// <see cref="ClassifyRecord"/>, which is why this method takes the slot rather than re-resolving it
+    /// from <paramref name="mode"/> and a sequence — the window's <see cref="ReceiveWindow.Base"/> may
+    /// already have advanced past that sequence by the time this call is made.
+    /// </para>
+    /// <para>
+    /// <b>Survives an interruption at no cost (issue #262).</b> A held Fragment's slot is ordinary
+    /// per-Peer <see cref="PeerSlot"/> and receive-arena state — the same state a lost and rebuilt
+    /// transport leaves untouched, because this profile identifies a Session by its wire token rather
+    /// than by the address or link a datagram arrived on (see <see cref="ProcessDataDatagram"/>'s
+    /// remarks). A half-arrived group's pieces are therefore still exactly here, still counted against
+    /// this Peer's own receive window, no matter how long the gap between one Fragment and the next:
+    /// nothing reads this state as part of resuming a Session, and nothing needs to, because nothing
+    /// about it was ever tied to the transport that went away. This is the general shape any resume of
+    /// any kind must respect — <see cref="StreamSessionReactor"/>'s own Resume (issue #128) makes the
+    /// same promise for its profile, stream framing rather than Fragments: resuming fixes <em>where
+    /// delivery continues from</em>, at Message granularity, and never discards what a receive window is
+    /// already holding piece by piece underneath that.
+    /// </para>
+    /// </remarks>
+    /// <param name="slot">The Peer this Fragment arrived on.</param>
+    /// <param name="mode">The Fragment's delivery mode — always <c>ReliableOrdered</c> or <c>ReliableUnordered</c> (ADR 0004).</param>
+    /// <param name="sequence">The Fragment's own sequence — see <see cref="FragmentGroup.FirstSequenceOf"/>.</param>
+    /// <param name="ringSlot">The ring position the admitting <see cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/> call reported.</param>
+    /// <param name="fragmentIndex">The Fragment's zero-based position within its group.</param>
+    /// <param name="fragmentCount">The group's declared Fragment count.</param>
+    /// <param name="payload">The Fragment's payload bytes.</param>
+    /// <returns>
+    /// Whether the Fragment's group is complete after this piece was held (issue #258) —
+    /// <see langword="false"/> whenever the payload did not fit its slot, since that leaves the slot's
+    /// length at zero and the piece effectively lost. Delivering a complete group is issue #259's, so
+    /// today's only caller discards this.
+    /// </returns>
+    private bool HoldFragment(
+        PeerSlot slot, PacketRecordMode mode, uint sequence, int ringSlot,
+        ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload)
+    {
+        int spaceIndex = ReliableSpaceIndex(mode);
+        Span<byte> fragmentSlot = _receiveArena.GetFragmentSlot(slot.Handle.Index, spaceIndex, ringSlot);
+
+        if (payload.Length > fragmentSlot.Length)
+        {
+            // Cannot happen from a peer whose own FragmentSize matches this Reactor's (ADR 0004's
+            // ordinary case), but fragment size is unilateral and per-direction, so nothing on the
+            // wire proves the two sides agree. Refusing to write past the slot's fixed width — rather
+            // than throwing — leaves the sequence admitted (the window already advanced past it) but
+            // this slot's length at zero, indistinguishable from an empty one: the Fragment set this
+            // piece belonged to simply never completes, exactly as if the piece had been lost.
+            return false;
+        }
+
+        payload.CopyTo(fragmentSlot);
+        ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
+        windows.RecordFragmentLength(mode, ringSlot, (ushort)payload.Length);
+
+        uint groupFirstSequence = FragmentGroup.FirstSequenceOf(sequence, fragmentIndex);
+        return windows.IsGroupComplete(mode, groupFirstSequence, fragmentCount);
+    }
+
+    /// <summary>
+    /// Decides how a just-completed Fragment group reaches the consumer (issue #259). For
+    /// <c>ReliableUnordered</c> there is no ordering rule to satisfy, so this attempts delivery
+    /// immediately and, if the frame arena had no room, defers it on the Space's <see cref="PendingFragmentGroups"/>
+    /// for <see cref="RetryPendingFragmentDeliveries"/> to retry on a later Pump. For
+    /// <c>ReliableOrdered</c> the group must additionally wait its turn in this Peer's
+    /// <see cref="PeerSlot.OrderedDelivery"/> queue — the same send-order rule an unfragmented record
+    /// already obeys (subtask 6.6.10, issue #220) — so this records the group as
+    /// the Space's <see cref="PendingFragmentGroups"/> and asks <see cref="DrainOrderedDelivery"/>
+    /// to deliver it the moment that queue's <see cref="OrderedDeliveryQueue.NextSequence"/> reaches
+    /// the group's first sequence, whether that is true already or only after some other sequence
+    /// still ahead of it in that Space arrives.
+    /// </summary>
+    /// <summary>
+    /// The completed-but-undelivered Fragment groups of <paramref name="slot"/>'s
+    /// <paramref name="mode"/> Space (issue #259). Resolved through <see cref="_receiveWindows"/> by
+    /// <see cref="SlotHandle.Index"/>, the same way this Peer's windows themselves are, so a waiting
+    /// group and the held pieces it names live in one place and are reset together when a Slot is
+    /// reused.
+    /// </summary>
+    private PendingFragmentGroups PendingGroupsOf(PeerSlot slot, PacketRecordMode mode) =>
+        _receiveWindows[slot.Handle.Index].PendingGroupsFor(mode);
+
+    private void TryDeliverOrDeferFragmentGroup(PeerSlot slot, PacketRecordMode mode, uint groupFirstSequence, ushort fragmentCount)
+    {
+        if (mode == PacketRecordMode.ReliableUnordered)
+        {
+            if (!TryDeliverFragmentGroup(slot, mode, groupFirstSequence, fragmentCount))
+            {
+                PendingGroupsOf(slot, mode).Add(groupFirstSequence, fragmentCount);
+            }
+
+            return;
+        }
+
+        PendingGroupsOf(slot, mode).Add(groupFirstSequence, fragmentCount);
+        DrainOrderedDelivery(slot);
+    }
+
+    /// <summary>
+    /// Copies a completed Fragment group's held pieces, in fragment index order, into one contiguous
+    /// frame arena reservation and queues it as one pending <see cref="SessionEventKind.MessageReceived"/>
+    /// (issue #259) — the same three steps <see cref="DeliverToConsumer"/> takes for an unfragmented
+    /// record, taken once for the whole group rather than once per piece, because the consumer is owed
+    /// one whole Message and not <paramref name="fragmentCount"/> partial ones. Releases the group's
+    /// window slots (<see cref="ReceiveWindowSpaces.ReleaseGroup"/>) only on success: a reservation
+    /// that fails leaves every piece exactly where <see cref="HoldFragment"/> put it, nothing is
+    /// counted as received, and the caller is responsible for retrying — see
+    /// the Space's <see cref="PendingFragmentGroups"/>, the Space's <see cref="PendingFragmentGroups"/>
+    /// and <see cref="RetryPendingFragmentDeliveries"/>.
+    /// </summary>
+    /// <remarks>
+    /// One reservation for the whole group, not one per piece, is deliberate: a consumer that Sent one
+    /// Message is owed one <see cref="SessionEventKind.MessageReceived"/>, not a run of them that
+    /// happens to reassemble into the same bytes if concatenated. The per-share-holder escape
+    /// <see cref="FrameArena.Reserve(int, int)"/> already grants a share-holder with nothing else
+    /// reserved this Frame — a Peer that has delivered nothing yet — applies here exactly as it does
+    /// for a single record: a reassembled Message at <see cref="DatagramSessionOptions.MaxMessageSize"/>
+    /// can exceed this Peer's fair share of the frame arena and still be delivered whole, which is what
+    /// makes such a Message reachable at all rather than permanently stuck behind a share bound sized
+    /// for ordinary traffic.
+    /// </remarks>
+    /// <returns><see langword="true"/> if the group was delivered; <see langword="false"/> if the reservation failed.</returns>
+    private bool TryDeliverFragmentGroup(PeerSlot slot, PacketRecordMode mode, uint groupFirstSequence, ushort fragmentCount)
+    {
+        ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
+        int spaceIndex = ReliableSpaceIndex(mode);
+
+        int totalLength = 0;
+        for (int i = 0; i < fragmentCount; i++)
+        {
+            uint sequence = unchecked(groupFirstSequence + (uint)i);
+            if (!windows.TryGetRingSlot(mode, sequence, out int ringSlot))
+            {
+                // A group HoldFragment/IsGroupComplete just reported complete should always resolve
+                // every one of its own pieces; if window state ever moved out from under it before
+                // this ran, there is nothing safe to deliver — treat it as not ready rather than throw
+                // or deliver a partial Message, and let a later Pump's retry re-derive the answer.
+                return false;
+            }
+
+            totalLength += windows.GetFragmentLength(mode, ringSlot);
+        }
+
+        int payloadOffset = _arena.BytesUsed;
+        ArenaReservation reservation = _arena.Reserve(slot.Handle.Index, totalLength);
+        if (reservation.Outcome != ArenaReservationOutcome.Committed)
+        {
+            if (reservation.Outcome == ArenaReservationOutcome.ArenaExhausted && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(
+                    ToPeerId(slot.Handle),
+                    reservation.BytesRequested,
+                    reservation.BytesFree));
+            }
+
+            return false;
+        }
+
+        Span<byte> destination = reservation.Payload;
+        int destinationOffset = 0;
+        for (int i = 0; i < fragmentCount; i++)
+        {
+            uint sequence = unchecked(groupFirstSequence + (uint)i);
+            windows.TryGetRingSlot(mode, sequence, out int ringSlot);
+            int length = windows.GetFragmentLength(mode, ringSlot);
+            ReadOnlySpan<byte> fragmentPayload = _receiveArena.GetFragmentSlot(slot.Handle.Index, spaceIndex, ringSlot)[..length];
+            fragmentPayload.CopyTo(destination.Slice(destinationOffset, length));
+            destinationOffset += length;
+        }
+
+        windows.ReleaseGroup(mode, groupFirstSequence, fragmentCount);
+
+        _pendingEvents.Add(new PendingEvent
+        {
+            Kind = SessionEventKind.MessageReceived,
+            Peer = ToPeerId(slot.Handle),
+            PayloadOffset = payloadOffset,
+            PayloadLength = totalLength,
+        });
+
+        slot.Counters.RecordMessageReceived();
+        return true;
+    }
+
+    /// <summary>
+    /// Drains this Peer's <c>ReliableOrdered</c> send-order queue — every payload
+    /// <see cref="OrderedDeliveryQueue.TryReleaseNext"/> now yields, in order — and then attempts
+    /// the Space's <see cref="PendingFragmentGroups"/> if that drain reached its first sequence
+    /// (issue #259). The two are interleaved rather than run once each, because delivering a group
+    /// advances the queue past the whole span it occupies
+    /// (<see cref="OrderedDeliveryQueue.SkipTo"/>), which can itself unblock a further run of ordinary
+    /// records that was held behind the group's own gap; the loop keeps alternating until a full pass
+    /// delivers nothing further.
+    /// </summary>
+    private void DrainOrderedDelivery(PeerSlot slot)
+    {
+        while (true)
+        {
+            while (slot.OrderedDelivery.TryReleaseNext(out ReadOnlyMemory<byte> released))
+            {
+                DeliverToConsumer(slot, released.Span);
+            }
+
+            if (!TryFlushPendingOrderedFragmentGroup(slot))
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Delivers the Space's <see cref="PendingFragmentGroups"/> if it is both present and its Space's
+    /// ordering queue has reached exactly its first sequence — the group's turn, in the same send-order
+    /// rule an unfragmented <c>ReliableOrdered</c> record already obeys (issue #259). A pending group
+    /// whose turn has not yet arrived, because some earlier sequence in the Space is still missing, is
+    /// left exactly as it is: its pieces stay held in the receive window and nothing here disturbs them.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> if a pending group was both due and successfully delivered — the signal
+    /// <see cref="DrainOrderedDelivery"/> uses to keep looping, since delivering a group can unblock
+    /// more of the ordinary queue behind it; <see langword="false"/> otherwise, whether because nothing
+    /// was pending, it was not yet due, or its reservation failed and it remains pending for a later
+    /// Pump.
+    /// </returns>
+    private bool TryFlushPendingOrderedFragmentGroup(PeerSlot slot)
+    {
+        PendingFragmentGroups pending = PendingGroupsOf(slot, PacketRecordMode.ReliableOrdered);
+        uint firstSequence = slot.OrderedDelivery.NextSequence;
+        if (!pending.TryGetDueAt(firstSequence, out ushort fragmentCount))
+        {
+            return false;
+        }
+
+        if (!TryDeliverFragmentGroup(slot, PacketRecordMode.ReliableOrdered, firstSequence, fragmentCount))
+        {
+            return false;
+        }
+
+        pending.Remove(firstSequence);
+        slot.OrderedDelivery.SkipTo(unchecked(firstSequence + fragmentCount));
+        return true;
+    }
+
+    /// <summary>
+    /// Retries every open Peer's Fragment group still waiting to be delivered (issue #259): one whose
+    /// frame-arena reservation failed the moment it completed, in either reliable Space. Driven once
+    /// per Pump, right after the datagram-processing pass that both completes new groups and can
+    /// advance a <c>ReliableOrdered</c> group past a gap — this Reactor's own send path never frees
+    /// receive-side room, so only a fresh Frame's wiped arena (<see cref="FrameArena.Reset"/>, at the
+    /// top of the next <see cref="Pump"/>) can turn a previously failed reservation into one that
+    /// succeeds. Allocates nothing: it walks the fixed-size Slot table by index exactly as the stream
+    /// profile's own per-Pump sweep does, rather than tracking a separate list of Peers with something
+    /// pending.
+    /// </summary>
+    private void RetryPendingFragmentDeliveries()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot)
+            {
+                continue;
+            }
+
+            if (PendingGroupsOf(slot, PacketRecordMode.ReliableOrdered).Count > 0)
+            {
+                DrainOrderedDelivery(slot);
+            }
+
+            // Walks the dense prefix backwards, so a delivered group's removal — which moves the last
+            // entry down into the freed position — can never skip an entry this pass has not yet tried.
+            PendingFragmentGroups unordered = PendingGroupsOf(slot, PacketRecordMode.ReliableUnordered);
+            for (int pending = unordered.Count - 1; pending >= 0; pending--)
+            {
+                (uint firstSequence, ushort fragmentCount) = unordered.At(pending);
+                if (TryDeliverFragmentGroup(slot, PacketRecordMode.ReliableUnordered, firstSequence, fragmentCount))
+                {
+                    unordered.Remove(firstSequence);
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -1722,10 +2056,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
 
             DeliverToConsumer(slot, payload);
-            while (slot.OrderedDelivery.TryReleaseNext(out ReadOnlyMemory<byte> released))
-            {
-                DeliverToConsumer(slot, released.Span);
-            }
+            DrainOrderedDelivery(slot);
 
             return;
         }
@@ -2398,5 +2729,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// previous occupant's held run or its next expected sequence.
         /// </summary>
         public OrderedDeliveryQueue OrderedDelivery { get; } = new();
+
     }
 }

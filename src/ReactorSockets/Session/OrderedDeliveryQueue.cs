@@ -178,6 +178,29 @@ internal sealed class OrderedDeliveryQueue
         return true;
     }
 
+    /// <summary>
+    /// Advances <see cref="NextSequence"/> straight to <paramref name="newNextSequence"/> without ever
+    /// calling <see cref="Admit"/> or <see cref="TryReleaseNext"/> for the sequences in between (issue
+    /// #259): what a caller uses when a whole contiguous run of sequences — a Fragment group's own
+    /// span — is accounted for entirely outside this queue, because the receive window holds and
+    /// reassembles a Fragment's bytes itself rather than handing them to this queue one at a time. A
+    /// group's sequences are never individually admitted here, so nothing this call steps over can be
+    /// mistaken for a held payload later; this is what keeps <c>ReliableOrdered</c>'s send-order rule
+    /// applying to a reassembled Message exactly as it does to an unfragmented one, without this queue
+    /// ever holding a Fragment's payload twice over.
+    /// </summary>
+    /// <param name="newNextSequence">
+    /// The sequence this queue should expect next. Must not be older than <see cref="NextSequence"/>.
+    /// </param>
+    public void SkipTo(uint newNextSequence)
+    {
+        uint distance = unchecked(newNextSequence - NextSequence);
+        for (uint i = 0; i < distance; i++)
+        {
+            Advance();
+        }
+    }
+
     /// <summary>Steps past the sequence just released: one sequence on, one ring slot on.</summary>
     private void Advance()
     {

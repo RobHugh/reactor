@@ -67,7 +67,8 @@ public class AssemblySkeletonTests
             nameof(RoundTripEstimator),
             nameof(RetransmissionTimer),
             nameof(FragmentPlan),
-            nameof(FragmentPlanResult));
+            nameof(FragmentPlanResult),
+            nameof(FragmentGroupCompleteness));
     }
 
     [Fact]

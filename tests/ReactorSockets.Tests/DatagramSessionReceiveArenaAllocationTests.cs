@@ -28,6 +28,14 @@ public class DatagramSessionReceiveArenaAllocationTests
     private const int MeasurementFragmentSize = 1200;
     private const int MeasurementWindowFragments = 32;
 
+    /// <summary>
+    /// Mirrors the internal <c>DatagramSessionOptions.FragmentLengthBytes</c> (#257) — this test file
+    /// cannot reference it directly (no <c>InternalsVisibleTo</c>, per tests/CLAUDE.md), so it restates
+    /// the same width the production bill is computed from.
+    /// </summary>
+    private const int FragmentLengthBytes = 2;
+    private const int PendingGroupEntryBytes = 6;
+
     [Fact]
     public void Construct_AndFillEveryPeerSlot_AllocatesExactlyTheOptionsStatedReceiveBudget()
     {
@@ -64,20 +72,27 @@ public class DatagramSessionReceiveArenaAllocationTests
     }
 
     [Fact]
-    public void ReceiveBudgetBytes_CountsPayloadForTheTwoReliableSpacesAndClassificationForAllFour()
+    public void ReceiveBudgetBytes_CountsPayloadForTheTwoReliableSpacesAndClassificationForAllFourAndLengthForTheTwoReliableSpaces()
     {
         // Act
         long stated = StatedReceiveBudgetBytes(MeasurementWindowFragments);
 
-        // Assert — the stated multiplier says what is actually allocated (issue #174). Payload slots
-        // exist only for the two reliable Spaces, which retain fragments until a Message is whole;
-        // the one-byte-per-slot admission record that lets a window classify a sequence exists for
-        // all four, because all four classify.
+        // Assert — the stated multiplier says what is actually allocated (issue #174, extended by
+        // #257). Payload slots exist only for the two reliable Spaces, which retain fragments until a
+        // Message is whole; the one-byte-per-slot admission record that lets a window classify a
+        // sequence exists for all four, because all four classify; the two-byte-per-slot Fragment
+        // length record exists only for the two reliable Spaces, the only ones that ever hold a
+        // Fragment (ADR 0004); and the six-byte waiting-group entries (#259) exist for those same two
+        // Spaces, half a window's worth each, since a group is at least two Fragments wide.
         long payload = (long)MeasurementCapacity * ReliableSpaces
             * MeasurementWindowFragments * MeasurementFragmentSize;
         long classification = (long)MeasurementCapacity * AllSpaces
             * MeasurementWindowFragments;
-        stated.Should().Be(payload + classification);
+        long length = (long)MeasurementCapacity * ReliableSpaces
+            * MeasurementWindowFragments * FragmentLengthBytes;
+        long pendingGroups = (long)MeasurementCapacity * ReliableSpaces
+            * (MeasurementWindowFragments / 2) * PendingGroupEntryBytes;
+        stated.Should().Be(payload + classification + length + pendingGroups);
     }
 
     /// <summary>
@@ -267,6 +282,193 @@ public class DatagramSessionReceiveArenaAllocationTests
         // (#181's third criterion): the measurement is warmed up above, so nothing but that branch
         // choice is left to explain a difference.
         mixedDelta.Should().Be(inOrderDelta);
+    }
+
+    /// <summary>
+    /// Closes issue #257's allocation-free acceptance criterion: holding a Fragment (copying its
+    /// payload into the receive arena's preallocated slot, recording its length) must not allocate any
+    /// more than an ordinary admitted record does. Two phases of identical shape — a sustained run of
+    /// two-piece <c>ReliableOrdered</c> Fragment sets, each piece its own datagram — run back to back;
+    /// since every sequence admits in order (ADR 0004: a Fragment rides an ordinary sequence, so
+    /// <c>AdvanceBase</c> keeps sliding the base forward exactly as it would for unfragmented traffic),
+    /// the window never fills and the second phase must cost no more than the first. Every set here
+    /// completes the moment its second piece lands (issue #258's <c>IsGroupComplete</c> runs on every
+    /// held Fragment), so this also closes #258's allocation-free criterion for the completeness path —
+    /// see also the dedicated reverse-order test below.
+    /// </summary>
+    [Fact]
+    public void Pump_ASustainedRunOfReliableOrderedFragments_DoesNotGrowAllocationAsTheRunContinues()
+    {
+        // Arrange
+        const int capacity = 16;
+        const int warmupSets = 50;
+        const int measuredSetsPerPhase = 300;
+
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: capacity, maxMessageSize: 1300);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        uint cursor = RunInOrderFragmentPhase(accepter, client, clientLink, sessionId, 0, warmupSets);
+
+        // Act — two equal-length phases run back to back, deep into the same sustained run.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        long beforePhaseOne = GC.GetAllocatedBytesForCurrentThread();
+        cursor = RunInOrderFragmentPhase(accepter, client, clientLink, sessionId, cursor, measuredSetsPerPhase);
+        long phaseOneDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseOne;
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        long beforePhaseTwo = GC.GetAllocatedBytesForCurrentThread();
+        RunInOrderFragmentPhase(accepter, client, clientLink, sessionId, cursor, measuredSetsPerPhase);
+        long phaseTwoDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseTwo;
+
+        // Assert — the multiple is generous headroom against GC noise, not a tight bound, mirroring
+        // the unfragmented sustained-run test above.
+        phaseTwoDelta.Should().BeLessThanOrEqualTo(phaseOneDelta * 2 + 1);
+    }
+
+    /// <summary>
+    /// Closes issue #258's allocation-free acceptance criterion directly: a sustained run of two-piece
+    /// <c>ReliableOrdered</c> Fragment sets whose pieces arrive in <em>reverse</em> order — index 1
+    /// before index 0 — so every set is held incomplete by its first datagram and only completes on
+    /// its second, the exact shape <see cref="FragmentGroupCompletenessTests"/> pins directly against
+    /// <see cref="FragmentGroupCompleteness"/> in isolation. Two phases of identical shape run back to
+    /// back; if <see cref="ReceiveWindow.IsGroupComplete"/> — reached through
+    /// <see cref="DatagramSessionReactor"/>'s live receive path here — ever allocated, the second phase
+    /// would cost visibly more than the first.
+    /// </summary>
+    [Fact]
+    public void Pump_ASustainedRunOfReverseOrderCompletingFragmentSets_DoesNotGrowAllocationAsTheRunContinues()
+    {
+        // Arrange
+        const int capacity = 16;
+        const int warmupSets = 50;
+        const int measuredSetsPerPhase = 300;
+
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: capacity, maxMessageSize: 1300);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        uint cursor = RunReverseOrderCompletingFragmentPhase(accepter, client, clientLink, sessionId, 0, warmupSets);
+
+        // Act — two equal-length phases run back to back, deep into the same sustained run.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        long beforePhaseOne = GC.GetAllocatedBytesForCurrentThread();
+        cursor = RunReverseOrderCompletingFragmentPhase(accepter, client, clientLink, sessionId, cursor, measuredSetsPerPhase);
+        long phaseOneDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseOne;
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        long beforePhaseTwo = GC.GetAllocatedBytesForCurrentThread();
+        RunReverseOrderCompletingFragmentPhase(accepter, client, clientLink, sessionId, cursor, measuredSetsPerPhase);
+        long phaseTwoDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseTwo;
+
+        // Assert — the multiple is generous headroom against GC noise, not a tight bound, mirroring
+        // the unfragmented sustained-run test above.
+        phaseTwoDelta.Should().BeLessThanOrEqualTo(phaseOneDelta * 2 + 1);
+    }
+
+    /// <summary>
+    /// Sends <paramref name="setCount"/> two-piece <c>ReliableOrdered</c> Fragment sets, one datagram
+    /// per piece, sequences increasing by two per set starting at <paramref name="startingSequence"/>,
+    /// index 1 sent before index 0 within each set — so the window admits the second piece first (held,
+    /// incomplete) and completes the set only when the first piece lands. Returns the next unused
+    /// sequence.
+    /// </summary>
+    private static uint RunReverseOrderCompletingFragmentPhase(
+        DatagramSessionReactorHarness accepter,
+        RawReactor client,
+        LinkId clientLink,
+        uint sessionId,
+        uint startingSequence,
+        int setCount)
+    {
+        Source destination = Source.FromIPEndPoint(accepter.Endpoint);
+        uint sequence = startingSequence;
+        for (int i = 0; i < setCount; i++)
+        {
+            byte[] second = BuildFragmentRecord(sequence + 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02]);
+            byte[] datagramTwo = [.. BuildHeader(sessionId), .. second];
+            ulong before = accepter.Reactor.Counters.DatagramsReceived;
+            client.SendTo(clientLink, destination, datagramTwo);
+            accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+
+            byte[] first = BuildFragmentRecord(sequence, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]);
+            byte[] datagramOne = [.. BuildHeader(sessionId), .. first];
+            before = accepter.Reactor.Counters.DatagramsReceived;
+            client.SendTo(clientLink, destination, datagramOne);
+            accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+
+            accepter.DrainAndDiscard();
+            sequence = unchecked(sequence + 2);
+        }
+
+        return sequence;
+    }
+
+    /// <summary>
+    /// Sends <paramref name="setCount"/> two-piece <c>ReliableOrdered</c> Fragment sets, one datagram
+    /// per piece, sequences increasing by two per set starting at <paramref name="startingSequence"/>.
+    /// Each set completes the moment its second piece lands (issue #258), but delivering a completed
+    /// set is issue #259's, so nothing is ever delivered regardless. Returns the next unused sequence.
+    /// </summary>
+    private static uint RunInOrderFragmentPhase(
+        DatagramSessionReactorHarness accepter,
+        RawReactor client,
+        LinkId clientLink,
+        uint sessionId,
+        uint startingSequence,
+        int setCount)
+    {
+        Source destination = Source.FromIPEndPoint(accepter.Endpoint);
+        uint sequence = startingSequence;
+        for (int i = 0; i < setCount; i++)
+        {
+            byte[] first = BuildFragmentRecord(sequence, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]);
+            byte[] datagramOne = [.. BuildHeader(sessionId), .. first];
+            ulong before = accepter.Reactor.Counters.DatagramsReceived;
+            client.SendTo(clientLink, destination, datagramOne);
+            accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+
+            byte[] second = BuildFragmentRecord(sequence + 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02]);
+            byte[] datagramTwo = [.. BuildHeader(sessionId), .. second];
+            before = accepter.Reactor.Counters.DatagramsReceived;
+            client.SendTo(clientLink, destination, datagramTwo);
+            accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
+
+            accepter.DrainAndDiscard();
+            sequence = unchecked(sequence + 2);
+        }
+
+        return sequence;
+    }
+
+    /// <summary>
+    /// Builds one <c>ReliableOrdered</c> Fragment record: the unfragmented shape's bytes with the
+    /// fragment bit set, followed by a two-byte fragment index and a two-byte fragment count, then the
+    /// payload.
+    /// </summary>
+    private static byte[] BuildFragmentRecord(uint sequence, ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload)
+    {
+        const byte modeReliableOrdered = 0b0000_0011;
+        const byte fragmentBit = 0b0000_0100;
+        const int fragmentRecordSize = 11;
+        byte[] record = new byte[fragmentRecordSize + payload.Length];
+        record[0] = (byte)(modeReliableOrdered | fragmentBit);
+        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(1, 4), sequence);
+        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(5, 2), (ushort)payload.Length);
+        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(7, 2), fragmentIndex);
+        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(9, 2), fragmentCount);
+        payload.CopyTo(record.AsSpan(fragmentRecordSize));
+        return record;
     }
 
     /// <summary>

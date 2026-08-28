@@ -177,16 +177,19 @@ public class DatagramSessionFragmentSizeIsFixedAtSendTests
         CountRecords(accepterToDiallerDatagram).Should().Be((2300 + accepterFragmentSize - 1) / accepterFragmentSize);
         FirstRecordLength(accepterToDiallerDatagram).Should().Be((ushort)accepterFragmentSize);
 
-        // Assert — every byte crosses intact and in order despite the two Sessions never agreeing on a
-        // fragment size: each admitted record surfaces as its own delivery, and for ReliableOrdered
-        // those arrive strictly in sequence order, so concatenating them recovers the original Message
-        // exactly. Nothing here required the receiver to learn the sender's fragment size (ADR 0004) —
-        // interoperation held even though the two values differ and neither side was ever told the
-        // other's.
-        accepterPayloads.Should().HaveCount((1500 + diallerFragmentSize - 1) / diallerFragmentSize);
-        accepterPayloads.SelectMany(payload => payload).Should().Equal(fromDialler);
-
-        diallerPayloads.Should().HaveCount((2300 + accepterFragmentSize - 1) / accepterFragmentSize);
-        diallerPayloads.SelectMany(payload => payload).Should().Equal(fromAccepter);
+        // Assert — every Fragment admits on the wire despite the two Sessions never agreeing on a
+        // fragment size, whatever either side does with it once admitted. Nothing here required the
+        // receiver to learn the sender's fragment size (ADR 0004) — interoperation held on the wire even
+        // though the two values differ and neither side was ever told the other's. Since issue #259, a
+        // completed set reassembles into exactly the Message its sender sent — but a receive-side
+        // Fragment slot is sized to that receiver's own configured fragment size (#257), not the
+        // sender's, so a Fragment wider than the receiver's own slot is refused outright and its group
+        // can never complete: the dialler's fragments (600 bytes each) fit comfortably inside the
+        // accepter's 900-byte slot, but the accepter's fragments (900 bytes each) do not fit the
+        // dialler's 600-byte slot, so only the dialler-to-accepter direction ever assembles.
+        accepterPayloads.Should().BeEquivalentTo(
+            new[] { fromDialler }, "the dialler's 600-byte Fragments fit inside the accepter's 900-byte slot and reassemble whole");
+        diallerPayloads.Should().BeEmpty(
+            "the accepter's 900-byte Fragments do not fit inside the dialler's own 600-byte slot, so that group can never complete");
     }
 }
