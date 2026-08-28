@@ -123,6 +123,18 @@ public sealed class DatagramSessionOptions
     /// statement about the consumer's own protocol that nothing here can derive. It is also the
     /// frame arena's floor — an arena that cannot hold one maximum Message could never deliver one.
     /// </summary>
+    /// <remarks>
+    /// Announced to the peer at the handshake precisely so an oversized claim can be refused before
+    /// this end holds anything for it: a declared Fragment <c>fragmentCount</c> larger than this
+    /// Reactor's receive window (<see cref="ResolvedReceiveWindowFragments"/>) is closed on its first
+    /// Fragment, before any receive-window slot or Fragment-group bookkeeping exists for it (issue
+    /// #282, reworked under #264). The bound is the window rather than <see cref="ReceiveWindowFloor"/>
+    /// alone, because the floor is computed from this end's own <see cref="ResolvedFragmentSize"/> and
+    /// fragment size is unilateral and per-direction (ADR 0004): a conforming peer with a smaller
+    /// fragment size legally cuts the same, within-limit Message into more Fragments than the floor.
+    /// <see cref="Validate"/> already requires the window to be at least the floor, so a set at exactly
+    /// this value is always admitted.
+    /// </remarks>
     public required int MaxMessageSize { get; init; }
 
     /// <summary>
@@ -175,7 +187,10 @@ public sealed class DatagramSessionOptions
     /// The fragments each reliable Space may have outstanding per Peer. Defaults to exactly the
     /// number a maximum Message occupies, which is ADR 0004's deadlock floor rather than a
     /// performance choice: a window narrower than one whole Message can never deliver one, so it can
-    /// never advance, so the sender can never send the rest.
+    /// never advance, so the sender can never send the rest. This resolved value is also the inbound
+    /// bound a declared Fragment <c>fragmentCount</c> is checked against (issue #282, under #264): a set
+    /// larger than the window can never be reassembled, since there is no slot to hold every one of
+    /// its pieces at once, so <see cref="DatagramSessionReactor"/> closes it before any is held.
     /// </summary>
     public int? ReceiveWindowFragments { get; init; }
 

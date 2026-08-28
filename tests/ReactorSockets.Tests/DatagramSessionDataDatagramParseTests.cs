@@ -455,13 +455,29 @@ public class DatagramSessionDataDatagramParseTests
     public void Pump_FragmentRecordsAtTheValidBoundaries_AllParseSuccessfully()
     {
         // Arrange — issue #253's boundaries either side of the refused combinations: a count of two at
-        // both its legal indexes, an index one below its count, and a count at the 16-bit maximum. Each
-        // is asserted rather than assumed, so a future change to the refusal cannot silently start
-        // rejecting a legal Fragment. Each boundary case travels in its own datagram (issue #256): index
-        // 999 of count 1000 and a lone Fragment of count 65535 are independent boundary cases whose
-        // declared ranges genuinely overlap each other and the two-Fragment group above when packed into
-        // one datagram together — a real declared-range collision #256's overlap check is right to
-        // reject, not a reason to weaken it.
+        // both its legal indexes, an index one below its count, and a count at this Reactor's own legal
+        // maximum. Each is asserted rather than assumed, so a future change to the refusal cannot
+        // silently start rejecting a legal Fragment. Each boundary case travels in its own datagram
+        // (issue #256): the second and third cases' declared ranges genuinely overlap each other and the
+        // two-Fragment group above when packed into one datagram together — a real declared-range
+        // collision #256's overlap check is right to reject, not a reason to weaken it.
+        //
+        // The former boundary values here — index 999 of count 1000, and a lone Fragment of count 65535
+        // — predate issue #282: a declared count is now also refused, with a Peer close rather than a
+        // parse failure, once it exceeds this Reactor's own ReceiveWindowFloor (4, from the default
+        // MaxMessageSize 4096 over FragmentSize 1200). Both former values sit far past that floor and
+        // would now close the Peer before reaching this test's own boundary, so they are replaced with
+        // values that keep the same shape — "an index one below its count" and "a count at the maximum
+        // this Reactor allows" — while staying legal under #282 too.
+        //
+        // Issue #264 reworked the bound from the floor to DatagramSessionOptions.ResolvedReceiveWindowFragments,
+        // which a harness may widen independently of MaxMessageSize. The index-999-of-count-1000 case is
+        // restored under that wider bound in Pump_FragmentIndex999OfDeclaredCount1000WithinAWidenedReceiveWindow_ParsesSuccessfully
+        // below, at a receive window and memory bill affordable enough to run in this suite. The count-65535
+        // case is not proved anywhere: PacketRecordCodec is internal and ADR 0015 forbids reaching it
+        // directly via InternalsVisibleTo, and #264's own bound closes the Peer at any receive window this
+        // suite can afford long before a count of 65535 could ever be legal, so there is no route back to
+        // it through the live parse path either.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -475,18 +491,51 @@ public class DatagramSessionDataDatagramParseTests
             BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02])));
         payloads.AddRange(SendOneDatagramAndDrain(
             accepter, client, clientLink, sessionId,
-            BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 999, fragmentCount: 1000, payload: [0x03])));
+            BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 2, fragmentCount: 3, payload: [0x03])));
         payloads.AddRange(SendOneDatagramAndDrain(
             accepter, client, clientLink, sessionId,
-            BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 0, fragmentCount: 65535, payload: [0x04])));
+            BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 0, fragmentCount: 4, payload: [0x04])));
 
         // Assert — parses cleanly at every boundary; only the two-Fragment set actually completes (the
-        // 1000- and 65535-piece sets each send only their first index, so neither ever completes and
-        // neither delivers).
+        // 3- and 4-piece sets each send only one of their pieces, so neither ever completes and neither
+        // delivers).
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         payloads.Should().BeEquivalentTo(
             new[] { new byte[] { 0x01, 0x02 } },
             "only the two-Fragment set at sequences 0-1 ever completes");
+    }
+
+    [Fact]
+    public void Pump_FragmentIndex999OfDeclaredCount1000WithinAWidenedReceiveWindow_ParsesSuccessfully()
+    {
+        // Arrange — issue #253's original count-1000 boundary, retired from the test above when #282
+        // landed because the default ReceiveWindowFloor (4) could never admit it. Restored here under
+        // #264's rework of the bound from the floor to DatagramSessionOptions.ResolvedReceiveWindowFragments,
+        // which a harness may widen independently of MaxMessageSize: at Capacity 1, FragmentSize 576 (the
+        // RFC 791 minimum) and ReceiveWindowFragments 1000, the memory bill
+        // (DatagramSessionOptions.ReceiveBudgetBytes) is Capacity(1) x 1000 x (2 reliable Spaces x
+        // (576 + 2 length bytes) + 4 admission bytes) + Capacity(1) x 2 x 500 pending-group entries x 6
+        // bytes = 1,166,000 bytes — well under a megabyte and a quarter, so the boundary is affordable
+        // again through the live parse path (PacketRecordCodec stays internal per ADR 0015).
+        using DatagramSessionReactorHarness accepter = new(capacity: 1, fragmentSize: 576, receiveWindowFragments: 1000);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        // Act — a lone Fragment at index 999 of a declared count of 1000: individually legal (#253:
+        // index 999 < count 1000) and exactly at the widened #264 bound (1000 <= ResolvedReceiveWindowFragments),
+        // so it is expected to parse and be admitted into its receive-window slot rather than close the
+        // Peer or fail to parse. Only this one piece of the declared 1000 is ever sent, so the set never
+        // completes and nothing is delivered.
+        List<byte[]> payloads = SendOneDatagramAndDrain(
+            accepter, client, clientLink, sessionId,
+            BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 999, fragmentCount: 1000, payload: [0x01]));
+
+        // Assert — parses cleanly, no violation, and delivers nothing (only one of 1000 declared pieces
+        // was ever sent).
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.OversizedFragmentSet);
+        payloads.Should().BeEmpty("only one of the declared 1000 pieces was ever sent");
     }
 
     /// <summary>

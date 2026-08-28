@@ -138,6 +138,14 @@ public readonly record struct DiagnosticRecord
         new(DiagnosticId.VersionRefused, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, versionOffered, versionRequired);
 
     /// <summary>
+    /// Builds a <see cref="DiagnosticId.OversizedFragmentSet"/> record for the Peer whose Fragment
+    /// declared a <c>fragmentCount</c> larger than this Reactor's own receive window could ever hold,
+    /// carrying the declared count and the largest legal count.
+    /// </summary>
+    public static DiagnosticRecord ForOversizedFragmentSet(PeerId peer, long declaredFragmentCount, long maxLegalFragmentCount) =>
+        new(DiagnosticId.OversizedFragmentSet, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, declaredFragmentCount, maxLegalFragmentCount);
+
+    /// <summary>
     /// Builds a <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record for the Peer whose
     /// <see cref="RetransmissionTimer"/> just backed off (subtask 6.4.9, issue #199). <c>Value0</c> is
     /// the new RTO in milliseconds; <c>Value1</c> is the consecutive backoff count after this backoff.
