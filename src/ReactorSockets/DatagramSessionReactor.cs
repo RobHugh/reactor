@@ -1709,6 +1709,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// (issue #258) and answers whether every piece of that group is now held.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// There is no separate reassembly buffer to copy into instead (ADR 0004): the receive window this
     /// Fragment was already admitted into <em>is</em> the reassembly storage, by design rather than by
     /// omission. A dedicated buffer would be new attack surface — a sender flooding partial Fragment
@@ -1719,6 +1720,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="ClassifyRecord"/>, which is why this method takes the slot rather than re-resolving it
     /// from <paramref name="mode"/> and a sequence — the window's <see cref="ReceiveWindow.Base"/> may
     /// already have advanced past that sequence by the time this call is made.
+    /// </para>
+    /// <para>
+    /// <b>Survives an interruption at no cost (issue #262).</b> A held Fragment's slot is ordinary
+    /// per-Peer <see cref="PeerSlot"/> and receive-arena state — the same state a lost and rebuilt
+    /// transport leaves untouched, because this profile identifies a Session by its wire token rather
+    /// than by the address or link a datagram arrived on (see <see cref="ProcessDataDatagram"/>'s
+    /// remarks). A half-arrived group's pieces are therefore still exactly here, still counted against
+    /// this Peer's own receive window, no matter how long the gap between one Fragment and the next:
+    /// nothing reads this state as part of resuming a Session, and nothing needs to, because nothing
+    /// about it was ever tied to the transport that went away. This is the general shape any resume of
+    /// any kind must respect — <see cref="StreamSessionReactor"/>'s own Resume (issue #128) makes the
+    /// same promise for its profile, stream framing rather than Fragments: resuming fixes <em>where
+    /// delivery continues from</em>, at Message granularity, and never discards what a receive window is
+    /// already holding piece by piece underneath that.
+    /// </para>
     /// </remarks>
     /// <param name="slot">The Peer this Fragment arrived on.</param>
     /// <param name="mode">The Fragment's delivery mode — always <c>ReliableOrdered</c> or <c>ReliableUnordered</c> (ADR 0004).</param>
