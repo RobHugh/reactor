@@ -1633,7 +1633,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
         else if (outcome == ReceiveWindowOutcome.Admitted)
         {
-            if (isFragment && (mode == PacketRecordMode.ReliableOrdered || mode == PacketRecordMode.ReliableUnordered))
+            if (isFragment && mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
             {
                 bool groupComplete = HoldFragment(slot, mode, sequence, ringSlot, fragmentIndex, fragmentCount, payload);
                 if (groupComplete)
@@ -1778,29 +1778,39 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Decides how a just-completed Fragment group reaches the consumer (issue #259). For
     /// <c>ReliableUnordered</c> there is no ordering rule to satisfy, so this attempts delivery
-    /// immediately and, if the frame arena had no room, defers it on <see cref="PeerSlot.PendingUnorderedFragmentGroup"/>
+    /// immediately and, if the frame arena had no room, defers it on the Space's <see cref="PendingFragmentGroups"/>
     /// for <see cref="RetryPendingFragmentDeliveries"/> to retry on a later Pump. For
     /// <c>ReliableOrdered</c> the group must additionally wait its turn in this Peer's
     /// <see cref="PeerSlot.OrderedDelivery"/> queue — the same send-order rule an unfragmented record
     /// already obeys (subtask 6.6.10, issue #220) — so this records the group as
-    /// <see cref="PeerSlot.PendingOrderedFragmentGroup"/> and asks <see cref="DrainOrderedDelivery"/>
+    /// the Space's <see cref="PendingFragmentGroups"/> and asks <see cref="DrainOrderedDelivery"/>
     /// to deliver it the moment that queue's <see cref="OrderedDeliveryQueue.NextSequence"/> reaches
     /// the group's first sequence, whether that is true already or only after some other sequence
     /// still ahead of it in that Space arrives.
     /// </summary>
+    /// <summary>
+    /// The completed-but-undelivered Fragment groups of <paramref name="slot"/>'s
+    /// <paramref name="mode"/> Space (issue #259). Resolved through <see cref="_receiveWindows"/> by
+    /// <see cref="SlotHandle.Index"/>, the same way this Peer's windows themselves are, so a waiting
+    /// group and the held pieces it names live in one place and are reset together when a Slot is
+    /// reused.
+    /// </summary>
+    private PendingFragmentGroups PendingGroupsOf(PeerSlot slot, PacketRecordMode mode) =>
+        _receiveWindows[slot.Handle.Index].PendingGroupsFor(mode);
+
     private void TryDeliverOrDeferFragmentGroup(PeerSlot slot, PacketRecordMode mode, uint groupFirstSequence, ushort fragmentCount)
     {
         if (mode == PacketRecordMode.ReliableUnordered)
         {
             if (!TryDeliverFragmentGroup(slot, mode, groupFirstSequence, fragmentCount))
             {
-                slot.PendingUnorderedFragmentGroup = (groupFirstSequence, fragmentCount);
+                PendingGroupsOf(slot, mode).Add(groupFirstSequence, fragmentCount);
             }
 
             return;
         }
 
-        slot.PendingOrderedFragmentGroup = (groupFirstSequence, fragmentCount);
+        PendingGroupsOf(slot, mode).Add(groupFirstSequence, fragmentCount);
         DrainOrderedDelivery(slot);
     }
 
@@ -1813,7 +1823,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// window slots (<see cref="ReceiveWindowSpaces.ReleaseGroup"/>) only on success: a reservation
     /// that fails leaves every piece exactly where <see cref="HoldFragment"/> put it, nothing is
     /// counted as received, and the caller is responsible for retrying — see
-    /// <see cref="PeerSlot.PendingOrderedFragmentGroup"/>, <see cref="PeerSlot.PendingUnorderedFragmentGroup"/>
+    /// the Space's <see cref="PendingFragmentGroups"/>, the Space's <see cref="PendingFragmentGroups"/>
     /// and <see cref="RetryPendingFragmentDeliveries"/>.
     /// </summary>
     /// <remarks>
@@ -1893,7 +1903,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Drains this Peer's <c>ReliableOrdered</c> send-order queue — every payload
     /// <see cref="OrderedDeliveryQueue.TryReleaseNext"/> now yields, in order — and then attempts
-    /// <see cref="PeerSlot.PendingOrderedFragmentGroup"/> if that drain reached its first sequence
+    /// the Space's <see cref="PendingFragmentGroups"/> if that drain reached its first sequence
     /// (issue #259). The two are interleaved rather than run once each, because delivering a group
     /// advances the queue past the whole span it occupies
     /// (<see cref="OrderedDeliveryQueue.SkipTo"/>), which can itself unblock a further run of ordinary
@@ -1917,7 +1927,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Delivers <see cref="PeerSlot.PendingOrderedFragmentGroup"/> if it is both present and its Space's
+    /// Delivers the Space's <see cref="PendingFragmentGroups"/> if it is both present and its Space's
     /// ordering queue has reached exactly its first sequence — the group's turn, in the same send-order
     /// rule an unfragmented <c>ReliableOrdered</c> record already obeys (issue #259). A pending group
     /// whose turn has not yet arrived, because some earlier sequence in the Space is still missing, is
@@ -1932,8 +1942,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </returns>
     private bool TryFlushPendingOrderedFragmentGroup(PeerSlot slot)
     {
-        if (slot.PendingOrderedFragmentGroup is not (uint firstSequence, ushort fragmentCount)
-            || slot.OrderedDelivery.NextSequence != firstSequence)
+        PendingFragmentGroups pending = PendingGroupsOf(slot, PacketRecordMode.ReliableOrdered);
+        uint firstSequence = slot.OrderedDelivery.NextSequence;
+        if (!pending.TryGetDueAt(firstSequence, out ushort fragmentCount))
         {
             return false;
         }
@@ -1943,7 +1954,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return false;
         }
 
-        slot.PendingOrderedFragmentGroup = null;
+        pending.Remove(firstSequence);
         slot.OrderedDelivery.SkipTo(unchecked(firstSequence + fragmentCount));
         return true;
     }
@@ -1968,15 +1979,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            if (slot.PendingOrderedFragmentGroup is not null)
+            if (PendingGroupsOf(slot, PacketRecordMode.ReliableOrdered).Count > 0)
             {
                 DrainOrderedDelivery(slot);
             }
 
-            if (slot.PendingUnorderedFragmentGroup is (uint firstSequence, ushort fragmentCount)
-                && TryDeliverFragmentGroup(slot, PacketRecordMode.ReliableUnordered, firstSequence, fragmentCount))
+            // Walks the dense prefix backwards, so a delivered group's removal — which moves the last
+            // entry down into the freed position — can never skip an entry this pass has not yet tried.
+            PendingFragmentGroups unordered = PendingGroupsOf(slot, PacketRecordMode.ReliableUnordered);
+            for (int pending = unordered.Count - 1; pending >= 0; pending--)
             {
-                slot.PendingUnorderedFragmentGroup = null;
+                (uint firstSequence, ushort fragmentCount) = unordered.At(pending);
+                if (TryDeliverFragmentGroup(slot, PacketRecordMode.ReliableUnordered, firstSequence, fragmentCount))
+                {
+                    unordered.Remove(firstSequence);
+                }
             }
         }
     }
@@ -2713,28 +2730,5 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// </summary>
         public OrderedDeliveryQueue OrderedDelivery { get; } = new();
 
-        /// <summary>
-        /// A completed Fragment group in this Peer's <c>ReliableOrdered</c> Space waiting for its turn
-        /// in <see cref="OrderedDelivery"/>, a failed frame-arena reservation, or both — the group's
-        /// first sequence and declared Fragment count, or <see langword="null"/> when nothing is
-        /// waiting (issue #259). Set by <see cref="DatagramSessionReactor.TryDeliverOrDeferFragmentGroup"/>
-        /// and cleared once <see cref="DatagramSessionReactor.TryFlushPendingOrderedFragmentGroup"/>
-        /// delivers it. At most one at a time: a Peer's own sender allocates one fragmented Message's
-        /// sequences as one contiguous block before moving on to the next (<see cref="FragmentGroup"/>),
-        /// so a second group can never complete while an earlier one in the same Space is still waiting
-        /// its turn — the earlier one, by construction, occupies every sequence the later one would
-        /// need to reach in order to complete.
-        /// </summary>
-        public (uint FirstSequence, ushort FragmentCount)? PendingOrderedFragmentGroup { get; set; }
-
-        /// <summary>
-        /// A completed Fragment group in this Peer's <c>ReliableUnordered</c> Space whose frame-arena
-        /// reservation failed the moment it completed, or <see langword="null"/> when nothing is
-        /// waiting (issue #259). <c>ReliableUnordered</c> has no ordering turn to wait for — this is
-        /// set only by a failed reservation, never by anything else — and is retried every Pump by
-        /// <see cref="DatagramSessionReactor.RetryPendingFragmentDeliveries"/> until the frame arena has
-        /// room.
-        /// </summary>
-        public (uint FirstSequence, ushort FragmentCount)? PendingUnorderedFragmentGroup { get; set; }
     }
 }

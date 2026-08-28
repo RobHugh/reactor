@@ -34,6 +34,7 @@ public class DatagramSessionReceiveArenaAllocationTests
     /// the same width the production bill is computed from.
     /// </summary>
     private const int FragmentLengthBytes = 2;
+    private const int PendingGroupEntryBytes = 6;
 
     [Fact]
     public void Construct_AndFillEveryPeerSlot_AllocatesExactlyTheOptionsStatedReceiveBudget()
@@ -81,14 +82,17 @@ public class DatagramSessionReceiveArenaAllocationTests
         // Message is whole; the one-byte-per-slot admission record that lets a window classify a
         // sequence exists for all four, because all four classify; the two-byte-per-slot Fragment
         // length record exists only for the two reliable Spaces, the only ones that ever hold a
-        // Fragment (ADR 0004).
+        // Fragment (ADR 0004); and the six-byte waiting-group entries (#259) exist for those same two
+        // Spaces, half a window's worth each, since a group is at least two Fragments wide.
         long payload = (long)MeasurementCapacity * ReliableSpaces
             * MeasurementWindowFragments * MeasurementFragmentSize;
         long classification = (long)MeasurementCapacity * AllSpaces
             * MeasurementWindowFragments;
         long length = (long)MeasurementCapacity * ReliableSpaces
             * MeasurementWindowFragments * FragmentLengthBytes;
-        stated.Should().Be(payload + classification + length);
+        long pendingGroups = (long)MeasurementCapacity * ReliableSpaces
+            * (MeasurementWindowFragments / 2) * PendingGroupEntryBytes;
+        stated.Should().Be(payload + classification + length + pendingGroups);
     }
 
     /// <summary>

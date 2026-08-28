@@ -224,6 +224,89 @@ public class DatagramSessionFragmentDeliveryTests
         delivered.Should().ContainSingle().Which.Should().Equal(expected);
     }
 
+    private const byte ModeReliableOrderedProbe = 0b0000_0011;
+
+    [Fact]
+    public void Pump_ASecondOrderedGroupCompletingWhileAnotherIsStillDeferred_DeliversBothMessages()
+    {
+        // Arrange — two ReliableOrdered groups in the SAME Space. The later group (sequences 2 and 3)
+        // completes first, so it must wait its turn behind the hole at sequence 0. The earlier group
+        // (sequences 0 and 1) then completes and releases that hole.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] laterGroup =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableOrderedProbe, sequence: 2, fragmentIndex: 0, fragmentCount: 2, payload: [0xC1]),
+            .. BuildFragmentRecord(ModeReliableOrderedProbe, sequence: 3, fragmentIndex: 1, fragmentCount: 2, payload: [0xC2]),
+        ];
+        byte[] earlierGroup =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableOrderedProbe, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0xA1]),
+            .. BuildFragmentRecord(ModeReliableOrderedProbe, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0xA2]),
+        ];
+
+        // Act
+        SendAndPumpUntilReceived(accepter, client, clientLink, laterGroup);
+        SendAndPumpUntilReceived(accepter, client, clientLink, earlierGroup);
+        List<byte[]> delivered = accepter.DrainPayloads();
+
+        // Assert — both Messages reach the consumer, in send order.
+        delivered.Should().HaveCount(2);
+        delivered[0].Should().Equal(new byte[] { 0xA1, 0xA2 });
+        delivered[1].Should().Equal(new byte[] { 0xC1, 0xC2 });
+    }
+    [Fact]
+    public void Pump_TwoUnorderedGroupsCompletingWhileTheArenaIsFull_AreBothRetainedAndBothDelivered()
+    {
+        // Arrange — the same arena pressure as the single-group retry test, but with two groups
+        // completing in the one Frame. Both reservations are refused, so both must be held: a single
+        // waiting slot per Space would let the second overwrite the first and lose it outright.
+        const int maxMessageSize = 64;
+        const int arenaSize = 64;
+        const int capacity = 8;
+        using DatagramSessionReactorHarness accepter = new(
+            capacity: capacity, maxMessageSize: maxMessageSize, arenaSize: arenaSize, receiveWindowFragments: 8);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+        PeerCounters before = accepter.Reactor.CountersOf(accepterPeer);
+
+        byte[] crowdingPayload = new byte[arenaSize / capacity];
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildRecord(ModeReliableUnordered, sequence: 0, payload: crowdingPayload),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 0, fragmentCount: 2, payload: [0xAA]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 1, fragmentCount: 2, payload: [0xBB]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 0, fragmentCount: 2, payload: [0xCC]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 4, fragmentIndex: 1, fragmentCount: 2, payload: [0xDD]),
+        ];
+
+        // Act — only the ordinary record fits this Frame; both groups are held.
+        SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
+        accepter.DrainPayloads().Should().ContainSingle().Which.Should().Equal(crowdingPayload);
+
+        // Act — later Pumps, with nothing further sent, retry what was held.
+        List<byte[]> retried = [];
+        for (int pump = 0; pump < 4; pump++)
+        {
+            accepter.Reactor.Pump();
+            retried.AddRange(accepter.DrainPayloads());
+        }
+
+        // Assert — neither group was lost, and each was delivered exactly once.
+        retried.Should().HaveCount(2);
+        retried.Should().ContainSingle(payload => payload.SequenceEqual(new byte[] { 0xAA, 0xBB }));
+        retried.Should().ContainSingle(payload => payload.SequenceEqual(new byte[] { 0xCC, 0xDD }));
+        PeerCounters after = accepter.Reactor.CountersOf(accepterPeer);
+        after.MessagesReceived.Should().Be(before.MessagesReceived + 3, "the crowding record plus both retained groups");
+    }
     private static void SendAndPumpUntilReceived(
         DatagramSessionReactorHarness accepter, RawReactor client, LinkId clientLink, byte[] datagram)
     {

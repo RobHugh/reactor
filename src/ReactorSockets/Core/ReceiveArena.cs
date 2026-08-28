@@ -48,9 +48,17 @@ internal sealed class ReceiveArena
     /// </summary>
     private const int FragmentLengthSize = 2;
 
+    /// <summary>
+    /// Bytes one waiting-Fragment-group entry occupies: a <c>u32</c> first sequence and a <c>u16</c>
+    /// declared Fragment count, the pair that names a group without a message ID the wire never
+    /// carries (<see cref="Session.FragmentGroup"/>).
+    /// </summary>
+    private const int PendingGroupEntrySize = 6;
+
     private readonly byte[] _buffer;
     private readonly int _admissionOrigin;
     private readonly int _lengthOrigin;
+    private readonly int _pendingGroupOrigin;
 
     /// <summary>
     /// Constructs an arena of <paramref name="capacity"/> share-holders, each holding
@@ -134,10 +142,13 @@ internal sealed class ReceiveArena
         FragmentsPerSpace = fragmentsPerSpace;
         FragmentSize = fragmentSize;
 
+        PendingGroupsPerSpace = fragmentsPerSpace / 2 < 1 ? 1 : fragmentsPerSpace / 2;
+
         long payloadBytes = (long)capacity * retainingSpaceCount * fragmentsPerSpace * fragmentSize;
         long admissionBytes = (long)capacity * classifyingSpaceCount * fragmentsPerSpace;
         long lengthBytes = (long)capacity * retainingSpaceCount * fragmentsPerSpace * FragmentLengthSize;
-        long totalBytes = payloadBytes + admissionBytes + lengthBytes;
+        long pendingGroupBytes = (long)capacity * retainingSpaceCount * PendingGroupsPerSpace * PendingGroupEntrySize;
+        long totalBytes = payloadBytes + admissionBytes + lengthBytes + pendingGroupBytes;
         if (totalBytes > Array.MaxLength)
         {
             throw new ArgumentOutOfRangeException(
@@ -145,12 +156,15 @@ internal sealed class ReceiveArena
                 totalBytes,
                 $"a receive arena of {capacity} share-holders × {fragmentsPerSpace} fragments × " +
                 $"({retainingSpaceCount} retaining Spaces × ({fragmentSize} payload bytes + {FragmentLengthSize} " +
-                $"length bytes) + {classifyingSpaceCount} classifying Spaces × 1 byte) = {totalBytes} bytes " +
-                $"cannot be allocated — it exceeds Array.MaxLength ({Array.MaxLength}).");
+                $"length bytes) + {classifyingSpaceCount} classifying Spaces × 1 byte) plus {capacity} × " +
+                $"{retainingSpaceCount} retaining Spaces × {PendingGroupsPerSpace} waiting groups × " +
+                $"{PendingGroupEntrySize} bytes = {totalBytes} bytes cannot be allocated — it exceeds " +
+                $"Array.MaxLength ({Array.MaxLength}).");
         }
 
         _admissionOrigin = (int)payloadBytes;
         _lengthOrigin = (int)(payloadBytes + admissionBytes);
+        _pendingGroupOrigin = (int)(payloadBytes + admissionBytes + lengthBytes);
         _buffer = new byte[totalBytes];
     }
 
@@ -168,6 +182,15 @@ internal sealed class ReceiveArena
 
     /// <summary>The number of bytes one payload fragment slot holds.</summary>
     public int FragmentSize { get; }
+
+    /// <summary>
+    /// The number of completed-but-undelivered Fragment groups one retaining Space can have waiting at
+    /// once: half <see cref="FragmentsPerSpace"/>, and never fewer than one. A group is at least two
+    /// Fragments wide and its pieces stay held until it is delivered, so a window of <c>n</c> slots can
+    /// never have more than <c>n / 2</c> groups waiting — the bound is a consequence of the window's own
+    /// size rather than a limit chosen here.
+    /// </summary>
+    public int PendingGroupsPerSpace { get; }
 
     /// <summary>
     /// The arena's total size in bytes: the payload region — <see cref="Capacity"/> ×
@@ -285,5 +308,38 @@ internal sealed class ReceiveArena
         int regionStart = _lengthOrigin
             + (((shareHolderId * RetainingSpaceCount) + spaceIndex) * FragmentsPerSpace * FragmentLengthSize);
         return _buffer.AsMemory(regionStart, FragmentsPerSpace * FragmentLengthSize);
+    }
+
+    /// <summary>
+    /// The waiting-Fragment-group run for <paramref name="shareHolderId"/>'s
+    /// <paramref name="spaceIndex"/>th retaining Space: <see cref="PendingGroupsPerSpace"/> entries of
+    /// six bytes each, holding the groups that have completed but not yet reached the consumer. Taken
+    /// from the arena for the same reason every other per-Peer receive run is (#171, #179): it is sized
+    /// by the receive window, so leaving it outside would put a window-proportional cost outside the
+    /// memory bill the options state.
+    /// </summary>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    /// <param name="spaceIndex">A zero-based index below <see cref="RetainingSpaceCount"/>.</param>
+    public Memory<byte> GetPendingGroupRun(int shareHolderId, int spaceIndex)
+    {
+        if (shareHolderId < 0 || shareHolderId >= Capacity)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(shareHolderId),
+                shareHolderId,
+                $"share-holder {shareHolderId} is outside the arena's capacity of {Capacity}.");
+        }
+
+        if (spaceIndex < 0 || spaceIndex >= RetainingSpaceCount)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(spaceIndex),
+                spaceIndex,
+                $"Space {spaceIndex} is outside this arena's retaining Space count of {RetainingSpaceCount}.");
+        }
+
+        int regionStart = _pendingGroupOrigin
+            + (((shareHolderId * RetainingSpaceCount) + spaceIndex) * PendingGroupsPerSpace * PendingGroupEntrySize);
+        return _buffer.AsMemory(regionStart, PendingGroupsPerSpace * PendingGroupEntrySize);
     }
 }

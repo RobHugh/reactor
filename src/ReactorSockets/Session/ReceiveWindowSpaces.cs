@@ -24,6 +24,8 @@ internal sealed class ReceiveWindowSpaces
     private readonly ReceiveWindow _unreliableSequenced;
     private readonly ReceiveWindow _reliableUnordered;
     private readonly ReceiveWindow _reliableOrdered;
+    private readonly PendingFragmentGroups _pendingReliableUnordered;
+    private readonly PendingFragmentGroups _pendingReliableOrdered;
 
     /// <summary>
     /// The reliable Space index <see cref="ReceiveArena.GetFragmentSlot"/> and
@@ -66,6 +68,11 @@ internal sealed class ReceiveWindowSpaces
         _reliableOrdered = new ReceiveWindow(
             arena.GetAdmissionRun(shareHolderId, (int)PacketRecordMode.ReliableOrdered),
             fragmentLengths: arena.GetFragmentLengthRun(shareHolderId, RetainingSpaceIndex(PacketRecordMode.ReliableOrdered)));
+
+        _pendingReliableOrdered = new PendingFragmentGroups(
+            arena.GetPendingGroupRun(shareHolderId, RetainingSpaceIndex(PacketRecordMode.ReliableOrdered)));
+        _pendingReliableUnordered = new PendingFragmentGroups(
+            arena.GetPendingGroupRun(shareHolderId, RetainingSpaceIndex(PacketRecordMode.ReliableUnordered)));
     }
 
     /// <summary>
@@ -221,5 +228,22 @@ internal sealed class ReceiveWindowSpaces
         _unreliableSequenced.Reset();
         _reliableUnordered.Reset();
         _reliableOrdered.Reset();
+        _pendingReliableUnordered.Reset();
+        _pendingReliableOrdered.Reset();
     }
+
+    /// <summary>
+    /// The completed-but-undelivered Fragment groups of <paramref name="mode"/>'s Space (issue #259) —
+    /// the ones waiting for their turn in that Space's send-order queue, for frame arena room, or both.
+    /// Held here, beside the windows, because a waiting group's pieces are held in the window itself
+    /// and the two are reset together when a Slot is reused.
+    /// </summary>
+    /// <param name="mode">Which reliable Space's waiting groups to reach.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable mode; only those ever fragment (ADR 0004).</exception>
+    public PendingFragmentGroups PendingGroupsFor(PacketRecordMode mode) => mode switch
+    {
+        PacketRecordMode.ReliableOrdered => _pendingReliableOrdered,
+        PacketRecordMode.ReliableUnordered => _pendingReliableUnordered,
+        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Not a reliable delivery mode."),
+    };
 }

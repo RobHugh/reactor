@@ -106,6 +106,12 @@ public sealed class DatagramSessionOptions
     internal const int FragmentLengthBytes = 2;
 
     /// <summary>
+    /// Bytes one waiting-Fragment-group entry occupies in the receive arena: a <c>u32</c> first
+    /// sequence and a <c>u16</c> declared Fragment count, the pair that names a group (issue #259).
+    /// </summary>
+    internal const int PendingGroupEntryBytes = 6;
+
+    /// <summary>
     /// The shared L0 budget: capacity, admission cap, arena size, time source and Diagnostic Sink.
     /// Required — a Reactor cannot be built without one, and its <see cref="ReactorOptions.Capacity"/>
     /// has no default of its own.
@@ -238,8 +244,18 @@ public sealed class DatagramSessionOptions
     /// it is an exact statement of what a Reactor takes, not a floor it sits above.
     /// </remarks>
     public long ReceiveBudgetBytes =>
-        (long)Reactor.Capacity * ResolvedReceiveWindowFragments
-        * (((long)ReliableSpaceCount * (ResolvedFragmentSize + FragmentLengthBytes)) + SpaceCount);
+        ((long)Reactor.Capacity * ResolvedReceiveWindowFragments
+            * (((long)ReliableSpaceCount * (ResolvedFragmentSize + FragmentLengthBytes)) + SpaceCount))
+        + ((long)Reactor.Capacity * ReliableSpaceCount * PendingGroupsPerSpace * PendingGroupEntryBytes);
+
+    /// <summary>
+    /// The completed Fragment groups one reliable Space can have waiting for delivery at once: half
+    /// <see cref="ResolvedReceiveWindowFragments"/>, never fewer than one. A group is at least two
+    /// Fragments wide and holds its slots until it is delivered, so the window's own size is what
+    /// bounds this — see <see cref="Session.PendingFragmentGroups"/>.
+    /// </summary>
+    internal int PendingGroupsPerSpace =>
+        ResolvedReceiveWindowFragments / 2 < 1 ? 1 : ResolvedReceiveWindowFragments / 2;
 
     /// <summary>The send line of the memory bill in bytes, reported the same way.</summary>
     public long SendBudgetBytes =>
