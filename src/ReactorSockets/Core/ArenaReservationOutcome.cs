@@ -1,7 +1,8 @@
 namespace ReactorSockets.Core;
 
 /// <summary>
-/// The outcome of a single <see cref="FrameArena.Reserve"/> call.
+/// The outcome of a single <see cref="FrameArena.Reserve(int, ReadOnlySpan{byte})"/> or
+/// <see cref="FrameArena.Reserve(int, int)"/> call.
 /// </summary>
 internal enum ArenaReservationOutcome
 {

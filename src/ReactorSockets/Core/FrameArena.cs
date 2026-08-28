@@ -84,6 +84,45 @@ internal sealed class FrameArena
     /// <param name="data">The bytes to commit — already read off the wire elsewhere.</param>
     public ArenaReservation Reserve(int shareHolderId, ReadOnlySpan<byte> data)
     {
+        ArenaReservationOutcome outcome = TryReserve(shareHolderId, data.Length, out Span<byte> destination, out int bytesFreeAtRequest);
+        if (outcome == ArenaReservationOutcome.Committed)
+        {
+            data.CopyTo(destination);
+        }
+
+        return new ArenaReservation(outcome, destination, data.Length, bytesFreeAtRequest);
+    }
+
+    /// <summary>
+    /// Reserves <paramref name="length"/> bytes for <paramref name="shareHolderId"/> without supplying
+    /// the bytes up front — the same outcomes, on the same rules, as
+    /// <see cref="Reserve(int, ReadOnlySpan{byte})"/>, but the caller fills
+    /// <see cref="ArenaReservation.Payload"/> itself once the reservation is decided rather than
+    /// handing bytes in to be copied (issue #259).
+    /// </summary>
+    /// <remarks>
+    /// This is what lets a reassembled Message be one reservation rather than one per piece: its
+    /// bytes are scattered across several non-adjacent receive-window slots, so there is no single
+    /// <see cref="ReadOnlySpan{T}"/> to hand <see cref="Reserve(int, ReadOnlySpan{byte})"/> in the
+    /// first place. Reserving the whole Message's length up front and then copying each piece
+    /// straight into its final position is both cheaper than staging the pieces somewhere else first
+    /// and necessary for the one-reservation-per-Message guarantee issue #259 asks for.
+    /// </remarks>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    /// <param name="length">The number of bytes to reserve.</param>
+    public ArenaReservation Reserve(int shareHolderId, int length)
+    {
+        ArenaReservationOutcome outcome = TryReserve(shareHolderId, length, out Span<byte> destination, out int bytesFreeAtRequest);
+        return new ArenaReservation(outcome, destination, length, bytesFreeAtRequest);
+    }
+
+    /// <summary>
+    /// The one place the share and arena rules are decided, shared by both <c>Reserve</c> overloads:
+    /// only their handling of the reserved bytes differs — one copies data in immediately, the other
+    /// hands the destination back for the caller to fill afterward.
+    /// </summary>
+    private ArenaReservationOutcome TryReserve(int shareHolderId, int length, out Span<byte> destination, out int bytesFreeAtRequest)
+    {
         if (shareHolderId < 0 || shareHolderId >= Capacity)
         {
             throw new ArgumentOutOfRangeException(
@@ -92,24 +131,25 @@ internal sealed class FrameArena
                 $"share-holder {shareHolderId} is outside the arena's capacity of {Capacity}.");
         }
 
-        int bytesFreeAtRequest = BytesFree;
-        if (data.Length > bytesFreeAtRequest)
+        bytesFreeAtRequest = BytesFree;
+        if (length > bytesFreeAtRequest)
         {
-            return new ArenaReservation(ArenaReservationOutcome.ArenaExhausted, default, data.Length, bytesFreeAtRequest);
+            destination = default;
+            return ArenaReservationOutcome.ArenaExhausted;
         }
 
         int bytesUsedByHolder = _bytesUsedByShareHolder[shareHolderId];
-        if (bytesUsedByHolder > 0 && bytesUsedByHolder + data.Length > ReadShare)
+        if (bytesUsedByHolder > 0 && bytesUsedByHolder + length > ReadShare)
         {
-            return new ArenaReservation(ArenaReservationOutcome.ShareExhausted, default, data.Length, bytesFreeAtRequest);
+            destination = default;
+            return ArenaReservationOutcome.ShareExhausted;
         }
 
-        Span<byte> destination = _buffer.AsSpan(BytesUsed, data.Length);
-        data.CopyTo(destination);
-        BytesUsed += data.Length;
-        _bytesUsedByShareHolder[shareHolderId] = bytesUsedByHolder + data.Length;
+        destination = _buffer.AsSpan(BytesUsed, length);
+        BytesUsed += length;
+        _bytesUsedByShareHolder[shareHolderId] = bytesUsedByHolder + length;
 
-        return new ArenaReservation(ArenaReservationOutcome.Committed, destination, data.Length, bytesFreeAtRequest);
+        return ArenaReservationOutcome.Committed;
     }
 
     /// <summary>

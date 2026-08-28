@@ -14,7 +14,8 @@ namespace ReactorSockets.Tests;
 /// <see cref="DatagramSessionMalformedInputTests"/> already proves for the control path. Most of this
 /// file ends at "the datagram parsed, or it did not", asserting the drain stays empty whatever the
 /// input; issue #252 adds the fragment shape as a second thing a record can legally be, so the tests
-/// for it also drain and check the payloads a well-formed Fragment delivers.
+/// for it also drain and check that an unfragmented record's payload still reaches the consumer
+/// alongside a well-formed Fragment — held rather than delivered since issue #257.
 /// </summary>
 /// <remarks>
 /// A live Session id is not exposed by the public surface — <see cref="PeerId"/> is an opaque handle,
@@ -199,11 +200,12 @@ public class DatagramSessionDataDatagramParseTests
     }
 
     [Fact]
-    public void Pump_RecordWithAWellFormedFragmentShape_ParsesSuccessfullyAndDeliversBothRecords()
+    public void Pump_RecordWithAWellFormedFragmentShape_ParsesSuccessfullyAndDeliversOnlyTheUnfragmentedRecord()
     {
-        // Arrange — the fragment shape reads now (issue #252): a record with the bit set and a
-        // complete 11-byte header no longer discards the datagram, and an earlier well-formed record
-        // still takes effect, the opposite of what this test asserted before the shape was readable.
+        // Arrange — the fragment shape reads (issue #252): a record with the bit set and a complete
+        // 11-byte header no longer discards the datagram, and an earlier well-formed record still takes
+        // effect. Since issue #257, an admitted Fragment is held rather than delivered — it is a piece
+        // of a Message, not a Message — so only the unfragmented record reaches the consumer here.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -220,19 +222,20 @@ public class DatagramSessionDataDatagramParseTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
         List<byte[]> payloads = accepter.DrainPayloads();
 
-        // Assert — neither record is discarded and both payloads reach the consumer. Whether the
-        // Fragment's index and count describe a legal set is #253's question, not this one's.
+        // Assert — neither record is discarded, but the Fragment is held rather than delivered (#257).
+        // Whether the Fragment's index and count describe a legal set is #253's question, not this one's.
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         payloads.Should().BeEquivalentTo(
-            new[] { new byte[] { 0x9A, 0x9B }, new byte[] { 0x01 } },
-            "the well-formed record and the Fragment both parse and both are delivered");
+            new[] { new byte[] { 0x9A, 0x9B } },
+            "the well-formed record parses and delivers, while the admitted Fragment is held (#257)");
     }
 
     [Fact]
-    public void Pump_DatagramOfOnlyFragmentRecords_ParsesToExhaustionAndDeliversEveryPayload()
+    public void Pump_DatagramOfOnlyFragmentRecords_ParsesAndDeliversTheAssembledMessage()
     {
         // Arrange — one datagram carrying nothing but Fragments, the second case the acceptance
-        // criteria names alongside "only unfragmented" and "mixed".
+        // criteria names alongside "only unfragmented" and "mixed". Since issue #259, a completed set
+        // is delivered as one assembled Message, concatenated in fragment-index order.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -251,14 +254,16 @@ public class DatagramSessionDataDatagramParseTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
         List<byte[]> payloads = accepter.DrainPayloads();
 
-        // Assert
+        // Assert — parses cleanly, and the completed set delivers as one assembled Message: the three
+        // Fragments' payloads concatenated in fragment-index order.
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         payloads.Should().BeEquivalentTo(
-            new[] { new byte[] { 0x01 }, new byte[] { 0x02, 0x02 }, new byte[] { 0x03, 0x03, 0x03 } });
+            new[] { new byte[] { 0x01, 0x02, 0x02, 0x03, 0x03, 0x03 } },
+            "the three-Fragment set completes and is delivered whole");
     }
 
     [Fact]
-    public void Pump_DatagramMixingUnfragmentedAndFragmentRecords_ParsesEveryRecordWithItsOwnFieldsIntact()
+    public void Pump_DatagramMixingUnfragmentedAndFragmentRecords_ParsesEveryRecordAndDeliversOnlyTheUnfragmentedOnes()
     {
         // Arrange — the mixed case the acceptance criteria calls out as the one a naive parser gets
         // wrong: unfragmented records and Fragments interleaved, each carrying a payload distinct enough
@@ -268,7 +273,9 @@ public class DatagramSessionDataDatagramParseTests
         // still exercise a second mode, including plain Unreliable, since nothing about ADR 0004 restricts
         // an unfragmented record's mode. The two Fragments' groups (firstSeq 1 and firstSeq 3) are
         // deliberately far enough apart that their declared ranges — [1,2] and [3,4] — do not overlap:
-        // #256's declared-range check would otherwise (rightly) reject this datagram.
+        // #256's declared-range check would otherwise (rightly) reject this datagram. Since issue #257,
+        // an admitted Fragment is held rather than delivered, so only the three unfragmented records'
+        // payloads reach the consumer.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -290,14 +297,11 @@ public class DatagramSessionDataDatagramParseTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
         List<byte[]> payloads = accepter.DrainPayloads();
 
-        // Assert — every record parsed, and every payload reached the consumer exactly once.
+        // Assert — every record parsed; only the unfragmented records' payloads reached the consumer,
+        // each exactly once, while the admitted Fragments are held (#257).
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         payloads.Should().BeEquivalentTo(
-            new[]
-            {
-                new byte[] { 0xA0 }, new byte[] { 0xB1 }, new byte[] { 0xA2 },
-                new byte[] { 0xB3 }, new byte[] { 0xE5 }, new byte[] { 0xF6 },
-            });
+            new[] { new byte[] { 0xA0 }, new byte[] { 0xA2 }, new byte[] { 0xE5 } });
     }
 
     [Fact]
@@ -476,10 +480,13 @@ public class DatagramSessionDataDatagramParseTests
             accepter, client, clientLink, sessionId,
             BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 0, fragmentCount: 65535, payload: [0x04])));
 
-        // Assert
+        // Assert — parses cleanly at every boundary; only the two-Fragment set actually completes (the
+        // 1000- and 65535-piece sets each send only their first index, so neither ever completes and
+        // neither delivers).
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         payloads.Should().BeEquivalentTo(
-            new[] { new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 } });
+            new[] { new byte[] { 0x01, 0x02 } },
+            "only the two-Fragment set at sequences 0-1 ever completes");
     }
 
     /// <summary>
@@ -504,7 +511,7 @@ public class DatagramSessionDataDatagramParseTests
     }
 
     [Fact]
-    public void Pump_WellFormedFragmentSetsCompletePartialAndNonOverlapping_AllParseAndDeliver()
+    public void Pump_WellFormedFragmentSetsCompletePartialAndNonOverlapping_CompleteSetsAndTheUnfragmentedRecordDeliver()
     {
         // Arrange — issue #256's positive cases in one datagram: a complete contiguous 3-Fragment set
         // (sequences 100-102), an unfragmented record between the groups, a partial set contiguous only
@@ -515,7 +522,9 @@ public class DatagramSessionDataDatagramParseTests
         // of these three groups' declared ranges — [100,102], [200,203], [300,301] — come near each
         // other. Every Fragment is ReliableUnordered (ADR 0004: fragmentation is reliable-only), so the
         // receive window is sized generously above the highest sequence used here — the window's own
-        // verdict is not what this test is about.
+        // verdict is not what this test is about. Since issue #259, each completed set is delivered as
+        // one assembled Message, so the two complete sets and the one unfragmented record all reach the
+        // consumer; the still-partial set (200-201 of a declared 4) delivers nothing.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 400);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -539,27 +548,26 @@ public class DatagramSessionDataDatagramParseTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
         List<byte[]> payloads = accepter.DrainPayloads();
 
-        // Assert
+        // Assert — every group parses; the two complete sets assemble and the unfragmented record
+        // delivers, while the still-partial set (200-201) delivers nothing.
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         payloads.Should().BeEquivalentTo(
-            new[]
-            {
-                new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 },
-                new byte[] { 0x05 }, new byte[] { 0x06 }, new byte[] { 0x07 }, new byte[] { 0x08 },
-            });
+            new[] { new byte[] { 0x01, 0x02, 0x03 }, new byte[] { 0x04 }, new byte[] { 0x07, 0x08 } },
+            "the 100-102 and 300-301 sets complete and assemble, the unfragmented record at 103 delivers " +
+            "as itself, and the still-partial 200-201 set delivers nothing");
     }
 
     [Fact]
-    public void Pump_ReliableOrderedAndReliableUnorderedFragmentGroupsStartingAtTheSameSequence_ParsesFullyAndDeliversBoth()
+    public void Pump_ReliableOrderedAndReliableUnorderedFragmentGroupsStartingAtTheSameSequence_ParsesFullyForBothGroups()
     {
         // Arrange — issue #47/#256 false-positive fix: ReceiveWindowSpaces keeps one independent Space
         // per PacketRecordMode (ADR 0009), so a ReliableOrdered group and a ReliableUnordered group both
         // starting at firstSeq 0 are not the same group at all — they live in different Spaces and can
         // never collide. FragmentSetsAreWellFormed must key group identity on (mode, firstSequence), not
         // firstSequence alone, or it folds these two legitimate groups into one and sees index 0 claimed
-        // twice. Both groups start at sequence 0 in their own Space (ReliableOrdered's OrderedDelivery
-        // queue only releases a contiguous run from its own Space's own zero, so this is also what lets
-        // both groups' Fragments reach the consumer rather than sit held behind a gap).
+        // twice, discarding the whole datagram. Since issue #259, each group is its own complete set and
+        // is delivered as one assembled Message, so the proof this is not a group conflict is that both
+        // groups reach the consumer independently, not merely that the datagram parses.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -579,24 +587,25 @@ public class DatagramSessionDataDatagramParseTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
         List<byte[]> payloads = accepter.DrainPayloads();
 
-        // Assert — this is not a group conflict: both groups parse and both deliver.
+        // Assert — this is not a group conflict: both groups parse and both deliver, independently.
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         payloads.Should().BeEquivalentTo(
-            new[] { new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 } },
-            "the two groups share a first sequence but live in independent Spaces, one per delivery mode");
+            new[] { new byte[] { 0x01, 0x02 }, new byte[] { 0x03, 0x04 } },
+            "the ReliableOrdered group assembles to 0x01,0x02 and the ReliableUnordered group to 0x03,0x04, " +
+            "each delivered from its own independent Space");
     }
 
     [Fact]
-    public void Pump_FragmentGroupsInDifferentModesWithDeclaredRangesThatWouldOverlapIgnoringMode_ParsesFullyAndDeliversBoth()
+    public void Pump_FragmentGroupsInDifferentModesWithDeclaredRangesThatWouldOverlapIgnoringMode_ParsesFullyForBothGroups()
     {
         // Arrange — issue #47/#256 false-positive fix: a ReliableOrdered group declaring range [0,4]
         // and a ReliableUnordered group declaring range [2,6] cannot overlap — they are different
         // Spaces (ReceiveWindowSpaces, ADR 0009) — even though the raw sequence numbers collide.
         // NoTwoDeclaredRangesOverlap must only ever compare two groups in the same mode. Only two of
         // each group's five declared Fragments are actually sent (issue #256: a partial set contiguous
-        // only as far as it goes is not itself a violation), and the ReliableOrdered pair starts at its
-        // own Space's sequence 0 so OrderedDelivery releases it immediately rather than holding it
-        // behind a gap.
+        // only as far as it goes is not itself a violation). Since issue #257, neither group's Fragments
+        // deliver — they are held — so the proof this is not a violation is that the datagram parses
+        // cleanly at all, not what reaches the consumer.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -619,9 +628,7 @@ public class DatagramSessionDataDatagramParseTests
         // Assert — the declared ranges [0,4] and [2,6] would overlap if mode were ignored, but they
         // belong to different Spaces, so this is not a violation.
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
-        payloads.Should().BeEquivalentTo(
-            new[] { new byte[] { 0x01 }, new byte[] { 0x02 }, new byte[] { 0x03 }, new byte[] { 0x04 } },
-            "declared ranges can only collide within one mode's Space");
+        payloads.Should().BeEmpty("declared ranges can only collide within one mode's Space, and every record here is a held Fragment (#257)");
     }
 
     /// <summary>

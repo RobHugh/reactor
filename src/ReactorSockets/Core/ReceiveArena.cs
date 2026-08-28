@@ -3,45 +3,62 @@ namespace ReactorSockets.Core;
 /// <summary>
 /// The receive side of the memory bill (issue #171), actually allocated: one buffer per Reactor,
 /// sized exactly <see cref="DatagramSessionOptions.ReceiveBudgetBytes"/> — <c>Capacity ×
-/// FragmentsPerSpace × (RetainingSpaceCount × FragmentSize + ClassifyingSpaceCount)</c> — and sliced
-/// into two regions (issue #174, #179). The payload region comes first: fixed-size fragment slots,
-/// one per (Peer, retaining Space) pair, for the two Spaces that reassemble and so must hold what
-/// they receive. The admission region follows: one byte per slot, one run per (Peer, classifying
-/// Space) pair, for all four Spaces, because all four classify whether or not they retain — that
-/// per-slot admission record is what <see cref="Session.ReceiveWindow"/> previously allocated for
-/// itself, outside this arena. Preallocated once at construction and never grown: the receive window
-/// is the library's main memory dial, taken once and never seen to grow.
+/// FragmentsPerSpace × (RetainingSpaceCount × (FragmentSize + 2) + ClassifyingSpaceCount)</c> — and
+/// sliced into three regions (issue #174, #179, #257). The payload region comes first: fixed-size
+/// fragment slots, one per (Peer, retaining Space) pair, for the two Spaces that reassemble and so
+/// must hold what they receive. The admission region follows: one byte per slot, one run per (Peer,
+/// classifying Space) pair, for all four Spaces, because all four classify whether or not they
+/// retain — that per-slot admission record is what <see cref="Session.ReceiveWindow"/> previously
+/// allocated for itself, outside this arena. The length region comes last: two bytes per slot, one
+/// run per (Peer, retaining Space) pair, for the two Spaces that retain — how many payload bytes the
+/// Fragment held in the matching payload slot actually occupies, zero when that slot holds none. This
+/// is the storage that lets a Fragment be held in the receive window it already arrived in rather than
+/// a separate reassembly buffer (issue #257, ADR 0004): the window's own admission bytes are cleared
+/// the moment the base advances past them, so the length run — which nothing but a completed or
+/// reused slot ever clears — is what a later Pump reads to tell a held Fragment from an empty slot.
+/// Preallocated once at construction and never grown: the receive window is the library's main memory
+/// dial, taken once and never seen to grow.
 /// </summary>
 /// <remarks>
 /// <para>
 /// A share-holder is identified by a zero-based index below <see cref="Capacity"/> — a Peer, in the
 /// datagram Session profile — the same convention <see cref="FrameArena"/> and
-/// <see cref="RetentionArena"/> use. A Space within a share-holder's payload region is identified by
-/// a zero-based index below <see cref="RetainingSpaceCount"/>, and a Space within a share-holder's
-/// admission region by a zero-based index below <see cref="ClassifyingSpaceCount"/>; a fragment slot
-/// within either by a zero-based index below <see cref="FragmentsPerSpace"/>.
+/// <see cref="RetentionArena"/> use. A Space within a share-holder's payload region, or its length
+/// region, is identified by a zero-based index below <see cref="RetainingSpaceCount"/>, and a Space
+/// within a share-holder's admission region by a zero-based index below
+/// <see cref="ClassifyingSpaceCount"/>; a fragment slot within any of the three by a zero-based index
+/// below <see cref="FragmentsPerSpace"/>.
 /// </para>
 /// <para>
 /// This type owns only the storage and the addressing arithmetic over it. It carries no notion of a
 /// sequence number, a fragment's offset within a Message, or which slot a given sequence belongs in —
 /// classifying a sequence into a slot is <see cref="Session.ReceiveWindow"/>'s job (#170), and routing a
-/// parsed record's payload into the slot <see cref="Session.ReceiveWindow.Classify"/> names is #172's. Keeping
-/// that knowledge out of this type is what keeps the allocation-and-lifetime concern this ticket
-/// (#171) owns separate from the classification-and-routing concern #172 owns, on the same file two
-/// branches are editing concurrently.
+/// parsed record's payload and length into the slot <see cref="Session.ReceiveWindow.Classify(uint)"/> names is
+/// #172's and #257's. Keeping that knowledge out of this type is what keeps the allocation-and-lifetime
+/// concern this ticket (#171) owns separate from the classification-and-routing concern #172 and #257
+/// own, on the same file several branches are editing concurrently.
 /// </para>
 /// </remarks>
 internal sealed class ReceiveArena
 {
+    /// <summary>
+    /// Bytes one fragment-length slot occupies: a <c>u16</c>, wide enough for any
+    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> up to the largest a UDP payload can
+    /// carry (65 507), which a single byte — the admission run's width — could not hold.
+    /// </summary>
+    private const int FragmentLengthSize = 2;
+
     private readonly byte[] _buffer;
     private readonly int _admissionOrigin;
+    private readonly int _lengthOrigin;
 
     /// <summary>
     /// Constructs an arena of <paramref name="capacity"/> share-holders, each holding
     /// <paramref name="retainingSpaceCount"/> payload-carrying Spaces and
     /// <paramref name="classifyingSpaceCount"/> admission-tracked Spaces, every Space a window of
     /// <paramref name="fragmentsPerSpace"/> slots — <paramref name="fragmentSize"/> bytes wide for a
-    /// payload slot, one byte for an admission slot.
+    /// payload slot, one byte for an admission slot, two bytes for a length slot (retaining Spaces
+    /// only).
     /// </summary>
     /// <param name="capacity">The number of share-holders this arena divides its regions across.</param>
     /// <param name="retainingSpaceCount">
@@ -119,19 +136,21 @@ internal sealed class ReceiveArena
 
         long payloadBytes = (long)capacity * retainingSpaceCount * fragmentsPerSpace * fragmentSize;
         long admissionBytes = (long)capacity * classifyingSpaceCount * fragmentsPerSpace;
-        long totalBytes = payloadBytes + admissionBytes;
+        long lengthBytes = (long)capacity * retainingSpaceCount * fragmentsPerSpace * FragmentLengthSize;
+        long totalBytes = payloadBytes + admissionBytes + lengthBytes;
         if (totalBytes > Array.MaxLength)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(capacity),
                 totalBytes,
                 $"a receive arena of {capacity} share-holders × {fragmentsPerSpace} fragments × " +
-                $"({retainingSpaceCount} retaining Spaces × {fragmentSize} bytes + {classifyingSpaceCount} " +
-                $"classifying Spaces × 1 byte) = {totalBytes} bytes cannot be allocated — it exceeds " +
-                $"Array.MaxLength ({Array.MaxLength}).");
+                $"({retainingSpaceCount} retaining Spaces × ({fragmentSize} payload bytes + {FragmentLengthSize} " +
+                $"length bytes) + {classifyingSpaceCount} classifying Spaces × 1 byte) = {totalBytes} bytes " +
+                $"cannot be allocated — it exceeds Array.MaxLength ({Array.MaxLength}).");
         }
 
         _admissionOrigin = (int)payloadBytes;
+        _lengthOrigin = (int)(payloadBytes + admissionBytes);
         _buffer = new byte[totalBytes];
     }
 
@@ -154,7 +173,8 @@ internal sealed class ReceiveArena
     /// The arena's total size in bytes: the payload region — <see cref="Capacity"/> ×
     /// <see cref="RetainingSpaceCount"/> × <see cref="FragmentsPerSpace"/> × <see cref="FragmentSize"/>
     /// — plus the admission region — <see cref="Capacity"/> × <see cref="ClassifyingSpaceCount"/> ×
-    /// <see cref="FragmentsPerSpace"/> — exactly matching
+    /// <see cref="FragmentsPerSpace"/> — plus the length region — <see cref="Capacity"/> ×
+    /// <see cref="RetainingSpaceCount"/> × <see cref="FragmentsPerSpace"/> × 2 — exactly matching
     /// <see cref="DatagramSessionOptions.ReceiveBudgetBytes"/> for the options this arena was built
     /// from.
     /// </summary>
@@ -230,5 +250,40 @@ internal sealed class ReceiveArena
 
         int regionStart = _admissionOrigin + (((shareHolderId * ClassifyingSpaceCount) + spaceIndex) * FragmentsPerSpace);
         return _buffer.AsMemory(regionStart, FragmentsPerSpace);
+    }
+
+    /// <summary>
+    /// The fragment-length run for <paramref name="shareHolderId"/>'s <paramref name="spaceIndex"/>th
+    /// retaining Space: <see cref="FragmentsPerSpace"/> slots of two bytes each, one per
+    /// <see cref="GetFragmentSlot"/> slot, recording how many payload bytes the Fragment currently held
+    /// there occupies — zero when that slot holds no Fragment. <see cref="Memory{T}"/> for the same
+    /// reason <see cref="GetAdmissionRun"/> returns one: a <see cref="Session.ReceiveWindow"/> holds
+    /// this run for the share-holder's whole lifetime, not for one call. This type only hands back the
+    /// storage; interpreting the two bytes of one slot is <see cref="Session.ReceiveWindow"/>'s job
+    /// (issue #257), exactly as classifying a sequence into a slot already is.
+    /// </summary>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    /// <param name="spaceIndex">A zero-based index below <see cref="RetainingSpaceCount"/>.</param>
+    public Memory<byte> GetFragmentLengthRun(int shareHolderId, int spaceIndex)
+    {
+        if (shareHolderId < 0 || shareHolderId >= Capacity)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(shareHolderId),
+                shareHolderId,
+                $"share-holder {shareHolderId} is outside the arena's capacity of {Capacity}.");
+        }
+
+        if (spaceIndex < 0 || spaceIndex >= RetainingSpaceCount)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(spaceIndex),
+                spaceIndex,
+                $"Space {spaceIndex} is outside this arena's retaining Space count of {RetainingSpaceCount}.");
+        }
+
+        int regionStart = _lengthOrigin
+            + (((shareHolderId * RetainingSpaceCount) + spaceIndex) * FragmentsPerSpace * FragmentLengthSize);
+        return _buffer.AsMemory(regionStart, FragmentsPerSpace * FragmentLengthSize);
     }
 }

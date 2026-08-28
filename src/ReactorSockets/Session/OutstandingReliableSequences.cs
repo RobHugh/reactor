@@ -704,7 +704,7 @@ internal sealed class OutstandingReliableSequences
         /// Resolves <paramref name="sequence"/> to its ring slot when it lies within
         /// <c>[_oldest, _oldest + _count)</c> — tracked and not yet released. A sequence below
         /// <see cref="_oldest"/> (already released) or at or beyond <c>_oldest + _count</c> (never sent)
-        /// reports <see langword="false"/>, mirroring <see cref="ReceiveWindow.Classify"/>'s own bounds
+        /// reports <see langword="false"/>, mirroring <see cref="ReceiveWindow.Classify(uint)"/>'s own bounds
         /// check.
         /// </summary>
         private bool TryGetSlot(uint sequence, out int slot)
