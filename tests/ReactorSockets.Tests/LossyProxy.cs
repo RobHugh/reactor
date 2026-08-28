@@ -47,6 +47,27 @@ internal sealed class LossyProxy : IDisposable
     private byte[]? _heldForReorderClientToUpstream;
     private byte[]? _heldForReorderUpstreamToClient;
     private Source? _lastClient;
+    private int _clientToUpstreamSizeThreshold = NoSizeThreshold;
+    private int _upstreamToClientSizeThreshold = NoSizeThreshold;
+    private int _clientToUpstreamLossEveryNth = NoLossEveryNth;
+    private int _upstreamToClientLossEveryNth = NoLossEveryNth;
+    private int _clientToUpstreamLossCount;
+    private int _upstreamToClientLossCount;
+
+    /// <summary>
+    /// The size threshold value meaning "no standing size threshold" — every payload is forwarded
+    /// regardless of length. Passing this to <see cref="SetSizeThreshold"/> clears whatever threshold
+    /// was standing on that direction, because no ordinary payload can exceed it.
+    /// </summary>
+    public const int NoSizeThreshold = int.MaxValue;
+
+    /// <summary>
+    /// The value meaning "no standing every-Nth loss rule" — every relay that direction is a candidate
+    /// to pass, subject only to the size threshold and the one-shot queue. Passing this to
+    /// <see cref="SetLossEveryNth"/> clears whatever every-Nth rule was standing on that direction, the
+    /// same way <see cref="NoSizeThreshold"/> clears the size threshold.
+    /// </summary>
+    public const int NoLossEveryNth = 0;
 
     /// <summary>
     /// Constructs a proxy that relays toward <paramref name="upstream"/>, timing its delayed relays
@@ -82,6 +103,63 @@ internal sealed class LossyProxy : IDisposable
     public void ReorderNextTwo(RelayDirection direction) => QueueFor(direction).Enqueue(Fault.Reorder);
 
     /// <summary>
+    /// Sets (or, with <see cref="NoSizeThreshold"/>, clears) a standing size threshold on
+    /// <paramref name="direction"/>: while it stands, every relay that direction whose payload length
+    /// exceeds <paramref name="maxPayloadLength"/> is read off the wire and never forwarded, and every
+    /// relay at or below it passes unchanged. Unlike <see cref="DropNext"/> and the other one-shot
+    /// faults, this is not an instruction consumed by the next relay — it is a property of the path that
+    /// holds for as long as it is set, because the condition it models (a link that carries small
+    /// datagrams but black-holes large ones) has to be true of every relay for the length of a test, not
+    /// just the next one. The proxy never inspects a payload beyond its length, so it neither knows nor
+    /// cares what the oversized datagrams actually are.
+    /// </summary>
+    public void SetSizeThreshold(RelayDirection direction, int maxPayloadLength)
+    {
+        if (direction == RelayDirection.ClientToUpstream)
+        {
+            _clientToUpstreamSizeThreshold = maxPayloadLength;
+        }
+        else
+        {
+            _upstreamToClientSizeThreshold = maxPayloadLength;
+        }
+    }
+
+    /// <summary>
+    /// Sets (or, with <see cref="NoLossEveryNth"/>, clears) a standing every-Nth loss rule on
+    /// <paramref name="direction"/>: while it stands, every <paramref name="everyNth"/>th relay that
+    /// direction reaches this rule is read off the wire and never forwarded, and every other relay
+    /// passes this rule unchanged. This is expressed as a count rather than a probability because a
+    /// probability makes the negative test it exists for flaky and its failures unreproducible — "a
+    /// tenth of everything is lost" written as a 10% chance needs a seed nobody wants to record to
+    /// reproduce a failure, where every tenth relay dropped is the same tenth every run. It matches
+    /// <see cref="DropNext"/> and friends in being scheduled rather than randomised, and matches
+    /// <see cref="SetSizeThreshold"/> in being a standing property of the path rather than a one-shot
+    /// instruction: setting it restarts counting from zero for <paramref name="direction"/>, even if the
+    /// same value was already standing, and it stands until cleared. <paramref name="everyNth"/> must be
+    /// non-negative; a negative count does not correspond to any dropping schedule and is rejected with
+    /// <see cref="ArgumentOutOfRangeException"/> rather than silently coerced into one.
+    /// </summary>
+    public void SetLossEveryNth(RelayDirection direction, int everyNth)
+    {
+        if (everyNth < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(everyNth), everyNth, "Every-Nth loss count must be non-negative.");
+        }
+
+        if (direction == RelayDirection.ClientToUpstream)
+        {
+            _clientToUpstreamLossEveryNth = everyNth;
+            _clientToUpstreamLossCount = 0;
+        }
+        else
+        {
+            _upstreamToClientLossEveryNth = everyNth;
+            _upstreamToClientLossCount = 0;
+        }
+    }
+
+    /// <summary>
     /// Advances this proxy's own Reactor by one Pump, relaying whatever arrived and releasing any
     /// delayed relay whose deadline this proxy's <see cref="TimeProvider"/> has now reached.
     /// </summary>
@@ -110,14 +188,32 @@ internal sealed class LossyProxy : IDisposable
     }
 
     /// <summary>
-    /// Applies the next queued fault (or none) to one relay. A <see cref="FaultKind.Reorder"/> fault
-    /// holds <paramref name="payload"/> back entirely rather than sending it now — it is released only
-    /// once the <em>next</em> relay in the same direction has been sent, whatever that next relay's own
-    /// fault turns out to be, so the two datagrams swap wire order without either's own content or
-    /// fault handling changing.
+    /// Applies the two standing rules, then the next queued fault (or none), to one relay. The size
+    /// threshold is consulted first and unconditionally: a payload it kills is read off the wire and
+    /// dropped without the every-Nth loss rule ever seeing it, so a relay the threshold drops does not
+    /// advance that rule's count — the datagram never reached the loss rule, so counting it would drop
+    /// the wrong relay later. The every-Nth loss rule is consulted second, still ahead of the one-shot
+    /// queue: a relay it drops consumes no queued fault, so a fault queued behind a standing loss rule
+    /// stays queued for the next relay that actually goes out — a fault never applied to anything has not
+    /// happened yet. Either standing rule dropping a relay is not a relay for reorder purposes either: it
+    /// does not release a held-back datagram and does not itself become the held datagram. A
+    /// <see cref="FaultKind.Reorder"/> fault holds <paramref name="payload"/> back entirely rather than
+    /// sending it now — it is released only once the <em>next</em> relay in the same direction has been
+    /// sent, whatever that next relay's own fault turns out to be, so the two datagrams swap wire order
+    /// without either's own content or fault handling changing.
     /// </summary>
     private void Relay(RelayDirection direction, LinkId from, Source to, byte[] payload)
     {
+        if (payload.Length > ThresholdFor(direction))
+        {
+            return;
+        }
+
+        if (ShouldDropByEveryNth(direction))
+        {
+            return;
+        }
+
         Queue<Fault> faults = QueueFor(direction);
         Fault fault = faults.Count > 0 ? faults.Dequeue() : Fault.None;
 
@@ -201,6 +297,40 @@ internal sealed class LossyProxy : IDisposable
 
     private Queue<Fault> QueueFor(RelayDirection direction) =>
         direction == RelayDirection.ClientToUpstream ? _clientToUpstreamFaults : _upstreamToClientFaults;
+
+    private int ThresholdFor(RelayDirection direction) =>
+        direction == RelayDirection.ClientToUpstream ? _clientToUpstreamSizeThreshold : _upstreamToClientSizeThreshold;
+
+    /// <summary>
+    /// Advances the every-Nth loss count for <paramref name="direction"/> by one relay reaching this
+    /// rule and reports whether this is the Nth one, resetting the count back to zero when it is — so
+    /// the rule drops the Nth, 2Nth, 3Nth, … relay counted from whenever it was last set. Returns
+    /// <see langword="false"/> without touching the count when no rule stands on this direction.
+    /// </summary>
+    private bool ShouldDropByEveryNth(RelayDirection direction)
+    {
+        int everyNth = LossEveryNthFor(direction);
+        if (everyNth == NoLossEveryNth)
+        {
+            return false;
+        }
+
+        ref int count = ref direction == RelayDirection.ClientToUpstream
+            ? ref _clientToUpstreamLossCount
+            : ref _upstreamToClientLossCount;
+
+        count++;
+        if (count < everyNth)
+        {
+            return false;
+        }
+
+        count = 0;
+        return true;
+    }
+
+    private int LossEveryNthFor(RelayDirection direction) =>
+        direction == RelayDirection.ClientToUpstream ? _clientToUpstreamLossEveryNth : _upstreamToClientLossEveryNth;
 
     public void Dispose() => _reactor.Dispose();
 
