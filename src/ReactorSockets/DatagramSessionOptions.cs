@@ -44,20 +44,19 @@ namespace ReactorSockets;
 /// shared across the whole Reactor rather than multiplied by capacity.
 /// </para>
 /// <para>
-/// <see cref="MaxMessageSize"/> appears in three places at once: it is announced to the remote as a
+/// <see cref="MaxMessageSize"/> reaches three places at once: it is announced to the remote as a
 /// receive limit, it floors the receive window at the fragments one maximum Message occupies
 /// (<see cref="ReceiveWindowFloor"/>), and it floors the frame arena, because an arena that cannot
-/// hold one maximum Message could never deliver one. It is therefore the one knob here whose
-/// careless enlargement multiplies memory in more than one direction: the window floor is per Peer
-/// and multiplied by capacity and by the Spaces, so the receive line above rises with it, and the
-/// shared arena is pushed up alongside. Retention is the exception this profile makes —
-/// <see cref="RetentionBytes"/> is floored by <see cref="ResolvedFragmentSize"/> rather than by
-/// <see cref="MaxMessageSize"/>, because a reliable Space retransmits fragment by fragment and needs
-/// only one fragment to have something to resend.
+/// hold one maximum Message could never deliver one. Careless enlargement therefore grows memory in
+/// two directions rather than one: the window floor is per Peer, so the receive line above rises
+/// with it multiplied by capacity and by the Spaces, and the shared arena is pushed up alongside.
+/// Retention is the exception this profile makes. <see cref="RetentionBytes"/> is floored by
+/// <see cref="ResolvedFragmentSize"/> rather than by <see cref="MaxMessageSize"/>, because a
+/// reliable Space retransmits fragment by fragment and needs only one fragment to have something to
+/// resend.
 /// </para>
 /// <para>
-/// Every check below is
-/// deterministic and entirely the caller's, so failures throw at construction —
+/// Every check below is deterministic and entirely the caller's, so failures throw at construction —
 /// <see cref="ArgumentOutOfRangeException"/> for a single bad value and
 /// <see cref="ArgumentException"/> for a combination that cannot work — rather than being reported
 /// through a <c>Result</c>.
