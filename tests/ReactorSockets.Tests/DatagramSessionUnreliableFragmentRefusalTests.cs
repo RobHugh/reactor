@@ -18,6 +18,11 @@ namespace ReactorSockets.Tests;
 /// no member of this Reactor surfaces a sequence number — so it is read off a captured Datagram at
 /// the byte offsets <see cref="DatagramSessionWireFormatTests"/> pins, rather than inferred.
 /// </remarks>
+/// <remarks>
+/// A reliable Send is refused unless its Peer has learned the remote's announced
+/// <c>MaxMessageSize</c> (issue #284); the one test below that also drives a reliable Send pumps a
+/// real handshake to completion first.
+/// </remarks>
 public class DatagramSessionUnreliableFragmentRefusalTests
 {
     private const int DatagramHeaderSize = 20;
@@ -70,6 +75,7 @@ public class DatagramSessionUnreliableFragmentRefusalTests
             fragmentSize: fragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         byte[] tooWide = new byte[fragmentSize + 1];
 
         // Act

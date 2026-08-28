@@ -411,15 +411,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Sends <paramref name="message"/> to <paramref name="peer"/> under <paramref name="mode"/> (ADR
-    /// 0009, issues #207, #215, #216). A Message too wide for its mode to carry is refused as
-    /// <see cref="SendOutcome.MessageTooLarge"/> before any work is done on it: no sequence is
-    /// allocated and no retention is taken, so a rejected Send leaves no trace on the Session. How
-    /// wide is too wide depends on the mode and is decided by <see cref="FragmentPlan.Resolve"/>, the
-    /// one place the rule is stated: an unreliable mode is capped at a single Datagram, while a
-    /// reliable mode is capped at <see cref="DatagramSessionOptions.MaxMessageSize"/> and fragments
-    /// below it (ADR 0004). That gate sits behind the <paramref name="peer"/> lookup rather than in
-    /// front of it, because the cap it measures against is the Peer's own captured fragment size
-    /// (issue #248) — so a Peer this Reactor is not holding open returns
+    /// 0009, issues #207, #215, #216). A Message too wide for its mode to carry is refused before any
+    /// work is done on it: no sequence is allocated and no retention is taken, so a rejected Send leaves
+    /// no trace on the Session. How wide is too wide depends on the mode and is decided by
+    /// <see cref="FragmentPlan.Resolve"/>, the one place the rule is stated: an unreliable mode is capped
+    /// at a single Datagram and refused as <see cref="SendOutcome.MessageTooLarge"/>, while a reliable
+    /// mode fragments below a cap and is refused above it as <see cref="SendOutcome.RemoteMessageTooLarge"/>
+    /// (ADR 0004). That reliable cap is <paramref name="peer"/>'s own announced receive limit, captured
+    /// on its Slot at handshake, not this Reactor's own <see cref="DatagramSessionOptions.MaxMessageSize"/>
+    /// (issue #284): <c>Send</c> is therefore not purely local to this Reactor's configuration, because
+    /// the same payload can be accepted for one Peer and refused for another whose handshake announced a
+    /// smaller limit. That gate sits behind the <paramref name="peer"/> lookup rather than in front of it,
+    /// because both caps it measures against, fragment size and remote max message size alike, are the
+    /// Peer's own captured values (issue #248); a Peer this Reactor is not holding open returns
     /// <see cref="SendOutcome.Closed"/> whatever the Message's width. Past
     /// that gate, a reliable mode allocates the next sequence in its own Space and retains the Message
     /// whole there, returning <see cref="SendOutcome.RetentionExhausted"/> once that Space has no slot
@@ -472,11 +476,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// ten-Fragment unreliable Message on a path losing 1% of Datagrams arrives about 90% of the time,
     /// having spent ten Datagrams of bandwidth on a coin flip (<c>docs/delivery-modes.md</c>). For
     /// <see cref="DeliveryMode.ReliableOrdered"/> and <see cref="DeliveryMode.ReliableUnordered"/> the
-    /// single-Datagram cap does not apply: a Message up to <see cref="DatagramSessionOptions.MaxMessageSize"/>
-    /// is cut into <c>ceil(length / fragmentSize)</c> Fragments (issue #245), each retained and
-    /// sequenced as its own ordinary reliable packet, and only a Message wider than
-    /// <see cref="DatagramSessionOptions.MaxMessageSize"/> is refused with
-    /// <see cref="SendOutcome.MessageTooLarge"/>. That <c>fragmentSize</c> is this Peer's own
+    /// single-Datagram cap does not apply: a Message up to <paramref name="peer"/>'s own announced
+    /// <c>MaxMessageSize</c> (issue #284; see the summary above) is cut into
+    /// <c>ceil(length / fragmentSize)</c> Fragments (issue #245), each retained and sequenced as its own
+    /// ordinary reliable packet, and only a Message wider than that remote limit is refused with
+    /// <see cref="SendOutcome.RemoteMessageTooLarge"/>. That <c>fragmentSize</c> is this Peer's own
     /// <see cref="PeerSlot.FragmentSize"/>, captured from <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
     /// once when the Peer was admitted (issue #248) — not re-read from options on this or any later
     /// call. Fragment size is unilateral, per-direction, and decided once, at <c>Send</c> (ADR 0004): a
@@ -501,13 +505,25 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         // The fragment size used to cut this Message is this Peer's own, captured on the Slot at
         // admission (issue #248, ADR 0004) rather than read from _options here — fragment size is
-        // decided once, per Peer, and Send only ever consults what was already decided. One call to
-        // FragmentPlan.Resolve states the too-large rule exactly once: unreliable modes refuse above
-        // one Fragment's worth, reliable modes refuse above MaxMessageSize (ADR 0004).
-        FragmentPlanResult plan = FragmentPlan.Resolve(message.Length, slot.FragmentSize, mode, _options.MaxMessageSize);
+        // decided once, per Peer, and Send only ever consults what was already decided. The reliable
+        // cap handed to FragmentPlan.Resolve is likewise this Peer's own remote-announced MaxMessageSize
+        // (issue #284; see this method's XML doc for why a reliable Send is capped by the far end's
+        // limit rather than this Reactor's own). RemoteMaxMessageSize is a uint off the wire while
+        // FragmentPlan.Resolve takes an int message length, so a value above int.MaxValue is clamped
+        // rather than cast unchecked; a Message that large will never exist in practice, so the clamp
+        // only ever widens the cap past a width nothing here could reach anyway. One call to
+        // FragmentPlan.Resolve states the too-large rule exactly once: unreliable modes refuse above one
+        // Fragment's worth, reliable modes refuse above that remote cap.
+        int remoteMaxMessageSize = slot.RemoteMaxMessageSize > int.MaxValue ? int.MaxValue : (int)slot.RemoteMaxMessageSize;
+        FragmentPlanResult plan = FragmentPlan.Resolve(message.Length, slot.FragmentSize, mode, remoteMaxMessageSize);
         if (plan.IsMessageTooLarge)
         {
-            return SendOutcome.MessageTooLarge;
+            // Which limit refused it follows from the mode alone (issue #284): an unreliable mode can
+            // only have been refused for exceeding the local one-Datagram cap (slot.FragmentSize), while
+            // a reliable mode can only have been refused for exceeding remoteMaxMessageSize, the peer's
+            // own announced limit — FragmentPlan.Resolve never applies the other cap to the other kind
+            // of mode.
+            return isReliable ? SendOutcome.RemoteMessageTooLarge : SendOutcome.MessageTooLarge;
         }
 
         if (!isReliable)
@@ -2348,6 +2364,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ReadOnlySpan<byte> remoteResumeSecret,
         ulong clientNonce)
     {
+        // ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize at parse
+        // (issue #287), so by the time a Peer is built here, straight into Established, the value is
+        // already trusted — an internal invariant to assert rather than input to re-validate.
+        Debug.Assert(
+            remoteMaxMessageSize != 0,
+            "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize before this is called.");
+
         RetransmissionTimer retransmitTimer = new();
         return new()
         {
@@ -2613,7 +2636,22 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <summary>The id the remote assigned, which this Reactor stamps on datagrams sent there.</summary>
         public uint RemoteSessionId { get; set; }
 
-        /// <summary>The largest Message the remote said it will accept.</summary>
+        /// <summary>
+        /// The largest Message the remote said it will accept, announced during the handshake
+        /// (issue #284). <see cref="DatagramSessionReactor.Send"/> refuses a reliable Message wider than
+        /// this with <see cref="SendOutcome.RemoteMessageTooLarge"/> rather than sending bytes the far
+        /// end has already said it cannot hold (issue #287) — which is why an unset value here would not
+        /// refuse nothing, it would refuse everything: every reliable Send would exceed a limit of zero.
+        /// Both Established paths, <see cref="OnHelloWithCookie"/> (via <see cref="NewAcceptedPeer"/>)
+        /// and <see cref="OnAccept"/>, therefore reject a zero announcement off the wire before a Peer
+        /// ever reaches Established, and each asserts or re-asserts the resulting non-zero invariant
+        /// rather than defaulting a missing value to something permissive or something that refuses. The
+        /// Datagram profile has no wire-level Resume yet (issue #52): what looks like "surviving an
+        /// interruption" here is a Session identified by its wire token rather than by address, so an
+        /// outage never tears down the <see cref="PeerSlot"/> and this field is never re-read or
+        /// re-established — it simply was never lost. A real Resume, when #52 lands, would have to
+        /// re-establish this value the same way the initial handshake does.
+        /// </summary>
         public uint RemoteMaxMessageSize { get; set; }
 
         /// <summary>
