@@ -139,8 +139,8 @@ public readonly record struct DiagnosticRecord
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.OversizedFragmentSet"/> record for the Peer whose Fragment
-    /// declared a <c>fragmentCount</c> too large for this Reactor's own <c>MaxMessageSize</c> to ever
-    /// hold, carrying the declared count and the largest legal count.
+    /// declared a <c>fragmentCount</c> larger than this Reactor's own receive window could ever hold,
+    /// carrying the declared count and the largest legal count.
     /// </summary>
     public static DiagnosticRecord ForOversizedFragmentSet(PeerId peer, long declaredFragmentCount, long maxLegalFragmentCount) =>
         new(DiagnosticId.OversizedFragmentSet, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, declaredFragmentCount, maxLegalFragmentCount);

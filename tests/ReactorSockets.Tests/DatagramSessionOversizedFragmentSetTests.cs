@@ -221,6 +221,149 @@ public class DatagramSessionOversizedFragmentSetTests
         stillUsable.Should().NotThrow("a stray fragment bit on an Unreliable record is not a protocol violation");
     }
 
+    [Fact]
+    public void Pump_FragmentDeclaringCountAboveFloorButWithinAWidenedReceiveWindow_IsAdmittedAndDeliveredWhole()
+    {
+        // Arrange — issue #264's rework: a receive window widened past ReceiveWindowFloor stands in
+        // for a conforming peer whose own FragmentSize is smaller than this end's, so it legally cuts
+        // a within-MaxMessageSize Message into more pieces than the floor alone would allow. Capacity 2,
+        // FragmentSize 576 (the RFC 791 minimum) and MaxMessageSize 4096 resolve ReceiveWindowFloor to 8
+        // (ceil(4096/576)); ReceiveWindowFragments is set to 20, well above that floor. A declared count
+        // of 10 sits strictly between the two: above the floor, at or below the window. The memory bill
+        // (DatagramSessionOptions.ReceiveBudgetBytes) at these numbers is Capacity(2) x 20 x (2 reliable
+        // Spaces x (576 + 2 length bytes) + 4 admission bytes) + Capacity(2) x 2 x 10 pending-group
+        // entries x 6 bytes = 46,640 bytes — trivial, so the whole 10-piece set is sent and delivered
+        // rather than merely proving the first piece is accepted.
+        const int capacity = 2;
+        const int fragmentSize = 576;
+        const int maxMessageSize = 4096;
+        const int receiveWindowFragments = 20;
+        const int fragmentCount = 10;
+
+        using DatagramSessionReactorHarness accepter = new(
+            capacity: capacity, maxMessageSize: maxMessageSize, fragmentSize: fragmentSize,
+            receiveWindowFragments: receiveWindowFragments);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x5000_0000_0000_0001UL);
+
+        byte[] datagram = [.. BuildHeader(sessionId), .. BuildWholeFragmentSet(ModeReliableOrdered, startSequence: 0, fragmentCount)];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> delivered = accepter.DrainPayloads();
+
+        // Assert — a count above the floor but within the widened window is admitted, assembles and
+        // delivers whole; no Peer is closed and no oversized-set diagnostic is raised.
+        delivered.Should().ContainSingle().Which.Should().Equal(ExpectedWholeFragmentSetPayload(fragmentCount));
+        accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.OversizedFragmentSet);
+    }
+
+    [Fact]
+    public void Pump_FragmentDeclaringOneMoreThanAWidenedReceiveWindow_ClosesThePeerWithProtocolViolation()
+    {
+        // Arrange — the bound moved with the window, it did not disappear: at the same widened options
+        // as the admitted case above (ReceiveWindowFragments 20), a declared count of 21 — one past the
+        // window — is still refused, exactly as a count one past ReceiveWindowFloor is refused at
+        // default options in the first test in this file.
+        const int capacity = 2;
+        const int fragmentSize = 576;
+        const int maxMessageSize = 4096;
+        const int receiveWindowFragments = 20;
+
+        using DatagramSessionReactorHarness accepter = new(
+            capacity: capacity, maxMessageSize: maxMessageSize, fragmentSize: fragmentSize,
+            receiveWindowFragments: receiveWindowFragments);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x5000_0000_0000_0002UL);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        byte[] oversizedDatagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: receiveWindowFragments + 1, payload: [0xAA]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), oversizedDatagram);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            accepter.PumpUntilDrained(all => all.Any(e => e.Kind == SessionEventKind.PeerClosed));
+
+        // Assert
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Should().BeEquivalentTo((SessionEventKind.PeerClosed, accepterPeer, DisconnectReason.ProtocolViolation));
+        accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.OversizedFragmentSet);
+    }
+
+    [Fact]
+    public void Pump_FragmentDeclaringExactlyAWidenedReceiveWindow_IsAdmittedAndDeliveredWhole()
+    {
+        // Arrange — the inclusive boundary at the widened bound: a declared count of exactly
+        // ReceiveWindowFragments (20) is the largest a Peer may legally claim once the window is
+        // widened past the floor, mirroring the default-options boundary test above but at the wider
+        // window this rework exists to admit. Same options, and so the same trivial memory bill, as the
+        // two tests above.
+        const int capacity = 2;
+        const int fragmentSize = 576;
+        const int maxMessageSize = 4096;
+        const int receiveWindowFragments = 20;
+
+        using DatagramSessionReactorHarness accepter = new(
+            capacity: capacity, maxMessageSize: maxMessageSize, fragmentSize: fragmentSize,
+            receiveWindowFragments: receiveWindowFragments);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x5000_0000_0000_0003UL);
+
+        byte[] datagram = [.. BuildHeader(sessionId), .. BuildWholeFragmentSet(ModeReliableOrdered, startSequence: 0, receiveWindowFragments)];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> delivered = accepter.DrainPayloads();
+
+        // Assert — the set at exactly the widened window is legal, completes, and delivers as one
+        // Message; no Peer is closed.
+        delivered.Should().ContainSingle().Which.Should().Equal(ExpectedWholeFragmentSetPayload(receiveWindowFragments));
+        accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.OversizedFragmentSet);
+    }
+
+    /// <summary>
+    /// Builds a complete, whole Fragment set of <paramref name="fragmentCount"/> pieces starting at
+    /// <paramref name="startSequence"/>, each carrying one payload byte distinct to its index (see
+    /// <see cref="ExpectedWholeFragmentSetPayload"/>), for a test that sends every piece of a set rather
+    /// than only enough to prove admission.
+    /// </summary>
+    private static byte[] BuildWholeFragmentSet(byte modeBits, uint startSequence, int fragmentCount)
+    {
+        List<byte> records = [];
+        for (int index = 0; index < fragmentCount; index++)
+        {
+            records.AddRange(BuildFragmentRecord(
+                modeBits,
+                sequence: startSequence + (uint)index,
+                fragmentIndex: (ushort)index,
+                fragmentCount: (ushort)fragmentCount,
+                payload: [(byte)(index & 0xFF)]));
+        }
+
+        return [.. records];
+    }
+
+    /// <summary>The assembled payload <see cref="BuildWholeFragmentSet"/> is expected to deliver: one byte per index, in order.</summary>
+    private static byte[] ExpectedWholeFragmentSetPayload(int fragmentCount)
+    {
+        byte[] expected = new byte[fragmentCount];
+        for (int index = 0; index < fragmentCount; index++)
+        {
+            expected[index] = (byte)(index & 0xFF);
+        }
+
+        return expected;
+    }
+
     /// <summary>
     /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
     /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned

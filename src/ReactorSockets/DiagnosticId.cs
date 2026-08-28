@@ -116,12 +116,13 @@ public enum DiagnosticId
     RetransmissionTimerBackedOff = 204,
 
     /// <summary>
-    /// An established Peer's Fragment declared a <c>fragmentCount</c> implying a Message larger than
-    /// this Reactor's own announced <see cref="DatagramSessionOptions.MaxMessageSize"/>, and the
-    /// Session was closed with <see cref="DisconnectReason.ProtocolViolation"/> on that Fragment's
-    /// first appearance, before any receive-window slot or Fragment-group bookkeeping was created for
-    /// its set (issue #282). Subject is the Peer. <c>Value0</c> is the declared <c>fragmentCount</c>;
-    /// <c>Value1</c> is the largest legal count this Reactor's <see cref="DatagramSessionOptions.ReceiveWindowFloor"/> allows.
+    /// An established Peer's Fragment declared a <c>fragmentCount</c> larger than this Reactor's own
+    /// receive window could ever hold, and the Session was closed with
+    /// <see cref="DisconnectReason.ProtocolViolation"/> on that Fragment's first appearance, before any
+    /// receive-window slot or Fragment-group bookkeeping was created for its set (issue #282, reworked
+    /// under #264). Subject is the Peer. <c>Value0</c> is the declared <c>fragmentCount</c>; <c>Value1</c>
+    /// is the largest legal count this Reactor's <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>
+    /// allows.
     /// </summary>
     /// <remarks>
     /// <see cref="DiagnosticLevel.Warn"/>, for the same reason as <see cref="DatagramMalformed"/>: a
