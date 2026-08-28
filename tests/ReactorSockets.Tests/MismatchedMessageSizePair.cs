@@ -20,7 +20,13 @@ internal sealed class MismatchedMessageSizePair : IDisposable
     /// <summary>The dialler's announced limit — the larger of the two, and the one the accepter's Sends are bound by.</summary>
     public const int DiallerMaxMessageSize = 4096;
 
-    /// <summary>Retention room comfortably above <see cref="DiallerMaxMessageSize"/>, the larger of the two limits.</summary>
+    /// <summary>
+    /// Retention room for four Messages at <see cref="DiallerMaxMessageSize"/>, the larger of the two
+    /// limits. A reliable Send retains every Fragment it cuts until the far end acknowledges it, so the
+    /// floor is one whole Message at the larger limit; the multiplier is headroom, so that a test driving
+    /// several Messages across one pair cannot trip a retention refusal and report a budget exhaustion as
+    /// though it were the size-limit refusal under test.
+    /// </summary>
     public const int RetentionBytes = DiallerMaxMessageSize * 4;
 
     private MismatchedMessageSizePair(
@@ -64,6 +70,36 @@ internal sealed class MismatchedMessageSizePair : IDisposable
         PeerId accepterPeer = accepterEvents.First(e => e.Kind == SessionEventKind.PeerConnected).Peer;
 
         return new MismatchedMessageSizePair(dialler, accepter, diallerPeer, accepterPeer);
+    }
+
+    /// <summary>
+    /// Pumps both ends until <paramref name="receiver"/> has drained at least one Message payload, or
+    /// until the <see cref="PumpDeadline"/> budget expires, and returns what it drained. Reassembling a
+    /// Fragment set spans more than one Frame, so a test waiting on a delivered Message needs a
+    /// clock-bounded wait rather than a round count, and
+    /// <see cref="DatagramSessionReactorHarness.PumpBothUntilDrained"/> accumulates only Event kinds and
+    /// so cannot hand a caller the delivered bytes. The other end is pumped and drained to nothing: it
+    /// is the sender here, and both ends of this pair send in one test or another, so which end receives
+    /// is the only thing that varies between callers.
+    /// </summary>
+    public List<byte[]> PumpUntilDeliveredTo(DatagramSessionReactorHarness receiver)
+    {
+        DatagramSessionReactorHarness sender = ReferenceEquals(receiver, Dialler) ? Accepter : Dialler;
+        List<byte[]> delivered = [];
+        PumpDeadline deadline = PumpDeadline.Start();
+        while (true)
+        {
+            receiver.Reactor.Pump();
+            delivered.AddRange(receiver.DrainPayloads());
+            sender.Reactor.Pump();
+            sender.DrainAndDiscard();
+            if (delivered.Count > 0 || deadline.Expired)
+            {
+                return delivered;
+            }
+
+            PumpDeadline.Yield();
+        }
     }
 
     public void Dispose()

@@ -62,7 +62,7 @@ public class DatagramSessionAsymmetricDirectionTests
         // Act — reassembly across several Fragments takes more than one round, so the wait is bounded by
         // a clock, not a round count.
         SendOutcome outcome = pair.Accepter.Reactor.Send(pair.AccepterPeer, DeliveryMode.ReliableOrdered, overAccepterOwnLimit);
-        List<byte[]> delivered = PumpBothUntilDiallerDrains(pair);
+        List<byte[]> delivered = pair.PumpUntilDeliveredTo(pair.Dialler);
 
         // Assert
         outcome.Should().Be(
@@ -70,30 +70,5 @@ public class DatagramSessionAsymmetricDirectionTests
             "2000 bytes is over the accepter's own 1200-byte limit but under the dialler's announced 4096, so the Send is bound by the receiver's limit, not the sender's own");
         delivered.Should().ContainSingle().Which.Should().Equal(
             overAccepterOwnLimit, "the bytes that arrive at the dialler are the exact bytes Sent, not a truncated or padded copy");
-    }
-
-    /// <summary>
-    /// Pumps both ends of <paramref name="pair"/> until the dialler drains at least one payload, or the
-    /// budget expires — the mirror-direction counterpart to the accepter-draining helper in
-    /// <see cref="DatagramSessionAsymmetricMessageSizeTests"/>, needed here because this file sends from
-    /// the accepter toward the dialler instead.
-    /// </summary>
-    private static List<byte[]> PumpBothUntilDiallerDrains(MismatchedMessageSizePair pair)
-    {
-        List<byte[]> delivered = [];
-        PumpDeadline deadline = PumpDeadline.Start();
-        while (true)
-        {
-            pair.Dialler.Reactor.Pump();
-            delivered.AddRange(pair.Dialler.DrainPayloads());
-            pair.Accepter.Reactor.Pump();
-            pair.Accepter.DrainAndDiscard();
-            if (delivered.Count > 0 || deadline.Expired)
-            {
-                return delivered;
-            }
-
-            PumpDeadline.Yield();
-        }
     }
 }

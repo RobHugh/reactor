@@ -27,7 +27,7 @@ public class DatagramSessionAsymmetricMessageSizeTests
 
         // Act — reassembly takes more than one Frame, so the wait is bounded by a clock, not a round count.
         SendOutcome outcome = pair.Dialler.Reactor.Send(pair.DiallerPeer, DeliveryMode.ReliableOrdered, exactlyAtLimit);
-        List<byte[]> delivered = PumpBothUntilAccepterDrains(pair);
+        List<byte[]> delivered = pair.PumpUntilDeliveredTo(pair.Accepter);
 
         // Assert
         outcome.Should().Be(SendOutcome.Sent, "a Message of exactly the peer's announced limit is one the design promises can complete");
@@ -46,7 +46,8 @@ public class DatagramSessionAsymmetricMessageSizeTests
 
         // Act
         SendOutcome outcome = pair.Dialler.Reactor.Send(pair.DiallerPeer, DeliveryMode.ReliableOrdered, oneByteOver);
-        (var _, var accepterEvents) = DatagramSessionReactorHarness.PumpBothRounds(pair.Dialler, pair.Accepter, rounds: 5);
+        (_, List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> accepterEvents) =
+            DatagramSessionReactorHarness.PumpBothRounds(pair.Dialler, pair.Accepter, rounds: 5);
 
         // Assert
         outcome.Should().Be(
@@ -54,29 +55,5 @@ public class DatagramSessionAsymmetricMessageSizeTests
             "1201 bytes exceeds the peer's own announced 1200-byte limit even though it is far inside this Reactor's own 4096");
         accepterEvents.Should().NotContain(
             e => e.Kind == SessionEventKind.MessageReceived, "a refused Send queues no record, so nothing ever reaches the far end");
-    }
-
-    /// <summary>
-    /// Pumps both ends of <paramref name="pair"/> until the accepter drains at least one payload, or the
-    /// budget expires — the payload-capturing counterpart to <see cref="DatagramSessionReactorHarness.PumpBothUntilDrained"/>,
-    /// which only accumulates event kinds and so cannot hand a caller the delivered bytes.
-    /// </summary>
-    private static List<byte[]> PumpBothUntilAccepterDrains(MismatchedMessageSizePair pair)
-    {
-        List<byte[]> delivered = [];
-        PumpDeadline deadline = PumpDeadline.Start();
-        while (true)
-        {
-            pair.Accepter.Reactor.Pump();
-            delivered.AddRange(pair.Accepter.DrainPayloads());
-            pair.Dialler.Reactor.Pump();
-            pair.Dialler.DrainAndDiscard();
-            if (delivered.Count > 0 || deadline.Expired)
-            {
-                return delivered;
-            }
-
-            PumpDeadline.Yield();
-        }
     }
 }
