@@ -164,6 +164,28 @@ public class DatagramSessionSendTests
     }
 
     [Fact]
+    public void Send_AnOversizedMessageToAClosedPeer_ReturnsClosedRatherThanMessageTooLarge()
+    {
+        // The width gate sits behind the Peer lookup rather than in front of it, because the cap it
+        // measures against is the Peer's own captured fragment size (issue #248): there is no cap to
+        // judge a Message against until a Peer has been found to judge it for. So a Peer that is gone
+        // is reported gone whatever the Message's width, and MessageTooLarge never stands in for it.
+
+        // Arrange
+        using DatagramSessionReactorHarness harness = new(bindLoopback: false);
+        using DatagramSessionReactorHarness remote = new();
+        PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+        harness.Reactor.Close(peer);
+        byte[] oversized = new byte[8192];
+
+        // Act
+        SendOutcome outcome = harness.Reactor.Send(peer, DeliveryMode.Unreliable, oversized);
+
+        // Assert
+        outcome.Should().Be(SendOutcome.Closed);
+    }
+
+    [Fact]
     public void Send_ToAPeerAlreadyClosed_ReturnsClosedRatherThanThrowing()
     {
         // Arrange

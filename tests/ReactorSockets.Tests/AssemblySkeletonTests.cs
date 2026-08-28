@@ -65,7 +65,9 @@ public class AssemblySkeletonTests
             nameof(DeliveryMode),
             nameof(PumpIntervalObserver),
             nameof(RoundTripEstimator),
-            nameof(RetransmissionTimer));
+            nameof(RetransmissionTimer),
+            nameof(FragmentPlan),
+            nameof(FragmentPlanResult));
     }
 
     [Fact]
