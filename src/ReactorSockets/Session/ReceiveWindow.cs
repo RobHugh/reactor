@@ -86,6 +86,21 @@ internal enum ReceiveWindowOutcome
 /// a slot still holds an unfinished Fragment — the length run is what a caller reads instead, and it
 /// stays whatever it was last set to until the slot is reused or the Fragment set completes (#258).
 /// </para>
+/// <para>
+/// <b>No expiry timer for an incomplete group, ever (issue #261).</b> A held Fragment's length entry is
+/// cleared only by <see cref="ReleaseGroup"/> — its own group completing — or by a fresh admission
+/// reusing the same physical ring slot for an unrelated, later sequence (see the admission path in
+/// <see cref="Classify(uint, out int)"/>). No clock, per-group timestamp, or expiry constant exists to
+/// clear it any other way, because none is needed: the window's own <see cref="Capacity"/> already
+/// bounds how many groups a sender flooding partial sets can hold open at once — the same bound an
+/// honest sender is already held to — so a timer would defend against nothing the bound does not
+/// already defend against, at the cost of a duration nobody could size honestly (too short discards a
+/// genuinely slow Message; too long defends nothing a hostile flood could not already do faster by
+/// simply filling the window). A group that never completes therefore occupies its slots for exactly as
+/// long as the window's ordinary rules leave them occupied — until the ring wraps back around to them
+/// for a later sequence, or the Peer's Session ends — the same lifetime as any other admitted-but-not-
+/// yet-retired sequence in this window, with no separate accounting of its own.
+/// </para>
 /// </remarks>
 internal sealed class ReceiveWindow
 {
