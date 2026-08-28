@@ -455,13 +455,20 @@ public class DatagramSessionDataDatagramParseTests
     public void Pump_FragmentRecordsAtTheValidBoundaries_AllParseSuccessfully()
     {
         // Arrange — issue #253's boundaries either side of the refused combinations: a count of two at
-        // both its legal indexes, an index one below its count, and a count at the 16-bit maximum. Each
-        // is asserted rather than assumed, so a future change to the refusal cannot silently start
-        // rejecting a legal Fragment. Each boundary case travels in its own datagram (issue #256): index
-        // 999 of count 1000 and a lone Fragment of count 65535 are independent boundary cases whose
-        // declared ranges genuinely overlap each other and the two-Fragment group above when packed into
-        // one datagram together — a real declared-range collision #256's overlap check is right to
-        // reject, not a reason to weaken it.
+        // both its legal indexes, an index one below its count, and a count at this Reactor's own legal
+        // maximum. Each is asserted rather than assumed, so a future change to the refusal cannot
+        // silently start rejecting a legal Fragment. Each boundary case travels in its own datagram
+        // (issue #256): the second and third cases' declared ranges genuinely overlap each other and the
+        // two-Fragment group above when packed into one datagram together — a real declared-range
+        // collision #256's overlap check is right to reject, not a reason to weaken it.
+        //
+        // The former boundary values here — index 999 of count 1000, and a lone Fragment of count 65535
+        // — predate issue #282: a declared count is now also refused, with a Peer close rather than a
+        // parse failure, once it exceeds this Reactor's own ReceiveWindowFloor (4, from the default
+        // MaxMessageSize 4096 over FragmentSize 1200). Both former values sit far past that floor and
+        // would now close the Peer before reaching this test's own boundary, so they are replaced with
+        // values that keep the same shape — "an index one below its count" and "a count at the maximum
+        // this Reactor allows" — while staying legal under #282 too.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -475,14 +482,14 @@ public class DatagramSessionDataDatagramParseTests
             BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02])));
         payloads.AddRange(SendOneDatagramAndDrain(
             accepter, client, clientLink, sessionId,
-            BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 999, fragmentCount: 1000, payload: [0x03])));
+            BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 2, fragmentCount: 3, payload: [0x03])));
         payloads.AddRange(SendOneDatagramAndDrain(
             accepter, client, clientLink, sessionId,
-            BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 0, fragmentCount: 65535, payload: [0x04])));
+            BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 0, fragmentCount: 4, payload: [0x04])));
 
         // Assert — parses cleanly at every boundary; only the two-Fragment set actually completes (the
-        // 1000- and 65535-piece sets each send only their first index, so neither ever completes and
-        // neither delivers).
+        // 3- and 4-piece sets each send only one of their pieces, so neither ever completes and neither
+        // delivers).
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         payloads.Should().BeEquivalentTo(
             new[] { new byte[] { 0x01, 0x02 } },

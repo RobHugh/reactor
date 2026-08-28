@@ -123,6 +123,13 @@ public sealed class DatagramSessionOptions
     /// statement about the consumer's own protocol that nothing here can derive. It is also the
     /// frame arena's floor — an arena that cannot hold one maximum Message could never deliver one.
     /// </summary>
+    /// <remarks>
+    /// Announced to the peer at the handshake precisely so an oversized claim can be refused before
+    /// this end holds anything for it: <see cref="ReceiveWindowFloor"/> derives the largest declared Fragment
+    /// <c>fragmentCount</c> this value can ever back, and a set claiming more than that is closed on
+    /// its first Fragment, before any receive-window slot or Fragment-group bookkeeping exists for it
+    /// (issue #282).
+    /// </remarks>
     public required int MaxMessageSize { get; init; }
 
     /// <summary>

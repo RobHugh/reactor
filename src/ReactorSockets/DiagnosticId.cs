@@ -116,6 +116,20 @@ public enum DiagnosticId
     RetransmissionTimerBackedOff = 204,
 
     /// <summary>
+    /// An established Peer's Fragment declared a <c>fragmentCount</c> implying a Message larger than
+    /// this Reactor's own announced <see cref="DatagramSessionOptions.MaxMessageSize"/>, and the
+    /// Session was closed with <see cref="DisconnectReason.ProtocolViolation"/> on that Fragment's
+    /// first appearance, before any receive-window slot or Fragment-group bookkeeping was created for
+    /// its set (issue #282). Subject is the Peer. <c>Value0</c> is the declared <c>fragmentCount</c>;
+    /// <c>Value1</c> is the largest legal count this Reactor's <see cref="DatagramSessionOptions.ReceiveWindowFloor"/> allows.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>, for the same reason as <see cref="DatagramMalformed"/>: a
+    /// remote can produce this at will by lying about how many Fragments a Message needs.
+    /// </remarks>
+    OversizedFragmentSet = 205,
+
+    /// <summary>
     /// A dialler was refused in-protocol during the stream handshake, either because it announced a
     /// different protocol version or because every capacity Slot was occupied. Subject is the claimed
     /// Source: at refusal time there is no Peer, only a claimed origin. For a capacity refusal,

@@ -171,6 +171,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private int _capacityDiscardsThisFrame;
 
     /// <summary>
+    /// The largest declared <c>fragmentCount</c> a Fragment's set may legally claim: the number of
+    /// Fragments one maximum-size Message occupies, <see cref="DatagramSessionOptions.ReceiveWindowFloor"/>
+    /// (issue #282). Computed once here, at construction, rather than read from <see cref="_options"/>
+    /// per datagram — the refusal path this bounds must allocate nothing and do no more arithmetic
+    /// than a single comparison.
+    /// </summary>
+    private readonly int _maxLegalFragmentCount;
+
+    /// <summary>
     /// Constructs a Reactor bound to the calling thread (ADR 0002) — every future mutating call must
     /// come from this same thread or it throws — and binds every declared endpoint in the order
     /// supplied. A bind that fails throws here, naming the endpoint: binding is part of what this
@@ -201,6 +210,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _entropy = options.Entropy;
         _cookies = new CookieMinter(options.Reactor.TimeProvider, _entropy);
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
+        _maxLegalFragmentCount = options.ReceiveWindowFloor;
         _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
 
         _receiveWindows = new ReceiveWindowSpaces[options.Reactor.Capacity];
@@ -837,10 +847,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// unfragmented one, and this method routes it into its Space the same way — <see cref="ClassifyRecord"/>
     /// is what diverts an admitted Fragment away from delivery and into its Space's receive-window slot
     /// instead (issue #257). Parsing therefore runs in
-    /// two passes over the same bytes: the first confirms every record is well-formed without touching
-    /// any Space, and only once the whole datagram has proven parseable does the second classify each
+    /// three passes over the same bytes: the first confirms every record is well-formed without
+    /// touching any Space; the second, once <see cref="FragmentSetsAreWellFormed"/> also stands, walks
+    /// every record again to refuse — with a close, not a discard — a declared <c>fragmentCount</c>
+    /// too large for this Reactor's own <see cref="DatagramSessionOptions.MaxMessageSize"/> to ever
+    /// hold (issue #282); only once neither of those passes objects does the third classify each
     /// record in turn — so an early record is never classified on the strength of a datagram whose tail
-    /// turns out to be forged. The header's two ack blocks are applied to <paramref name="slot"/>'s
+    /// turns out to be forged, or whose Fragment set claims a Message this Reactor could never receive.
+    /// The header's two ack blocks are applied to <paramref name="slot"/>'s
     /// <see cref="PeerSlot.AckTracker"/> for the two reliable Spaces only (subtask 6.3.6, issue #188)
     /// once that same proof stands — a short or malformed datagram applies neither block, exactly as it
     /// admits no record. Both blocks are applied at the same effective RTO, read once from
@@ -886,6 +900,40 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             DiscardMalformed(source, datagram.Length);
             return;
+        }
+
+        // A declared fragmentCount that implies a Message bigger than this Reactor's own announced
+        // MaxMessageSize is refused with a close, not a discard (issue #282) — the record is
+        // individually legal and its set internally consistent (both already proved above), but the
+        // Message it claims to assemble into could never fit the limit this end told the peer at the
+        // handshake. This is its own pass over body, ahead of the classification loop below, so that a
+        // datagram carrying other, legal records ahead of the offending Fragment still closes the Peer
+        // having classified none of them — no receive-window slot or Fragment-group bookkeeping is
+        // created for any record of this datagram once the check fires. Only ReliableOrdered and
+        // ReliableUnordered ever carry the fragment shape (ADR 0004), matching ClassifyRecord's own
+        // gate, so a stray fragment bit on an unreliable record is not evaluated here at all.
+        remainder = body;
+        while (remainder.Length > 0)
+        {
+            PacketRecordCodec.TryRead(
+                remainder, out PacketRecordMode oversizedMode, out _, out _,
+                out bool oversizedIsFragment, out _, out ushort oversizedFragmentCount, out int oversizedBytesConsumed);
+
+            if (oversizedIsFragment
+                && oversizedMode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered
+                && oversizedFragmentCount > _maxLegalFragmentCount)
+            {
+                if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                {
+                    _diagnostics.Log(DiagnosticRecord.ForOversizedFragmentSet(
+                        ToPeerId(slot.Handle), oversizedFragmentCount, _maxLegalFragmentCount));
+                }
+
+                ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
+                return;
+            }
+
+            remainder = remainder[oversizedBytesConsumed..];
         }
 
         // The proof above is what attributes this Datagram to slot's Peer: it names an established
@@ -1622,7 +1670,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// delivers it as one Message or defers it if delivery cannot happen yet (issue #259). Only
     /// <c>ReliableOrdered</c> and <c>ReliableUnordered</c> ever carry the fragment shape (ADR 0004);
     /// <paramref name="isFragment"/> is otherwise ignored exactly as it always was, so a stray fragment
-    /// bit on an unreliable-mode record changes nothing this method does.
+    /// bit on an unreliable-mode record changes nothing this method does. By the time this method runs
+    /// at all, <see cref="ParseDataDatagram"/>'s own pass has already refused any Fragment in this
+    /// datagram whose declared <c>fragmentCount</c> claims a Message bigger than this Reactor's
+    /// <see cref="DatagramSessionOptions.MaxMessageSize"/> allows (issue #282), so
+    /// <paramref name="fragmentCount"/> here is always a legal claim, never one this method itself
+    /// needs to bound.
     /// </para>
     /// </remarks>
     private void ClassifyRecord(

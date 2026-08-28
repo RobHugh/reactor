@@ -103,9 +103,12 @@ public class DatagramSessionFragmentDeliveryTests
     {
         // Arrange — a window sized to exactly the group's own Fragment count, so completing the group
         // is the only way any further sequence could ever be admitted: if its slots were not released,
-        // nothing past it could ever be received again.
+        // nothing past it could ever be received again. MaxMessageSize is 3600 rather than the original
+        // 1300 so that ReceiveWindowFloor (issue #282's own cap on a declared fragmentCount) is exactly
+        // windowCapacity too — ceil(3600 / 1200) = 3 — since a declared count of 3 over a floor of 2
+        // would now close the Peer before the group could ever complete.
         const int windowCapacity = 3;
-        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: windowCapacity, maxMessageSize: 1300);
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: windowCapacity, maxMessageSize: 3600);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
@@ -145,8 +148,16 @@ public class DatagramSessionFragmentDeliveryTests
         // record ahead of the Fragment set but not both together: the group's own reservation, as this
         // Peer's second reservation this Frame, is refused past its share. The receive window itself is
         // sized generously (well above the two-piece group), so only the frame arena is under pressure.
-        const int maxMessageSize = 64;
-        const int arenaSize = 64;
+        // MaxMessageSize is 2400 rather than the original 64 so that ReceiveWindowFloor (issue #282) is
+        // at least 2 over the default 1200-byte FragmentSize — the group below declares a fragmentCount
+        // of 2, which a floor of 1 would now refuse with a Peer close before arena pressure ever mattered.
+        // ArenaSize must rise alongside it (an arena cannot be smaller than one maximum Message), but the
+        // arena-pressure mechanism itself — a share-holder's first reservation exactly consumes its own
+        // fair share (ArenaSize / Capacity), so any second reservation that Frame is refused past it — is
+        // scale-invariant: it depends only on the crowding payload equalling the share, computed fresh
+        // below, never on the share's absolute size.
+        const int maxMessageSize = 2400;
+        const int arenaSize = 2400;
         const int capacity = 8;
         using DatagramSessionReactorHarness accepter = new(
             capacity: capacity, maxMessageSize: maxMessageSize, arenaSize: arenaSize, receiveWindowFragments: 8);
@@ -156,7 +167,7 @@ public class DatagramSessionFragmentDeliveryTests
         PeerId accepterPeer = FindAccepterPeer(accepter);
         PeerCounters before = accepter.Reactor.CountersOf(accepterPeer);
 
-        // ArenaSize / Capacity = 8: this Peer's fair share. The crowding record uses all of it as this
+        // ArenaSize / Capacity: this Peer's fair share. The crowding record uses all of it as this
         // Peer's first (escaping) reservation, leaving no room for the group's own, second reservation.
         byte[] crowdingPayload = new byte[arenaSize / capacity];
         byte[] datagram =
@@ -266,8 +277,13 @@ public class DatagramSessionFragmentDeliveryTests
         // Arrange — the same arena pressure as the single-group retry test, but with two groups
         // completing in the one Frame. Both reservations are refused, so both must be held: a single
         // waiting slot per Space would let the second overwrite the first and lose it outright.
-        const int maxMessageSize = 64;
-        const int arenaSize = 64;
+        // MaxMessageSize is 2400 rather than the original 64 for the same reason as the single-group
+        // retry test above: issue #282's ReceiveWindowFloor must reach the fragmentCount of 2 each group
+        // below declares, or the Peer closes before either group can complete. ArenaSize rises alongside
+        // it for the same reason too — see that test's comment for why the arena-pressure math is
+        // unaffected by the scale-up.
+        const int maxMessageSize = 2400;
+        const int arenaSize = 2400;
         const int capacity = 8;
         using DatagramSessionReactorHarness accepter = new(
             capacity: capacity, maxMessageSize: maxMessageSize, arenaSize: arenaSize, receiveWindowFragments: 8);
