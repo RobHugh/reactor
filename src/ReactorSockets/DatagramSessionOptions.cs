@@ -41,8 +41,22 @@ namespace ReactorSockets;
 /// </list>
 /// <para>
 /// The frame arena (<see cref="ReactorOptions.ArenaSize"/>) is over and above those two lines and is
-/// shared across the whole Reactor rather than multiplied by capacity. Every check below is
-/// deterministic and entirely the caller's, so failures throw at construction —
+/// shared across the whole Reactor rather than multiplied by capacity.
+/// </para>
+/// <para>
+/// <see cref="MaxMessageSize"/> reaches three places at once: it is announced to the remote as a
+/// receive limit, it floors the receive window at the fragments one maximum Message occupies
+/// (<see cref="ReceiveWindowFloor"/>), and it floors the frame arena, because an arena that cannot
+/// hold one maximum Message could never deliver one. Careless enlargement therefore grows memory in
+/// two directions rather than one: the window floor is per Peer, so the receive line above rises
+/// with it multiplied by capacity and by the Spaces, and the shared arena is pushed up alongside.
+/// Retention is the exception this profile makes. <see cref="RetentionBytes"/> is floored by
+/// <see cref="ResolvedFragmentSize"/> rather than by <see cref="MaxMessageSize"/>, because a
+/// reliable Space retransmits fragment by fragment and needs only one fragment to have something to
+/// resend.
+/// </para>
+/// <para>
+/// Every check below is deterministic and entirely the caller's, so failures throw at construction —
 /// <see cref="ArgumentOutOfRangeException"/> for a single bad value and
 /// <see cref="ArgumentException"/> for a combination that cannot work — rather than being reported
 /// through a <c>Result</c>.
@@ -120,8 +134,9 @@ public sealed class DatagramSessionOptions
 
     /// <summary>
     /// The largest Message, in bytes, this Reactor will accept or deliver. Required: it is a
-    /// statement about the consumer's own protocol that nothing here can derive. It is also the
-    /// frame arena's floor — an arena that cannot hold one maximum Message could never deliver one.
+    /// statement about the consumer's own protocol that nothing here can derive. It is also the knob
+    /// that multiplies this profile's memory bill in more than one direction — the class remarks on
+    /// <see cref="DatagramSessionOptions"/> say what it floors and what raising it costs.
     /// </summary>
     /// <remarks>
     /// Announced to the peer at the handshake precisely so an oversized claim can be refused before
