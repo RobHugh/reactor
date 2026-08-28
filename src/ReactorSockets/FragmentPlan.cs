@@ -4,8 +4,9 @@ namespace ReactorSockets;
 
 /// <summary>
 /// The outcome of <see cref="FragmentPlan.Resolve"/>: either the Fragment count a Message is cut
-/// into, or the permanent refusal <see cref="SendOutcome.MessageTooLarge"/> maps to when a mode
-/// cannot carry it. Named-value pass/fail, the same shape <see cref="Result"/> uses for the public
+/// into, or a permanent refusal — the caller maps <see cref="IsMessageTooLarge"/> to
+/// <see cref="SendOutcome.MessageTooLarge"/> or <see cref="SendOutcome.RemoteMessageTooLarge"/> by mode
+/// alone (issue #284). Named-value pass/fail, the same shape <see cref="Result"/> uses for the public
 /// surface, extended with the count a success needs to hand back.
 /// </summary>
 public readonly record struct FragmentPlanResult
@@ -17,8 +18,9 @@ public readonly record struct FragmentPlanResult
     }
 
     /// <summary>
-    /// Whether the Message cannot be carried at all — the mode is one of the two unreliable modes and
-    /// the Message is wider than one Datagram (ADR 0004). <see cref="FragmentCount"/> is meaningless
+    /// Whether the Message cannot be carried at all: either an unreliable mode and the Message is wider
+    /// than one Datagram, or a reliable mode and the Message is wider than <c>maxMessageLength</c> — the
+    /// peer's announced receive limit (ADR 0004, issue #284). <see cref="FragmentCount"/> is meaningless
     /// when this is <see langword="true"/>.
     /// </summary>
     public bool IsMessageTooLarge { get; }
@@ -97,11 +99,13 @@ public static class FragmentPlan
     /// </param>
     /// <param name="mode">The delivery mode the Message is sent under.</param>
     /// <param name="maxMessageLength">
-    /// The reliable receive limit a Message is checked against (<see cref="DatagramSessionOptions.MaxMessageSize"/>).
-    /// Ignored by the two unreliable modes, which are capped at <paramref name="fragmentSize"/> instead.
-    /// Defaults to <see cref="int.MaxValue"/> — effectively no cap — so a caller with no reliable limit
-    /// to enforce (every existing caller of this overload before issue #242's too-large rule moved here)
-    /// does not have to invent one.
+    /// The reliable receive limit a Message is checked against — the peer's own announced
+    /// <c>MaxMessageSize</c> (issue #284), not this Reactor's <see cref="DatagramSessionOptions.MaxMessageSize"/>:
+    /// a reliable Send is capped by how much the far end is willing to receive, not by this end's own
+    /// setting. Ignored by the two unreliable modes, which are capped at <paramref name="fragmentSize"/>
+    /// instead. Defaults to <see cref="int.MaxValue"/> — effectively no cap — so a caller with no
+    /// reliable limit to enforce (every existing caller of this overload before issue #242's too-large
+    /// rule moved here) does not have to invent one.
     /// </param>
     /// <returns>
     /// A <see cref="FragmentPlanResult"/> carrying the Fragment count, or

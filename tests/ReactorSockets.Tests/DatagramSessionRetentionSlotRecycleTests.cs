@@ -33,7 +33,10 @@ public class DatagramSessionRetentionSlotRecycleTests
         using DatagramSessionReactorHarness firstRemote = new();
         using DatagramSessionReactorHarness secondRemote = new();
 
+        // A reliable Send is refused unless its Peer has learned the remote's announced MaxMessageSize
+        // (issue #284), so each Peer here must complete a real handshake before it can Send.
         PeerId first = harness.Reactor.Connect(firstRemote.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, firstRemote);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, [1, 2, 3]).Should().Be(SendOutcome.Sent);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, [1, 2, 3]).Should().Be(
             SendOutcome.RetentionExhausted, "the first Peer genuinely filled its Space's one slot");
@@ -43,6 +46,7 @@ public class DatagramSessionRetentionSlotRecycleTests
 
         // Act — capacity is one, so this dial reuses the Slot the first Peer just vacated.
         PeerId second = harness.Reactor.Connect(secondRemote.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, secondRemote);
         SendOutcome outcome = harness.Reactor.Send(second, DeliveryMode.ReliableOrdered, [4, 5, 6]);
 
         // Assert
@@ -64,7 +68,10 @@ public class DatagramSessionRetentionSlotRecycleTests
         using DatagramSessionReactorHarness firstRemote = new();
         using DatagramSessionReactorHarness secondRemote = new();
 
+        // A reliable Send is refused unless its Peer has learned the remote's announced MaxMessageSize
+        // (issue #284), so the first Peer must complete a real handshake before it can Send.
         PeerId first = harness.Reactor.Connect(firstRemote.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, firstRemote);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, [1, 2, 3]).Should().Be(SendOutcome.Sent);
         harness.Reactor.CountersOf(first).RetentionHighWaterBytes.Should().Be(
             3UL, "the first Peer's high-water is the three bytes it retained");

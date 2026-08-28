@@ -30,10 +30,13 @@ public class DatagramSessionSendTests
     [InlineData(DeliveryMode.ReliableOrdered)]
     public void Send_ToAFreshlyDialledPeerUnderEveryMode_ReturnsSent(DeliveryMode mode)
     {
-        // Arrange
+        // Arrange — a reliable mode's Send is refused unless the Peer has learned the remote's
+        // announced MaxMessageSize (issue #284), so the handshake is driven to completion here even
+        // though the unreliable modes do not strictly need it.
         using DatagramSessionReactorHarness harness = new(bindLoopback: false);
         using DatagramSessionReactorHarness remote = new();
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
 
         // Act
         SendOutcome outcome = harness.Reactor.Send(peer, mode, [1, 2, 3]);
@@ -53,6 +56,10 @@ public class DatagramSessionSendTests
             bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize * 2, maxMessageSize: fragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+
+        // A reliable Send is refused unless the Peer has learned the remote's announced
+        // MaxMessageSize (issue #284), so the handshake must actually complete first.
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         byte[] message = [1, 2, 3];
 
         // Act
@@ -78,6 +85,10 @@ public class DatagramSessionSendTests
             bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize * 2, maxMessageSize: fragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+
+        // A reliable Send is refused unless the Peer has learned the remote's announced
+        // MaxMessageSize (issue #284), so the handshake must actually complete first.
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         byte[] message = [1, 2, 3];
 
         // Act
@@ -106,6 +117,11 @@ public class DatagramSessionSendTests
         using DatagramSessionReactorHarness secondRemote = new();
         PeerId firstPeer = harness.Reactor.Connect(firstRemote.Endpoint);
         PeerId secondPeer = harness.Reactor.Connect(secondRemote.Endpoint);
+
+        // A reliable Send is refused unless its Peer has learned the remote's announced
+        // MaxMessageSize (issue #284), so both Peers here must complete a real handshake before they Send.
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, firstRemote);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, secondRemote);
         byte[] message = [1, 2, 3];
 
         // Act
@@ -202,26 +218,33 @@ public class DatagramSessionSendTests
     }
 
     [Theory]
-    [InlineData(DeliveryMode.Unreliable)]
-    [InlineData(DeliveryMode.UnreliableSequenced)]
-    [InlineData(DeliveryMode.ReliableUnordered)]
-    [InlineData(DeliveryMode.ReliableOrdered)]
-    public void Send_AMessageWiderThanOneFragment_ReturnsMessageTooLargeInEveryMode(DeliveryMode mode)
+    [InlineData(DeliveryMode.Unreliable, SendOutcome.MessageTooLarge)]
+    [InlineData(DeliveryMode.UnreliableSequenced, SendOutcome.MessageTooLarge)]
+    [InlineData(DeliveryMode.ReliableUnordered, SendOutcome.RemoteMessageTooLarge)]
+    [InlineData(DeliveryMode.ReliableOrdered, SendOutcome.RemoteMessageTooLarge)]
+    public void Send_AMessageWiderThanOneFragment_ReturnsTheModeAppropriateTooLargeOutcome(DeliveryMode mode, SendOutcome expected)
     {
-        // Arrange — subtask 6.6.2 (issue #215): a Message too wide for one Datagram is a checked
-        // outcome the caller can branch on, in every one of the four modes, not an exception.
+        // Arrange — subtask 6.6.2 (issue #215), updated for issue #284: a Message too wide for one
+        // Datagram is a checked outcome the caller can branch on, in every one of the four modes, not an
+        // exception, but the outcome now differs by mode. An unreliable mode is still capped by this
+        // end's own Datagram size and refused as MessageTooLarge; a reliable mode is capped by the
+        // remote's announced MaxMessageSize and refused as RemoteMessageTooLarge, which is only known
+        // once the Peer has completed a real handshake — so both ends share the same MaxMessageSize and
+        // the handshake is driven to completion before Send is called.
         const int fragmentSize = 600;
         using DatagramSessionReactorHarness harness = new(
             bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
-        using DatagramSessionReactorHarness remote = new();
+        using DatagramSessionReactorHarness remote = new(
+            fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         byte[] tooWide = new byte[fragmentSize + 1];
 
         // Act
         SendOutcome outcome = harness.Reactor.Send(peer, mode, tooWide);
 
         // Assert
-        outcome.Should().Be(SendOutcome.MessageTooLarge);
+        outcome.Should().Be(expected);
     }
 
     [Fact]
@@ -234,6 +257,10 @@ public class DatagramSessionSendTests
             bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+
+        // A reliable Send is refused unless the Peer has learned the remote's announced
+        // MaxMessageSize (issue #284), so the handshake must actually complete first.
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         byte[] exactlyAtCap = new byte[fragmentSize];
 
         // Act
@@ -249,12 +276,18 @@ public class DatagramSessionSendTests
         // Arrange — issue #215's "no retention is taken" half of the no-footprint promise. Retention
         // is directly observable through the public seam (a full Space answers RetentionExhausted, the
         // same proof #43's own interference tests already use); a rejected oversized Send must not have
-        // spent the Space's one slot before the two ordinary Sends that follow it.
+        // spent the Space's one slot before the two ordinary Sends that follow it. Since issue #284, a
+        // reliable Send's width is judged against the remote's announced MaxMessageSize rather than this
+        // end's own, so the remote is given the same MaxMessageSize and the handshake is driven to
+        // completion before the refusal is exercised, and the refusal itself now reads
+        // RemoteMessageTooLarge rather than MessageTooLarge.
         const int fragmentSize = 600;
         using DatagramSessionReactorHarness harness = new(
             bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
-        using DatagramSessionReactorHarness remote = new();
+        using DatagramSessionReactorHarness remote = new(
+            fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         byte[] tooWide = new byte[fragmentSize + 1];
         byte[] message = [1, 2, 3];
 
@@ -264,7 +297,7 @@ public class DatagramSessionSendTests
         SendOutcome second = harness.Reactor.Send(peer, DeliveryMode.ReliableOrdered, message);
 
         // Assert
-        refused.Should().Be(SendOutcome.MessageTooLarge);
+        refused.Should().Be(SendOutcome.RemoteMessageTooLarge);
         first.Should().Be(SendOutcome.Sent, "the refused Send took no retention slot, so the Space's one slot is still free");
         second.Should().Be(SendOutcome.RetentionExhausted, "the Space genuinely holds only one slot");
     }
@@ -311,8 +344,9 @@ public class DatagramSessionSendTests
 
         PeerCounters receiverCounters = receiver.Reactor.CountersOf(receiverPeer);
 
-        // Assert
-        refused.Should().Be(SendOutcome.MessageTooLarge);
+        // Assert — issue #284: a reliable Send's width is judged against the remote's announced
+        // MaxMessageSize, so this refusal now reads RemoteMessageTooLarge rather than MessageTooLarge.
+        refused.Should().Be(SendOutcome.RemoteMessageTooLarge);
         accepted.Should().Be(SendOutcome.Sent);
         receiverCounters.OutOfWindowPackets.Should().Be(
             0UL, "the accepted Send must have carried sequence 0, the only sequence this pinned window ever admits");

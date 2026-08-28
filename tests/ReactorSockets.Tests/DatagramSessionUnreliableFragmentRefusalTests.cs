@@ -70,6 +70,10 @@ public class DatagramSessionUnreliableFragmentRefusalTests
             fragmentSize: fragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+
+        // The reliable Send below is refused unless this Peer has learned the remote's announced
+        // MaxMessageSize (issue #284), so the handshake must actually complete first.
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         byte[] tooWide = new byte[fragmentSize + 1];
 
         // Act
