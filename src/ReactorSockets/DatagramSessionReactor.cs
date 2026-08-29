@@ -1696,6 +1696,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// hold (issue #282, reworked under #264), so <paramref name="fragmentCount"/> here is always a legal
     /// claim, never one this method itself needs to bound.
     /// </para>
+    /// <para>
+    /// <b>An abandoned Fragment set is reported, never acted on</b> (issue #297). The
+    /// <see cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/> call above may have
+    /// just clobbered the ring slot of an incomplete Fragment set that can now never complete — the
+    /// window itself has no <see cref="PeerId"/> to subject a Diagnostic to, so this method reads
+    /// <see cref="ReceiveWindowSpaces.LastAbandonedFragmentSet"/> right after that call and logs
+    /// <see cref="DiagnosticRecord.ForFragmentSetAbandoned"/> from it. This is accounting only: it fires
+    /// on ordinary loss as readily as on anything more serious, so nothing here closes, disconnects, or
+    /// otherwise changes Session state — that is issue #270's job, off a different signal.
+    /// </para>
     /// </remarks>
     private void ClassifyRecord(
         PeerSlot slot, PacketRecordMode mode, uint sequence, bool isFragment,
@@ -1703,6 +1713,18 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     {
         ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
         ReceiveWindowOutcome outcome = windows.Classify(mode, sequence, out int ringSlot);
+
+        // The moment a Fragment set's slot is discarded is the last moment anyone can say how much of
+        // it had arrived (issue #297): windows.Classify just clobbered such a slot if this is set. This
+        // is accounting only — it says what was lost and not why, and fires on ordinary loss too, which
+        // is exactly why it may never close, disconnect, or otherwise change Session state itself.
+        if (windows.LastAbandonedFragmentSet.Occurred && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForFragmentSetAbandoned(
+                ToPeerId(slot.Handle),
+                windows.LastAbandonedFragmentSet.Held,
+                windows.LastAbandonedFragmentSet.Expected));
+        }
 
         switch (outcome)
         {
@@ -1794,7 +1816,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// is queued, and <see cref="PeerCounters.MessagesReceived"/> does not rise — a Fragment is a piece
     /// of a Message, not a Message, so none of the three steps <see cref="DeliverToConsumer"/> takes
     /// apply to it. Once the length is recorded, this derives the held piece's group first sequence
-    /// (issue #258) and answers whether every piece of that group is now held.
+    /// (issue #258), records that identity on the window too (issue #297) — so the set can still be
+    /// named if its slot is later discarded before it completes — and answers whether every piece of
+    /// that group is now held.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1860,6 +1884,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         windows.RecordFragmentLength(mode, ringSlot, (ushort)payload.Length);
 
         uint groupFirstSequence = FragmentGroup.FirstSequenceOf(sequence, fragmentIndex);
+        windows.RecordFragmentGroup(mode, ringSlot, groupFirstSequence, fragmentCount);
         return windows.IsGroupComplete(mode, groupFirstSequence, fragmentCount);
     }
 

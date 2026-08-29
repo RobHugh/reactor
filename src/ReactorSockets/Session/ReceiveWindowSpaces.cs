@@ -47,8 +47,9 @@ internal sealed class ReceiveWindowSpaces
     /// <see cref="ReceiveArena.GetAdmissionRun"/> hands back for that Space (#179) — nothing here
     /// allocates. The two reliable windows additionally take the Fragment-length run
     /// <see cref="ReceiveArena.GetFragmentLengthRun"/> hands back for the matching retaining Space
-    /// (#257); the two unreliable windows take none, since ADR 0004 never routes a Fragment into
-    /// either.
+    /// (#257) and the Fragment-group run <see cref="ReceiveArena.GetFragmentGroupRun"/> hands back for
+    /// the same Space (issue #297); the two unreliable windows take neither, since ADR 0004 never routes
+    /// a Fragment into either.
     /// </summary>
     /// <param name="arena">The receive arena a Slot's admission and Fragment-length runs come from.</param>
     /// <param name="shareHolderId">The Slot index this instance's four windows are built over.</param>
@@ -64,10 +65,12 @@ internal sealed class ReceiveWindowSpaces
             arena.GetAdmissionRun(shareHolderId, (int)PacketRecordMode.UnreliableSequenced), slides: true);
         _reliableUnordered = new ReceiveWindow(
             arena.GetAdmissionRun(shareHolderId, (int)PacketRecordMode.ReliableUnordered),
-            fragmentLengths: arena.GetFragmentLengthRun(shareHolderId, RetainingSpaceIndex(PacketRecordMode.ReliableUnordered)));
+            fragmentLengths: arena.GetFragmentLengthRun(shareHolderId, RetainingSpaceIndex(PacketRecordMode.ReliableUnordered)),
+            fragmentGroups: arena.GetFragmentGroupRun(shareHolderId, RetainingSpaceIndex(PacketRecordMode.ReliableUnordered)));
         _reliableOrdered = new ReceiveWindow(
             arena.GetAdmissionRun(shareHolderId, (int)PacketRecordMode.ReliableOrdered),
-            fragmentLengths: arena.GetFragmentLengthRun(shareHolderId, RetainingSpaceIndex(PacketRecordMode.ReliableOrdered)));
+            fragmentLengths: arena.GetFragmentLengthRun(shareHolderId, RetainingSpaceIndex(PacketRecordMode.ReliableOrdered)),
+            fragmentGroups: arena.GetFragmentGroupRun(shareHolderId, RetainingSpaceIndex(PacketRecordMode.ReliableOrdered)));
 
         _pendingReliableOrdered = new PendingFragmentGroups(
             arena.GetPendingGroupRun(shareHolderId, RetainingSpaceIndex(PacketRecordMode.ReliableOrdered)));
@@ -83,6 +86,15 @@ internal sealed class ReceiveWindowSpaces
     /// reference to whichever of the four windows <see cref="Classify(PacketRecordMode, uint)"/> touched.
     /// </summary>
     public ulong LastSlideLoss { get; private set; }
+
+    /// <summary>
+    /// Whether <see cref="Classify(PacketRecordMode, uint, out int)"/>'s most recent call discovered an
+    /// incomplete Fragment set abandoned (issue #297), and if so, how much of it was held versus how
+    /// much it declared — mirrors <see cref="ReceiveWindow.LastAbandonedFragmentSet"/> one level up, for
+    /// the same reason <see cref="LastSlideLoss"/> does: a caller here does not hold a reference to
+    /// whichever of the four windows <see cref="Classify(PacketRecordMode, uint, out int)"/> touched.
+    /// </summary>
+    public (bool Occurred, long Held, long Expected) LastAbandonedFragmentSet { get; private set; }
 
     /// <summary>
     /// Classifies <paramref name="sequence"/> against <paramref name="mode"/>'s Space alone — the other
@@ -119,6 +131,7 @@ internal sealed class ReceiveWindowSpaces
 
         ReceiveWindowOutcome outcome = window.Classify(sequence, out ringSlot);
         LastSlideLoss = window.LastSlideLoss;
+        LastAbandonedFragmentSet = window.LastAbandonedFragmentSet;
         return outcome;
     }
 
@@ -131,6 +144,17 @@ internal sealed class ReceiveWindowSpaces
     /// </summary>
     public void RecordFragmentLength(PacketRecordMode mode, int ringSlot, ushort byteLength) =>
         ReliableWindow(mode).RecordFragmentLength(ringSlot, byteLength);
+
+    /// <summary>
+    /// Records that the Fragment occupying ring slot <paramref name="ringSlot"/> of
+    /// <paramref name="mode"/>'s window belongs to the group starting at
+    /// <paramref name="groupFirstSequence"/> and declaring <paramref name="fragmentCount"/> pieces
+    /// (issue #297) — see <see cref="ReceiveWindow.RecordFragmentGroup"/>. <paramref name="mode"/> must
+    /// be <c>ReliableOrdered</c> or <c>ReliableUnordered</c>, the only two Spaces ADR 0004 ever routes a
+    /// Fragment into.
+    /// </summary>
+    public void RecordFragmentGroup(PacketRecordMode mode, int ringSlot, uint groupFirstSequence, ushort fragmentCount) =>
+        ReliableWindow(mode).RecordFragmentGroup(ringSlot, groupFirstSequence, fragmentCount);
 
     /// <summary>
     /// Reads back what <see cref="RecordFragmentLength"/> most recently recorded for ring slot

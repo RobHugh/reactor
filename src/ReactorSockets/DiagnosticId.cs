@@ -99,6 +99,22 @@ public enum DiagnosticId
     VersionRefused = 202,
 
     /// <summary>
+    /// A Fragment set for an established Peer was abandoned before it ever completed. Subject is the
+    /// Peer, not the claimed Source: an incomplete set belongs to the Session that was receiving it,
+    /// not to a bare source address. <c>Value0</c> is the number of fragments actually held for the
+    /// set at the moment it was abandoned; <c>Value1</c> is the number the set's own metadata
+    /// declared it would need. Held against expected is the pair a consumer can act on — one of forty
+    /// held is a path dropping almost everything of that size, thirty-nine of forty is ordinary loss
+    /// on a set that was nearly there, and the two want different responses.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>, not <see cref="DiagnosticLevel.Error"/>: nothing local is
+    /// broken, an abandoned set is loss on a lossy transport working as designed, and the level's job
+    /// is to answer whether a consumer wants to see this, not whether this Reactor is at fault.
+    /// </remarks>
+    FragmentSetAbandoned = 203,
+
+    /// <summary>
     /// This Peer's <see cref="RetransmissionTimer"/> backed off: a Pump's expiry sweep
     /// (<see cref="Session.OutstandingReliableSequences.CollectExpired"/>, subtask 6.4.8, issue #198)
     /// found at least one overdue sequence on either reliable Space, so <see cref="RetransmissionTimer.BackOff"/>

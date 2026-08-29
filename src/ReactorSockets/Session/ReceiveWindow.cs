@@ -124,8 +124,21 @@ internal sealed class ReceiveWindow
     private readonly Memory<byte> _fragmentLengths;
 
     /// <summary>
+    /// The Fragment-group run for this window's Space, six bytes per slot, ring-indexed exactly as
+    /// <see cref="_fragmentLengths"/> is — <see cref="Core.ReceiveArena.GetFragmentGroupRun"/> (issue
+    /// #297): a <c>u32</c> first sequence and a <c>u16</c> declared Fragment count naming the group the
+    /// slot's held Fragment belongs to. Empty exactly when <see cref="_fragmentLengths"/> is, for the
+    /// same reason: a Space that never retains a Fragment never needs to say which set one belonged to.
+    /// This is what lets <see cref="Classify(uint, out int)"/> answer how much of an abandoned set was
+    /// held and how much it declared at the moment its slot is reused — the length region alone says a
+    /// piece was held, not which set it was a piece of or how large that set claimed to be.
+    /// </summary>
+    private readonly Memory<byte> _fragmentGroups;
+
+    /// <summary>
     /// Whether this window slides its base forward to admit a far-ahead arrival instead of refusing
-    /// it (#173). Fixed at construction; see <see cref="ReceiveWindow(Memory{byte}, bool, Memory{byte})"/>.
+    /// it (#173). Fixed at construction; see
+    /// <see cref="ReceiveWindow(Memory{byte}, bool, Memory{byte}, Memory{byte})"/>.
     /// </summary>
     private readonly bool _slides;
 
@@ -161,11 +174,20 @@ internal sealed class ReceiveWindow
     /// (ADR 0004); <see cref="RecordFragmentLength"/> and <see cref="GetFragmentLength"/> throw for
     /// such a window. When supplied, its length must be exactly twice <paramref name="admitted"/>'s.
     /// </param>
+    /// <param name="fragmentGroups">
+    /// The Fragment-group run this window records a held Fragment's group identity into, six bytes per
+    /// sequence slot — see <see cref="Core.ReceiveArena.GetFragmentGroupRun"/> (issue #297). Defaults to
+    /// <see langword="default"/> (empty) for a window built over a Space that never retains a Fragment
+    /// (ADR 0004), the same condition <paramref name="fragmentLengths"/> is empty under. When supplied,
+    /// its length must be exactly six times <paramref name="admitted"/>'s.
+    /// </param>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// <paramref name="admitted"/> is empty, or <paramref name="fragmentLengths"/> is non-empty and its
-    /// length is not exactly twice <paramref name="admitted"/>'s.
+    /// <paramref name="admitted"/> is empty, <paramref name="fragmentLengths"/> is non-empty and its
+    /// length is not exactly twice <paramref name="admitted"/>'s, or <paramref name="fragmentGroups"/> is
+    /// non-empty and its length is not exactly six times <paramref name="admitted"/>'s.
     /// </exception>
-    internal ReceiveWindow(Memory<byte> admitted, bool slides = false, Memory<byte> fragmentLengths = default)
+    internal ReceiveWindow(
+        Memory<byte> admitted, bool slides = false, Memory<byte> fragmentLengths = default, Memory<byte> fragmentGroups = default)
     {
         if (admitted.Length < 1)
         {
@@ -184,9 +206,19 @@ internal sealed class ReceiveWindow
                 $"admission slots at 2 bytes each ({admitted.Length * 2}).");
         }
 
+        if (!fragmentGroups.IsEmpty && fragmentGroups.Length != admitted.Length * 6)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(fragmentGroups),
+                fragmentGroups.Length,
+                $"a Fragment-group run of {fragmentGroups.Length} bytes does not match {admitted.Length} " +
+                $"admission slots at 6 bytes each ({admitted.Length * 6}).");
+        }
+
         Capacity = admitted.Length;
         _admitted = admitted;
         _fragmentLengths = fragmentLengths;
+        _fragmentGroups = fragmentGroups;
         _base = 0;
         _baseSlot = 0;
         _slides = slides;
@@ -214,6 +246,21 @@ internal sealed class ReceiveWindow
     /// if an earlier call slid.
     /// </summary>
     internal ulong LastSlideLoss { get; private set; }
+
+    /// <summary>
+    /// Whether the most recent <see cref="Classify(uint, out int)"/> call discovered an incomplete
+    /// Fragment set abandoned (issue #297) — a fresh admission clobbered a physical ring slot that still
+    /// carried a live, never-completed occupant's Fragment-length residue — and if so, how many of that
+    /// set's sequences were actually held at that instant (<c>Held</c>) versus how many it declared
+    /// (<c>Expected</c>). <c>Occurred</c> is <see langword="false"/> and <c>Held</c>/<c>Expected</c> are
+    /// both zero unless that call's admission clobbered such residue. Reset to that default at the start
+    /// of every <see cref="Classify(uint, out int)"/> call, so a call that abandons nothing reports it
+    /// even if an earlier call did — mirrors <see cref="LastSlideLoss"/>, and for the same reason: this
+    /// window has no <see cref="PeerId"/> to subject a Diagnostic to, so
+    /// <see cref="DatagramSessionReactor.ClassifyRecord"/> reads this and logs
+    /// <see cref="DiagnosticRecord.ForFragmentSetAbandoned"/> from it instead.
+    /// </summary>
+    internal (bool Occurred, long Held, long Expected) LastAbandonedFragmentSet { get; private set; }
 
     /// <summary>
     /// Classifies <paramref name="sequence"/> against the window's current span. When it is new and
@@ -253,6 +300,7 @@ internal sealed class ReceiveWindow
     internal ReceiveWindowOutcome Classify(uint sequence, out int ringSlot)
     {
         LastSlideLoss = 0;
+        LastAbandonedFragmentSet = default;
         ringSlot = -1;
 
         bool atOrAboveBase = sequence == _base || SequenceNumber.IsNewerThan(sequence, _base);
@@ -293,6 +341,17 @@ internal sealed class ReceiveWindow
         admitted[slot] = 1;
         if (!_fragmentLengths.IsEmpty)
         {
+            // A fresh admission at this ring slot is the last moment anyone can say how much of a
+            // previous, never-completed occupant's Fragment set had arrived (issue #297): once the
+            // length below is zeroed, that occupant's own residue is gone. A non-zero length here means
+            // exactly that — a live piece of a set that will now never complete, because the ring has
+            // just reused its slot and a sequence the base has already passed can never be re-admitted.
+            ushort residualLength = BinaryPrimitives.ReadUInt16LittleEndian(_fragmentLengths.Span.Slice(slot * 2, 2));
+            if (residualLength != 0)
+            {
+                HandleFragmentSetAbandonment(slot);
+            }
+
             // A fresh admission at this ring slot invalidates whatever Fragment-length residue a
             // previous, never-completed occupant of the same physical slot left behind (issue #259):
             // without this, a slot the ring later reuses for an unrelated sequence could still read
@@ -300,8 +359,10 @@ internal sealed class ReceiveWindow
             // would misread that leftover byte as this admission's own piece. Cleared unconditionally,
             // for a Fragment and an ordinary record alike, because an ordinary record never calls
             // RecordFragmentLength to overwrite it itself; HoldFragment writes the real length right
-            // after this call returns, for the one case that needs one.
+            // after this call returns, for the one case that needs one. The group-identity entry is
+            // cleared alongside it for the same reason (issue #297).
             BinaryPrimitives.WriteUInt16LittleEndian(_fragmentLengths.Span.Slice(slot * 2, 2), 0);
+            ClearFragmentGroup(slot);
         }
 
         AdvanceBase();
@@ -320,7 +381,7 @@ internal sealed class ReceiveWindow
     /// <param name="byteLength">The Fragment's payload length in bytes.</param>
     /// <exception cref="InvalidOperationException">
     /// This window was built without a Fragment-length run — see
-    /// <see cref="ReceiveWindow(Memory{byte}, bool, Memory{byte})"/> — because its Space never retains
+    /// <see cref="ReceiveWindow(Memory{byte}, bool, Memory{byte}, Memory{byte})"/> — because its Space never retains
     /// a Fragment (ADR 0004).
     /// </exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="ringSlot"/> is outside <see cref="Capacity"/>.</exception>
@@ -338,7 +399,7 @@ internal sealed class ReceiveWindow
     /// <param name="ringSlot">A ring position below <see cref="Capacity"/>.</param>
     /// <exception cref="InvalidOperationException">
     /// This window was built without a Fragment-length run — see
-    /// <see cref="ReceiveWindow(Memory{byte}, bool, Memory{byte})"/> — because its Space never retains
+    /// <see cref="ReceiveWindow(Memory{byte}, bool, Memory{byte}, Memory{byte})"/> — because its Space never retains
     /// a Fragment (ADR 0004).
     /// </exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="ringSlot"/> is outside <see cref="Capacity"/>.</exception>
@@ -371,6 +432,124 @@ internal sealed class ReceiveWindow
         }
 
         return _fragmentLengths.Span.Slice(ringSlot * 2, 2);
+    }
+
+    /// <summary>
+    /// Records that the Fragment occupying ring slot <paramref name="ringSlot"/> belongs to the group
+    /// starting at <paramref name="groupFirstSequence"/> and declaring <paramref name="fragmentCount"/>
+    /// pieces (issue #297). Written alongside <see cref="RecordFragmentLength"/> at the same point
+    /// <see cref="DatagramSessionReactor.HoldFragment"/> holds a piece, so the two runs never disagree
+    /// about which slots currently hold a piece of which set.
+    /// </summary>
+    /// <param name="ringSlot">A ring position below <see cref="Capacity"/>, from <see cref="Classify(uint, out int)"/>.</param>
+    /// <param name="groupFirstSequence">The group's first sequence — see <see cref="FragmentGroup.FirstSequenceOf"/>.</param>
+    /// <param name="fragmentCount">The group's declared Fragment count.</param>
+    /// <exception cref="InvalidOperationException">
+    /// This window was built without a Fragment-group run — see
+    /// <see cref="ReceiveWindow(Memory{byte}, bool, Memory{byte}, Memory{byte})"/> — because its Space
+    /// never retains a Fragment (ADR 0004).
+    /// </exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="ringSlot"/> is outside <see cref="Capacity"/>.</exception>
+    internal void RecordFragmentGroup(int ringSlot, uint groupFirstSequence, ushort fragmentCount)
+    {
+        Span<byte> slot = FragmentGroupSlot(ringSlot);
+        BinaryPrimitives.WriteUInt32LittleEndian(slot[..4], groupFirstSequence);
+        BinaryPrimitives.WriteUInt16LittleEndian(slot.Slice(4, 2), fragmentCount);
+    }
+
+    /// <summary>
+    /// Reads back what <see cref="RecordFragmentGroup"/> most recently recorded for ring slot
+    /// <paramref name="ringSlot"/> — a first sequence and declared count of zero if nothing has, which
+    /// is exactly what a slot never written to (or cleared by <see cref="Reset"/> or
+    /// <see cref="ClearFragmentGroup"/>) reads as.
+    /// </summary>
+    private (uint FirstSequence, ushort FragmentCount) ReadFragmentGroup(int ringSlot)
+    {
+        Span<byte> slot = FragmentGroupSlot(ringSlot);
+        uint firstSequence = BinaryPrimitives.ReadUInt32LittleEndian(slot[..4]);
+        ushort fragmentCount = BinaryPrimitives.ReadUInt16LittleEndian(slot.Slice(4, 2));
+        return (firstSequence, fragmentCount);
+    }
+
+    /// <summary>
+    /// Zeroes ring slot <paramref name="ringSlot"/>'s Fragment-group entry — called everywhere the
+    /// matching length entry is cleared (a fresh admission clobbering it, <see cref="ReleaseGroup"/>
+    /// releasing a delivered set, or <see cref="Reset"/>), so the two runs are cleared together and
+    /// never drift out of step.
+    /// </summary>
+    private void ClearFragmentGroup(int ringSlot) => FragmentGroupSlot(ringSlot).Clear();
+
+    /// <summary>
+    /// Resolves <paramref name="ringSlot"/>'s six bytes in <see cref="_fragmentGroups"/>, shared by
+    /// <see cref="RecordFragmentGroup"/>, <see cref="ReadFragmentGroup"/> and
+    /// <see cref="ClearFragmentGroup"/> so the bounds check and the "this Space never retains" guard
+    /// exist in exactly one place, mirroring <see cref="FragmentLengthSlot"/>.
+    /// </summary>
+    private Span<byte> FragmentGroupSlot(int ringSlot)
+    {
+        if (_fragmentGroups.IsEmpty)
+        {
+            throw new InvalidOperationException(
+                "this receive window was built over a Space that never retains a Fragment (ADR 0004), " +
+                "so it holds no Fragment-group run to read or write.");
+        }
+
+        if (ringSlot < 0 || ringSlot >= Capacity)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(ringSlot),
+                ringSlot,
+                $"ring slot {ringSlot} is outside this window's capacity of {Capacity}.");
+        }
+
+        return _fragmentGroups.Span.Slice(ringSlot * 6, 6);
+    }
+
+    /// <summary>
+    /// Reports how much of the incomplete Fragment set occupying ring slot <paramref name="ringSlot"/>
+    /// was actually held at the instant its physical slot is about to be reused for an unrelated, later
+    /// sequence (issue #297) — the last moment anyone can still answer that, since the caller is about to
+    /// zero the very residue this reads. Sets <see cref="LastAbandonedFragmentSet"/> and clears every one
+    /// of the set's own still-addressable slots whose recorded group still names it, so that no later
+    /// clobber of a sibling slot can ever report the same set abandoned a second time.
+    /// </summary>
+    /// <param name="ringSlot">
+    /// The ring slot a fresh admission is about to clobber, whose Fragment-length residue was found
+    /// non-zero — the set's own record of its first sequence and declared count is read from here.
+    /// </param>
+    /// <remarks>
+    /// A set member's sequence that no longer resolves to any ring slot (<see cref="TryGetRingSlot"/>
+    /// returns <see langword="false"/>) is skipped rather than counted: it is too far away, in either
+    /// direction, for any slot to still be able to answer for it. A set member whose resolved slot's
+    /// recorded group names a different first sequence is skipped too — that physical slot holds
+    /// something other than this set's own piece (a hole this set never filled, or residue from a still
+    /// older, unrelated occupant), so it is neither counted as held nor cleared as part of this set.
+    /// </remarks>
+    private void HandleFragmentSetAbandonment(int ringSlot)
+    {
+        (uint groupFirstSequence, ushort declaredCount) = ReadFragmentGroup(ringSlot);
+        long held = 0;
+        for (int i = 0; i < declaredCount; i++)
+        {
+            uint sequence = unchecked(groupFirstSequence + (uint)i);
+            if (!TryGetRingSlot(sequence, out int memberSlot))
+            {
+                continue;
+            }
+
+            ushort length = BinaryPrimitives.ReadUInt16LittleEndian(_fragmentLengths.Span.Slice(memberSlot * 2, 2));
+            (uint memberFirstSequence, _) = ReadFragmentGroup(memberSlot);
+            if (length == 0 || memberFirstSequence != groupFirstSequence)
+            {
+                continue;
+            }
+
+            held++;
+            BinaryPrimitives.WriteUInt16LittleEndian(_fragmentLengths.Span.Slice(memberSlot * 2, 2), 0);
+            ClearFragmentGroup(memberSlot);
+        }
+
+        LastAbandonedFragmentSet = (true, held, declaredCount);
     }
 
     /// <summary>
@@ -419,7 +598,7 @@ internal sealed class ReceiveWindow
     /// </returns>
     /// <exception cref="InvalidOperationException">
     /// This window was built without a Fragment-length run — see
-    /// <see cref="ReceiveWindow(Memory{byte}, bool, Memory{byte})"/> — because its Space never retains
+    /// <see cref="ReceiveWindow(Memory{byte}, bool, Memory{byte}, Memory{byte})"/> — because its Space never retains
     /// a Fragment (ADR 0004).
     /// </exception>
     internal bool IsGroupComplete(uint groupFirstSequence, ushort fragmentCount)
@@ -436,14 +615,15 @@ internal sealed class ReceiveWindow
     }
 
     /// <summary>
-    /// Zeroes the Fragment-length entry for every sequence of the group starting at
-    /// <paramref name="groupFirstSequence"/> (issue #259) — the release half of the reassembly
-    /// bookkeeping this window's class doc describes, called once a completed group's pieces have all
-    /// been copied out into a delivered Message. Releasing is what keeps a later Fragment that reuses
-    /// one of these ring slots from ever being mistaken for a leftover of the group just delivered:
-    /// without it, <see cref="IsGroupComplete"/> could read a stale non-zero length left over from this
-    /// group and report a future, different group complete before every one of its own pieces had
-    /// actually arrived. A sequence too far away to resolve to a ring slot — already fully retired, or
+    /// Zeroes the Fragment-length and Fragment-group entries for every sequence of the group starting at
+    /// <paramref name="groupFirstSequence"/> (issue #259, extended by #297) — the release half of the
+    /// reassembly bookkeeping this window's class doc describes, called once a completed group's pieces
+    /// have all been copied out into a delivered Message. Releasing is what keeps a later Fragment that
+    /// reuses one of these ring slots from ever being mistaken for a leftover of the group just
+    /// delivered: without it, <see cref="IsGroupComplete"/> could read a stale non-zero length left over
+    /// from this group and report a future, different group complete before every one of its own pieces
+    /// had actually arrived, and a later abandonment could misreport this already-delivered set's residue
+    /// as still abandoned. A sequence too far away to resolve to a ring slot — already fully retired, or
     /// never reachable — is simply skipped rather than throwing, since there is then nothing left in
     /// this window that still needs releasing for it.
     /// </summary>
@@ -453,7 +633,7 @@ internal sealed class ReceiveWindow
     /// <param name="fragmentCount">The group's declared Fragment count.</param>
     /// <exception cref="InvalidOperationException">
     /// This window was built without a Fragment-length run — see
-    /// <see cref="ReceiveWindow(Memory{byte}, bool, Memory{byte})"/> — because its Space never retains
+    /// <see cref="ReceiveWindow(Memory{byte}, bool, Memory{byte}, Memory{byte})"/> — because its Space never retains
     /// a Fragment (ADR 0004).
     /// </exception>
     internal void ReleaseGroup(uint groupFirstSequence, ushort fragmentCount)
@@ -471,6 +651,7 @@ internal sealed class ReceiveWindow
             if (TryGetRingSlot(sequence, out int ringSlot))
             {
                 RecordFragmentLength(ringSlot, 0);
+                ClearFragmentGroup(ringSlot);
             }
         }
     }
@@ -529,20 +710,25 @@ internal sealed class ReceiveWindow
     }
 
     /// <summary>
-    /// Clears this window's admission run and its Fragment-length run, if it has one, and resets
-    /// <see cref="Base"/>, its ring position and <see cref="LastSlideLoss"/> to their construction-time
-    /// values. The arena storage a window is built over outlives the Peer that used it (#179): a Slot a
-    /// new Peer reuses must classify from a clean window, not inherit whatever the previous occupant
-    /// had admitted or held. Mirrors the division <see cref="Core.ReceiveArena.GetFragmentSlot"/>
-    /// already draws — the arena keeps the bytes, the occupant clears them.
+    /// Clears this window's admission run and its Fragment-length and Fragment-group runs, if it has
+    /// them, and resets <see cref="Base"/>, its ring position and <see cref="LastSlideLoss"/> to their
+    /// construction-time values. The arena storage a window is built over outlives the Peer that used it
+    /// (#179): a Slot a new Peer reuses must classify from a clean window, not inherit whatever the
+    /// previous occupant had admitted or held. Mirrors the division
+    /// <see cref="Core.ReceiveArena.GetFragmentSlot"/> already draws — the arena keeps the bytes, the
+    /// occupant clears them. Does not emit — the Session is over and there is no Peer left to subject a
+    /// Diagnostic to, so <see cref="LastAbandonedFragmentSet"/> is simply reset to its construction-time
+    /// default along with everything else, exactly as it would after any other <see cref="Classify(uint)"/> call.
     /// </summary>
     internal void Reset()
     {
         _admitted.Span.Clear();
         _fragmentLengths.Span.Clear();
+        _fragmentGroups.Span.Clear();
         _base = 0;
         _baseSlot = 0;
         LastSlideLoss = 0;
+        LastAbandonedFragmentSet = default;
     }
 
     /// <summary>
