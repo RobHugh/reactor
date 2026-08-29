@@ -126,6 +126,15 @@ public sealed class DatagramSessionOptions
     internal const int PendingGroupEntryBytes = 6;
 
     /// <summary>
+    /// Bytes one held-Fragment's group-identity entry occupies in the receive arena: the same <c>u32</c>
+    /// first sequence and <c>u16</c> declared Fragment count as <see cref="PendingGroupEntryBytes"/>, but
+    /// one entry per receive-window slot rather than per waiting group — what still names an incomplete
+    /// set's held and declared counts at the moment its slot is discarded and its length residue is
+    /// cleared (issue #297).
+    /// </summary>
+    internal const int FragmentGroupEntryBytes = 6;
+
+    /// <summary>
     /// The shared L0 budget: capacity, admission cap, arena size, time source and Diagnostic Sink.
     /// Required — a Reactor cannot be built without one, and its <see cref="ReactorOptions.Capacity"/>
     /// has no default of its own.
@@ -262,20 +271,26 @@ public sealed class DatagramSessionOptions
     /// silently wraps through.
     /// </summary>
     /// <remarks>
-    /// Three things per Peer scale with the window, and this figure covers all three (issue #174,
-    /// #257). Payload slots — <see cref="ResolvedFragmentSize"/> bytes each — exist only for the
+    /// Four things per Peer scale with the window, and this figure covers all four (issue #174, #257,
+    /// #259, #297). Payload slots — <see cref="ResolvedFragmentSize"/> bytes each — exist only for the
     /// <see cref="ReliableSpaceCount"/> Spaces that hold fragments until a Message is whole. The
     /// one-byte-per-slot admission record a receive window classifies against exists for all
     /// <see cref="SpaceCount"/> Spaces, because all four classify whether or not they retain.
     /// <see cref="FragmentLengthBytes"/> per slot records how many bytes of a held Fragment's payload
-    /// are actually occupied, and exists only for the same <see cref="ReliableSpaceCount"/> Spaces as
-    /// the payload it describes — this is the receive window's own reassembly bookkeeping (issue
-    /// #257), not a separate buffer. Nothing on the receive side is allocated outside this figure, so
-    /// it is an exact statement of what a Reactor takes, not a floor it sits above.
+    /// are actually occupied, and <see cref="FragmentGroupEntryBytes"/> per slot names the group that
+    /// payload belongs to — both exist only for the same <see cref="ReliableSpaceCount"/> Spaces as the
+    /// payload they describe, and both are the receive window's own reassembly bookkeeping (issue #257,
+    /// #297), not a separate buffer: the length says a piece was held, the group-identity entry is what
+    /// still lets an abandoned set's held and declared counts be read once that slot is reused. The
+    /// six-byte waiting-group entry — <see cref="PendingGroupEntryBytes"/> — exists for the same two
+    /// Spaces too, but only half a window's worth each (<see cref="PendingGroupsPerSpace"/>, issue
+    /// #259), since a completed-but-undelivered group holds at least two Fragments. Nothing on the
+    /// receive side is allocated outside this figure, so it is an exact statement of what a Reactor
+    /// takes, not a floor it sits above.
     /// </remarks>
     public long ReceiveBudgetBytes =>
         ((long)Reactor.Capacity * ResolvedReceiveWindowFragments
-            * (((long)ReliableSpaceCount * (ResolvedFragmentSize + FragmentLengthBytes)) + SpaceCount))
+            * (((long)ReliableSpaceCount * (ResolvedFragmentSize + FragmentLengthBytes + FragmentGroupEntryBytes)) + SpaceCount))
         + ((long)Reactor.Capacity * ReliableSpaceCount * PendingGroupsPerSpace * PendingGroupEntryBytes);
 
     /// <summary>
@@ -430,9 +445,11 @@ public sealed class DatagramSessionOptions
                 $"these options ask for {total} bytes of preallocation, which cannot be allocated. " +
                 $"Receive is Capacity {Reactor.Capacity} × {ResolvedReceiveWindowFragments} fragments × " +
                 $"({ReliableSpaceCount} reliable Spaces × ({ResolvedFragmentSize} payload bytes + {FragmentLengthBytes} " +
-                $"length bytes) + {SpaceCount} Spaces × 1 admission byte) = {receive}; send is Capacity " +
-                $"{Reactor.Capacity} × {ReliableSpaceCount} reliable Spaces × {RetentionBytes} bytes = {send}. " +
-                "Lower Capacity, MaxMessageSize, ReceiveWindowFragments or RetentionBytes.",
+                $"length bytes + {FragmentGroupEntryBytes} group-identity bytes) + {SpaceCount} Spaces × 1 " +
+                $"admission byte) plus Capacity {Reactor.Capacity} × {ReliableSpaceCount} reliable Spaces × " +
+                $"{PendingGroupsPerSpace} waiting groups × {PendingGroupEntryBytes} bytes = {receive}; send is " +
+                $"Capacity {Reactor.Capacity} × {ReliableSpaceCount} reliable Spaces × {RetentionBytes} bytes = " +
+                $"{send}. Lower Capacity, MaxMessageSize, ReceiveWindowFragments or RetentionBytes.",
                 nameof(Reactor));
         }
     }

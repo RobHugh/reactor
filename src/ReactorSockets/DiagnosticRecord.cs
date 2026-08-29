@@ -138,6 +138,14 @@ public readonly record struct DiagnosticRecord
         new(DiagnosticId.VersionRefused, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, versionOffered, versionRequired);
 
     /// <summary>
+    /// Builds a <see cref="DiagnosticId.FragmentSetAbandoned"/> record for the Peer whose Fragment set
+    /// was abandoned before it ever completed, carrying the fragments actually held and the number the
+    /// set's own metadata declared.
+    /// </summary>
+    public static DiagnosticRecord ForFragmentSetAbandoned(PeerId peer, long fragmentsHeld, long fragmentsExpected) =>
+        new(DiagnosticId.FragmentSetAbandoned, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, fragmentsHeld, fragmentsExpected);
+
+    /// <summary>
     /// Builds a <see cref="DiagnosticId.OversizedFragmentSet"/> record for the Peer whose Fragment
     /// declared a <c>fragmentCount</c> larger than this Reactor's own receive window could ever hold,
     /// carrying the declared count and the largest legal count.

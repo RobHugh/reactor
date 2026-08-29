@@ -55,9 +55,20 @@ internal sealed class ReceiveArena
     /// </summary>
     private const int PendingGroupEntrySize = 6;
 
+    /// <summary>
+    /// Bytes one held-Fragment's group-identity entry occupies: a <c>u32</c> first sequence and a
+    /// <c>u16</c> declared Fragment count, the same shape as <see cref="PendingGroupEntrySize"/> but one
+    /// entry per <see cref="GetFragmentSlot"/> slot rather than per waiting group (issue #297) — what
+    /// names the set a held-but-not-yet-complete Fragment belongs to, so that set's held and declared
+    /// counts can still be read at the moment its slot is discarded and the length region's own residue
+    /// is lost.
+    /// </summary>
+    private const int FragmentGroupEntrySize = 6;
+
     private readonly byte[] _buffer;
     private readonly int _admissionOrigin;
     private readonly int _lengthOrigin;
+    private readonly int _fragmentGroupOrigin;
     private readonly int _pendingGroupOrigin;
 
     /// <summary>
@@ -147,8 +158,9 @@ internal sealed class ReceiveArena
         long payloadBytes = (long)capacity * retainingSpaceCount * fragmentsPerSpace * fragmentSize;
         long admissionBytes = (long)capacity * classifyingSpaceCount * fragmentsPerSpace;
         long lengthBytes = (long)capacity * retainingSpaceCount * fragmentsPerSpace * FragmentLengthSize;
+        long fragmentGroupBytes = (long)capacity * retainingSpaceCount * fragmentsPerSpace * FragmentGroupEntrySize;
         long pendingGroupBytes = (long)capacity * retainingSpaceCount * PendingGroupsPerSpace * PendingGroupEntrySize;
-        long totalBytes = payloadBytes + admissionBytes + lengthBytes + pendingGroupBytes;
+        long totalBytes = payloadBytes + admissionBytes + lengthBytes + fragmentGroupBytes + pendingGroupBytes;
         if (totalBytes > Array.MaxLength)
         {
             throw new ArgumentOutOfRangeException(
@@ -156,15 +168,16 @@ internal sealed class ReceiveArena
                 totalBytes,
                 $"a receive arena of {capacity} share-holders × {fragmentsPerSpace} fragments × " +
                 $"({retainingSpaceCount} retaining Spaces × ({fragmentSize} payload bytes + {FragmentLengthSize} " +
-                $"length bytes) + {classifyingSpaceCount} classifying Spaces × 1 byte) plus {capacity} × " +
-                $"{retainingSpaceCount} retaining Spaces × {PendingGroupsPerSpace} waiting groups × " +
-                $"{PendingGroupEntrySize} bytes = {totalBytes} bytes cannot be allocated — it exceeds " +
-                $"Array.MaxLength ({Array.MaxLength}).");
+                $"length bytes + {FragmentGroupEntrySize} group-identity bytes) + {classifyingSpaceCount} " +
+                $"classifying Spaces × 1 byte) plus {capacity} × {retainingSpaceCount} retaining Spaces × " +
+                $"{PendingGroupsPerSpace} waiting groups × {PendingGroupEntrySize} bytes = {totalBytes} bytes " +
+                $"cannot be allocated — it exceeds Array.MaxLength ({Array.MaxLength}).");
         }
 
         _admissionOrigin = (int)payloadBytes;
         _lengthOrigin = (int)(payloadBytes + admissionBytes);
-        _pendingGroupOrigin = (int)(payloadBytes + admissionBytes + lengthBytes);
+        _fragmentGroupOrigin = (int)(payloadBytes + admissionBytes + lengthBytes);
+        _pendingGroupOrigin = (int)(payloadBytes + admissionBytes + lengthBytes + fragmentGroupBytes);
         _buffer = new byte[totalBytes];
     }
 
@@ -308,6 +321,43 @@ internal sealed class ReceiveArena
         int regionStart = _lengthOrigin
             + (((shareHolderId * RetainingSpaceCount) + spaceIndex) * FragmentsPerSpace * FragmentLengthSize);
         return _buffer.AsMemory(regionStart, FragmentsPerSpace * FragmentLengthSize);
+    }
+
+    /// <summary>
+    /// The Fragment-group run for <paramref name="shareHolderId"/>'s <paramref name="spaceIndex"/>th
+    /// retaining Space: <see cref="FragmentsPerSpace"/> entries of six bytes each, one per
+    /// <see cref="GetFragmentSlot"/> slot, naming the group — first sequence, then declared Fragment
+    /// count — that the Fragment currently held there belongs to (issue #297). Read alongside
+    /// <see cref="GetFragmentLengthRun"/> at the moment a slot's residue would otherwise be lost: the
+    /// length region says a piece was held, this region says which set it was a piece of and how large
+    /// that set claimed to be, which is what lets an abandoned set's held-versus-declared count still be
+    /// answered after its slot is reused. <see cref="Memory{T}"/> for the same reason
+    /// <see cref="GetFragmentLengthRun"/> returns one: a <see cref="Session.ReceiveWindow"/> holds this
+    /// run for the share-holder's whole lifetime, not for one call.
+    /// </summary>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    /// <param name="spaceIndex">A zero-based index below <see cref="RetainingSpaceCount"/>.</param>
+    public Memory<byte> GetFragmentGroupRun(int shareHolderId, int spaceIndex)
+    {
+        if (shareHolderId < 0 || shareHolderId >= Capacity)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(shareHolderId),
+                shareHolderId,
+                $"share-holder {shareHolderId} is outside the arena's capacity of {Capacity}.");
+        }
+
+        if (spaceIndex < 0 || spaceIndex >= RetainingSpaceCount)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(spaceIndex),
+                spaceIndex,
+                $"Space {spaceIndex} is outside this arena's retaining Space count of {RetainingSpaceCount}.");
+        }
+
+        int regionStart = _fragmentGroupOrigin
+            + (((shareHolderId * RetainingSpaceCount) + spaceIndex) * FragmentsPerSpace * FragmentGroupEntrySize);
+        return _buffer.AsMemory(regionStart, FragmentsPerSpace * FragmentGroupEntrySize);
     }
 
     /// <summary>

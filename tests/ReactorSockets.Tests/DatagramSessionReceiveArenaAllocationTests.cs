@@ -34,6 +34,14 @@ public class DatagramSessionReceiveArenaAllocationTests
     /// the same width the production bill is computed from.
     /// </summary>
     private const int FragmentLengthBytes = 2;
+
+    /// <summary>
+    /// Mirrors the internal <c>DatagramSessionOptions.FragmentGroupEntryBytes</c> (#297) — the six bytes
+    /// per fragment slot that name the group a held Fragment belongs to, distinct from
+    /// <see cref="PendingGroupEntryBytes"/>'s six bytes per waiting group.
+    /// </summary>
+    private const int FragmentGroupEntryBytes = 6;
+
     private const int PendingGroupEntryBytes = 6;
 
     [Fact]
@@ -78,21 +86,24 @@ public class DatagramSessionReceiveArenaAllocationTests
         long stated = StatedReceiveBudgetBytes(MeasurementWindowFragments);
 
         // Assert — the stated multiplier says what is actually allocated (issue #174, extended by
-        // #257). Payload slots exist only for the two reliable Spaces, which retain fragments until a
-        // Message is whole; the one-byte-per-slot admission record that lets a window classify a
+        // #257 and #297). Payload slots exist only for the two reliable Spaces, which retain fragments
+        // until a Message is whole; the one-byte-per-slot admission record that lets a window classify a
         // sequence exists for all four, because all four classify; the two-byte-per-slot Fragment
-        // length record exists only for the two reliable Spaces, the only ones that ever hold a
-        // Fragment (ADR 0004); and the six-byte waiting-group entries (#259) exist for those same two
-        // Spaces, half a window's worth each, since a group is at least two Fragments wide.
+        // length record and the six-byte-per-slot Fragment group-identity record exist only for the two
+        // reliable Spaces, the only ones that ever hold a Fragment (ADR 0004); and the six-byte
+        // waiting-group entries (#259) exist for those same two Spaces, half a window's worth each,
+        // since a group is at least two Fragments wide.
         long payload = (long)MeasurementCapacity * ReliableSpaces
             * MeasurementWindowFragments * MeasurementFragmentSize;
         long classification = (long)MeasurementCapacity * AllSpaces
             * MeasurementWindowFragments;
         long length = (long)MeasurementCapacity * ReliableSpaces
             * MeasurementWindowFragments * FragmentLengthBytes;
+        long fragmentGroups = (long)MeasurementCapacity * ReliableSpaces
+            * MeasurementWindowFragments * FragmentGroupEntryBytes;
         long pendingGroups = (long)MeasurementCapacity * ReliableSpaces
             * (MeasurementWindowFragments / 2) * PendingGroupEntryBytes;
-        stated.Should().Be(payload + classification + length + pendingGroups);
+        stated.Should().Be(payload + classification + length + fragmentGroups + pendingGroups);
     }
 
     /// <summary>

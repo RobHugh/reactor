@@ -136,6 +136,24 @@ public class DiagnosticRecordTests
     }
 
     [Fact]
+    public void ForFragmentSetAbandoned_PeerHeldAndExpected_CarriesPeerSubjectAndWarnLevel()
+    {
+        // Arrange — the roster's Warn-level, Peer-subject entry at 203.
+        PeerId peer = new(Origin: 1, Index: 0, Generation: 1);
+
+        // Act
+        DiagnosticRecord record = DiagnosticRecord.ForFragmentSetAbandoned(peer, fragmentsHeld: 39, fragmentsExpected: 40);
+
+        // Assert
+        record.Id.Should().Be(DiagnosticId.FragmentSetAbandoned);
+        record.Level.Should().Be(DiagnosticLevel.Warn);
+        record.SubjectKind.Should().Be(DiagnosticSubjectKind.Peer);
+        record.Peer.Should().Be(peer);
+        record.Value0.Should().Be(39);
+        record.Value1.Should().Be(40);
+    }
+
+    [Fact]
     public void ForRetransmissionTimerBackedOff_PeerRtoAndCount_CarriesPeerSubjectAndTraceLevel()
     {
         // Arrange — subtask 6.4.9, issue #199: the roster's Trace-level, Peer-subject entry at 204.
