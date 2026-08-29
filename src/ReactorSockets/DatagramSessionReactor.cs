@@ -1443,6 +1443,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             // counts toward anything (it is a no-op unless a Fragment window is open and unacked).
             slot.StallSignature.RecordRetransmissionRound();
 
+            // Acting on the stall signature (issue #302): the round just recorded above is the only
+            // place RoundsSinceFirstUnackedFragment can advance, so it is the earliest and only point a
+            // false IsFragmentSizeStall can newly turn true — no separate per-Pump sweep is needed.
+            // Closing here, before the re-arm below, means the expired sequences QueueForRetransmission
+            // just queued onto slot.PendingSends never reach FlushOutboundDatagrams: ClosePeer removes
+            // the slot from every table that keeps it reachable, so nothing about this Peer survives to
+            // be flushed, backed off, or traced. Removing the occupant at this index leaves the Slot
+            // null (ShareHolderTable.Remove) rather than shifting later Slots, so continuing the loop at
+            // index + 1 is exactly as safe as an ordinary skip.
+            if (slot.StallSignature.IsFragmentSizeStall)
+            {
+                ClosePeer(slot.Handle, DisconnectReason.FragmentSizeUnviable);
+                continue;
+            }
+
             TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
             slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableOrdered, effectiveRto);
             slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableUnordered, effectiveRto);
