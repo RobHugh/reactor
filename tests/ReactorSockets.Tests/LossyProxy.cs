@@ -13,6 +13,18 @@ internal enum RelayDirection
 }
 
 /// <summary>
+/// One datagram a <see cref="LossyProxy"/> observed arriving, captured before any fault was applied —
+/// issue #307's instrument for asserting "no probe datagram is ever emitted" at the wire rather than at
+/// an internal flag. Captured at arrival rather than at forwarding on purpose: a datagram this proxy's
+/// own size threshold or every-Nth rule then drops still left the sender and still belongs on the wire
+/// this assertion reasons about, the same way a real network would have carried it right up to the point
+/// something dropped it.
+/// </summary>
+/// <param name="Direction">Which way the datagram was travelling when this proxy observed it.</param>
+/// <param name="Payload">A defensive copy of the exact bytes observed — safe to keep past this proxy's next Pump.</param>
+internal readonly record struct RelayCapture(RelayDirection Direction, byte[] Payload);
+
+/// <summary>
 /// A <see cref="RawReactor"/> relaying UDP datagrams between a client-facing address and a fixed
 /// upstream endpoint, dropping, duplicating, reordering and delaying under explicit test control — the
 /// third instrument the parent slice spec's Further Notes calls for. Built entirely from the public
@@ -44,6 +56,7 @@ internal sealed class LossyProxy : IDisposable
     private readonly Queue<Fault> _clientToUpstreamFaults = new();
     private readonly Queue<Fault> _upstreamToClientFaults = new();
     private readonly List<DelayedRelay> _delayed = [];
+    private readonly List<RelayCapture> _captures = [];
     private byte[]? _heldForReorderClientToUpstream;
     private byte[]? _heldForReorderUpstreamToClient;
     private Source? _lastClient;
@@ -85,6 +98,14 @@ internal sealed class LossyProxy : IDisposable
 
     /// <summary>The address a client should be told to send to — this proxy relays whatever arrives here toward <c>upstream</c>.</summary>
     public IPEndPoint PublicEndPoint => _reactor.LocalOf(_clientFacing);
+
+    /// <summary>
+    /// Every datagram this proxy has observed arriving so far, in either direction and in arrival order,
+    /// captured before any standing rule or one-shot fault was applied to it (see <see cref="RelayCapture"/>).
+    /// Read-only and purely additive to this type's existing relay behaviour — nothing here changes what
+    /// is forwarded, delayed, dropped, duplicated or reordered.
+    /// </summary>
+    public IReadOnlyList<RelayCapture> Captures => _captures;
 
     /// <summary>Queues a drop for the next relay in <paramref name="direction"/>: the datagram is read off the wire and never forwarded.</summary>
     public void DropNext(RelayDirection direction) => QueueFor(direction).Enqueue(Fault.Drop);
@@ -176,11 +197,15 @@ internal sealed class LossyProxy : IDisposable
             if (evt.Link == _clientFacing)
             {
                 _lastClient = evt.Source;
-                Relay(RelayDirection.ClientToUpstream, _upstreamFacing, Source.FromIPEndPoint(_upstream), evt.Payload.ToArray());
+                byte[] payload = evt.Payload.ToArray();
+                _captures.Add(new RelayCapture(RelayDirection.ClientToUpstream, payload));
+                Relay(RelayDirection.ClientToUpstream, _upstreamFacing, Source.FromIPEndPoint(_upstream), payload);
             }
             else if (evt.Link == _upstreamFacing && _lastClient is Source client)
             {
-                Relay(RelayDirection.UpstreamToClient, _clientFacing, client, evt.Payload.ToArray());
+                byte[] payload = evt.Payload.ToArray();
+                _captures.Add(new RelayCapture(RelayDirection.UpstreamToClient, payload));
+                Relay(RelayDirection.UpstreamToClient, _clientFacing, client, payload);
             }
         }
 
