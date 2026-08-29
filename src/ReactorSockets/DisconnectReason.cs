@@ -107,4 +107,34 @@ public enum DisconnectReason
     /// of retention would have made a fabricated counter valid.
     /// </summary>
     RetentionGap = 7,
+
+    /// <summary>
+    /// The configured fragment size (<see cref="DatagramSessionOptions.FragmentSize"/>) is larger than
+    /// this network path will carry. Detected from the fragment-size stall signature
+    /// (<see cref="FragmentStallSignature.IsFragmentSizeStall"/>): unfragmented reliable records kept
+    /// being acknowledged — proving the path and this Peer are both reachable — while not one Fragment
+    /// was acknowledged across <see cref="FragmentStallSignature.StallRoundCount"/> retransmission
+    /// rounds, which is only explained by every Fragment being lost every round because of its size
+    /// rather than by chance. The remedy is to lower <see cref="DatagramSessionOptions.FragmentSize"/>;
+    /// nothing this library can change fixes it, since the configuration itself is what will not fit.
+    /// </summary>
+    /// <remarks>
+    /// This member is a diagnosis, not a fault this end tries to work around: no probe datagram is sent,
+    /// no fragment size is reduced, nothing smaller is retried, and the Session simply closes with this
+    /// reason. Each of those would mean measuring a path this library deliberately declines to probe
+    /// (ADR 0004) and replacing a size the consumer configured with one this library guessed, so recovery
+    /// is left entirely to the consumer changing their own configuration and reconnecting. A Message
+    /// already cut into Fragments keeps the size it was cut at, because fragment size is fixed at
+    /// <see cref="DatagramSessionReactor.Send"/> and retransmits are byte-identical. Distinct from
+    /// <see cref="TransportFailed"/> and <see cref="LingerExpired"/>, both of which are silent about
+    /// *why* the Session ended — nothing here said anything was wrong with the bytes, only that the
+    /// transport stopped answering — while this member is a direct statement about what was observed:
+    /// unfragmented traffic proved the path alive while every Fragment vanished. Distinct from
+    /// <see cref="RetentionGap"/>, the other member whose remedy is a configuration change: that one
+    /// names a capacity too small for an outage already survived, this one names a size too large for
+    /// the path carrying it. Named for the setting that cannot work, <see cref="DatagramSessionOptions.FragmentSize"/>,
+    /// rather than for the stall that revealed it, because the stall is only the symptom and the
+    /// fragment size is what the consumer can actually change.
+    /// </remarks>
+    FragmentSizeUnviable = 8,
 }
