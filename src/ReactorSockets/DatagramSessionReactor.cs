@@ -376,6 +376,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             State = HandshakeState.AwaitingCookie,
             AckTracker = NewAckTracker(retransmitTimer),
             RetransmitTimer = retransmitTimer,
+            StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
         };
 
@@ -964,7 +965,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits, effectiveRto);
+        ApplyAckToStallSignature(slot);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableUnordered, reliableUnorderedAckBase, reliableUnorderedAckBits, effectiveRto);
+        ApplyAckToStallSignature(slot);
         ReconcileHorizonDeferrals(slot);
 
         remainder = body;
@@ -1433,6 +1436,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             QueueForRetransmission(slot, PacketRecordMode.ReliableUnordered, reliableUnorderedExpired);
 
             slot.RetransmitTimer.BackOff();
+
+            // One elapsed retransmission round for this Peer (subtask 7.5.3.1, issue #294): once per
+            // Peer per Pump that expired something, whatever expired, alongside the shared backoff
+            // above — not once per expired Fragment. StallSignature itself decides whether this round
+            // counts toward anything (it is a no-op unless a Fragment window is open and unacked).
+            slot.StallSignature.RecordRetransmissionRound();
+
             TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
             slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableOrdered, effectiveRto);
             slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableUnordered, effectiveRto);
@@ -1453,6 +1463,28 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private static bool IsReliable(PacketRecordMode mode) =>
         mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered;
+
+    /// <summary>
+    /// Folds the <see cref="OutstandingReliableSequences.LastAckRelease"/> left behind by the
+    /// <see cref="OutstandingReliableSequences.ApplyAck"/> call that just ran into
+    /// <paramref name="slot"/>'s <see cref="PeerSlot.StallSignature"/> (subtask 7.5.3.1, issue #294):
+    /// called once per <see cref="OutstandingReliableSequences.ApplyAck"/> call, immediately after it, so
+    /// each Space's own release is read before the other Space's call overwrites
+    /// <see cref="OutstandingReliableSequences.LastAckRelease"/>.
+    /// </summary>
+    private static void ApplyAckToStallSignature(PeerSlot slot)
+    {
+        (bool releasedFragment, bool releasedUnfragmentedRecord) = slot.AckTracker.LastAckRelease;
+        if (releasedFragment)
+        {
+            slot.StallSignature.RecordFragmentAcked();
+        }
+
+        if (releasedUnfragmentedRecord)
+        {
+            slot.StallSignature.RecordUnfragmentedRecordAcked();
+        }
+    }
 
     /// <summary>
     /// Queues every sequence <see cref="ReportExpiredRetransmissions"/> found expired on one reliable
@@ -1596,7 +1628,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 slot.AckTracker.RecordSent(
                     pending.Mode,
                     pending.Sequence,
-                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger));
+                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger),
+                    isFragment);
+            }
+
+            // StallSignature.RecordFragmentSent opens the unacked-Fragment window on the first Fragment
+            // only (subtask 7.5.3.1, issue #294) but must see every reliable Fragment actually packed,
+            // retransmits included — the tracker itself latches only the first send.
+            if (isFragment && IsReliable(pending.Mode))
+            {
+                slot.StallSignature.RecordFragmentSent();
             }
         }
 
@@ -2482,6 +2523,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             State = HandshakeState.Established,
             AckTracker = NewAckTracker(retransmitTimer),
             RetransmitTimer = retransmitTimer,
+            StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
         };
     }
@@ -2822,6 +2864,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// through it and should extend this property rather than add a second one.
         /// </summary>
         public required RetransmissionTimer RetransmitTimer { get; init; }
+
+        /// <summary>
+        /// This Peer's own fragment-size stall signature state (subtask 7.5.3.1, issue #294; parent
+        /// #269): built fresh from this Reactor's own <see cref="ReactorOptions.TimeProvider"/> at the
+        /// same two admission sites as <see cref="AckTracker"/> and <see cref="RetransmitTimer"/>, and
+        /// released with the Slot, so a Slot a later Peer reuses inherits none of the previous
+        /// occupant's stall state. Fed from the same flush, ack and retransmission-sweep paths that
+        /// already run for <see cref="AckTracker"/> and <see cref="RetransmitTimer"/>; nothing new reads
+        /// the clock or sweeps for it.
+        /// </summary>
+        public required FragmentStallSignature StallSignature { get; init; }
 
         /// <summary>
         /// The value of <see cref="OutstandingReliableSequences.HorizonDeferrals"/> last folded into

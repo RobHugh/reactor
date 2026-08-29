@@ -53,6 +53,14 @@ namespace ReactorSockets.Session;
 /// by the base advancing past it is not sampled twice.
 /// </para>
 /// <para>
+/// <b>Reporting what a release covered.</b> <see cref="RecordSent"/> also takes whether the sequence
+/// being recorded is a Fragment (subtask 7.5.3.1, issue #294), and every sequence one <see cref="ApplyAck"/>
+/// call actually releases — named by a bit or swept up by the base advancing past it, once each,
+/// matching the estimator-sampling rule above — contributes to <see cref="LastAckRelease"/> according to
+/// its stored flag. This is what lets a Peer's fragment-stall signature (issue #269) tell a Fragment ack
+/// from an unfragmented one without <see cref="ApplyAck"/> itself knowing anything about that signature.
+/// </para>
+/// <para>
 /// Deadlines are always computed from the injected <see cref="TimeProvider"/>, never the ambient clock,
 /// so a test can advance time deterministically and so a real Reactor's single time source stays the
 /// only clock a Peer ever reads. Every timing read here is monotonic — <see cref="TimeProvider.GetTimestamp"/>
@@ -112,6 +120,18 @@ internal sealed class OutstandingReliableSequences
     public ulong HorizonDeferrals { get; private set; }
 
     /// <summary>
+    /// What the most recent <see cref="ApplyAck"/> call actually released, one Space's worth at a time
+    /// (subtask 7.5.3.1, issue #294): whether any of the sequences it released was a Fragment, and
+    /// whether any was an unfragmented record. Written by every <see cref="ApplyAck"/> call, including a
+    /// stale or empty one, which writes <see langword="default"/> — <c>(false, false)</c> — rather than
+    /// leaving the previous call's value standing. One value across both reliable Spaces, since each
+    /// <see cref="ApplyAck"/> call names exactly one Space: read this immediately after the call it
+    /// belongs to, mirroring <see cref="ReceiveWindow.LastSlideLoss"/> and
+    /// <see cref="ReceiveWindow.LastAbandonedFragmentSet"/>'s own idiom.
+    /// </summary>
+    public (bool ReleasedFragment, bool ReleasedUnfragmentedRecord) LastAckRelease { get; private set; }
+
+    /// <summary>
     /// Records that <paramref name="sequence"/> was just sent on <paramref name="mode"/>'s reliable
     /// Space and is now outstanding. Arms its retransmit deadline — <paramref name="sequence"/>'s send
     /// time is not tracked, only the moment this call arms from — at <paramref name="effectiveRto"/>
@@ -126,10 +146,16 @@ internal sealed class OutstandingReliableSequences
     /// The effective RTO to arm with, read fresh by the caller at the moment of this call (issue #197)
     /// — never captured earlier and never a value fixed at construction.
     /// </param>
+    /// <param name="isFragment">
+    /// Whether <paramref name="sequence"/> names one Fragment of a cut Message rather than a whole
+    /// record (subtask 7.5.3.1, issue #294). Stored against the slot so a later <see cref="ApplyAck"/>
+    /// release can report it through <see cref="LastAckRelease"/> without this tracker knowing anything
+    /// about what reads that value.
+    /// </param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
-    public void RecordSent(PacketRecordMode mode, uint sequence, TimeSpan effectiveRto)
+    public void RecordSent(PacketRecordMode mode, uint sequence, TimeSpan effectiveRto, bool isFragment)
     {
-        if (SpaceOf(mode).RecordSent(sequence, _time, effectiveRto))
+        if (SpaceOf(mode).RecordSent(sequence, _time, effectiveRto, isFragment))
         {
             HorizonDeferrals++;
         }
@@ -231,9 +257,13 @@ internal sealed class OutstandingReliableSequences
     /// The effective RTO any newly-covered sequence arms at, read fresh by the caller at the moment of
     /// this call (issue #197) — never a value fixed at construction.
     /// </param>
+    /// <remarks>
+    /// Always writes <see cref="LastAckRelease"/>, including <see langword="default"/> for a stale or
+    /// empty block — see that property's own doc.
+    /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
     public void ApplyAck(PacketRecordMode mode, uint ackBase, uint ackBits, TimeSpan effectiveRto) =>
-        SpaceOf(mode).ApplyAck(ackBase, ackBits, _time, effectiveRto, _timer);
+        LastAckRelease = SpaceOf(mode).ApplyAck(ackBase, ackBits, _time, effectiveRto, _timer);
 
     /// <summary>
     /// Reports every sequence on <paramref name="mode"/>'s reliable Space whose retransmit deadline has
@@ -367,6 +397,7 @@ internal sealed class OutstandingReliableSequences
         private bool[] _armed = new bool[InitialCapacity];
         private bool[] _released = new bool[InitialCapacity];
         private bool[] _retransmitted = new bool[InitialCapacity];
+        private bool[] _isFragment = new bool[InitialCapacity];
         private long[] _armedAtTimestamp = new long[InitialCapacity];
         private long[] _deadlineTimestamp = new long[InitialCapacity];
 
@@ -417,9 +448,11 @@ internal sealed class OutstandingReliableSequences
         /// Records <paramref name="sequence"/> as newly outstanding, arming its deadline at
         /// <paramref name="effectiveRto"/> when the current horizon covers it. Returns whether it was
         /// deferred instead, so the caller can fold that into <see cref="HorizonDeferrals"/> without this
-        /// tracker needing to know about the counter it feeds.
+        /// tracker needing to know about the counter it feeds. Stores <paramref name="isFragment"/>
+        /// against the slot, read back when this sequence is released (see the enclosing type's
+        /// <c>LastAckRelease</c>).
         /// </summary>
-        public bool RecordSent(uint sequence, TimeProvider time, TimeSpan effectiveRto)
+        public bool RecordSent(uint sequence, TimeProvider time, TimeSpan effectiveRto, bool isFragment)
         {
             if (_count == 0)
             {
@@ -434,6 +467,7 @@ internal sealed class OutstandingReliableSequences
             bool withinHorizon = unchecked(sequence - _ackBase) <= HorizonWidth;
             _released[slot] = false;
             _retransmitted[slot] = false;
+            _isFragment[slot] = isFragment;
             if (withinHorizon)
             {
                 Arm(slot, time.GetTimestamp(), time, effectiveRto);
@@ -555,17 +589,25 @@ internal sealed class OutstandingReliableSequences
         /// than, and is not equal to, the base already applied — is rejected outright: nothing is
         /// released, sampled or armed, and the horizon does not move.
         /// </summary>
-        public void ApplyAck(uint ackBase, uint ackBits, TimeProvider time, TimeSpan effectiveRto, RetransmissionTimer timer)
+        /// <returns>
+        /// Whether any sequence this call actually released was a Fragment, and whether any was an
+        /// unfragmented record — <see langword="default"/> for a stale or empty block (see the enclosing
+        /// type's <c>LastAckRelease</c>).
+        /// </returns>
+        public (bool ReleasedFragment, bool ReleasedUnfragmentedRecord) ApplyAck(
+            uint ackBase, uint ackBits, TimeProvider time, TimeSpan effectiveRto, RetransmissionTimer timer)
         {
             bool stale = ackBase != _ackBase && !SequenceNumber.IsNewerThan(ackBase, _ackBase);
             if (stale)
             {
-                return;
+                return default;
             }
 
             long now = time.GetTimestamp();
+            bool releasedFragment = false;
+            bool releasedUnfragmentedRecord = false;
 
-            ReleaseBelowBase(ackBase, time, now, timer);
+            ReleaseBelowBase(ackBase, time, now, timer, ref releasedFragment, ref releasedUnfragmentedRecord);
 
             for (int n = 0; n < (int)HorizonWidth; n++)
             {
@@ -577,12 +619,14 @@ internal sealed class OutstandingReliableSequences
                 uint sequence = unchecked(ackBase + (uint)n + 1);
                 if (TryGetSlot(sequence, out int slot))
                 {
-                    Release(slot, time, now, timer);
+                    Release(slot, time, now, timer, ref releasedFragment, ref releasedUnfragmentedRecord);
                 }
             }
 
             _ackBase = ackBase;
             ArmNewlyCovered(time, now, effectiveRto);
+
+            return (releasedFragment, releasedUnfragmentedRecord);
         }
 
         /// <summary>
@@ -592,7 +636,9 @@ internal sealed class OutstandingReliableSequences
         /// bit. A no-op when nothing is tracked, or when <paramref name="ackBase"/> does not reach past
         /// <see cref="_oldest"/> at all.
         /// </summary>
-        private void ReleaseBelowBase(uint ackBase, TimeProvider time, long now, RetransmissionTimer timer)
+        private void ReleaseBelowBase(
+            uint ackBase, TimeProvider time, long now, RetransmissionTimer timer,
+            ref bool releasedFragment, ref bool releasedUnfragmentedRecord)
         {
             if (_count == 0 || _oldest == ackBase || SequenceNumber.IsNewerThan(_oldest, ackBase))
             {
@@ -604,7 +650,7 @@ internal sealed class OutstandingReliableSequences
 
             for (int i = 0; i < steps; i++)
             {
-                Release(SlotFor((uint)i), time, now, timer);
+                Release(SlotFor((uint)i), time, now, timer, ref releasedFragment, ref releasedUnfragmentedRecord);
             }
 
             _oldest = unchecked(_oldest + (uint)steps);
@@ -629,14 +675,37 @@ internal sealed class OutstandingReliableSequences
         /// failing must end. Resetting only on a clean sample would leave a path that recovered by
         /// retransmission backed off forever, which is exactly the case backoff exists to escape.
         /// </para>
+        /// <para>
+        /// A slot not already released also contributes to <paramref name="releasedFragment"/> or
+        /// <paramref name="releasedUnfragmentedRecord"/> — whichever <see cref="_isFragment"/> says it
+        /// is — regardless of whether it was armed, so a still-deferred sequence swept up by the base
+        /// advancing past it is reported the same as an armed one (subtask 7.5.3.1, issue #294). An
+        /// already-released slot contributes nothing, matching the no-double-sample rule above.
+        /// </para>
         /// </summary>
-        private void Release(int slot, TimeProvider time, long now, RetransmissionTimer timer)
+        private void Release(
+            int slot, TimeProvider time, long now, RetransmissionTimer timer,
+            ref bool releasedFragment, ref bool releasedUnfragmentedRecord)
         {
-            if (_armed[slot] && !_released[slot])
+            if (_released[slot])
+            {
+                return;
+            }
+
+            if (_armed[slot])
             {
                 TimeSpan elapsed = time.GetElapsedTime(_armedAtTimestamp[slot], now);
                 timer.Estimator.Sample(elapsed, _retransmitted[slot]);
                 timer.RecordDelivery();
+            }
+
+            if (_isFragment[slot])
+            {
+                releasedFragment = true;
+            }
+            else
+            {
+                releasedUnfragmentedRecord = true;
             }
 
             _armed[slot] = false;
@@ -756,6 +825,7 @@ internal sealed class OutstandingReliableSequences
             bool[] newArmed = new bool[newCapacity];
             bool[] newReleased = new bool[newCapacity];
             bool[] newRetransmitted = new bool[newCapacity];
+            bool[] newIsFragment = new bool[newCapacity];
             long[] newArmedAtTimestamp = new long[newCapacity];
             long[] newDeadlineTimestamp = new long[newCapacity];
             for (int i = 0; i < _count; i++)
@@ -764,6 +834,7 @@ internal sealed class OutstandingReliableSequences
                 newArmed[i] = _armed[oldSlot];
                 newReleased[i] = _released[oldSlot];
                 newRetransmitted[i] = _retransmitted[oldSlot];
+                newIsFragment[i] = _isFragment[oldSlot];
                 newArmedAtTimestamp[i] = _armedAtTimestamp[oldSlot];
                 newDeadlineTimestamp[i] = _deadlineTimestamp[oldSlot];
             }
@@ -771,6 +842,7 @@ internal sealed class OutstandingReliableSequences
             _armed = newArmed;
             _released = newReleased;
             _retransmitted = newRetransmitted;
+            _isFragment = newIsFragment;
             _armedAtTimestamp = newArmedAtTimestamp;
             _deadlineTimestamp = newDeadlineTimestamp;
 

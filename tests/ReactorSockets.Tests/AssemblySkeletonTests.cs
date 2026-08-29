@@ -66,6 +66,7 @@ public class AssemblySkeletonTests
             nameof(PumpIntervalObserver),
             nameof(RoundTripEstimator),
             nameof(RetransmissionTimer),
+            nameof(FragmentStallSignature),
             nameof(FragmentPlan),
             nameof(FragmentPlanResult),
             nameof(FragmentGroupCompleteness));
