@@ -31,13 +31,15 @@ public class FragmentGroupTests
     {
         // Arrange — a 4-piece group starting well clear of the u32 wrap.
         uint firstSequence = 10_000;
+        ushort[] fragmentIndices = [0, 1, 2, 3];
 
-        // Act, Assert — each piece's own sequence and index recovers the same first sequence.
-        for (ushort fragmentIndex = 0; fragmentIndex < 4; fragmentIndex++)
-        {
-            uint sequence = firstSequence + fragmentIndex;
-            FragmentGroup.FirstSequenceOf(sequence, fragmentIndex).Should().Be(firstSequence);
-        }
+        // Act — each piece's own sequence and index recovers the group's first sequence.
+        uint[] resolved = fragmentIndices
+            .Select(fragmentIndex => FragmentGroup.FirstSequenceOf(firstSequence + fragmentIndex, fragmentIndex))
+            .ToArray();
+
+        // Assert
+        resolved.Should().AllBeEquivalentTo(firstSequence);
     }
 
     [Fact]
@@ -54,12 +56,13 @@ public class FragmentGroupTests
             unchecked(firstSequence + 3), // 1 — wrapped
         ];
 
-        // Act, Assert — naive (non-wrap-aware) subtraction would corrupt the wrapped pieces' answers;
-        // unchecked u32 subtraction recovers the same first sequence for every one of them.
-        for (ushort fragmentIndex = 0; fragmentIndex < sequencesInFragmentIndexOrder.Length; fragmentIndex++)
-        {
-            FragmentGroup.FirstSequenceOf(sequencesInFragmentIndexOrder[fragmentIndex], fragmentIndex)
-                .Should().Be(firstSequence);
-        }
+        // Act — naive (non-wrap-aware) subtraction would corrupt the wrapped pieces' answers;
+        // unchecked u32 subtraction should recover the same first sequence for every one of them.
+        uint[] resolved = sequencesInFragmentIndexOrder
+            .Select((sequence, fragmentIndex) => FragmentGroup.FirstSequenceOf(sequence, (ushort)fragmentIndex))
+            .ToArray();
+
+        // Assert
+        resolved.Should().AllBeEquivalentTo(firstSequence);
     }
 }

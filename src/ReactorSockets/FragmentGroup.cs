@@ -67,7 +67,10 @@ public static class FragmentGroup
     /// A no-op outside <c>DEBUG</c> builds, matching every other debug-only guard in this codebase: the
     /// contiguity invariant is enforced by construction in the send path that builds these sets, so this
     /// exists to catch a defect in that construction, not to police an untrusted input — a remote peer's
-    /// Fragments are validated by <see cref="PacketRecordCodec.TryRead"/>, not by this method.
+    /// Fragments are validated by <see cref="PacketRecordCodec.TryRead"/>, not by this method. Stays
+    /// <see langword="internal"/> rather than following <see cref="FirstSequenceOf"/> public: unlike that
+    /// method, this one is already reachable through the send path it guards, so ADR 0015's
+    /// unreachable-through-the-seam condition does not hold for it, and nothing pins it directly.
     /// </remarks>
     /// <param name="sequencesInFragmentIndexOrder">
     /// The group's sequences, ordered by ascending fragment index — <c>sequencesInFragmentIndexOrder[i]</c>
@@ -75,7 +78,7 @@ public static class FragmentGroup
     /// </param>
     /// <param name="declaredFragmentCount">The fragment count the set is being emitted to claim on the wire.</param>
     [Conditional("DEBUG")]
-    public static void AssertContiguousSet(ReadOnlySpan<uint> sequencesInFragmentIndexOrder, ushort declaredFragmentCount)
+    internal static void AssertContiguousSet(ReadOnlySpan<uint> sequencesInFragmentIndexOrder, ushort declaredFragmentCount)
     {
         Debug.Assert(
             sequencesInFragmentIndexOrder.Length == declaredFragmentCount,
