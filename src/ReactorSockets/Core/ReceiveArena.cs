@@ -51,7 +51,7 @@ internal sealed class ReceiveArena
     /// <summary>
     /// Bytes one waiting-Fragment-group entry occupies: a <c>u32</c> first sequence and a <c>u16</c>
     /// declared Fragment count, the pair that names a group without a message ID the wire never
-    /// carries (<see cref="Session.FragmentGroup"/>).
+    /// carries (<see cref="FragmentGroup"/>).
     /// </summary>
     private const int PendingGroupEntrySize = 6;
 

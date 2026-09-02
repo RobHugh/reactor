@@ -1,6 +1,7 @@
 using System.Diagnostics;
+using ReactorSockets.Session;
 
-namespace ReactorSockets.Session;
+namespace ReactorSockets;
 
 /// <summary>
 /// A Fragment's group identity (ADR 0009, issue #47): no message ID exists on the wire, so a group is
@@ -10,6 +11,15 @@ namespace ReactorSockets.Session;
 /// naming scheme lie is caught where the set is built rather than inferred later by a receiver.
 /// </summary>
 /// <remarks>
+/// <para>
+/// Public for the same reason <see cref="FragmentPlan"/> is (ADR 0015, issue #254): a test pins the
+/// <c>u32</c>-wrap identity by calling <see cref="FirstSequenceOf"/> directly with hand-picked
+/// sequences and fragment indices, with no <c>InternalsVisibleTo</c> and no interface invented for the
+/// purpose. It is not part of a consumer's request path — nothing here is reached by name from
+/// application code — but the seam this library tests through has no other way to reach arithmetic
+/// this precise.
+/// </para>
+/// <para>
 /// Added as a sibling to <see cref="SequenceNumber"/> rather than folded into it: that type answers
 /// one question, whether <c>a</c> is newer than <c>b</c>, and has no notion of a Fragment or a group.
 /// This type answers a different one, which group a Fragment belongs to and whether a claimed group is
@@ -17,8 +27,9 @@ namespace ReactorSockets.Session;
 /// <c>unchecked</c> <c>u32</c> subtraction, never a signed or widened comparison — rather than
 /// open-coding it a second time. Keeping the two types separate keeps each file's XML doc answering one
 /// question instead of two.
+/// </para>
 /// </remarks>
-internal static class FragmentGroup
+public static class FragmentGroup
 {
     /// <summary>
     /// The first sequence of the group a Fragment at <paramref name="sequence"/> and
@@ -56,7 +67,10 @@ internal static class FragmentGroup
     /// A no-op outside <c>DEBUG</c> builds, matching every other debug-only guard in this codebase: the
     /// contiguity invariant is enforced by construction in the send path that builds these sets, so this
     /// exists to catch a defect in that construction, not to police an untrusted input — a remote peer's
-    /// Fragments are validated by <see cref="PacketRecordCodec.TryRead"/>, not by this method.
+    /// Fragments are validated by <see cref="PacketRecordCodec.TryRead"/>, not by this method. Stays
+    /// <see langword="internal"/> rather than following <see cref="FirstSequenceOf"/> public: unlike that
+    /// method, this one is already reachable through the send path it guards, so ADR 0015's
+    /// unreachable-through-the-seam condition does not hold for it, and nothing pins it directly.
     /// </remarks>
     /// <param name="sequencesInFragmentIndexOrder">
     /// The group's sequences, ordered by ascending fragment index — <c>sequencesInFragmentIndexOrder[i]</c>
@@ -64,7 +78,7 @@ internal static class FragmentGroup
     /// </param>
     /// <param name="declaredFragmentCount">The fragment count the set is being emitted to claim on the wire.</param>
     [Conditional("DEBUG")]
-    public static void AssertContiguousSet(ReadOnlySpan<uint> sequencesInFragmentIndexOrder, ushort declaredFragmentCount)
+    internal static void AssertContiguousSet(ReadOnlySpan<uint> sequencesInFragmentIndexOrder, ushort declaredFragmentCount)
     {
         Debug.Assert(
             sequencesInFragmentIndexOrder.Length == declaredFragmentCount,
