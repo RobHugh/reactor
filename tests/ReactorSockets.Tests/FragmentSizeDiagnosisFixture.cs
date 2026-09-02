@@ -35,27 +35,32 @@ namespace ReactorSockets.Tests;
 /// to prove the diagnosis end to end through a real proxy rather than against a picked ack.
 /// </para>
 /// <para>
-/// <b>Bounded, not waited on.</b> Every pump method here takes a round budget and returns once it is
-/// spent, never blocking on a condition that might not arrive — the fixture's own contract is to
-/// terminate, leaving a caller's own assertions to report a stall that never resolved as a failure rather
-/// than a hang. <see cref="PumpDeadline"/>'s real-time budget still applies to establishing the initial
-/// handshake, because Windows loopback delivery is not synchronous with a Pump (see its own remarks) —
-/// that one wait is real time spent settling the platform, not scenario time, and a handshake that never
-/// completes is a fixture failure, so <see cref="Establish"/> is the one place here allowed to throw.
+/// <b>Bounded, not waited on.</b> Every pump method here, <see cref="Establish"/> included, takes a
+/// round budget and returns once it is spent, never blocking on a condition that might not arrive — the
+/// fixture's own contract is to terminate, leaving a caller's own assertions to report a stall that never
+/// resolved as a failure rather than a hang. A handshake that never completes is the one failure a
+/// caller cannot express an assertion about, since it happens before a caller holds the fixture at all,
+/// so <see cref="Establish"/> is the one place here allowed to throw.
 /// </para>
 /// <para>
-/// <b>Issue #304's "no wall-clock waits" and where the one exception is.</b>
-/// <see cref="Establish"/>, called from the constructor, spends a bounded amount of <em>real</em> time —
-/// via <see cref="PumpDeadline"/>, which is <c>Thread.Sleep(1)</c> plus a <see cref="System.Diagnostics.Stopwatch"/>
-/// — because Windows loopback delivery is not synchronous with a <c>Pump</c> call (see
-/// <see cref="PumpDeadline"/>'s own remarks and issue #153): a handshake datagram sent on one Reactor's
-/// Pump is not guaranteed to be readable on the other's very next Pump, so establishing the pair has
-/// nothing but wall-clock time to wait on. Every other timing decision either run makes after that —
-/// RTO expiry, backoff, and the four retransmission rounds <see cref="FragmentStallSignature"/> counts —
-/// is read off <see cref="Clock"/>, the shared <see cref="FakeTimeProvider"/>, and advanced only by
-/// <see cref="PumpRound"/>'s own <paramref name="advance"/> parameter; no wall clock is consulted for any
-/// of it. The two are not the same kind of wait: one settles the platform once, before either run's
-/// standing rule is even installed, and the other is the scenario itself.
+/// <b>Issue #304's "no wall-clock waits", including the handshake.</b> No method here reads a real
+/// clock or sleeps. <see cref="Establish"/> pumps up to <see cref="DefaultHandshakeRounds"/> rounds and
+/// gives up, rather than running against <see cref="PumpDeadline"/>'s <c>Thread.Sleep(1)</c> and
+/// <see cref="System.Diagnostics.Stopwatch"/> budget the way the harness's own connect helpers do.
+/// Measured on issue #304 before the switch, with a throwaway probe rather than a kept test: 5000 fresh
+/// proxied handshakes on this path each completed within three rounds, none needing a wait of any kind. Every timing decision either run makes after that — RTO
+/// expiry, backoff, and the four retransmission rounds <see cref="FragmentStallSignature"/> counts — is
+/// read off <see cref="Clock"/>, the shared <see cref="FakeTimeProvider"/>, and advanced only by
+/// <see cref="PumpRound"/>'s own <paramref name="advance"/> parameter.
+/// </para>
+/// <para>
+/// <b>Why that does not generalise to the stream harness.</b> <see cref="PumpDeadline"/> exists for
+/// issue #153, whose intermittent failures were all <c>StreamSession</c> handshake and resume tests
+/// driving a real TCP connect and accept, where a connection can genuinely take about a millisecond to
+/// become acceptable and no count of Pumps covers that. This fixture is UDP throughout: a datagram is
+/// sent on the sender's own Pump with no accept to settle, which is why a round budget is sound here and
+/// remains the wrong instrument in <see cref="StreamSessionReactorHarness"/> and the other real-time
+/// callers of <see cref="PumpDeadline"/>. Do not read this fixture as precedent for those.
 /// </para>
 /// <para>
 /// <b>Issue #307's shared assertions.</b> <see cref="AssertNoProbeWasObserved"/> and
@@ -100,6 +105,14 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     /// </summary>
     public const int LargeMessageLength = 1500;
 
+    /// <summary>
+    /// How many rounds <see cref="Establish"/> pumps before declaring the handshake a fixture failure.
+    /// Three rounds is what the proxied handshake actually takes (see the type remarks), so this is
+    /// overshoot by two orders of magnitude — overshooting costs nothing, because the loop returns the
+    /// moment both ends are connected, while a budget that ever undershoots is the whole defect.
+    /// </summary>
+    public const int DefaultHandshakeRounds = 1000;
+
     /// <summary>How long a caller's <see cref="AdvanceClock"/> moves the shared clock by default, absent an override.</summary>
     public static readonly TimeSpan DefaultClockAdvance = TimeSpan.FromMilliseconds(50);
 
@@ -141,17 +154,18 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     /// <param name="fragmentSize">Overrides <see cref="FragmentSize"/> for both ends, if a run ever needs a different one.</param>
     /// <param name="maxMessageSize">Overrides <see cref="MaxMessageSize"/> for both ends.</param>
     /// <param name="retentionBytes">Overrides <see cref="RetentionBytes"/> for both ends.</param>
-    /// <param name="handshakeBudget">
-    /// The real-time budget the handshake is allowed to settle within — see <see cref="PumpDeadline"/> for
-    /// why this one wait is real time rather than scenario time. Defaults to <see cref="PumpDeadline.Default"/>.
+    /// <param name="handshakeRounds">
+    /// How many rounds the handshake is allowed to settle within. Defaults to
+    /// <see cref="DefaultHandshakeRounds"/>; a round budget rather than a real-time one because nothing
+    /// on this path waits on a wall clock (see the type remarks).
     /// </param>
-    /// <exception cref="InvalidOperationException">The handshake did not complete within <paramref name="handshakeBudget"/> — a fixture failure, not a scenario outcome.</exception>
+    /// <exception cref="InvalidOperationException">The handshake did not complete within <paramref name="handshakeRounds"/> — a fixture failure, not a scenario outcome.</exception>
     public FragmentSizeDiagnosisFixture(
         Action<LossyProxy> configureProxyRule,
         int fragmentSize = FragmentSize,
         int maxMessageSize = MaxMessageSize,
         int retentionBytes = RetentionBytes,
-        TimeSpan? handshakeBudget = null)
+        int handshakeRounds = DefaultHandshakeRounds)
     {
         ArgumentNullException.ThrowIfNull(configureProxyRule);
 
@@ -179,7 +193,7 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
         // pair is already established — installing it first would make an ordinary size threshold below
         // that fixed size block the handshake itself, which is not a fragment-size scenario at all.
         DiallerPeer = Dialler.Reactor.Connect(Proxy.PublicEndPoint);
-        AccepterPeer = Establish(handshakeBudget);
+        AccepterPeer = Establish(handshakeRounds);
 
         // Everything the proxy captures from here on is this fixture's own scenario traffic — the
         // handshake's own fixed-size control Datagrams, captured above during Establish, are deliberately
@@ -321,13 +335,12 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     /// established <see cref="PeerId"/>, so the handshake's Events would never reach
     /// <see cref="DiallerEvents"/> or <see cref="AccepterEvents"/>.
     /// </summary>
-    private PeerId Establish(TimeSpan? budget)
+    private PeerId Establish(int rounds)
     {
-        PumpDeadline deadline = PumpDeadline.Start(budget);
         PeerId? accepterPeer = null;
         bool diallerConnected = false;
 
-        while (true)
+        for (int round = 0; round < rounds; round++)
         {
             DatagramSessionReactorHarness.PumpRoundThroughProxy(Dialler, Proxy, Accepter);
             int diallerEventsBefore = _diallerEvents.Count;
@@ -351,14 +364,10 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
             {
                 return established;
             }
-
-            if (deadline.Expired)
-            {
-                throw new InvalidOperationException("The proxied handshake did not complete within the Pump budget.");
-            }
-
-            PumpDeadline.Yield();
         }
+
+        throw new InvalidOperationException(
+            $"The proxied handshake did not complete within {rounds} rounds.");
     }
 
     /// <summary>
