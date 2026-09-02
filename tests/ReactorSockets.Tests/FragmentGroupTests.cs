@@ -16,10 +16,14 @@ namespace ReactorSockets.Tests;
 /// unreachable through <see cref="DatagramSessionReactor.Send"/> at any cost, and ADR 0015 pins them
 /// directly instead. <see cref="Debug.Assert(bool, string)"/> failure does not throw by default — it
 /// reports to <see cref="Trace.Listeners"/> and returns — so these tests install a
-/// <see cref="ThrowingTraceListener"/> for the call and restore the original listeners afterwards.
+/// <see cref="ThrowingTraceListener"/> for the call and restore the original listeners afterwards. Both
+/// runs compile only under <c>DEBUG</c>, because a Release build strips the call itself.
 /// </summary>
 public class FragmentGroupTests
 {
+    // AssertContiguousSet is [Conditional("DEBUG")], so in a Release build the calls below compile
+    // away and there is no assertion left to trip. CI builds Release; these two runs are Debug-only.
+#if DEBUG
     /// <summary>
     /// Runs <paramref name="action"/> with <see cref="Trace.Listeners"/> replaced by one that turns a
     /// failed <see cref="Debug.Assert(bool, string)"/> into a thrown <see cref="DebugAssertFailedException"/>,
@@ -87,6 +91,7 @@ public class FragmentGroupTests
         act.Should().Throw<DebugAssertFailedException>()
             .WithMessage("*fragment count*");
     }
+#endif
 
     [Fact]
     public void FirstSequenceOf_IndexZero_IsTheSequenceItself()
