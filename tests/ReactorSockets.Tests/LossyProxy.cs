@@ -57,6 +57,9 @@ internal sealed class LossyProxy : IDisposable
     private readonly Queue<Fault> _upstreamToClientFaults = new();
     private readonly List<DelayedRelay> _delayed = [];
     private readonly List<RelayCapture> _captures = [];
+    private readonly List<RelayCapture> _forwarded = [];
+    private Func<byte[], bool>? _clientToUpstreamPayloadDropRule;
+    private Func<byte[], bool>? _upstreamToClientPayloadDropRule;
     private byte[]? _heldForReorderClientToUpstream;
     private byte[]? _heldForReorderUpstreamToClient;
     private Source? _lastClient;
@@ -106,6 +109,17 @@ internal sealed class LossyProxy : IDisposable
     /// is forwarded, delayed, dropped, duplicated or reordered.
     /// </summary>
     public IReadOnlyList<RelayCapture> Captures => _captures;
+
+    /// <summary>
+    /// Every datagram this proxy actually put back on the wire, in the order it went out and in the
+    /// direction it went — the counterpart to <see cref="Captures"/>, which records arrivals before any
+    /// rule was applied. The difference between the two lists is exactly what this proxy's standing
+    /// rules and one-shot faults dropped, which is what lets a caller derive how much of a set actually
+    /// reached the far end from the proxy itself rather than assuming it (issue #317). A duplicated
+    /// relay appears twice and a delayed one appears at the Pump that released it, because both are
+    /// what the far end genuinely saw.
+    /// </summary>
+    public IReadOnlyList<RelayCapture> Forwarded => _forwarded;
 
     /// <summary>Queues a drop for the next relay in <paramref name="direction"/>: the datagram is read off the wire and never forwarded.</summary>
     public void DropNext(RelayDirection direction) => QueueFor(direction).Enqueue(Fault.Drop);
@@ -181,6 +195,38 @@ internal sealed class LossyProxy : IDisposable
     }
 
     /// <summary>
+    /// Sets (or, with <see langword="null"/>, clears) a standing payload rule on
+    /// <paramref name="direction"/>: while it stands, every relay that direction whose payload
+    /// <paramref name="shouldDrop"/> answers <see langword="true"/> for is read off the wire and never
+    /// forwarded, and every other relay passes this rule unchanged. This is the only rule here that
+    /// looks at a payload's content rather than only its length, and it exists because neither other
+    /// standing rule can express partial delivery of a named set (issue #317): a size threshold
+    /// black-holes every datagram of a given size, and an every-Nth count cannot name which datagrams
+    /// it drops. A caller that needs "these Fragments and no others, retransmissions included, never
+    /// arrive" — which is what keeps an incomplete Fragment set incomplete for a whole run — supplies
+    /// that as a predicate over bytes it already knows how to decode. The proxy itself still knows
+    /// nothing about the protocol: it hands the exact bytes over and does whatever it is told.
+    /// </summary>
+    /// <remarks>
+    /// Consulted after <see cref="SetSizeThreshold"/> and before <see cref="SetLossEveryNth"/>, for the
+    /// same reason the threshold comes first: a datagram this rule kills never reaches the every-Nth
+    /// rule, so it does not advance that rule's count and cannot shift which later relay that rule
+    /// drops. It consumes no queued one-shot fault either, so a fault queued behind it stays queued for
+    /// the next relay that actually goes out.
+    /// </remarks>
+    public void SetPayloadDropRule(RelayDirection direction, Func<byte[], bool>? shouldDrop)
+    {
+        if (direction == RelayDirection.ClientToUpstream)
+        {
+            _clientToUpstreamPayloadDropRule = shouldDrop;
+        }
+        else
+        {
+            _upstreamToClientPayloadDropRule = shouldDrop;
+        }
+    }
+
+    /// <summary>
     /// Advances this proxy's own Reactor by one Pump, relaying whatever arrived and releasing any
     /// delayed relay whose deadline this proxy's <see cref="TimeProvider"/> has now reached.
     /// </summary>
@@ -213,11 +259,13 @@ internal sealed class LossyProxy : IDisposable
     }
 
     /// <summary>
-    /// Applies the two standing rules, then the next queued fault (or none), to one relay. The size
+    /// Applies the three standing rules, then the next queued fault (or none), to one relay. The size
     /// threshold is consulted first and unconditionally: a payload it kills is read off the wire and
     /// dropped without the every-Nth loss rule ever seeing it, so a relay the threshold drops does not
     /// advance that rule's count — the datagram never reached the loss rule, so counting it would drop
-    /// the wrong relay later. The every-Nth loss rule is consulted second, still ahead of the one-shot
+    /// the wrong relay later. The payload drop rule (<see cref="SetPayloadDropRule"/>) is consulted
+    /// second, on the same reasoning and with the same consequence: a datagram it kills advances no
+    /// count and consumes no queued fault. The every-Nth loss rule is consulted third, still ahead of the one-shot
     /// queue: a relay it drops consumes no queued fault, so a fault queued behind a standing loss rule
     /// stays queued for the next relay that actually goes out — a fault never applied to anything has not
     /// happened yet. Either standing rule dropping a relay is not a relay for reorder purposes either: it
@@ -230,6 +278,11 @@ internal sealed class LossyProxy : IDisposable
     private void Relay(RelayDirection direction, LinkId from, Source to, byte[] payload)
     {
         if (payload.Length > ThresholdFor(direction))
+        {
+            return;
+        }
+
+        if (PayloadDropRuleFor(direction) is Func<byte[], bool> shouldDrop && shouldDrop(payload))
         {
             return;
         }
@@ -318,7 +371,24 @@ internal sealed class LossyProxy : IDisposable
         }
     }
 
-    private void Send(LinkId from, Source to, byte[] payload) => _reactor.SendTo(from, to, payload);
+    /// <summary>
+    /// Puts one datagram back on the wire and records it in <see cref="Forwarded"/>. Every path that
+    /// forwards anything — an unfaulted relay, each half of a duplicate, a released delay, a released
+    /// reorder — goes through here, which is what makes <see cref="Forwarded"/> a complete account of
+    /// what left this proxy rather than a partial one. The direction is recovered from
+    /// <paramref name="from"/>: a datagram leaving the client-facing Link is on its way back to the
+    /// client, and one leaving the upstream-facing Link is on its way to upstream.
+    /// </summary>
+    private void Send(LinkId from, Source to, byte[] payload)
+    {
+        _forwarded.Add(new RelayCapture(
+            from == _clientFacing ? RelayDirection.UpstreamToClient : RelayDirection.ClientToUpstream,
+            payload));
+        _reactor.SendTo(from, to, payload);
+    }
+
+    private Func<byte[], bool>? PayloadDropRuleFor(RelayDirection direction) =>
+        direction == RelayDirection.ClientToUpstream ? _clientToUpstreamPayloadDropRule : _upstreamToClientPayloadDropRule;
 
     private Queue<Fault> QueueFor(RelayDirection direction) =>
         direction == RelayDirection.ClientToUpstream ? _clientToUpstreamFaults : _upstreamToClientFaults;

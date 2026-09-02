@@ -106,6 +106,19 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     public const int LargeMessageLength = 1500;
 
     /// <summary>
+    /// The payload length <see cref="SendSpanningMessage"/> sends: wide enough that its Fragment set
+    /// cannot fit in one Datagram (issue #317). A Reactor packs as many of a Message's Fragments into
+    /// one outbound Datagram as the 65 507-byte UDP maximum has room for, so a Message any smaller than
+    /// this crosses the wire as a single Datagram and a network that loses that Datagram loses the whole
+    /// set — all or nothing, which is issue #271's black hole and leaves nothing held to report against.
+    /// A set spanning two Datagrams is the smallest shape a real path can leave partially held, which is
+    /// what <see cref="DiagnosticId.FragmentSetAbandoned"/>'s held-against-expected figures are for.
+    /// At <see cref="FragmentSize"/> this is 110 Fragments, of which the first Datagram carries the 107
+    /// that fit and the second carries the rest.
+    /// </summary>
+    public const int SpanningMessageLength = 66000;
+
+    /// <summary>
     /// How many rounds <see cref="Establish"/> pumps before declaring the handshake a fixture failure.
     /// Three rounds is what the proxied handshake actually takes (see the type remarks), so this is
     /// overshoot by two orders of magnitude — overshooting costs nothing, because the loop returns the
@@ -127,14 +140,21 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     private const byte ModeMask = 0b0000_0011;
     private const byte FragmentBit = 0b0000_0100;
 
+    // The two ushort fields a Fragment record header carries past the unfragmented shape, in the order
+    // the wire carries them: the Fragment's index within its set, then the count the set declares.
+    private const int FragmentIndexOffset = UnfragmentedRecordSize;
+    private const int FragmentCountOffset = FragmentIndexOffset + sizeof(ushort);
+
     private readonly List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> _diallerEvents = [];
     private readonly List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> _accepterEvents = [];
     private readonly List<byte[]> _delivered = [];
     private readonly byte[] _smallPayload = Enumerable.Range(0, SmallMessageLength).Select(i => (byte)i).ToArray();
     private readonly byte[] _largePayload = Enumerable.Range(0, LargeMessageLength).Select(i => (byte)i).ToArray();
+    private readonly byte[] _spanningPayload = Enumerable.Range(0, SpanningMessageLength).Select(i => (byte)i).ToArray();
     private readonly byte[] _keepAlivePayload = [0];
-    private readonly int _highestFragmentSequence;
     private readonly int _wireBaselineCount;
+    private readonly int _forwardedBaselineCount;
+    private int _orderedSequencesSent;
 
     /// <summary>
     /// Builds the pair, wires them through a fresh <see cref="LossyProxy"/> sharing this fixture's clock,
@@ -169,10 +189,11 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     {
         ArgumentNullException.ThrowIfNull(configureProxyRule);
 
-        // The large Message is the only one this fixture ever sends on the ReliableOrdered Space, so its
-        // fragment count — derived from the same fragmentSize a caller may override — is the whole known
-        // sequence range AssertNoProbeWasObserved checks a Fragment record against.
-        _highestFragmentSequence = ((LargeMessageLength + fragmentSize - 1) / fragmentSize) - 1;
+        // The large Message is the only shape this fixture ever sends on the ReliableOrdered Space, so
+        // its fragment count — derived from the same fragmentSize a caller may override — is what the
+        // known sequence range AssertNoProbeWasObserved checks a Fragment record against is measured in.
+        FragmentsPerLargeMessage = (LargeMessageLength + fragmentSize - 1) / fragmentSize;
+        FragmentsPerSpanningMessage = (SpanningMessageLength + fragmentSize - 1) / fragmentSize;
 
         Clock = new FakeTimeProvider();
         Dialler = new DatagramSessionReactorHarness(
@@ -199,12 +220,33 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
         // handshake's own fixed-size control Datagrams, captured above during Establish, are deliberately
         // excluded from AssertNoProbeWasObserved's walk (see the type remarks).
         _wireBaselineCount = Proxy.Captures.Count;
+        _forwardedBaselineCount = Proxy.Forwarded.Count;
 
         configureProxyRule(Proxy);
     }
 
     /// <summary>The clock every Reactor and the proxy share — advancing it is the only way anything here measures time.</summary>
     public FakeTimeProvider Clock { get; }
+
+    /// <summary>
+    /// How many Fragments one <see cref="SendLargeMessage"/> is cut into, given the fragment size this
+    /// fixture was constructed with. A caller reasoning about which sequences belong to which Fragment
+    /// set derives them from this rather than restating three.
+    /// </summary>
+    public int FragmentsPerLargeMessage { get; }
+
+    /// <summary>How many Fragments one <see cref="SendSpanningMessage"/> is cut into, given the fragment size this fixture was constructed with.</summary>
+    public int FragmentsPerSpanningMessage { get; }
+
+    /// <summary>
+    /// The sequence the next Fragment this fixture sends on the <see cref="DeliveryMode.ReliableOrdered"/>
+    /// Space will carry — equivalently, the first sequence of the next Fragment set, since the large and
+    /// spanning Messages are the only things this fixture ever sends on that Space and each takes the
+    /// sequences immediately after the last. A caller reads this before a Send to learn which set the
+    /// Fragments about to go out belong to, rather than restating that arithmetic against a fragment
+    /// size it may have overridden.
+    /// </summary>
+    public uint NextOrderedSequence => (uint)_orderedSequencesSent;
 
     /// <summary>The sending Reactor's harness. Its own Events and Diagnostics are exposed for the case where the dialler itself is what a run needs to inspect.</summary>
     public DatagramSessionReactorHarness Dialler { get; }
@@ -252,7 +294,127 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     /// <see cref="DeliveryMode.ReliableOrdered"/>, cut into three Fragments by both ends' configured
     /// <see cref="FragmentSize"/>.
     /// </summary>
-    public SendOutcome SendLargeMessage() => Dialler.Reactor.Send(DiallerPeer, DeliveryMode.ReliableOrdered, _largePayload);
+    /// <remarks>
+    /// Callable more than once (issue #317): a second call queues a second Fragment set on the same
+    /// Space, at the sequences immediately after the first set's, which is what makes two sets overlap
+    /// in a receive ring narrow enough for the later one to lap onto the earlier one's slots. Every
+    /// accepted call widens the sequence range <see cref="AssertNoProbeWasObserved"/> recognises as this
+    /// fixture's own Fragment traffic by exactly <see cref="FragmentsPerLargeMessage"/>, so that check
+    /// stays exactly as tight for a run sending two Messages as for one sending one.
+    /// </remarks>
+    public SendOutcome SendLargeMessage() => SendOrdered(_largePayload, FragmentsPerLargeMessage);
+
+    /// <summary>
+    /// Sends <see cref="SpanningMessageLength"/> bytes from the dialler to the accepter as
+    /// <see cref="DeliveryMode.ReliableOrdered"/> — the same Space and shape as
+    /// <see cref="SendLargeMessage"/>, but wide enough that its Fragment set crosses the wire as more
+    /// than one Datagram (see <see cref="SpanningMessageLength"/>), which is what lets an ordinary
+    /// whole-Datagram loss leave the set partially held rather than entirely missing.
+    /// </summary>
+    public SendOutcome SendSpanningMessage() => SendOrdered(_spanningPayload, FragmentsPerSpanningMessage);
+
+    /// <summary>
+    /// Installs a standing <see cref="LossyProxy.SetPayloadDropRule"/> on the dialler-to-accepter
+    /// direction that drops every Datagram carrying a Fragment at one of <paramref name="sequences"/>,
+    /// and forwards everything else untouched — with no sequences at all, it forwards everything, which
+    /// is how a caller lifts a rule it installed earlier. Retransmissions included: the rule is a
+    /// property of the path, so a Fragment named here never arrives however many times the dialler
+    /// resends it, which is what keeps a Fragment set incomplete for a whole run rather than only until
+    /// the first repair.
+    /// </summary>
+    /// <remarks>
+    /// Whole Datagrams, never individual records: a Datagram carrying several Fragments is dropped
+    /// entire if any one of them names a listed sequence, because that is the only loss a real path can
+    /// inflict. That is why <see cref="ForwardedFragmentSequencesOf"/> exists and why a caller reads the
+    /// held figure from it rather than from this list — what a rule was asked to drop and what the far
+    /// end actually stopped seeing are two different facts, and only the second is what a Diagnostic's
+    /// held figure has to match.
+    /// </remarks>
+    public void DropFragmentsAtSequences(params uint[] sequences)
+    {
+        ArgumentNullException.ThrowIfNull(sequences);
+        HashSet<uint> dropped = [.. sequences];
+        Proxy.SetPayloadDropRule(
+            RelayDirection.ClientToUpstream,
+            datagram => DecodeRecords(datagram).Any(record => record.IsFragment && dropped.Contains(record.Sequence)));
+    }
+
+    /// <summary>
+    /// The distinct sequences of the Fragment set beginning at <paramref name="firstSequence"/> that the
+    /// proxy actually put on the wire toward the accepter, read off <see cref="LossyProxy.Forwarded"/>
+    /// rather than assumed from whatever rule was installed. Distinct, because a retransmission forwards
+    /// a sequence the accepter already holds and cannot make it hold that piece twice — which is exactly
+    /// the figure a <see cref="DiagnosticId.FragmentSetAbandoned"/> record's held count has to equal.
+    /// </summary>
+    /// <param name="firstSequence">The set's first sequence — see <see cref="FirstSequenceOfLargeMessage"/>.</param>
+    /// <param name="count">How many sequences the set spans.</param>
+    public IReadOnlyCollection<uint> ForwardedFragmentSequencesOf(uint firstSequence, int count)
+    {
+        HashSet<uint> forwarded = [];
+        foreach (RelayCapture capture in Proxy.Forwarded.Skip(_forwardedBaselineCount))
+        {
+            if (capture.Direction != RelayDirection.ClientToUpstream)
+            {
+                continue;
+            }
+
+            foreach ((byte _, uint sequence, int _, bool isFragment, ushort _, ushort _) in DecodeRecords(capture.Payload))
+            {
+                if (isFragment && unchecked(sequence - firstSequence) < (uint)count)
+                {
+                    forwarded.Add(sequence);
+                }
+            }
+        }
+
+        return forwarded;
+    }
+
+    /// <summary>
+    /// The <c>fragmentCount</c> the Fragment set beginning at <paramref name="firstSequence"/> declared
+    /// on the wire, read off the first Fragment of that set the proxy observed — the count a
+    /// <see cref="DiagnosticId.FragmentSetAbandoned"/> record's expected figure has to equal, taken from
+    /// the set's own metadata rather than from what this fixture believes it sent. Read from
+    /// <see cref="LossyProxy.Captures"/>, not <see cref="LossyProxy.Forwarded"/>: the set declared its
+    /// count when it left the dialler, whether or not that particular Fragment was allowed through.
+    /// </summary>
+    /// <returns>The declared count, or <see langword="null"/> if no Fragment of that set was ever observed.</returns>
+    public ushort? DeclaredFragmentCountOf(uint firstSequence, int count)
+    {
+        foreach (RelayCapture capture in Proxy.Captures.Skip(_wireBaselineCount))
+        {
+            if (capture.Direction != RelayDirection.ClientToUpstream)
+            {
+                continue;
+            }
+
+            foreach ((byte _, uint sequence, int _, bool isFragment, ushort _, ushort fragmentCount) in DecodeRecords(capture.Payload))
+            {
+                if (isFragment && unchecked(sequence - firstSequence) < (uint)count)
+                {
+                    return fragmentCount;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Sends one Message on the <see cref="DeliveryMode.ReliableOrdered"/> Space and, if it was
+    /// accepted, advances <see cref="NextOrderedSequence"/> past the Fragments it will occupy — the one
+    /// place that bookkeeping happens, so the two Message shapes cannot drift apart on it.
+    /// </summary>
+    private SendOutcome SendOrdered(byte[] payload, int fragments)
+    {
+        SendOutcome outcome = Dialler.Reactor.Send(DiallerPeer, DeliveryMode.ReliableOrdered, payload);
+        if (outcome == SendOutcome.Sent)
+        {
+            _orderedSequencesSent += fragments;
+        }
+
+        return outcome;
+    }
 
     /// <summary>
     /// Runs one round: the dialler, the proxy, the accepter's own keep-alive Send followed by its Pump,
@@ -413,12 +575,12 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
         {
             bool sawAnyRecord = false;
 
-            foreach ((byte mode, uint sequence, int length) in DecodeRecords(capture.Payload))
+            foreach ((byte mode, uint sequence, int length, bool _, ushort _, ushort _) in DecodeRecords(capture.Payload))
             {
                 sawAnyRecord = true;
 
                 bool isKnownFragment = mode == (byte)DeliveryMode.ReliableOrdered
-                    && sequence <= _highestFragmentSequence
+                    && sequence < NextOrderedSequence
                     && capture.Direction == RelayDirection.ClientToUpstream;
                 bool isKnownSmallMessage = mode == (byte)DeliveryMode.ReliableUnordered
                     && length == SmallMessageLength
@@ -491,7 +653,7 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     /// cannot walk a datagram carrying an 11-byte Fragment record header without misreading everything
     /// after it.
     /// </summary>
-    private static IEnumerable<(byte Mode, uint Sequence, int Length)> DecodeRecords(byte[] datagram)
+    private static IEnumerable<(byte Mode, uint Sequence, int Length, bool IsFragment, ushort FragmentIndex, ushort FragmentCount)> DecodeRecords(byte[] datagram)
     {
         int offset = DatagramHeaderSize;
         while (offset < datagram.Length)
@@ -501,8 +663,10 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
             ushort length = BinaryPrimitives.ReadUInt16BigEndian(datagram.AsSpan(offset + 5, 2));
             bool isFragment = (flags & FragmentBit) != 0;
             int headerSize = isFragment ? FragmentRecordSize : UnfragmentedRecordSize;
+            ushort fragmentIndex = isFragment ? BinaryPrimitives.ReadUInt16BigEndian(datagram.AsSpan(offset + FragmentIndexOffset, 2)) : (ushort)0;
+            ushort fragmentCount = isFragment ? BinaryPrimitives.ReadUInt16BigEndian(datagram.AsSpan(offset + FragmentCountOffset, 2)) : (ushort)0;
 
-            yield return ((byte)(flags & ModeMask), sequence, length);
+            yield return ((byte)(flags & ModeMask), sequence, length, isFragment, fragmentIndex, fragmentCount);
 
             offset += headerSize + length;
         }
