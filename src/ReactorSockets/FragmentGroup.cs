@@ -67,10 +67,13 @@ public static class FragmentGroup
     /// A no-op outside <c>DEBUG</c> builds, matching every other debug-only guard in this codebase: the
     /// contiguity invariant is enforced by construction in the send path that builds these sets, so this
     /// exists to catch a defect in that construction, not to police an untrusted input — a remote peer's
-    /// Fragments are validated by <see cref="PacketRecordCodec.TryRead"/>, not by this method. Stays
-    /// <see langword="internal"/> rather than following <see cref="FirstSequenceOf"/> public: unlike that
-    /// method, this one is already reachable through the send path it guards, so ADR 0015's
-    /// unreachable-through-the-seam condition does not hold for it, and nothing pins it directly.
+    /// Fragments are validated by <see cref="PacketRecordCodec.TryRead"/>, not by this method. Public for
+    /// the same reason <see cref="FirstSequenceOf"/> is (ADR 0015, issue #319): the send path only ever
+    /// hands this a set it just built correctly, so the happy path exercised through
+    /// <see cref="DatagramSessionReactor.Send"/> can never reach the gap or length-mismatch it guards
+    /// against. Those two failure shapes are unreachable through the public seam at any cost — not
+    /// expensive, unreachable — so a test pins them by calling this method directly with a hand-built
+    /// bad set, with no <c>InternalsVisibleTo</c> and no interface invented for the purpose.
     /// </remarks>
     /// <param name="sequencesInFragmentIndexOrder">
     /// The group's sequences, ordered by ascending fragment index — <c>sequencesInFragmentIndexOrder[i]</c>
@@ -78,7 +81,7 @@ public static class FragmentGroup
     /// </param>
     /// <param name="declaredFragmentCount">The fragment count the set is being emitted to claim on the wire.</param>
     [Conditional("DEBUG")]
-    internal static void AssertContiguousSet(ReadOnlySpan<uint> sequencesInFragmentIndexOrder, ushort declaredFragmentCount)
+    public static void AssertContiguousSet(ReadOnlySpan<uint> sequencesInFragmentIndexOrder, ushort declaredFragmentCount)
     {
         Debug.Assert(
             sequencesInFragmentIndexOrder.Length == declaredFragmentCount,

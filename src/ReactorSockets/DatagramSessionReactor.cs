@@ -607,14 +607,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // sequenced exactly as a whole small Message would be above, one at a time in order, so their
         // sequence numbers fall out contiguous and ascending as a consequence of allocating from the
         // same Space with nothing else able to interleave. Reassembly's firstSeq = seq - fragmentIndex
-        // depends on that contiguity, so it is asserted below rather than merely trusted.
+        // depends on that contiguity, so it is asserted below, once the set is built, by
+        // FragmentGroup.AssertContiguousSet (issue #319) rather than merely trusted.
         //
         // The FreeSlotCount check above already guarantees every TryAcquire below commits: nothing else
         // can shrink this Space's free slots between that check and this loop, because Send only ever
         // runs on the constructing thread (EnsureCallingThreadIsConstructingThread). A commit failing
         // here would mean the two disagreed, which is a bug in this method, not a runtime outcome to
         // report through SendOutcome (issue #247).
-        uint? previousSequence = null;
+#if DEBUG
+        uint[] debugSequencesInFragmentIndexOrder = new uint[fragmentCount];
+#endif
 
         for (int fragmentIndex = 0; fragmentIndex < fragmentCount; fragmentIndex++)
         {
@@ -634,14 +637,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 outcome == RetentionSlotOutcome.Committed,
                 "the FreeSlotCount check above already reserved enough slots for every Fragment in this Message.");
 
-            Debug.Assert(
-                previousSequence is null || sequence == previousSequence.Value + 1,
-                "a Message's Fragments must occupy contiguous, ascending sequence numbers (ADR 0004).");
-            previousSequence = sequence;
-
             slot.OutboundSequences.Allocate(recordMode);
             slot.PendingSends.Add(new PendingOutboundRecord { Mode = recordMode, Sequence = sequence });
+
+#if DEBUG
+            debugSequencesInFragmentIndexOrder[fragmentIndex] = sequence;
+#endif
         }
+
+#if DEBUG
+        FragmentGroup.AssertContiguousSet(debugSequencesInFragmentIndexOrder, (ushort)fragmentCount);
+#endif
 
         return SendOutcome.Sent;
     }

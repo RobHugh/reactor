@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FluentAssertions;
 using Xunit;
 
@@ -9,9 +10,84 @@ namespace ReactorSockets.Tests;
 /// <see cref="FragmentGroup.FirstSequenceOf"/> directly, including the <c>u32</c>-wrap identity that
 /// <c>Pump_HostileFragmentGroupNonContiguousAcrossTheSequenceWrap_DiscardsWholeDatagramAndLeavesTheWindowUntouched</c>
 /// (<see cref="DatagramSessionHostileFragmentDiscardTests"/>) only exercised indirectly.
+///
+/// <see cref="FragmentGroup.AssertContiguousSet"/> is pinned here too (issue #319): the send path only
+/// ever hands it a set it just built correctly, so the gap and length-mismatch it guards against are
+/// unreachable through <see cref="DatagramSessionReactor.Send"/> at any cost, and ADR 0015 pins them
+/// directly instead. <see cref="Debug.Assert(bool, string)"/> failure does not throw by default — it
+/// reports to <see cref="Trace.Listeners"/> and returns — so these tests install a
+/// <see cref="ThrowingTraceListener"/> for the call and restore the original listeners afterwards.
 /// </summary>
 public class FragmentGroupTests
 {
+    /// <summary>
+    /// Runs <paramref name="action"/> with <see cref="Trace.Listeners"/> replaced by one that turns a
+    /// failed <see cref="Debug.Assert(bool, string)"/> into a thrown <see cref="DebugAssertFailedException"/>,
+    /// restoring the original listeners afterwards regardless of outcome.
+    /// </summary>
+    private static void RunWithAssertFailuresThrowing(Action action)
+    {
+        TraceListener[] originalListeners = new TraceListener[Trace.Listeners.Count];
+        Trace.Listeners.CopyTo(originalListeners, 0);
+        Trace.Listeners.Clear();
+        Trace.Listeners.Add(new ThrowingTraceListener());
+
+        try
+        {
+            action();
+        }
+        finally
+        {
+            Trace.Listeners.Clear();
+            Trace.Listeners.AddRange(originalListeners);
+        }
+    }
+
+    /// <summary>Thrown by <see cref="ThrowingTraceListener"/> in place of the default assert-failure UI.</summary>
+    private sealed class DebugAssertFailedException(string message) : Exception(message);
+
+    /// <summary>Converts a failed <see cref="Trace.Fail(string, string)"/> into a thrown exception
+    /// instead of the default listener's UI or console report, so a test can observe the failure.</summary>
+    private sealed class ThrowingTraceListener : TraceListener
+    {
+        public override void Fail(string? message, string? detailMessage) =>
+            throw new DebugAssertFailedException($"{message} {detailMessage}");
+
+        public override void Write(string? message) { }
+
+        public override void WriteLine(string? message) { }
+    }
+
+    [Fact]
+    public void AssertContiguousSet_SequencesWithAGap_TripsTheContiguityAssertion()
+    {
+        // Arrange — three sequences claimed as one group, but the middle one skips 102.
+        uint[] sequencesWithAGap = [100, 101, 103];
+
+        // Act
+        Action act = () => RunWithAssertFailuresThrowing(
+            () => FragmentGroup.AssertContiguousSet(sequencesWithAGap, declaredFragmentCount: 3));
+
+        // Assert
+        act.Should().Throw<DebugAssertFailedException>()
+            .WithMessage("*contiguous*");
+    }
+
+    [Fact]
+    public void AssertContiguousSet_SetLengthDisagreesWithDeclaredCount_TripsTheLengthAssertion()
+    {
+        // Arrange — a contiguous set of 3, but the caller claims only 2 on the wire.
+        uint[] contiguousSequences = [100, 101, 102];
+
+        // Act
+        Action act = () => RunWithAssertFailuresThrowing(
+            () => FragmentGroup.AssertContiguousSet(contiguousSequences, declaredFragmentCount: 2));
+
+        // Assert
+        act.Should().Throw<DebugAssertFailedException>()
+            .WithMessage("*fragment count*");
+    }
+
     [Fact]
     public void FirstSequenceOf_IndexZero_IsTheSequenceItself()
     {
