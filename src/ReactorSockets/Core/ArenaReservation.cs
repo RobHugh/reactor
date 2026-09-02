@@ -1,7 +1,8 @@
 namespace ReactorSockets.Core;
 
 /// <summary>
-/// The result of a single <see cref="FrameArena.Reserve"/> call. A <see langword="ref struct"/>
+/// The result of a single <see cref="FrameArena.Reserve(int, ReadOnlySpan{byte})"/> or
+/// <see cref="FrameArena.Reserve(int, int)"/> call. A <see langword="ref struct"/>
 /// because <see cref="Payload"/> aliases the arena's backing memory directly — it must never
 /// outlive the Frame, and a <see langword="ref struct"/> is the compiler-enforced way to say so.
 /// </summary>

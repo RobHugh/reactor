@@ -16,6 +16,10 @@ namespace ReactorSockets.Tests;
 /// second Peer inherits the first's occupied slots, and a Peer that has sent nothing is refused with
 /// <see cref="SendOutcome.RetentionExhausted"/> on its very first reliable Send.
 /// </remarks>
+/// <remarks>
+/// A reliable Send is refused unless its Peer has learned the remote's announced
+/// <c>MaxMessageSize</c> (issue #284), so every Peer below completes a real handshake before Sending.
+/// </remarks>
 public class DatagramSessionRetentionSlotRecycleTests
 {
     [Fact]
@@ -34,6 +38,7 @@ public class DatagramSessionRetentionSlotRecycleTests
         using DatagramSessionReactorHarness secondRemote = new();
 
         PeerId first = harness.Reactor.Connect(firstRemote.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, firstRemote);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, [1, 2, 3]).Should().Be(SendOutcome.Sent);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, [1, 2, 3]).Should().Be(
             SendOutcome.RetentionExhausted, "the first Peer genuinely filled its Space's one slot");
@@ -43,6 +48,7 @@ public class DatagramSessionRetentionSlotRecycleTests
 
         // Act — capacity is one, so this dial reuses the Slot the first Peer just vacated.
         PeerId second = harness.Reactor.Connect(secondRemote.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, secondRemote);
         SendOutcome outcome = harness.Reactor.Send(second, DeliveryMode.ReliableOrdered, [4, 5, 6]);
 
         // Assert
@@ -65,6 +71,7 @@ public class DatagramSessionRetentionSlotRecycleTests
         using DatagramSessionReactorHarness secondRemote = new();
 
         PeerId first = harness.Reactor.Connect(firstRemote.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, firstRemote);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, [1, 2, 3]).Should().Be(SendOutcome.Sent);
         harness.Reactor.CountersOf(first).RetentionHighWaterBytes.Should().Be(
             3UL, "the first Peer's high-water is the three bytes it retained");

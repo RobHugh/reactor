@@ -19,6 +19,14 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
     /// Binds one loopback port-zero endpoint. Passed <see langword="false"/> by tests exercising the
     /// dial-only case, where the first <c>Connect</c> is what binds anything at all.
     /// </param>
+    /// <param name="timeProvider">
+    /// The clock this harness's Reactor is built with. Defaults to a fresh <see cref="FakeTimeProvider"/>
+    /// so most tests need not think about it, but a fixture driving two Reactors and a
+    /// <see cref="LossyProxy"/> as one deterministic scenario passes the same instance to every harness
+    /// and to the proxy — a shared clock is the only way advancing it once moves every retransmission
+    /// timer in the scenario together, rather than moving one Reactor's timers while the other's stand
+    /// still (<see cref="FragmentSizeDiagnosisFixture"/>).
+    /// </param>
     public DatagramSessionReactorHarness(
         int capacity = 4,
         int? admissionCap = null,
@@ -33,11 +41,13 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
         bool withoutDiagnostics = false,
         bool bindLoopback = true,
         IReadOnlyList<IPEndPoint>? endpoints = null,
-        RandomNumberGenerator? entropy = null)
+        RandomNumberGenerator? entropy = null,
+        FakeTimeProvider? timeProvider = null)
     {
         IReactorDiagnostics? installedSink = withoutDiagnostics ? null : sinkOverride ?? Sink;
         Entropy = entropy ?? RandomNumberGenerator.Create();
-        Reactor = new DatagramSessionReactor(new DatagramSessionOptions
+        TimeProvider = timeProvider ?? new();
+        Options = new DatagramSessionOptions
         {
             Reactor = new ReactorOptions
             {
@@ -57,11 +67,19 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
             Linger = TimeSpan.FromSeconds(1),
             Endpoints = endpoints ?? (bindLoopback ? [new IPEndPoint(IPAddress.Loopback, 0)] : []),
             Entropy = Entropy,
-        });
+        };
+        Reactor = new DatagramSessionReactor(Options);
     }
 
     /// <summary>The clock the Reactor was built with — advance it to exercise anything time-dependent.</summary>
-    public FakeTimeProvider TimeProvider { get; } = new();
+    public FakeTimeProvider TimeProvider { get; }
+
+    /// <summary>
+    /// The options the Reactor was built from — the same public surface a consumer reads back through
+    /// (e.g. <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>), kept here so a test can confirm
+    /// a configured value after a run rather than only trusting what it passed in at construction.
+    /// </summary>
+    public DatagramSessionOptions Options { get; }
 
     /// <summary>The recording Sink installed on the Reactor, unless the harness was told to override or omit it.</summary>
     public RecordingDiagnosticsSink Sink { get; } = new();

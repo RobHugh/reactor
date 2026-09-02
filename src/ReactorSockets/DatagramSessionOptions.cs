@@ -41,8 +41,22 @@ namespace ReactorSockets;
 /// </list>
 /// <para>
 /// The frame arena (<see cref="ReactorOptions.ArenaSize"/>) is over and above those two lines and is
-/// shared across the whole Reactor rather than multiplied by capacity. Every check below is
-/// deterministic and entirely the caller's, so failures throw at construction —
+/// shared across the whole Reactor rather than multiplied by capacity.
+/// </para>
+/// <para>
+/// <see cref="MaxMessageSize"/> reaches three places at once: it is announced to the remote as a
+/// receive limit, it floors the receive window at the fragments one maximum Message occupies
+/// (<see cref="ReceiveWindowFloor"/>), and it floors the frame arena, because an arena that cannot
+/// hold one maximum Message could never deliver one. Careless enlargement therefore grows memory in
+/// two directions rather than one: the window floor is per Peer, so the receive line above rises
+/// with it multiplied by capacity and by the Spaces, and the shared arena is pushed up alongside.
+/// Retention is the exception this profile makes. <see cref="RetentionBytes"/> is floored by
+/// <see cref="ResolvedFragmentSize"/> rather than by <see cref="MaxMessageSize"/>, because a
+/// reliable Space retransmits fragment by fragment and needs only one fragment to have something to
+/// resend.
+/// </para>
+/// <para>
+/// Every check below is deterministic and entirely the caller's, so failures throw at construction —
 /// <see cref="ArgumentOutOfRangeException"/> for a single bad value and
 /// <see cref="ArgumentException"/> for a combination that cannot work — rather than being reported
 /// through a <c>Result</c>.
@@ -97,6 +111,30 @@ public sealed class DatagramSessionOptions
     internal const int SpaceCount = 4;
 
     /// <summary>
+    /// The bytes one receive-arena length slot occupies for a retaining Space (issue #257): a
+    /// <c>u16</c> recording how many payload bytes the Fragment held in a slot actually occupies, wide
+    /// enough for any <see cref="ResolvedFragmentSize"/> up to the largest a UDP payload can carry.
+    /// Internal so <see cref="Core.ReceiveArena"/> sizes its length region against the same constant
+    /// this budget is computed from, rather than a second literal 2 that could drift from it.
+    /// </summary>
+    internal const int FragmentLengthBytes = 2;
+
+    /// <summary>
+    /// Bytes one waiting-Fragment-group entry occupies in the receive arena: a <c>u32</c> first
+    /// sequence and a <c>u16</c> declared Fragment count, the pair that names a group (issue #259).
+    /// </summary>
+    internal const int PendingGroupEntryBytes = 6;
+
+    /// <summary>
+    /// Bytes one held-Fragment's group-identity entry occupies in the receive arena: the same <c>u32</c>
+    /// first sequence and <c>u16</c> declared Fragment count as <see cref="PendingGroupEntryBytes"/>, but
+    /// one entry per receive-window slot rather than per waiting group — what still names an incomplete
+    /// set's held and declared counts at the moment its slot is discarded and its length residue is
+    /// cleared (issue #297).
+    /// </summary>
+    internal const int FragmentGroupEntryBytes = 6;
+
+    /// <summary>
     /// The shared L0 budget: capacity, admission cap, arena size, time source and Diagnostic Sink.
     /// Required — a Reactor cannot be built without one, and its <see cref="ReactorOptions.Capacity"/>
     /// has no default of its own.
@@ -105,9 +143,22 @@ public sealed class DatagramSessionOptions
 
     /// <summary>
     /// The largest Message, in bytes, this Reactor will accept or deliver. Required: it is a
-    /// statement about the consumer's own protocol that nothing here can derive. It is also the
-    /// frame arena's floor — an arena that cannot hold one maximum Message could never deliver one.
+    /// statement about the consumer's own protocol that nothing here can derive. It is also the knob
+    /// that multiplies this profile's memory bill in more than one direction — the class remarks on
+    /// <see cref="DatagramSessionOptions"/> say what it floors and what raising it costs.
     /// </summary>
+    /// <remarks>
+    /// Announced to the peer at the handshake precisely so an oversized claim can be refused before
+    /// this end holds anything for it: a declared Fragment <c>fragmentCount</c> larger than this
+    /// Reactor's receive window (<see cref="ResolvedReceiveWindowFragments"/>) is closed on its first
+    /// Fragment, before any receive-window slot or Fragment-group bookkeeping exists for it (issue
+    /// #282, reworked under #264). The bound is the window rather than <see cref="ReceiveWindowFloor"/>
+    /// alone, because the floor is computed from this end's own <see cref="ResolvedFragmentSize"/> and
+    /// fragment size is unilateral and per-direction (ADR 0004): a conforming peer with a smaller
+    /// fragment size legally cuts the same, within-limit Message into more Fragments than the floor.
+    /// <see cref="Validate"/> already requires the window to be at least the floor, so a set at exactly
+    /// this value is always admitted.
+    /// </remarks>
     public required int MaxMessageSize { get; init; }
 
     /// <summary>
@@ -145,13 +196,25 @@ public sealed class DatagramSessionOptions
     /// value with citable provenance for surviving an arbitrary path. Must lie between 576 (RFC 791's
     /// guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).
     /// </summary>
+    /// <remarks>
+    /// Unilateral and per-direction (ADR 0004): each side of a Session cuts its own outbound Messages
+    /// by its own configured value, and the two directions need not agree. It is never announced in
+    /// the handshake, because a receiver reassembles a Fragment set from <c>fragmentIndex</c> and
+    /// <c>fragmentCount</c> alone and never needs to know the sender's choice — so two Sessions
+    /// configured with different values still interoperate, each cutting by its own. This value is
+    /// resolved once per Peer, at admission, onto that Peer's own slot; a later change to this options
+    /// instance never reaches a Peer already open. See <see cref="ResolvedFragmentSize"/>.
+    /// </remarks>
     public int? FragmentSize { get; init; }
 
     /// <summary>
     /// The fragments each reliable Space may have outstanding per Peer. Defaults to exactly the
     /// number a maximum Message occupies, which is ADR 0004's deadlock floor rather than a
     /// performance choice: a window narrower than one whole Message can never deliver one, so it can
-    /// never advance, so the sender can never send the rest.
+    /// never advance, so the sender can never send the rest. This resolved value is also the inbound
+    /// bound a declared Fragment <c>fragmentCount</c> is checked against (issue #282, under #264): a set
+    /// larger than the window can never be reassembled, since there is no slot to hold every one of
+    /// its pieces at once, so <see cref="DatagramSessionReactor"/> closes it before any is held.
     /// </summary>
     public int? ReceiveWindowFragments { get; init; }
 
@@ -178,7 +241,15 @@ public sealed class DatagramSessionOptions
     /// </remarks>
     public RandomNumberGenerator Entropy { get; init; } = RandomNumberGenerator.Create();
 
-    /// <summary>The resolved fragment size: <see cref="FragmentSize"/> if set, otherwise 1200.</summary>
+    /// <summary>
+    /// The resolved fragment size: <see cref="FragmentSize"/> if set, otherwise 1200.
+    /// </summary>
+    /// <remarks>
+    /// A Peer captures this value once, onto its own slot, at admission (issue #248) — every
+    /// <see cref="DatagramSessionReactor.Send"/> call for that Peer, and every retransmit, cuts by that
+    /// captured value rather than reading this property afresh, so fragment size cannot move mid-Session
+    /// even if this options instance later would resolve differently (ADR 0004).
+    /// </remarks>
     public int ResolvedFragmentSize => FragmentSize ?? DefaultFragmentSize;
 
     /// <summary>
@@ -200,17 +271,36 @@ public sealed class DatagramSessionOptions
     /// silently wraps through.
     /// </summary>
     /// <remarks>
-    /// Two things per Peer scale with the window, and this figure covers both (issue #174). Payload
-    /// slots — <see cref="ResolvedFragmentSize"/> bytes each — exist only for the
+    /// Four things per Peer scale with the window, and this figure covers all four (issue #174, #257,
+    /// #259, #297). Payload slots — <see cref="ResolvedFragmentSize"/> bytes each — exist only for the
     /// <see cref="ReliableSpaceCount"/> Spaces that hold fragments until a Message is whole. The
     /// one-byte-per-slot admission record a receive window classifies against exists for all
-    /// <see cref="SpaceCount"/> Spaces, because all four classify whether or not they retain. Nothing
-    /// on the receive side is allocated outside this figure, so it is an exact statement of what a
-    /// Reactor takes, not a floor it sits above.
+    /// <see cref="SpaceCount"/> Spaces, because all four classify whether or not they retain.
+    /// <see cref="FragmentLengthBytes"/> per slot records how many bytes of a held Fragment's payload
+    /// are actually occupied, and <see cref="FragmentGroupEntryBytes"/> per slot names the group that
+    /// payload belongs to — both exist only for the same <see cref="ReliableSpaceCount"/> Spaces as the
+    /// payload they describe, and both are the receive window's own reassembly bookkeeping (issue #257,
+    /// #297), not a separate buffer: the length says a piece was held, the group-identity entry is what
+    /// still lets an abandoned set's held and declared counts be read once that slot is reused. The
+    /// six-byte waiting-group entry — <see cref="PendingGroupEntryBytes"/> — exists for the same two
+    /// Spaces too, but only half a window's worth each (<see cref="PendingGroupsPerSpace"/>, issue
+    /// #259), since a completed-but-undelivered group holds at least two Fragments. Nothing on the
+    /// receive side is allocated outside this figure, so it is an exact statement of what a Reactor
+    /// takes, not a floor it sits above.
     /// </remarks>
     public long ReceiveBudgetBytes =>
-        (long)Reactor.Capacity * ResolvedReceiveWindowFragments
-        * (((long)ReliableSpaceCount * ResolvedFragmentSize) + SpaceCount);
+        ((long)Reactor.Capacity * ResolvedReceiveWindowFragments
+            * (((long)ReliableSpaceCount * (ResolvedFragmentSize + FragmentLengthBytes + FragmentGroupEntryBytes)) + SpaceCount))
+        + ((long)Reactor.Capacity * ReliableSpaceCount * PendingGroupsPerSpace * PendingGroupEntryBytes);
+
+    /// <summary>
+    /// The completed Fragment groups one reliable Space can have waiting for delivery at once: half
+    /// <see cref="ResolvedReceiveWindowFragments"/>, never fewer than one. A group is at least two
+    /// Fragments wide and holds its slots until it is delivered, so the window's own size is what
+    /// bounds this — see <see cref="Session.PendingFragmentGroups"/>.
+    /// </summary>
+    internal int PendingGroupsPerSpace =>
+        ResolvedReceiveWindowFragments / 2 < 1 ? 1 : ResolvedReceiveWindowFragments / 2;
 
     /// <summary>The send line of the memory bill in bytes, reported the same way.</summary>
     public long SendBudgetBytes =>
@@ -354,9 +444,12 @@ public sealed class DatagramSessionOptions
             throw new ArgumentException(
                 $"these options ask for {total} bytes of preallocation, which cannot be allocated. " +
                 $"Receive is Capacity {Reactor.Capacity} × {ResolvedReceiveWindowFragments} fragments × " +
-                $"({ReliableSpaceCount} reliable Spaces × {ResolvedFragmentSize} payload bytes + {SpaceCount} Spaces × " +
-                $"1 admission byte) = {receive}; send is Capacity {Reactor.Capacity} × {ReliableSpaceCount} reliable " +
-                $"Spaces × {RetentionBytes} bytes = {send}. Lower Capacity, MaxMessageSize, ReceiveWindowFragments or RetentionBytes.",
+                $"({ReliableSpaceCount} reliable Spaces × ({ResolvedFragmentSize} payload bytes + {FragmentLengthBytes} " +
+                $"length bytes + {FragmentGroupEntryBytes} group-identity bytes) + {SpaceCount} Spaces × 1 " +
+                $"admission byte) plus Capacity {Reactor.Capacity} × {ReliableSpaceCount} reliable Spaces × " +
+                $"{PendingGroupsPerSpace} waiting groups × {PendingGroupEntryBytes} bytes = {receive}; send is " +
+                $"Capacity {Reactor.Capacity} × {ReliableSpaceCount} reliable Spaces × {RetentionBytes} bytes = " +
+                $"{send}. Lower Capacity, MaxMessageSize, ReceiveWindowFragments or RetentionBytes.",
                 nameof(Reactor));
         }
     }

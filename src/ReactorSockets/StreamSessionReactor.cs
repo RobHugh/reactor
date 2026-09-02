@@ -913,6 +913,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// immediately, riding the same <see cref="SendDeliveryCounterOrArm"/> a received-count advance
     /// already uses (issue #116), rather than inventing a second wire shape for the same fact.
     /// </para>
+    /// <para>
+    /// <b>What this rewind does not touch (issue #262).</b> Every step above is outbound: it renegotiates
+    /// only where <em>this end's own sent</em> retention resumes from, at the Message granularity
+    /// <paramref name="deliveryCount"/> is expressed in. Nothing here reads or clears anything this end
+    /// has received — an inbound reassembly buffer, were this profile to grow one, would be untouched by
+    /// a rewind that never looks at it. The Datagram profile's own receive-window Fragment holding
+    /// (<see cref="DatagramSessionReactor.HoldFragment"/>) already relies on exactly this separation:
+    /// "resume at Message granularity" is a statement about the negotiated resume point, never about
+    /// discarding whatever a receive window is still holding piece by piece underneath it.
+    /// </para>
     /// </remarks>
     /// <param name="slot">The Interrupted Peer the match found.</param>
     /// <param name="link">The freshly accepted transport presenting the Resume.</param>

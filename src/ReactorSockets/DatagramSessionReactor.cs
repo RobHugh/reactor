@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -118,10 +119,82 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// Pump packs into it; reused across every Peer flushed by one Pump rather than allocated per Peer.
     /// </summary>
     private readonly byte[] _outboundDatagramBuffer = new byte[MaxUdpDatagramSize];
+
+    /// <summary>
+    /// <see cref="FragmentSetsAreWellFormed"/>'s scratch, sized once at construction from
+    /// <see cref="MaxUdpDatagramSize"/> — the largest datagram this Reactor ever reads — divided by the
+    /// smallest a Fragment record can be (<see cref="DatagramSessionProtocol.FragmentRecordSize"/>), so
+    /// no datagram this Reactor accepts can ever hold more Fragments than these arrays hold entries for
+    /// (issue #256, DoS follow-up). A group's identity is the pair (mode, first sequence), never first
+    /// sequence alone (issue #47): <see cref="ReceiveWindowSpaces"/>'s own doc states the reason — each
+    /// <see cref="PacketRecordMode"/> is an independent Space, so a sequence admitted under one mode says
+    /// nothing about the same sequence under another, and two groups in different modes can never
+    /// conflict, however their first sequences or declared ranges happen to line up. One entry per
+    /// Fragment actually found in the datagram being parsed: <see cref="_fragmentGroupKey"/> packs each
+    /// Fragment's mode into its high bits and its first sequence into its low bits
+    /// (<see cref="PackModeAndFirstSequence"/>), and is sorted together with
+    /// <see cref="_fragmentGroupIndexAndCount"/> by that combined key so every Fragment of one (mode,
+    /// first sequence) group becomes one contiguous run in O(n log n) instead of re-walking the datagram
+    /// once per Fragment — sorting by mode first is what keeps one mode's runs from ever interleaving
+    /// with another's. <see cref="_distinctGroupFirstSequenceAndCount"/> then holds one entry per
+    /// distinct group (mode, first sequence and declared count all packed together), grouped by mode in
+    /// the same order the runs above were closed in; the O(g log g) sweep that finds a declared-range
+    /// overlap is run once per mode's own contiguous slice of that array via
+    /// <see cref="_distinctGroupSortKey"/> — each group's declared range start relative to an anchor
+    /// derived fresh for that mode's slice — so a comparison across two different modes' groups never
+    /// happens at all.
+    /// Four arrays of <see cref="MaxFragmentRecordsPerDatagram"/> entries costs about 140 KB per Reactor,
+    /// paid once at construction and never again: the point of sizing them off a bound fixed at
+    /// construction is that a peer's choice of datagram can never move it.
+    /// Reused across every datagram parsed — never cleared, since every read is bounded by a count
+    /// computed fresh for that datagram, and never resized, since the bound above is fixed at
+    /// construction. Single-threaded like every other field this Reactor's Pump touches (ADR 0002).
+    /// </summary>
+    /// <remarks>
+    /// <see cref="OneSequenceSpace"/> sits beside these because the sweep they feed measures distances
+    /// around the <c>u32</c> sequence circle, and 2^32 does not fit in the <see cref="uint"/> that circle
+    /// is counted in.
+    /// </remarks>
+    private const ulong OneSequenceSpace = 1UL << 32;
+
+    private const int MaxFragmentRecordsPerDatagram =
+        (MaxUdpDatagramSize - DatagramSessionProtocol.DatagramHeaderSize) / DatagramSessionProtocol.FragmentRecordSize;
+
+    private readonly ulong[] _fragmentGroupKey = new ulong[MaxFragmentRecordsPerDatagram];
+    private readonly uint[] _fragmentGroupIndexAndCount = new uint[MaxFragmentRecordsPerDatagram];
+    private readonly ulong[] _distinctGroupFirstSequenceAndCount = new ulong[MaxFragmentRecordsPerDatagram];
+    private readonly int[] _distinctGroupSortKey = new int[MaxFragmentRecordsPerDatagram];
+
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
     private int _capDiscardsThisFrame;
     private int _capacityDiscardsThisFrame;
+
+    /// <summary>
+    /// The largest declared <c>fragmentCount</c> a Fragment's set may legally claim: this Reactor's own
+    /// receive window, <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>, not
+    /// <see cref="DatagramSessionOptions.ReceiveWindowFloor"/> (issue #282, reworked under #264). The
+    /// floor is computed from <em>this end's own</em> <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>,
+    /// but fragment size is unilateral and per-direction (ADR 0004) — a conforming peer with a smaller
+    /// fragment size legally cuts the same, within-<see cref="DatagramSessionOptions.MaxMessageSize"/>
+    /// Message into more Fragments than that floor, and bounding by the floor would close that peer as
+    /// a protocol violator for a set it was always entitled to send. The window is the right bound
+    /// instead of a looser one: it is what a Fragment set actually occupies while it is held, so a
+    /// declared count larger than the window can never be reassembled — there is no slot for every
+    /// piece to sit in at once — and refusing it refuses exactly the sets that were never legal,
+    /// whoever's fragment size produced them. <see cref="DatagramSessionOptions.Validate"/> already
+    /// requires the window to be at least the floor, so this bound is never tighter than the old one: a
+    /// set at exactly the announced limit is still admitted, and at default options — where the window
+    /// resolves to the floor — nothing observable changes. Where an operator deliberately widens
+    /// <see cref="DatagramSessionOptions.ReceiveWindowFragments"/> past the floor, a declared count
+    /// between the floor and the window is admitted even though nothing checks summed payload bytes at
+    /// delivery, so such a set could in principle reassemble past <see cref="DatagramSessionOptions.MaxMessageSize"/>;
+    /// that is the accepted trade for never closing a conforming peer, and this check remains the
+    /// defence that matters because it is the one that runs before anything is held. Computed once
+    /// here, at construction, rather than read from <see cref="_options"/> per datagram — the refusal
+    /// path this bounds must allocate nothing and do no more arithmetic than a single comparison.
+    /// </summary>
+    private readonly int _maxLegalFragmentCount;
 
     /// <summary>
     /// Constructs a Reactor bound to the calling thread (ADR 0002) — every future mutating call must
@@ -154,6 +227,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _entropy = options.Entropy;
         _cookies = new CookieMinter(options.Reactor.TimeProvider, _entropy);
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
+        _maxLegalFragmentCount = options.ResolvedReceiveWindowFragments;
         _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
 
         _receiveWindows = new ReceiveWindowSpaces[options.Reactor.Capacity];
@@ -248,6 +322,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             _capDiscardsThisFrame = 0;
             _capacityDiscardsThisFrame = 0;
             _dispatcher.Pump();
+            RetryPendingFragmentDeliveries();
             ReportExpiredRetransmissions();
             FlushOutboundDatagrams();
             ReportDeclinedAdmissions();
@@ -301,6 +376,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             State = HandshakeState.AwaitingCookie,
             AckTracker = NewAckTracker(retransmitTimer),
             RetransmitTimer = retransmitTimer,
+            StallSignature = new(_options.Reactor.TimeProvider),
+            FragmentSize = _options.ResolvedFragmentSize,
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
@@ -362,9 +439,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Sends <paramref name="message"/> to <paramref name="peer"/> under <paramref name="mode"/> (ADR
-    /// 0009, issues #207, #215, #216). A Message wider than one Datagram is refused up front as
-    /// <see cref="SendOutcome.MessageTooLarge"/>, before anything else happens: no sequence is
-    /// allocated and no retention is taken, so a rejected Send leaves no trace on the Session. Past
+    /// 0009, issues #207, #215, #216). A Message too wide for its mode to carry is refused before any
+    /// work is done on it: no sequence is allocated and no retention is taken, so a rejected Send leaves
+    /// no trace on the Session. How wide is too wide depends on the mode and is decided by
+    /// <see cref="FragmentPlan.Resolve"/>, the one place the rule is stated: an unreliable mode is capped
+    /// at a single Datagram and refused as <see cref="SendOutcome.MessageTooLarge"/>, while a reliable
+    /// mode fragments below a cap and is refused above it as <see cref="SendOutcome.RemoteMessageTooLarge"/>
+    /// (ADR 0004). That reliable cap is <paramref name="peer"/>'s own announced receive limit, captured
+    /// on its Slot at handshake, not this Reactor's own <see cref="DatagramSessionOptions.MaxMessageSize"/>
+    /// (issue #284): <c>Send</c> is therefore not purely local to this Reactor's configuration, because
+    /// the same payload can be accepted for one Peer and refused for another whose handshake announced a
+    /// smaller limit. That gate sits behind the <paramref name="peer"/> lookup rather than in front of it,
+    /// because both caps it measures against, fragment size and remote max message size alike, are the
+    /// Peer's own captured values (issue #248); a Peer this Reactor is not holding open returns
+    /// <see cref="SendOutcome.Closed"/> whatever the Message's width. Past
     /// that gate, a reliable mode allocates the next sequence in its own Space and retains the Message
     /// whole there, returning <see cref="SendOutcome.RetentionExhausted"/> once that Space has no slot
     /// left — and that refusal spends nothing either: the sequence is claimed only once retention has
@@ -383,10 +471,23 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// further Pumps it takes to reach the front, still in the order it was Sent (issue #230).
     /// </summary>
     /// <remarks>
+    /// <b><see cref="SendOutcome.RetentionExhausted"/> is reachable from one <c>Send</c> call</b> (issue
+    /// #247, ADR 0004's "one Message can fill the send window alone"): the retention budget is sized in
+    /// Fragments, not Messages, so a single Message cut into more Fragments than its Space has free
+    /// slots for exhausts that Space by itself, with nothing else needing to have sent anything first.
+    /// The refusal is whole, not partial — this checks the Space's free-slot count against the Fragment
+    /// count the Message needs <em>before</em> retaining or sequencing a single Fragment, so a refused
+    /// Send leaves retention holding no Fragment of that Message and leaves the Space's next sequence
+    /// exactly where <see cref="Send"/> found it, the same "spend nothing on a refusal" contract issue
+    /// #244 established for a whole small Message. A half-retained Message would be unrepairable: the
+    /// receiver's reassembly waits forever for a set that was never cut in full. A smaller Message that
+    /// fits the Space's free slots still succeeds afterward — the refusal costs the Space nothing.
+    /// <para>
     /// Sending to a <paramref name="peer"/> this Reactor is not currently holding open — unknown, or
     /// already closed — returns <see cref="SendOutcome.Closed"/> rather than throwing, unlike
     /// <see cref="CountersOf"/>: a Peer closing under a caller is an ordinary race, the same reason
     /// <see cref="Close"/> tolerates a stale <see cref="PeerId"/>.
+    /// </para>
     /// </remarks>
     /// <param name="peer">The Peer to send to.</param>
     /// <param name="mode">Which of the four delivery modes carries this Message; see <c>docs/delivery-modes.md</c>.</param>
@@ -395,26 +496,34 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="_retention"/> for a reliable mode, into the queued record for an unreliable one — so
     /// the caller owns its buffer again the instant <c>Send</c> returns and may overwrite or reuse it
     /// without changing what is eventually put on the wire (issue #244). A Message wider than
-    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> cannot fit in one Datagram and is
-    /// reported back as <see cref="SendOutcome.MessageTooLarge"/> rather than thrown. For
-    /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> the cap
-    /// is permanent, and there is no option that lifts it: you may only fragment what you can
-    /// retransmit (ADR 0004), because fragmenting what cannot be repaired multiplies the failure rate
-    /// by the number of pieces — a ten-Fragment unreliable Message on a path losing 1% of Datagrams
-    /// arrives about 90% of the time, having spent ten Datagrams of bandwidth on a coin flip
-    /// (<c>docs/delivery-modes.md</c>). For <see cref="DeliveryMode.ReliableOrdered"/> and
-    /// <see cref="DeliveryMode.ReliableUnordered"/> the same cap applies for now and is lifted once
-    /// slice 7 gives the reliable modes fragmentation.
+    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> cannot fit in one Datagram, and for
+    /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> that cap
+    /// is reported back as <see cref="SendOutcome.MessageTooLarge"/> rather than thrown, and it is
+    /// permanent — no option lifts it: you may only fragment what you can retransmit (ADR 0004), because
+    /// fragmenting what cannot be repaired multiplies the failure rate by the number of pieces — a
+    /// ten-Fragment unreliable Message on a path losing 1% of Datagrams arrives about 90% of the time,
+    /// having spent ten Datagrams of bandwidth on a coin flip (<c>docs/delivery-modes.md</c>). For
+    /// <see cref="DeliveryMode.ReliableOrdered"/> and <see cref="DeliveryMode.ReliableUnordered"/> the
+    /// single-Datagram cap does not apply: a Message up to <paramref name="peer"/>'s own announced
+    /// <c>MaxMessageSize</c> (issue #284; see the summary above) is cut into
+    /// <c>ceil(length / fragmentSize)</c> Fragments (issue #245), each retained and sequenced as its own
+    /// ordinary reliable packet, and only a Message wider than that remote limit is refused with
+    /// <see cref="SendOutcome.RemoteMessageTooLarge"/>. That <c>fragmentSize</c> is this Peer's own
+    /// <see cref="PeerSlot.FragmentSize"/>, captured from <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
+    /// once when the Peer was admitted (issue #248) — not re-read from options on this or any later
+    /// call. Fragment size is unilateral, per-direction, and decided once, at <c>Send</c> (ADR 0004): a
+    /// retransmit re-sends bytes already cut rather than re-deciding anything, so two Messages sent to
+    /// the same Peer at different times, and every retransmit of either, are always cut with the same
+    /// size. It is never announced in the handshake, because a receiver reassembles a Fragment set by
+    /// <c>fragmentIndex</c> and <c>fragmentCount</c> alone and never needs to know the sender's choice.
     /// </param>
     public SendOutcome Send(PeerId peer, DeliveryMode mode, ReadOnlySpan<byte> message)
     {
         EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
 
-        if (message.Length > _options.ResolvedFragmentSize)
-        {
-            return SendOutcome.MessageTooLarge;
-        }
+        PacketRecordMode recordMode = ToRecordMode(mode);
+        bool isReliable = recordMode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered;
 
         SlotHandle handle = ToHandle(peer);
         if (_peers.TryResolve(handle) is not PeerSlot slot)
@@ -422,9 +531,30 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return SendOutcome.Closed;
         }
 
-        PacketRecordMode recordMode = ToRecordMode(mode);
+        // The fragment size used to cut this Message is this Peer's own, captured on the Slot at
+        // admission (issue #248, ADR 0004) rather than read from _options here — fragment size is
+        // decided once, per Peer, and Send only ever consults what was already decided. The reliable
+        // cap handed to FragmentPlan.Resolve is likewise this Peer's own remote-announced MaxMessageSize
+        // (issue #284; see this method's XML doc for why a reliable Send is capped by the far end's
+        // limit rather than this Reactor's own). RemoteMaxMessageSize is a uint off the wire while
+        // FragmentPlan.Resolve takes an int message length, so a value above int.MaxValue is clamped
+        // rather than cast unchecked; a Message that large will never exist in practice, so the clamp
+        // only ever widens the cap past a width nothing here could reach anyway. One call to
+        // FragmentPlan.Resolve states the too-large rule exactly once: unreliable modes refuse above one
+        // Fragment's worth, reliable modes refuse above that remote cap.
+        int remoteMaxMessageSize = slot.RemoteMaxMessageSize > int.MaxValue ? int.MaxValue : (int)slot.RemoteMaxMessageSize;
+        FragmentPlanResult plan = FragmentPlan.Resolve(message.Length, slot.FragmentSize, mode, remoteMaxMessageSize);
+        if (plan.IsMessageTooLarge)
+        {
+            // Which limit refused it follows from the mode alone (issue #284): an unreliable mode can
+            // only have been refused for exceeding the local one-Datagram cap (slot.FragmentSize), while
+            // a reliable mode can only have been refused for exceeding remoteMaxMessageSize, the peer's
+            // own announced limit — FragmentPlan.Resolve never applies the other cap to the other kind
+            // of mode.
+            return isReliable ? SendOutcome.RemoteMessageTooLarge : SendOutcome.MessageTooLarge;
+        }
 
-        if (recordMode is not (PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered))
+        if (!isReliable)
         {
             slot.PendingSends.Add(new PendingOutboundRecord
             {
@@ -435,26 +565,91 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return SendOutcome.Sent;
         }
 
-        // The sequence is read before retention is attempted and only spent once retention commits.
-        // TryAcquire refuses an exhausted Space without touching the pool, so a refusal here has to
-        // leave the Space where it found it too: a burned sequence is a hole the receiver's window
-        // waits on for a record that will never be sent (issue #244), and a Space has no rewind.
         int spaceIndex = ReliableSpaceIndex(recordMode);
-        uint sequence = slot.OutboundSequences.Peek(recordMode);
-        RetentionSlotOutcome outcome = _retention.TryAcquire(handle.Index, spaceIndex, sequence, message);
+        int fragmentSize = slot.FragmentSize;
+        int fragmentCount = plan.FragmentCount;
 
-        if (outcome == RetentionSlotOutcome.Committed)
+        // A Message's Fragments are committed as one unit (issue #247): the retention budget is sized
+        // in Fragments, not Messages, so a Message wide enough to need more Fragments than the Space has
+        // free slots for must be refused whole rather than left half-retained — the receiver can never
+        // reassemble a set that was never cut in full. Checked before anything is touched, because
+        // neither this pool nor OutboundSequenceSpaces can roll a partial commit back (issue #244): the
+        // slot count and the sequence space are both left exactly where they were on a refusal.
+        if (_retention.FreeSlotCount(handle.Index, spaceIndex) < fragmentCount)
         {
-            slot.OutboundSequences.Allocate(recordMode);
-            slot.PendingSends.Add(new PendingOutboundRecord { Mode = recordMode, Sequence = sequence });
+            return SendOutcome.RetentionExhausted;
         }
 
-        return outcome switch
+        if (fragmentCount == 1)
         {
-            RetentionSlotOutcome.Committed => SendOutcome.Sent,
-            RetentionSlotOutcome.Exhausted => SendOutcome.RetentionExhausted,
-            _ => throw new InvalidOperationException($"Unrecognised {nameof(RetentionSlotOutcome)}: {outcome}."),
-        };
+            // The sequence is read before retention is attempted and only spent once retention commits.
+            // TryAcquire refuses an exhausted Space without touching the pool, so a refusal here has to
+            // leave the Space where it found it too: a burned sequence is a hole the receiver's window
+            // waits on for a record that will never be sent (issue #244), and a Space has no rewind.
+            uint sequence = slot.OutboundSequences.Peek(recordMode);
+            RetentionSlotOutcome outcome = _retention.TryAcquire(handle.Index, spaceIndex, sequence, message);
+
+            if (outcome == RetentionSlotOutcome.Committed)
+            {
+                slot.OutboundSequences.Allocate(recordMode);
+                slot.PendingSends.Add(new PendingOutboundRecord { Mode = recordMode, Sequence = sequence });
+            }
+
+            return outcome switch
+            {
+                RetentionSlotOutcome.Committed => SendOutcome.Sent,
+                RetentionSlotOutcome.Exhausted => SendOutcome.RetentionExhausted,
+                _ => throw new InvalidOperationException($"Unrecognised {nameof(RetentionSlotOutcome)}: {outcome}."),
+            };
+        }
+
+        // Cutting a Message into Fragments (issue #245, ADR 0004): each Fragment is retained and
+        // sequenced exactly as a whole small Message would be above, one at a time in order, so their
+        // sequence numbers fall out contiguous and ascending as a consequence of allocating from the
+        // same Space with nothing else able to interleave. Reassembly's firstSeq = seq - fragmentIndex
+        // depends on that contiguity, so it is asserted below, once the set is built, by
+        // FragmentGroup.AssertContiguousSet (issue #319) rather than merely trusted.
+        //
+        // The FreeSlotCount check above already guarantees every TryAcquire below commits: nothing else
+        // can shrink this Space's free slots between that check and this loop, because Send only ever
+        // runs on the constructing thread (EnsureCallingThreadIsConstructingThread). A commit failing
+        // here would mean the two disagreed, which is a bug in this method, not a runtime outcome to
+        // report through SendOutcome (issue #247).
+#if DEBUG
+        uint[] debugSequencesInFragmentIndexOrder = new uint[fragmentCount];
+#endif
+
+        for (int fragmentIndex = 0; fragmentIndex < fragmentCount; fragmentIndex++)
+        {
+            int offset = fragmentIndex * fragmentSize;
+            int length = Math.Min(fragmentSize, message.Length - offset);
+            ReadOnlySpan<byte> fragmentPayload = message.Slice(offset, length);
+
+            uint sequence = slot.OutboundSequences.Peek(recordMode);
+
+            // The Fragment's shape — that it is one, its index, its count — is handed to retention here
+            // and nowhere else (issue #250): TryRead hands it straight back to a retransmit, so the
+            // shape is decided once and never rebuilt from a PendingOutboundRecord.
+            RetentionSlotOutcome outcome = _retention.TryAcquire(
+                handle.Index, spaceIndex, sequence, fragmentPayload, isFragment: true, (ushort)fragmentIndex, (ushort)fragmentCount);
+
+            Debug.Assert(
+                outcome == RetentionSlotOutcome.Committed,
+                "the FreeSlotCount check above already reserved enough slots for every Fragment in this Message.");
+
+            slot.OutboundSequences.Allocate(recordMode);
+            slot.PendingSends.Add(new PendingOutboundRecord { Mode = recordMode, Sequence = sequence });
+
+#if DEBUG
+            debugSequencesInFragmentIndexOrder[fragmentIndex] = sequence;
+#endif
+        }
+
+#if DEBUG
+        FragmentGroup.AssertContiguousSet(debugSequencesInFragmentIndexOrder, (ushort)fragmentCount);
+#endif
+
+        return SendOutcome.Sent;
     }
 
     /// <summary>
@@ -669,13 +864,22 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// Reads the 20-byte header, then packet records until the datagram is exhausted (issue #163), and
     /// routes every record that parses into <paramref name="slot"/>'s Space for its mode (issue #172).
     /// A datagram is a container, not a Message: one bad record — a short header, a bad flags byte, a
-    /// spare or fragment bit set, a length running past the end, or truncation inside a record —
-    /// discards the whole datagram rather than whatever records parsed before it, because a partial
-    /// admission would let a forged tail poison an otherwise legitimate send. Parsing therefore runs in
-    /// two passes over the same bytes: the first confirms every record is well-formed without touching
-    /// any Space, and only once the whole datagram has proven parseable does the second classify each
-    /// record in turn — so an early record is never classified on the strength of a datagram whose tail
-    /// turns out to be forged. The header's two ack blocks are applied to <paramref name="slot"/>'s
+    /// spare bit set, a length running past the end, or truncation inside a record — discards the
+    /// whole datagram rather than whatever records parsed before it, because a partial admission would
+    /// let a forged tail poison an otherwise legitimate send. A record with the fragment bit set is not
+    /// by itself bad: <see cref="PacketRecordCodec.TryRead"/> reads the Fragment shape same as the
+    /// unfragmented one, and this method routes it into its Space the same way — <see cref="ClassifyRecord"/>
+    /// is what diverts an admitted Fragment away from delivery and into its Space's receive-window slot
+    /// instead (issue #257). Parsing therefore runs in
+    /// three passes over the same bytes: the first confirms every record is well-formed without
+    /// touching any Space; the second, once <see cref="FragmentSetsAreWellFormed"/> also stands, walks
+    /// every record again to refuse — with a close, not a discard — a declared <c>fragmentCount</c>
+    /// larger than this Reactor's own receive window, <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>,
+    /// could ever hold (issue #282, reworked under #264); only once neither of those passes objects does
+    /// the third classify each record in turn — so an early record is never classified on the strength
+    /// of a datagram whose tail turns out to be forged, or whose Fragment set claims more Fragments
+    /// than this Reactor could ever hold at once.
+    /// The header's two ack blocks are applied to <paramref name="slot"/>'s
     /// <see cref="PeerSlot.AckTracker"/> for the two reliable Spaces only (subtask 6.3.6, issue #188)
     /// once that same proof stands — a short or malformed datagram applies neither block, exactly as it
     /// admits no record. Both blocks are applied at the same effective RTO, read once from
@@ -704,13 +908,58 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ReadOnlySpan<byte> remainder = body;
         while (remainder.Length > 0)
         {
-            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out int bytesConsumed))
+            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
             {
                 DiscardMalformed(source, datagram.Length);
                 return;
             }
 
             remainder = remainder[bytesConsumed..];
+        }
+
+        // Every record on its own proved legal above (issue #253), but a Fragment's index and count are
+        // only half the story: this checks the claimed sets those individually-legal Fragments form
+        // (issue #256), still before any Space is touched, so a forged set is refused exactly like a
+        // malformed record rather than reaching classification.
+        if (!FragmentSetsAreWellFormed(body))
+        {
+            DiscardMalformed(source, datagram.Length);
+            return;
+        }
+
+        // A declared fragmentCount larger than this Reactor's own receive window is refused with a
+        // close, not a discard (issue #282, reworked under #264) — the record is individually legal and
+        // its set internally consistent (both already proved above), but the set it claims could never
+        // be held: the window is what a Fragment set actually occupies while it waits, and there is no
+        // slot for every piece of a set that size to sit in at once, whatever fragment size a
+        // conforming peer used to cut it. This is its own pass over body, ahead of the classification loop below, so that a
+        // datagram carrying other, legal records ahead of the offending Fragment still closes the Peer
+        // having classified none of them — no receive-window slot or Fragment-group bookkeeping is
+        // created for any record of this datagram once the check fires. Only ReliableOrdered and
+        // ReliableUnordered ever carry the fragment shape (ADR 0004), matching ClassifyRecord's own
+        // gate, so a stray fragment bit on an unreliable record is not evaluated here at all.
+        remainder = body;
+        while (remainder.Length > 0)
+        {
+            PacketRecordCodec.TryRead(
+                remainder, out PacketRecordMode oversizedMode, out _, out _,
+                out bool oversizedIsFragment, out _, out ushort oversizedFragmentCount, out int oversizedBytesConsumed);
+
+            if (oversizedIsFragment
+                && oversizedMode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered
+                && oversizedFragmentCount > _maxLegalFragmentCount)
+            {
+                if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                {
+                    _diagnostics.Log(DiagnosticRecord.ForOversizedFragmentSet(
+                        ToPeerId(slot.Handle), oversizedFragmentCount, _maxLegalFragmentCount));
+                }
+
+                ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
+                return;
+            }
+
+            remainder = remainder[oversizedBytesConsumed..];
         }
 
         // The proof above is what attributes this Datagram to slot's Peer: it names an established
@@ -722,22 +971,383 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits, effectiveRto);
+        ApplyAckToStallSignature(slot);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableUnordered, reliableUnorderedAckBase, reliableUnorderedAckBits, effectiveRto);
+        ApplyAckToStallSignature(slot);
         ReconcileHorizonDeferrals(slot);
 
         remainder = body;
         while (remainder.Length > 0)
         {
             // Every record in this span already proved well-formed in the pass above, so this read
-            // cannot fail — the return value is not re-checked.
-            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out ushort length, out int bytesConsumed);
+            // cannot fail — the return value is not re-checked. fragmentIndex and fragmentCount are
+            // read here (issue #258): a held Fragment's group first sequence, and so its completeness,
+            // is derived from them the moment it is held.
+            PacketRecordCodec.TryRead(
+                remainder, out PacketRecordMode mode, out uint sequence, out ushort length,
+                out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount, out int bytesConsumed);
 
             // The payload is the tail of what this record consumed, so it is sliced from the record's
             // own span rather than re-derived from a header width this method would then have to know.
             ReadOnlySpan<byte> payload = remainder.Slice(bytesConsumed - length, length);
-            ClassifyRecord(slot, mode, sequence, payload);
+            ClassifyRecord(slot, mode, sequence, isFragment, fragmentIndex, fragmentCount, payload);
             remainder = remainder[bytesConsumed..];
         }
+    }
+
+    /// <summary>
+    /// Checks every Fragment in <paramref name="body"/> as part of the set it claims to belong to, not
+    /// only individually (issue #256; ADR 0009). Contiguity stands in for a message ID no wire byte
+    /// carries, so two shapes of forgery break it: Fragments naming the same group — the pair of that
+    /// group's mode and <see cref="FragmentGroup.FirstSequenceOf"/> — whose actually-present indices
+    /// leave a gap, and two distinct claimed groups <em>in the same mode</em> whose <em>declared</em>
+    /// ranges overlap — some one wire sequence that could be read as belonging to either, whether or not
+    /// a Fragment has actually arrived there yet. Every record here already proved individually legal in
+    /// the pass above (issue #253) — an index at or beyond its own count, a count of zero, or a count of
+    /// one already discarded the datagram before this method is reached — so this is where a datagram
+    /// whose individually-legal Fragments lie about which set each belongs to is refused instead.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>A group is identified by (mode, first sequence), not first sequence alone (issue #47).</b>
+    /// <see cref="ReceiveWindowSpaces"/> keeps one independent <see cref="ReceiveWindow"/> per
+    /// <see cref="PacketRecordMode"/> — its own doc states why: a sequence admitted under one mode says
+    /// nothing about the same sequence under another. A <c>ReliableOrdered</c> group starting at sequence
+    /// 100 and a <c>ReliableUnordered</c> group also starting at sequence 100 are unrelated groups in
+    /// unrelated Spaces; folding them into one first-sequence-only namespace, as an earlier shape of this
+    /// check did, sees two Fragments both claiming index 0 of what it wrongly believes is one group and
+    /// discards a datagram no attacker forged. The same is true of the declared-range overlap sweep: two
+    /// groups in different modes can never conflict, however their declared ranges happen to line up, so
+    /// that sweep only ever compares two groups already known to share a mode.
+    /// </para>
+    /// <para>
+    /// <b>Scope is this one datagram.</b> A group that arrives split across more than one datagram, or
+    /// one a later datagram contradicts, needs state only reassembly owns (a future sub-slice); this
+    /// method holds nothing across calls beyond its own preallocated scratch (below) and knows nothing
+    /// beyond <paramref name="body"/>'s own bytes. A partial set — fewer Fragments than
+    /// <see cref="PacketRecordCodec.TryRead"/>'s <c>fragmentCount</c> promises, so long as the indices
+    /// actually present are contiguous — is not a violation: an honest sender's Fragments of one group
+    /// may simply be spread across datagrams.
+    /// </para>
+    /// <para>
+    /// <b>Overlap is judged on each same-mode group's DECLARED range, not on what is merely observed.</b>
+    /// Two Fragments in one mode — firstSeq 100 declaring count 5 (range 100..104), and firstSeq 103
+    /// declaring count 2 (range 103..104) — can arrive with only sequences 100, 101 and 103 actually
+    /// present, so their observed points (100-101 vs 103) never collide. Sequence 104 is still claimed by
+    /// both groups: a later Fragment landing there is index 4 of the first group or index 1 of the second
+    /// depending on which group is believed, and nothing observed so far can tell them apart. Judging the
+    /// check on declared ranges is what catches this before either group is trusted.
+    /// </para>
+    /// <para>
+    /// <b>Bounded cost, no per-datagram allocation (DoS follow-up to issue #256).</b> Re-deriving every
+    /// Fragment's group by re-walking <paramref name="body"/> once per Fragment — the previous shape of
+    /// this check — is O(n²) in the datagram's record count on a path a remote peer's datagram length
+    /// alone controls: at the wire floor of 11 bytes per Fragment, a maximum-size 65,507-byte UDP
+    /// datagram holds <see cref="MaxFragmentRecordsPerDatagram"/> (5,953) of them, and two O(n²) walks
+    /// over that many records is tens of millions of <see cref="PacketRecordCodec.TryRead"/> calls for
+    /// one datagram on the single-threaded Pump. Instead, one linear pass collects each Fragment's
+    /// (mode, first sequence) key and index into <see cref="_fragmentGroupKey"/> and
+    /// <see cref="_fragmentGroupIndexAndCount"/>, both sorted by that combined key
+    /// (<see cref="Array.Sort(Array, Array, int, int)"/> over ulong/uint keys, no comparer allocated,
+    /// mode occupying the key's high bits so one mode's entries never interleave with another's) so
+    /// every Fragment of one (mode, first sequence) group becomes one contiguous
+    /// run — O(n log n) rather than O(n) group lookups each costing O(n). Each run is checked for a
+    /// gap in one further linear pass and, if it passes, contributes one entry to
+    /// <see cref="_distinctGroupFirstSequenceAndCount"/> (<see cref="TryCloseContiguousRun"/>), which
+    /// packs that group's mode alongside its first sequence and declared count. Because the runs above
+    /// were closed in (mode, first sequence) order, the distinct groups already sit in contiguous
+    /// per-mode slices; the declared-range overlap sweep (<see cref="NoTwoDeclaredRangesOverlap"/>) walks
+    /// those slices one mode at a time and only ever sorts and sweeps within one slice
+    /// (<see cref="_distinctGroupSortKey"/>) — an interval-scheduling sweep, O(g log g) overall in the
+    /// number of distinct groups (the per-mode sweeps' costs sum to at most that bound) rather than the
+    /// O(g²) an all-pairs comparison would cost, and a comparison between two different modes' groups
+    /// never happens at all. Every array here is preallocated once at construction from
+    /// <see cref="MaxUdpDatagramSize"/> (see the scratch fields' own remarks) and reused datagram after
+    /// datagram: nothing is allocated, resized or cleared on this path, only bounded by a count freshly
+    /// computed for the datagram being parsed.
+    /// </para>
+    /// <para>
+    /// <b>Each per-mode sweep's sort key is relative to an anchor chosen fresh for that mode's slice,
+    /// using the same unsigned wrap-aware subtraction <see cref="SequenceNumber.IsNewerThan"/> is built
+    /// on.</b> This assumes, as every "newer than" decision on this data path already does, that the
+    /// groups actually present in one datagram never span more than half the sequence space (2^31) — true
+    /// of anything an honest sender produces, and the same boundary this whole design accepts elsewhere
+    /// rather than treating as a hazard to defend against (see <see cref="SequenceNumber"/>'s own
+    /// remarks). Each mode's own anchor keeps this assumption scoped to that mode's own groups, exactly as
+    /// their sequence Spaces already are.
+    /// </para>
+    /// </remarks>
+    private bool FragmentSetsAreWellFormed(ReadOnlySpan<byte> body)
+    {
+        int fragmentCount = 0;
+        ReadOnlySpan<byte> remainder = body;
+        while (remainder.Length > 0)
+        {
+            PacketRecordCodec.TryRead(
+                remainder, out PacketRecordMode mode, out uint sequence, out _, out bool isFragment,
+                out ushort index, out ushort count, out int bytesConsumed);
+
+            if (isFragment)
+            {
+                // Cannot happen: MaxFragmentRecordsPerDatagram is this Reactor's own scratch bound,
+                // derived from the largest datagram it ever reads (MaxUdpDatagramSize) divided by the
+                // smallest a Fragment record can be, so no datagram this method is ever called with can
+                // produce more Fragments than the scratch below has room for.
+                Debug.Assert(fragmentCount < MaxFragmentRecordsPerDatagram, "More Fragments than the scratch was sized for.");
+
+                _fragmentGroupKey[fragmentCount] = PackModeAndFirstSequence(mode, FragmentGroup.FirstSequenceOf(sequence, index));
+                _fragmentGroupIndexAndCount[fragmentCount] = PackIndexAndCount(index, count);
+                fragmentCount++;
+            }
+
+            remainder = remainder[bytesConsumed..];
+        }
+
+        if (fragmentCount == 0)
+        {
+            return true;
+        }
+
+        Array.Sort(_fragmentGroupKey, _fragmentGroupIndexAndCount, 0, fragmentCount);
+
+        int distinctGroupCount = 0;
+        int runStart = 0;
+        for (int i = 1; i <= fragmentCount; i++)
+        {
+            if (i == fragmentCount || _fragmentGroupKey[i] != _fragmentGroupKey[runStart])
+            {
+                if (!TryCloseContiguousRun(runStart, i, ref distinctGroupCount))
+                {
+                    return false;
+                }
+
+                runStart = i;
+            }
+        }
+
+        return NoTwoDeclaredRangesOverlap(distinctGroupCount);
+    }
+
+    /// <summary>
+    /// Packs a Fragment's group identity for <see cref="_fragmentGroupKey"/>: <paramref name="mode"/> in
+    /// the key's high bits, <paramref name="firstSequence"/> in its low 32 bits. Mode dominates the sort
+    /// order this key drives, so every Fragment of one mode sorts before every Fragment of the next —
+    /// two groups in different modes can never end up in the same contiguous run.
+    /// </summary>
+    private static ulong PackModeAndFirstSequence(PacketRecordMode mode, uint firstSequence) =>
+        ((ulong)(byte)mode << 32) | firstSequence;
+
+    private static byte UnpackMode(ulong modeAndFirstSequence) => (byte)(modeAndFirstSequence >> 32);
+
+    private static uint UnpackFirstSequenceFromGroupKey(ulong modeAndFirstSequence) => (uint)modeAndFirstSequence;
+
+    /// <summary>Packs a Fragment's index and count into one <c>uint</c> for <see cref="_fragmentGroupIndexAndCount"/>.</summary>
+    private static uint PackIndexAndCount(ushort index, ushort count) => ((uint)index << 16) | count;
+
+    private static ushort UnpackIndex(uint indexAndCount) => (ushort)(indexAndCount >> 16);
+
+    private static ushort UnpackCount(uint indexAndCount) => (ushort)indexAndCount;
+
+    /// <summary>
+    /// Closes the run <c>[runStart, runEnd)</c> of <see cref="_fragmentGroupKey"/> and
+    /// <see cref="_fragmentGroupIndexAndCount"/> — every Fragment the datagram's walk found that shares
+    /// one group's mode and first sequence, now contiguous in the sorted arrays — checking that every
+    /// member agrees on its declared count and that the indices actually present leave no gap, exactly
+    /// as the pre-sort double-walk did. A group's Fragments disagreeing on the count they claim makes
+    /// the set's shape ambiguous, the same forgery as a literal gap: neither describes a set an honest
+    /// sender, which uses one count per Message, could ever produce. On success, appends one entry to
+    /// <see cref="_distinctGroupFirstSequenceAndCount"/> — mode, first sequence and declared count all
+    /// packed together — for the per-mode overlap sweep that follows.
+    /// </summary>
+    private bool TryCloseContiguousRun(int runStart, int runEnd, ref int distinctGroupCount)
+    {
+        ushort declaredCount = UnpackCount(_fragmentGroupIndexAndCount[runStart]);
+        ushort minIndexSeen = ushort.MaxValue;
+        ushort maxIndexSeen = 0;
+
+        for (int i = runStart; i < runEnd; i++)
+        {
+            ushort index = UnpackIndex(_fragmentGroupIndexAndCount[i]);
+            ushort count = UnpackCount(_fragmentGroupIndexAndCount[i]);
+
+            if (count != declaredCount)
+            {
+                return false;
+            }
+
+            minIndexSeen = Math.Min(minIndexSeen, index);
+            maxIndexSeen = Math.Max(maxIndexSeen, index);
+        }
+
+        int occurrences = runEnd - runStart;
+        if (maxIndexSeen - minIndexSeen + 1 != occurrences)
+        {
+            return false;
+        }
+
+        byte mode = UnpackMode(_fragmentGroupKey[runStart]);
+        uint firstSequence = UnpackFirstSequenceFromGroupKey(_fragmentGroupKey[runStart]);
+        _distinctGroupFirstSequenceAndCount[distinctGroupCount] =
+            PackGroupIdentity(mode, firstSequence, declaredCount);
+        distinctGroupCount++;
+        return true;
+    }
+
+    /// <summary>
+    /// Packs one distinct group's identity for <see cref="_distinctGroupFirstSequenceAndCount"/>:
+    /// <paramref name="mode"/> in bits 48-55, <paramref name="firstSequence"/> in bits 16-47, and
+    /// <paramref name="declaredCount"/> in bits 0-15.
+    /// </summary>
+    private static ulong PackGroupIdentity(byte mode, uint firstSequence, ushort declaredCount) =>
+        ((ulong)mode << 48) | ((ulong)firstSequence << 16) | declaredCount;
+
+    private static byte UnpackGroupMode(ulong groupIdentity) => (byte)(groupIdentity >> 48);
+
+    // Truncating to uint after the >>16 shift drops the mode bits above bit 31 along with it, leaving
+    // exactly the first-sequence bits PackGroupIdentity placed at 16-47.
+    private static uint UnpackFirstSequence(ulong groupIdentity) => (uint)(groupIdentity >> 16);
+
+    private static ushort UnpackDeclaredCount(ulong groupIdentity) => (ushort)groupIdentity;
+
+    /// <summary>
+    /// Sweeps <see cref="_distinctGroupFirstSequenceAndCount"/>'s first <paramref name="groupCount"/>
+    /// entries for a declared-range overlap — the second forgery #256 rejects, judged on each group's
+    /// full <c>[firstSequence, firstSequence + declaredCount)</c> range rather than only the sequences a
+    /// Fragment has actually claimed so far (see this class's <see cref="FragmentSetsAreWellFormed"/>
+    /// remarks for why) — but only ever between two groups sharing one mode (issue #47): two groups in
+    /// different modes live in different <see cref="ReceiveWindowSpaces"/> Spaces and can never conflict,
+    /// whatever their declared ranges happen to be. Because <see cref="TryCloseContiguousRun"/> appends
+    /// groups in the (mode, first sequence) order <see cref="FragmentSetsAreWellFormed"/> sorted
+    /// Fragments into, this array already sits in contiguous per-mode slices; this method finds each
+    /// slice's boundary in one linear pass and delegates the actual sweep, unchanged in shape from before
+    /// this fix, to <see cref="NoTwoDeclaredRangesOverlapWithinOneMode"/> for each slice in turn.
+    /// </summary>
+    private bool NoTwoDeclaredRangesOverlap(int groupCount)
+    {
+        if (groupCount == 0)
+        {
+            return true;
+        }
+
+        int sliceStart = 0;
+        for (int i = 1; i <= groupCount; i++)
+        {
+            if (i == groupCount || UnpackGroupMode(_distinctGroupFirstSequenceAndCount[i]) != UnpackGroupMode(_distinctGroupFirstSequenceAndCount[sliceStart]))
+            {
+                if (!NoTwoDeclaredRangesOverlapWithinOneMode(sliceStart, i))
+                {
+                    return false;
+                }
+
+                sliceStart = i;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The declared-range overlap sweep proper, run over one mode's own contiguous slice
+    /// <c>[sliceStart, sliceEnd)</c> of <see cref="_distinctGroupFirstSequenceAndCount"/> — every group in
+    /// that slice is already known to share one mode, so comparing any two of them is meaningful. Sorts
+    /// the slice by declared range start, relative to a wrap-aware anchor, then sweeps once tracking the
+    /// furthest declared end seen so far within the slice — the standard O(k log k) interval-overlap check
+    /// for a slice of <c>k</c> groups, correct for nested as well as merely adjacent ranges, in place of an
+    /// O(k²) all-pairs comparison.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The anchor is derived, not assumed.</b> Ordering <c>u32</c> sequences that may straddle the wrap
+    /// needs a point to measure from, and taking the slice's numerically smallest value is wrong: a hostile
+    /// peer adds one decoy group to drag that point away, which splits a genuinely overlapping pair to
+    /// opposite ends of the sorted slice, and the linear sweep then never compares them. The anchor is
+    /// therefore the slice's <em>wrap-aware</em> minimum — the value immediately after the largest circular
+    /// gap between consecutive first sequences, the wrap gap from the largest value back to the smallest
+    /// included. Every offset measured from it is then a genuine distance forward around the circle, so the
+    /// sort key is a consistent total order and the sweep compares the pairs it must.
+    /// </para>
+    /// <para>
+    /// <b>A slice too wide to order is refused, not guessed at.</b> No wrap-aware order exists over
+    /// sequences spanning more than half the space (2^31): past that, "forward around the circle" stops
+    /// being well defined, which is the same boundary <see cref="SequenceNumber"/> names. An honest sender
+    /// cannot produce such a datagram — a Peer's receive window is smaller than 2^31 by many orders of
+    /// magnitude — so a slice whose circular span exceeds it is discarded exactly as any other violation
+    /// here is. The assumption is enforced rather than relied upon, because on this path the span is a
+    /// value the attacker chooses.
+    /// </para>
+    /// <para>
+    /// Offsets are carried as <see cref="long"/> rather than <see cref="int"/>: a declared range's end is
+    /// its start plus up to <see cref="ushort.MaxValue"/>, which a slice already spanning close to 2^31
+    /// would push past <see cref="int.MaxValue"/> and wrap to a negative, defeating the very comparison the
+    /// sweep exists to make.
+    /// </para>
+    /// </remarks>
+    private bool NoTwoDeclaredRangesOverlapWithinOneMode(int sliceStart, int sliceEnd)
+    {
+        int sliceCount = sliceEnd - sliceStart;
+        if (sliceCount <= 1)
+        {
+            return true;
+        }
+
+        // The slice arrived in ascending numeric first-sequence order, and its groups are distinct, so the
+        // largest circular gap is found by one pass over adjacent pairs plus the wrap gap that closes the
+        // circle from the last value back to the first.
+        uint smallest = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[sliceStart]);
+        uint largest = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[sliceEnd - 1]);
+
+        ulong largestGap = OneSequenceSpace - largest + smallest;
+        uint anchor = smallest;
+
+        for (int i = sliceStart + 1; i < sliceEnd; i++)
+        {
+            uint previous = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i - 1]);
+            uint current = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i]);
+            ulong gap = current - previous;
+            if (gap > largestGap)
+            {
+                largestGap = gap;
+                anchor = current;
+            }
+        }
+
+        // The circular span is whatever the largest gap does not cover. At half the space or wider, no
+        // ordering of these groups is meaningful, so the datagram is refused rather than swept in an order
+        // the peer chose. The bound is "at or wider", not merely "wider": a span of exactly 2^31 puts the
+        // furthest group at an offset of 2^31 from the anchor, which is one past what the sort key below
+        // can hold, and it would wrap to a negative and sort to the wrong end — the very reordering this
+        // check exists to prevent.
+        if (OneSequenceSpace - largestGap >= OneSequenceSpace / 2)
+        {
+            return false;
+        }
+
+        for (int i = sliceStart; i < sliceEnd; i++)
+        {
+            uint firstSequence = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i]);
+            _distinctGroupSortKey[i] = unchecked((int)(firstSequence - anchor));
+        }
+
+        Array.Sort(_distinctGroupSortKey, _distinctGroupFirstSequenceAndCount, sliceStart, sliceCount);
+
+        long maxDeclaredEndSoFar = long.MinValue;
+        for (int i = sliceStart; i < sliceEnd; i++)
+        {
+            uint firstSequence = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i]);
+            ushort declaredCount = UnpackDeclaredCount(_distinctGroupFirstSequenceAndCount[i]);
+
+            long start = unchecked(firstSequence - anchor);
+            long end = start + declaredCount - 1;
+
+            if (i > sliceStart && start <= maxDeclaredEndSoFar)
+            {
+                return false;
+            }
+
+            maxDeclaredEndSoFar = Math.Max(maxDeclaredEndSoFar, end);
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -832,6 +1442,28 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             QueueForRetransmission(slot, PacketRecordMode.ReliableUnordered, reliableUnorderedExpired);
 
             slot.RetransmitTimer.BackOff();
+
+            // One elapsed retransmission round for this Peer (subtask 7.5.3.1, issue #294): once per
+            // Peer per Pump that expired something, whatever expired, alongside the shared backoff
+            // above — not once per expired Fragment. StallSignature itself decides whether this round
+            // counts toward anything (it is a no-op unless a Fragment window is open and unacked).
+            slot.StallSignature.RecordRetransmissionRound();
+
+            // Acting on the stall signature (issue #302): the round just recorded above is the only
+            // place RoundsSinceFirstUnackedFragment can advance, so it is the earliest and only point a
+            // false IsFragmentSizeStall can newly turn true — no separate per-Pump sweep is needed.
+            // Closing here, before the re-arm below, means the expired sequences QueueForRetransmission
+            // just queued onto slot.PendingSends never reach FlushOutboundDatagrams: ClosePeer removes
+            // the slot from every table that keeps it reachable, so nothing about this Peer survives to
+            // be flushed, backed off, or traced. Removing the occupant at this index leaves the Slot
+            // null (ShareHolderTable.Remove) rather than shifting later Slots, so continuing the loop at
+            // index + 1 is exactly as safe as an ordinary skip.
+            if (slot.StallSignature.IsFragmentSizeStall)
+            {
+                ClosePeer(slot.Handle, DisconnectReason.FragmentSizeUnviable);
+                continue;
+            }
+
             TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
             slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableOrdered, effectiveRto);
             slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableUnordered, effectiveRto);
@@ -854,13 +1486,37 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered;
 
     /// <summary>
+    /// Folds the <see cref="OutstandingReliableSequences.LastAckRelease"/> left behind by the
+    /// <see cref="OutstandingReliableSequences.ApplyAck"/> call that just ran into
+    /// <paramref name="slot"/>'s <see cref="PeerSlot.StallSignature"/> (subtask 7.5.3.1, issue #294):
+    /// called once per <see cref="OutstandingReliableSequences.ApplyAck"/> call, immediately after it, so
+    /// each Space's own release is read before the other Space's call overwrites
+    /// <see cref="OutstandingReliableSequences.LastAckRelease"/>.
+    /// </summary>
+    private static void ApplyAckToStallSignature(PeerSlot slot)
+    {
+        (bool releasedFragment, bool releasedUnfragmentedRecord) = slot.AckTracker.LastAckRelease;
+        if (releasedFragment)
+        {
+            slot.StallSignature.RecordFragmentAcked();
+        }
+
+        if (releasedUnfragmentedRecord)
+        {
+            slot.StallSignature.RecordUnfragmentedRecordAcked();
+        }
+    }
+
+    /// <summary>
     /// Queues every sequence <see cref="ReportExpiredRetransmissions"/> found expired on one reliable
     /// Space back onto <paramref name="slot"/>'s <see cref="PeerSlot.PendingSends"/>, so the same
     /// Pump's <see cref="FlushOutboundDatagrams"/> packs it (subtask 6.6.8, issue #218). No payload
-    /// copy is made or needed: a reliable record's bytes are in <see cref="_retention"/> from the
-    /// moment <see cref="Send"/> committed them, and <see cref="TryResolvePendingPayload"/> reads them
-    /// back at flush time — which is also what makes the resent bytes identical to the original
-    /// without this method holding anything to compare them against.
+    /// copy is made or needed: a reliable record's bytes, and its record shape — whole or one Fragment
+    /// of a cut Message, index and count included — are in <see cref="_retention"/> from the moment
+    /// <see cref="Send"/> committed them, and <see cref="TryResolvePendingPayload"/> reads both back at
+    /// flush time (issue #250). That is what makes the resent bytes identical to the original: this
+    /// queue entry carries nothing of its own for <see cref="FlushPeer"/> to rebuild the shape from —
+    /// <see cref="_retention"/> is the only place it is ever decided.
     /// </summary>
     /// <remarks>
     /// A sequence whose retention slot has already been released resolves to nothing at flush time and
@@ -963,13 +1619,18 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         int consumed = 0;
         foreach (PendingOutboundRecord pending in slot.PendingSends)
         {
-            if (!TryResolvePendingPayload(slot, pending, out ReadOnlySpan<byte> payload))
+            if (!TryResolvePendingPayload(
+                slot, pending, out ReadOnlySpan<byte> payload, out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount))
             {
                 consumed++;
                 continue;
             }
 
-            if (!packer.TryPackRecord(pending.Mode, pending.Sequence, payload))
+            bool packed = isFragment
+                ? packer.TryPackFragmentRecord(pending.Mode, pending.Sequence, fragmentIndex, fragmentCount, payload)
+                : packer.TryPackRecord(pending.Mode, pending.Sequence, payload);
+
+            if (!packed)
             {
                 break;
             }
@@ -988,7 +1649,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 slot.AckTracker.RecordSent(
                     pending.Mode,
                     pending.Sequence,
-                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger));
+                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger),
+                    isFragment);
+            }
+
+            // StallSignature.RecordFragmentSent opens the unacked-Fragment window on the first Fragment
+            // only (subtask 7.5.3.1, issue #294) but must see every reliable Fragment actually packed,
+            // retransmits included — the tracker itself latches only the first send.
+            if (isFragment && IsReliable(pending.Mode))
+            {
+                slot.StallSignature.RecordFragmentSent();
             }
         }
 
@@ -1008,22 +1678,41 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// The bytes one queued record's flush should pack: <paramref name="pending"/>'s own copy for an
-    /// unreliable record, since nothing else retains it; otherwise a read back from
-    /// <see cref="_retention"/> at the reliable Space <paramref name="pending"/>'s mode addresses.
-    /// Fails — nothing to pack — only if a reliable sequence was already released from retention
-    /// between being queued and this flush, which no path on this ticket's live traffic does yet.
+    /// The bytes, and the record shape, one queued record's flush should pack: <paramref name="pending"/>'s
+    /// own copy for an unreliable record, since nothing else retains it, and never a Fragment (ADR 0004
+    /// — only reliable modes ever fragment); otherwise both are read back from <see cref="_retention"/>
+    /// at the reliable Space <paramref name="pending"/>'s mode addresses, which is where <see cref="Send"/>
+    /// recorded them and the only place a retransmit — <paramref name="pending"/> itself carries nothing
+    /// of the shape — can recover them from (issue #250). Fails — nothing to pack — only if a reliable
+    /// sequence was already released from retention between being queued and this flush, which no path
+    /// on this ticket's live traffic does yet.
     /// </summary>
-    private bool TryResolvePendingPayload(PeerSlot slot, PendingOutboundRecord pending, out ReadOnlySpan<byte> payload)
+    /// <param name="slot">The Peer this record was queued against.</param>
+    /// <param name="pending">The queued record whose bytes and shape are being resolved.</param>
+    /// <param name="payload">The resolved record's payload bytes.</param>
+    /// <param name="isFragment">Whether the record is one piece of a Message cut into Fragments.</param>
+    /// <param name="fragmentIndex">This piece's position within its Message, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
+    /// <param name="fragmentCount">The Message's total piece count, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
+    private bool TryResolvePendingPayload(
+        PeerSlot slot,
+        PendingOutboundRecord pending,
+        out ReadOnlySpan<byte> payload,
+        out bool isFragment,
+        out ushort fragmentIndex,
+        out ushort fragmentCount)
     {
         if (pending.UnreliablePayload is byte[] bytes)
         {
             payload = bytes;
+            isFragment = false;
+            fragmentIndex = 0;
+            fragmentCount = 0;
             return true;
         }
 
         int spaceIndex = ReliableSpaceIndex(pending.Mode);
-        return _retention.TryRead(slot.Handle.Index, spaceIndex, pending.Sequence, out payload);
+        return _retention.TryRead(
+            slot.Handle.Index, spaceIndex, pending.Sequence, out payload, out isFragment, out fragmentIndex, out fragmentCount);
     }
 
     /// <summary>
@@ -1051,11 +1740,53 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// counted for this Space, since the 64-entry window is the authority on what was a duplicate here
     /// and counting both would count one repeat twice.
     /// </para>
+    /// <para>
+    /// <b>An admitted Fragment is diverted, not delivered</b> (issue #257, ADR 0004). A Fragment is one
+    /// piece of a Message, not a Message, so an admitted one is held in its Space's receive-window slot
+    /// instead — <see cref="HoldFragment"/> — rather than reaching <see cref="DeliverAdmittedRecord"/>:
+    /// no frame-arena reservation, no pending <see cref="SessionEventKind.MessageReceived"/>, and
+    /// <see cref="PeerCounters.MessagesReceived"/> does not rise. <see cref="HoldFragment"/> also
+    /// derives the held Fragment's group first sequence and answers whether its group is now complete
+    /// (issue #258); a complete group is handed to <see cref="TryDeliverOrDeferFragmentGroup"/>, which
+    /// delivers it as one Message or defers it if delivery cannot happen yet (issue #259). Only
+    /// <c>ReliableOrdered</c> and <c>ReliableUnordered</c> ever carry the fragment shape (ADR 0004);
+    /// <paramref name="isFragment"/> is otherwise ignored exactly as it always was, so a stray fragment
+    /// bit on an unreliable-mode record changes nothing this method does. By the time this method runs
+    /// at all, <see cref="ParseDataDatagram"/>'s own pass has already refused any Fragment in this
+    /// datagram whose declared <c>fragmentCount</c> claims more Fragments than this Reactor's own
+    /// receive window, <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>, could ever
+    /// hold (issue #282, reworked under #264), so <paramref name="fragmentCount"/> here is always a legal
+    /// claim, never one this method itself needs to bound.
+    /// </para>
+    /// <para>
+    /// <b>An abandoned Fragment set is reported, never acted on</b> (issue #297). The
+    /// <see cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/> call above may have
+    /// just clobbered the ring slot of an incomplete Fragment set that can now never complete — the
+    /// window itself has no <see cref="PeerId"/> to subject a Diagnostic to, so this method reads
+    /// <see cref="ReceiveWindowSpaces.LastAbandonedFragmentSet"/> right after that call and logs
+    /// <see cref="DiagnosticRecord.ForFragmentSetAbandoned"/> from it. This is accounting only: it fires
+    /// on ordinary loss as readily as on anything more serious, so nothing here closes, disconnects, or
+    /// otherwise changes Session state — that is issue #270's job, off a different signal.
+    /// </para>
     /// </remarks>
-    private void ClassifyRecord(PeerSlot slot, PacketRecordMode mode, uint sequence, ReadOnlySpan<byte> payload)
+    private void ClassifyRecord(
+        PeerSlot slot, PacketRecordMode mode, uint sequence, bool isFragment,
+        ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload)
     {
         ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
-        ReceiveWindowOutcome outcome = windows.Classify(mode, sequence);
+        ReceiveWindowOutcome outcome = windows.Classify(mode, sequence, out int ringSlot);
+
+        // The moment a Fragment set's slot is discarded is the last moment anyone can say how much of
+        // it had arrived (issue #297): windows.Classify just clobbered such a slot if this is set. This
+        // is accounting only — it says what was lost and not why, and fires on ordinary loss too, which
+        // is exactly why it may never close, disconnect, or otherwise change Session state itself.
+        if (windows.LastAbandonedFragmentSet.Occurred && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForFragmentSetAbandoned(
+                ToPeerId(slot.Handle),
+                windows.LastAbandonedFragmentSet.Held,
+                windows.LastAbandonedFragmentSet.Expected));
+        }
 
         switch (outcome)
         {
@@ -1074,7 +1805,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
         else if (outcome == ReceiveWindowOutcome.Admitted)
         {
-            DeliverAdmittedRecord(slot, mode, sequence, payload);
+            if (isFragment && mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
+            {
+                bool groupComplete = HoldFragment(slot, mode, sequence, ringSlot, fragmentIndex, fragmentCount, payload);
+                if (groupComplete)
+                {
+                    uint groupFirstSequence = FragmentGroup.FirstSequenceOf(sequence, fragmentIndex);
+                    TryDeliverOrDeferFragmentGroup(slot, mode, groupFirstSequence, fragmentCount);
+                }
+            }
+            else
+            {
+                DeliverAdmittedRecord(slot, mode, sequence, payload);
+            }
         }
 
         // No mode test guards this (#176): a window reports a nonzero LastSlideLoss only if it slid,
@@ -1124,6 +1867,310 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         DeliverAdmittedRecord(slot, PacketRecordMode.Unreliable, sequence, payload);
+    }
+
+    /// <summary>
+    /// Diverts an admitted Fragment away from delivery and into its Space's receive-window slot for
+    /// <paramref name="ringSlot"/> instead (issue #257, ADR 0004): copies its payload into the
+    /// fixed-size slot the receive arena preallocated for that ring position, and records the payload's
+    /// byte length on the window so a later Pump can tell a held Fragment apart from an empty slot.
+    /// Nothing is reserved in the frame arena, no pending <see cref="SessionEventKind.MessageReceived"/>
+    /// is queued, and <see cref="PeerCounters.MessagesReceived"/> does not rise — a Fragment is a piece
+    /// of a Message, not a Message, so none of the three steps <see cref="DeliverToConsumer"/> takes
+    /// apply to it. Once the length is recorded, this derives the held piece's group first sequence
+    /// (issue #258), records that identity on the window too (issue #297) — so the set can still be
+    /// named if its slot is later discarded before it completes — and answers whether every piece of
+    /// that group is now held.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// There is no separate reassembly buffer to copy into instead (ADR 0004): the receive window this
+    /// Fragment was already admitted into <em>is</em> the reassembly storage, by design rather than by
+    /// omission. A dedicated buffer would be new attack surface — a sender flooding partial Fragment
+    /// sets would fill memory taken solely for that purpose — while this design lets such a sender only
+    /// ever fill the same receive window an honest sender's traffic already bounds and this Reactor
+    /// already defends. <paramref name="ringSlot"/> comes from
+    /// <see cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/>'s own call in
+    /// <see cref="ClassifyRecord"/>, which is why this method takes the slot rather than re-resolving it
+    /// from <paramref name="mode"/> and a sequence — the window's <see cref="ReceiveWindow.Base"/> may
+    /// already have advanced past that sequence by the time this call is made.
+    /// </para>
+    /// <para>
+    /// <b>Survives an interruption at no cost (issue #262).</b> A held Fragment's slot is ordinary
+    /// per-Peer <see cref="PeerSlot"/> and receive-arena state — the same state a lost and rebuilt
+    /// transport leaves untouched, because this profile identifies a Session by its wire token rather
+    /// than by the address or link a datagram arrived on (see <see cref="ProcessDataDatagram"/>'s
+    /// remarks). A half-arrived group's pieces are therefore still exactly here, still counted against
+    /// this Peer's own receive window, no matter how long the gap between one Fragment and the next:
+    /// nothing reads this state as part of resuming a Session, and nothing needs to, because nothing
+    /// about it was ever tied to the transport that went away. This is the general shape any resume of
+    /// any kind must respect — <see cref="StreamSessionReactor"/>'s own Resume (issue #128) makes the
+    /// same promise for its profile, stream framing rather than Fragments: resuming fixes <em>where
+    /// delivery continues from</em>, at Message granularity, and never discards what a receive window is
+    /// already holding piece by piece underneath that.
+    /// </para>
+    /// </remarks>
+    /// <param name="slot">The Peer this Fragment arrived on.</param>
+    /// <param name="mode">The Fragment's delivery mode — always <c>ReliableOrdered</c> or <c>ReliableUnordered</c> (ADR 0004).</param>
+    /// <param name="sequence">The Fragment's own sequence — see <see cref="FragmentGroup.FirstSequenceOf"/>.</param>
+    /// <param name="ringSlot">The ring position the admitting <see cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/> call reported.</param>
+    /// <param name="fragmentIndex">The Fragment's zero-based position within its group.</param>
+    /// <param name="fragmentCount">The group's declared Fragment count.</param>
+    /// <param name="payload">The Fragment's payload bytes.</param>
+    /// <returns>
+    /// Whether the Fragment's group is complete after this piece was held (issue #258) —
+    /// <see langword="false"/> whenever the payload did not fit its slot, since that leaves the slot's
+    /// length at zero and the piece effectively lost. Delivering a complete group is issue #259's, so
+    /// today's only caller discards this.
+    /// </returns>
+    private bool HoldFragment(
+        PeerSlot slot, PacketRecordMode mode, uint sequence, int ringSlot,
+        ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload)
+    {
+        int spaceIndex = ReliableSpaceIndex(mode);
+        Span<byte> fragmentSlot = _receiveArena.GetFragmentSlot(slot.Handle.Index, spaceIndex, ringSlot);
+
+        if (payload.Length > fragmentSlot.Length)
+        {
+            // Cannot happen from a peer whose own FragmentSize matches this Reactor's (ADR 0004's
+            // ordinary case), but fragment size is unilateral and per-direction, so nothing on the
+            // wire proves the two sides agree. Refusing to write past the slot's fixed width — rather
+            // than throwing — leaves the sequence admitted (the window already advanced past it) but
+            // this slot's length at zero, indistinguishable from an empty one: the Fragment set this
+            // piece belonged to simply never completes, exactly as if the piece had been lost.
+            return false;
+        }
+
+        payload.CopyTo(fragmentSlot);
+        ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
+        windows.RecordFragmentLength(mode, ringSlot, (ushort)payload.Length);
+
+        uint groupFirstSequence = FragmentGroup.FirstSequenceOf(sequence, fragmentIndex);
+        windows.RecordFragmentGroup(mode, ringSlot, groupFirstSequence, fragmentCount);
+        return windows.IsGroupComplete(mode, groupFirstSequence, fragmentCount);
+    }
+
+    /// <summary>
+    /// Decides how a just-completed Fragment group reaches the consumer (issue #259). For
+    /// <c>ReliableUnordered</c> there is no ordering rule to satisfy, so this attempts delivery
+    /// immediately and, if the frame arena had no room, defers it on the Space's <see cref="PendingFragmentGroups"/>
+    /// for <see cref="RetryPendingFragmentDeliveries"/> to retry on a later Pump. For
+    /// <c>ReliableOrdered</c> the group must additionally wait its turn in this Peer's
+    /// <see cref="PeerSlot.OrderedDelivery"/> queue — the same send-order rule an unfragmented record
+    /// already obeys (subtask 6.6.10, issue #220) — so this records the group as
+    /// the Space's <see cref="PendingFragmentGroups"/> and asks <see cref="DrainOrderedDelivery"/>
+    /// to deliver it the moment that queue's <see cref="OrderedDeliveryQueue.NextSequence"/> reaches
+    /// the group's first sequence, whether that is true already or only after some other sequence
+    /// still ahead of it in that Space arrives.
+    /// </summary>
+    /// <summary>
+    /// The completed-but-undelivered Fragment groups of <paramref name="slot"/>'s
+    /// <paramref name="mode"/> Space (issue #259). Resolved through <see cref="_receiveWindows"/> by
+    /// <see cref="SlotHandle.Index"/>, the same way this Peer's windows themselves are, so a waiting
+    /// group and the held pieces it names live in one place and are reset together when a Slot is
+    /// reused.
+    /// </summary>
+    private PendingFragmentGroups PendingGroupsOf(PeerSlot slot, PacketRecordMode mode) =>
+        _receiveWindows[slot.Handle.Index].PendingGroupsFor(mode);
+
+    private void TryDeliverOrDeferFragmentGroup(PeerSlot slot, PacketRecordMode mode, uint groupFirstSequence, ushort fragmentCount)
+    {
+        if (mode == PacketRecordMode.ReliableUnordered)
+        {
+            if (!TryDeliverFragmentGroup(slot, mode, groupFirstSequence, fragmentCount))
+            {
+                PendingGroupsOf(slot, mode).Add(groupFirstSequence, fragmentCount);
+            }
+
+            return;
+        }
+
+        PendingGroupsOf(slot, mode).Add(groupFirstSequence, fragmentCount);
+        DrainOrderedDelivery(slot);
+    }
+
+    /// <summary>
+    /// Copies a completed Fragment group's held pieces, in fragment index order, into one contiguous
+    /// frame arena reservation and queues it as one pending <see cref="SessionEventKind.MessageReceived"/>
+    /// (issue #259) — the same three steps <see cref="DeliverToConsumer"/> takes for an unfragmented
+    /// record, taken once for the whole group rather than once per piece, because the consumer is owed
+    /// one whole Message and not <paramref name="fragmentCount"/> partial ones. Releases the group's
+    /// window slots (<see cref="ReceiveWindowSpaces.ReleaseGroup"/>) only on success: a reservation
+    /// that fails leaves every piece exactly where <see cref="HoldFragment"/> put it, nothing is
+    /// counted as received, and the caller is responsible for retrying — see
+    /// the Space's <see cref="PendingFragmentGroups"/>, the Space's <see cref="PendingFragmentGroups"/>
+    /// and <see cref="RetryPendingFragmentDeliveries"/>.
+    /// </summary>
+    /// <remarks>
+    /// One reservation for the whole group, not one per piece, is deliberate: a consumer that Sent one
+    /// Message is owed one <see cref="SessionEventKind.MessageReceived"/>, not a run of them that
+    /// happens to reassemble into the same bytes if concatenated. The per-share-holder escape
+    /// <see cref="FrameArena.Reserve(int, int)"/> already grants a share-holder with nothing else
+    /// reserved this Frame — a Peer that has delivered nothing yet — applies here exactly as it does
+    /// for a single record: a reassembled Message at <see cref="DatagramSessionOptions.MaxMessageSize"/>
+    /// can exceed this Peer's fair share of the frame arena and still be delivered whole, which is what
+    /// makes such a Message reachable at all rather than permanently stuck behind a share bound sized
+    /// for ordinary traffic.
+    /// </remarks>
+    /// <returns><see langword="true"/> if the group was delivered; <see langword="false"/> if the reservation failed.</returns>
+    private bool TryDeliverFragmentGroup(PeerSlot slot, PacketRecordMode mode, uint groupFirstSequence, ushort fragmentCount)
+    {
+        ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
+        int spaceIndex = ReliableSpaceIndex(mode);
+
+        int totalLength = 0;
+        for (int i = 0; i < fragmentCount; i++)
+        {
+            uint sequence = unchecked(groupFirstSequence + (uint)i);
+            if (!windows.TryGetRingSlot(mode, sequence, out int ringSlot))
+            {
+                // A group HoldFragment/IsGroupComplete just reported complete should always resolve
+                // every one of its own pieces; if window state ever moved out from under it before
+                // this ran, there is nothing safe to deliver — treat it as not ready rather than throw
+                // or deliver a partial Message, and let a later Pump's retry re-derive the answer.
+                return false;
+            }
+
+            totalLength += windows.GetFragmentLength(mode, ringSlot);
+        }
+
+        int payloadOffset = _arena.BytesUsed;
+        ArenaReservation reservation = _arena.Reserve(slot.Handle.Index, totalLength);
+        if (reservation.Outcome != ArenaReservationOutcome.Committed)
+        {
+            if (reservation.Outcome == ArenaReservationOutcome.ArenaExhausted && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(
+                    ToPeerId(slot.Handle),
+                    reservation.BytesRequested,
+                    reservation.BytesFree));
+            }
+
+            return false;
+        }
+
+        Span<byte> destination = reservation.Payload;
+        int destinationOffset = 0;
+        for (int i = 0; i < fragmentCount; i++)
+        {
+            uint sequence = unchecked(groupFirstSequence + (uint)i);
+            windows.TryGetRingSlot(mode, sequence, out int ringSlot);
+            int length = windows.GetFragmentLength(mode, ringSlot);
+            ReadOnlySpan<byte> fragmentPayload = _receiveArena.GetFragmentSlot(slot.Handle.Index, spaceIndex, ringSlot)[..length];
+            fragmentPayload.CopyTo(destination.Slice(destinationOffset, length));
+            destinationOffset += length;
+        }
+
+        windows.ReleaseGroup(mode, groupFirstSequence, fragmentCount);
+
+        _pendingEvents.Add(new PendingEvent
+        {
+            Kind = SessionEventKind.MessageReceived,
+            Peer = ToPeerId(slot.Handle),
+            PayloadOffset = payloadOffset,
+            PayloadLength = totalLength,
+        });
+
+        slot.Counters.RecordMessageReceived();
+        return true;
+    }
+
+    /// <summary>
+    /// Drains this Peer's <c>ReliableOrdered</c> send-order queue — every payload
+    /// <see cref="OrderedDeliveryQueue.TryReleaseNext"/> now yields, in order — and then attempts
+    /// the Space's <see cref="PendingFragmentGroups"/> if that drain reached its first sequence
+    /// (issue #259). The two are interleaved rather than run once each, because delivering a group
+    /// advances the queue past the whole span it occupies
+    /// (<see cref="OrderedDeliveryQueue.SkipTo"/>), which can itself unblock a further run of ordinary
+    /// records that was held behind the group's own gap; the loop keeps alternating until a full pass
+    /// delivers nothing further.
+    /// </summary>
+    private void DrainOrderedDelivery(PeerSlot slot)
+    {
+        while (true)
+        {
+            while (slot.OrderedDelivery.TryReleaseNext(out ReadOnlyMemory<byte> released))
+            {
+                DeliverToConsumer(slot, released.Span);
+            }
+
+            if (!TryFlushPendingOrderedFragmentGroup(slot))
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Delivers the Space's <see cref="PendingFragmentGroups"/> if it is both present and its Space's
+    /// ordering queue has reached exactly its first sequence — the group's turn, in the same send-order
+    /// rule an unfragmented <c>ReliableOrdered</c> record already obeys (issue #259). A pending group
+    /// whose turn has not yet arrived, because some earlier sequence in the Space is still missing, is
+    /// left exactly as it is: its pieces stay held in the receive window and nothing here disturbs them.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> if a pending group was both due and successfully delivered — the signal
+    /// <see cref="DrainOrderedDelivery"/> uses to keep looping, since delivering a group can unblock
+    /// more of the ordinary queue behind it; <see langword="false"/> otherwise, whether because nothing
+    /// was pending, it was not yet due, or its reservation failed and it remains pending for a later
+    /// Pump.
+    /// </returns>
+    private bool TryFlushPendingOrderedFragmentGroup(PeerSlot slot)
+    {
+        PendingFragmentGroups pending = PendingGroupsOf(slot, PacketRecordMode.ReliableOrdered);
+        uint firstSequence = slot.OrderedDelivery.NextSequence;
+        if (!pending.TryGetDueAt(firstSequence, out ushort fragmentCount))
+        {
+            return false;
+        }
+
+        if (!TryDeliverFragmentGroup(slot, PacketRecordMode.ReliableOrdered, firstSequence, fragmentCount))
+        {
+            return false;
+        }
+
+        pending.Remove(firstSequence);
+        slot.OrderedDelivery.SkipTo(unchecked(firstSequence + fragmentCount));
+        return true;
+    }
+
+    /// <summary>
+    /// Retries every open Peer's Fragment group still waiting to be delivered (issue #259): one whose
+    /// frame-arena reservation failed the moment it completed, in either reliable Space. Driven once
+    /// per Pump, right after the datagram-processing pass that both completes new groups and can
+    /// advance a <c>ReliableOrdered</c> group past a gap — this Reactor's own send path never frees
+    /// receive-side room, so only a fresh Frame's wiped arena (<see cref="FrameArena.Reset"/>, at the
+    /// top of the next <see cref="Pump"/>) can turn a previously failed reservation into one that
+    /// succeeds. Allocates nothing: it walks the fixed-size Slot table by index exactly as the stream
+    /// profile's own per-Pump sweep does, rather than tracking a separate list of Peers with something
+    /// pending.
+    /// </summary>
+    private void RetryPendingFragmentDeliveries()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot)
+            {
+                continue;
+            }
+
+            if (PendingGroupsOf(slot, PacketRecordMode.ReliableOrdered).Count > 0)
+            {
+                DrainOrderedDelivery(slot);
+            }
+
+            // Walks the dense prefix backwards, so a delivered group's removal — which moves the last
+            // entry down into the freed position — can never skip an entry this pass has not yet tried.
+            PendingFragmentGroups unordered = PendingGroupsOf(slot, PacketRecordMode.ReliableUnordered);
+            for (int pending = unordered.Count - 1; pending >= 0; pending--)
+            {
+                (uint firstSequence, ushort fragmentCount) = unordered.At(pending);
+                if (TryDeliverFragmentGroup(slot, PacketRecordMode.ReliableUnordered, firstSequence, fragmentCount))
+                {
+                    unordered.Remove(firstSequence);
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -1184,10 +2231,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
 
             DeliverToConsumer(slot, payload);
-            while (slot.OrderedDelivery.TryReleaseNext(out ReadOnlyMemory<byte> released))
-            {
-                DeliverToConsumer(slot, released.Span);
-            }
+            DrainOrderedDelivery(slot);
 
             return;
         }
@@ -1479,6 +2523,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ReadOnlySpan<byte> remoteResumeSecret,
         ulong clientNonce)
     {
+        // ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize at parse
+        // (issue #287), so by the time a Peer is built here, straight into Established, the value is
+        // already trusted — an internal invariant to assert rather than input to re-validate.
+        Debug.Assert(
+            remoteMaxMessageSize != 0,
+            "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize before this is called.");
+
         RetransmissionTimer retransmitTimer = new();
         return new()
         {
@@ -1493,6 +2544,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             State = HandshakeState.Established,
             AckTracker = NewAckTracker(retransmitTimer),
             RetransmitTimer = retransmitTimer,
+            StallSignature = new(_options.Reactor.TimeProvider),
+            FragmentSize = _options.ResolvedFragmentSize,
         };
     }
 
@@ -1668,14 +2721,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// One record <see cref="Send"/> queued on a Peer's Slot, awaiting that Peer's next flush
     /// (<see cref="FlushOutboundDatagrams"/>, issue #216): the wire mode and sequence
     /// <see cref="Send"/> already allocated, plus — only for the two unreliable modes — a copy of the
-    /// Message's bytes. A reliable record carries no copy of its own: its bytes already live in
-    /// <see cref="_retention"/> from the moment <see cref="Send"/> committed them, and
-    /// <see cref="TryResolvePendingPayload"/> reads them back from there at flush time instead of
-    /// duplicating them here. Nothing retains an unreliable Send's bytes anywhere else — plain
-    /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> take no
-    /// retention slot at all (issue #43) — so this is the simplest place that can hold them until the
-    /// Pump that finally needs them: one small copy per unreliable Send, released the moment that
-    /// Pump's flush clears <see cref="PeerSlot.PendingSends"/>.
+    /// Message's bytes. A reliable record carries no copy of its own and no record shape of its own
+    /// either: its bytes, and whether it is a whole Message or one Fragment of a cut one (with which
+    /// index and count), already live in <see cref="_retention"/> from the moment <see cref="Send"/>
+    /// committed them, and <see cref="TryResolvePendingPayload"/> reads both back from there at flush
+    /// time instead of duplicating them here (issue #250) — a queue entry rebuilding the shape itself
+    /// is exactly the bug that ticket fixed. Nothing retains an unreliable Send's bytes anywhere else —
+    /// plain <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/>
+    /// take no retention slot at all (issue #43) and are never a Fragment (ADR 0004) — so this is the
+    /// simplest place that can hold them until the Pump that finally needs them: one small copy per
+    /// unreliable Send, released the moment that Pump's flush clears <see cref="PeerSlot.PendingSends"/>.
     /// </summary>
     private readonly struct PendingOutboundRecord
     {
@@ -1741,8 +2796,34 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <summary>The id the remote assigned, which this Reactor stamps on datagrams sent there.</summary>
         public uint RemoteSessionId { get; set; }
 
-        /// <summary>The largest Message the remote said it will accept.</summary>
+        /// <summary>
+        /// The largest Message the remote said it will accept, announced during the handshake
+        /// (issue #284). <see cref="DatagramSessionReactor.Send"/> refuses a reliable Message wider than
+        /// this with <see cref="SendOutcome.RemoteMessageTooLarge"/> rather than sending bytes the far
+        /// end has already said it cannot hold (issue #287) — which is why an unset value here would not
+        /// refuse nothing, it would refuse everything: every reliable Send would exceed a limit of zero.
+        /// Both Established paths, <see cref="OnHelloWithCookie"/> (via <see cref="NewAcceptedPeer"/>)
+        /// and <see cref="OnAccept"/>, therefore reject a zero announcement off the wire before a Peer
+        /// ever reaches Established, and each asserts or re-asserts the resulting non-zero invariant
+        /// rather than defaulting a missing value to something permissive or something that refuses. The
+        /// Datagram profile has no wire-level Resume yet (issue #52): what looks like "surviving an
+        /// interruption" here is a Session identified by its wire token rather than by address, so an
+        /// outage never tears down the <see cref="PeerSlot"/> and this field is never re-read or
+        /// re-established — it simply was never lost. A real Resume, when #52 lands, would have to
+        /// re-establish this value the same way the initial handshake does.
+        /// </summary>
         public uint RemoteMaxMessageSize { get; set; }
+
+        /// <summary>
+        /// This Peer's own fragment size, resolved from <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
+        /// once at admission and stored here rather than read afresh from options on every
+        /// <see cref="DatagramSessionReactor.Send"/> (issue #248). Fragment size is unilateral and
+        /// per-direction (ADR 0004): it is decided once, when this Peer opens, and nothing consulted
+        /// later — a config change, a handshake reply, a Resume — can move it for a Session already in
+        /// flight. Every Fragment a Message is cut into and every retransmit of one uses this same
+        /// value for that Peer's whole lifetime.
+        /// </summary>
+        public required int FragmentSize { get; init; }
 
         /// <summary>The secret the remote will require before it resumes this Session. Stored, unused until Resume lands.</summary>
         public byte[] RemoteResumeSecret { get; set; } = [];
@@ -1806,6 +2887,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         public required RetransmissionTimer RetransmitTimer { get; init; }
 
         /// <summary>
+        /// This Peer's own fragment-size stall signature state (subtask 7.5.3.1, issue #294; parent
+        /// #269): built fresh from this Reactor's own <see cref="ReactorOptions.TimeProvider"/> at the
+        /// same two admission sites as <see cref="AckTracker"/> and <see cref="RetransmitTimer"/>, and
+        /// released with the Slot, so a Slot a later Peer reuses inherits none of the previous
+        /// occupant's stall state. Fed from the same flush, ack and retransmission-sweep paths that
+        /// already run for <see cref="AckTracker"/> and <see cref="RetransmitTimer"/>; nothing new reads
+        /// the clock or sweeps for it.
+        /// </summary>
+        public required FragmentStallSignature StallSignature { get; init; }
+
+        /// <summary>
         /// The value of <see cref="OutstandingReliableSequences.HorizonDeferrals"/> last folded into
         /// <see cref="Counters"/> (subtask 6.3.6, issue #188). The tracker exposes a monotonic total
         /// rather than a per-event signal, while <see cref="Core.PeerCounterSet.RecordHorizonDeferral"/>
@@ -1846,5 +2938,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// previous occupant's held run or its next expected sequence.
         /// </summary>
         public OrderedDeliveryQueue OrderedDelivery { get; } = new();
+
     }
 }

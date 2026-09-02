@@ -430,8 +430,10 @@ public class DatagramSessionOptionsTests
         long budget = options.ReceiveBudgetBytes;
 
         // Assert — payload slots for the two reliable Spaces, one admission byte per slot for all
-        // four, both scaled by Capacity and the window (issue #174).
-        budget.Should().Be((3L * 2 * 5 * 1000) + (3L * 4 * 5));
+        // four, a two-byte Fragment-length slot and a six-byte Fragment-group slot for the two reliable
+        // Spaces (issue #257, #297), and a six-byte waiting-group entry per half-window for those same
+        // two Spaces (issue #259), all scaled by Capacity and the window (issue #174).
+        budget.Should().Be((3L * 2 * 5 * (1000 + 2 + 6)) + (3L * 4 * 5) + (3L * 2 * (5 / 2) * 6));
     }
 
     [Fact]
@@ -453,7 +455,10 @@ public class DatagramSessionOptionsTests
         // Arrange — capacity 100 000 with a 100 000-byte retention and a one-fragment receive window
         // adds to far more than can be allocated.
         DatagramSessionOptions options = CreateOptions(capacity: 100_000, maxMessageSize: 1200, retentionBytes: 100_000);
-        long expectedReceive = (100_000L * 2 * 1 * 1200) + (100_000L * 4 * 1);
+        // A one-fragment window still holds one waiting group per reliable Space — the floor of the
+        // half-window bound, never fewer than one (issue #259). The payload term also carries a 2-byte
+        // Fragment-length slot (issue #257) and a 6-byte Fragment-group slot (issue #297) per fragment.
+        long expectedReceive = (100_000L * 2 * 1 * (1200 + 2 + 6)) + (100_000L * 4 * 1) + (100_000L * 2 * 1 * 6);
         long expectedSend = 100_000L * 2 * 100_000;
         long expectedTotal = expectedReceive + expectedSend;
 
