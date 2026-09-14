@@ -269,6 +269,22 @@ internal sealed class RetentionArena
     /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
     public (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) GetUnsent(int shareHolderId)
     {
+        (ArraySegment<byte> first, ArraySegment<byte> second) = GetUnsentSegments(shareHolderId);
+        return (first.AsMemory(), second.AsMemory());
+    }
+
+    /// <summary>
+    /// The same two unsent runs <see cref="GetUnsent"/> reports, expressed as
+    /// <see cref="ArraySegment{T}"/> over the backing array rather than <see cref="ReadOnlyMemory{T}"/>
+    /// — the shape a gather write needs (issue #132), since a scatter/gather socket send takes an
+    /// <see cref="System.Collections.Generic.IList{T}"/> of segments and nothing else. This exists
+    /// beside <see cref="GetUnsent"/>, rather than replacing it, so a caller writing one run at a time
+    /// keeps the span-shaped view it already had, and so neither caller has to prove at runtime that
+    /// this arena's memory is array-backed.
+    /// </summary>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    public (ArraySegment<byte> first, ArraySegment<byte> second) GetUnsentSegments(int shareHolderId)
+    {
         ValidateShareHolderId(shareHolderId);
 
         ulong unsent = _writtenTotal[shareHolderId] - _sentTotal[shareHolderId];
@@ -278,11 +294,11 @@ internal sealed class RetentionArena
 
         if (unsent <= (ulong)spaceToRegionEnd)
         {
-            return (_buffer.AsMemory(regionStart + position, (int)unsent), default);
+            return (new ArraySegment<byte>(_buffer, regionStart + position, (int)unsent), default);
         }
 
-        ReadOnlyMemory<byte> first = _buffer.AsMemory(regionStart + position, spaceToRegionEnd);
-        ReadOnlyMemory<byte> second = _buffer.AsMemory(regionStart, (int)unsent - spaceToRegionEnd);
+        ArraySegment<byte> first = new(_buffer, regionStart + position, spaceToRegionEnd);
+        ArraySegment<byte> second = new(_buffer, regionStart, (int)unsent - spaceToRegionEnd);
         return (first, second);
     }
 

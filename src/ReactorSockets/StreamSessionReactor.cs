@@ -58,6 +58,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly HashSet<SlotHandle> _peersWithAdvancedReceivedCount = [];
     private readonly HashSet<SlotHandle> _peersPendingClose = [];
     private readonly HashSet<SlotHandle> _peersWithRedialScheduled = [];
+
+    // The two fixed-size segment lists a delivery counter riding a retention write is described by
+    // (issue #132): the counter record plus one unsent run, or the counter record plus both runs of a
+    // wrapped one. Allocated once with the Reactor and rewritten in place on every gather write, for
+    // the same reason PeerSlot.DeliveryCounterRecord is — this fires on every Pump a two-way Peer's
+    // received count advances, which is steady state rather than an exceptional path, and
+    // Socket.Send's gather overload takes an IList whose Count is the segment count, so a single
+    // oversized array cannot stand in for both shapes.
+    private readonly ArraySegment<byte>[] _counterAndOneRun = new ArraySegment<byte>[2];
+    private readonly ArraySegment<byte>[] _counterAndBothRuns = new ArraySegment<byte>[3];
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
     private int _capDeferralsThisFrame;
@@ -948,6 +958,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         slot.PendingHandshakeBytesToSend = null;
         slot.QueuedHandshakeSend = null;
         slot.PendingDeliveryCounterBytesToSend = null;
+        slot.DeliveryCounterRidesRetentionWrite = false;
         slot.State = HandshakeState.Established;
 
         long now = _options.Reactor.TimeProvider.GetTimestamp();
@@ -1408,6 +1419,23 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// for retention-ring room and never perturbs a Message's boundary index.
     /// </para>
     /// <para>
+    /// <b>How it costs a two-way Peer nothing (issue #132, #25's stated cost).</b> Bypassing the ring
+    /// says where the bytes may not come from, not that they need a write of their own. When this Peer
+    /// already has a retention write due this Pump (<see cref="PeerSlot.HasPendingRetentionWrite"/>),
+    /// this method writes the record into <see cref="PeerSlot.DeliveryCounterRecord"/> and marks it to
+    /// ride (<see cref="PeerSlot.DeliveryCounterRidesRetentionWrite"/>) instead of sending it;
+    /// <see cref="FlushRetention"/> then offers the record and the unsent retention runs to the socket
+    /// as one gather write (<see cref="TcpLink.Send(IList{ArraySegment{byte}})"/>). The record stays
+    /// outside the ring — it is still this end's own buffer, never a retained Message, so no boundary
+    /// ordinal moves and nothing awaits release — while a Peer with continuous two-way traffic pays no
+    /// additional record and no additional syscall for the counter. A purely receiving Peer has no
+    /// write to ride and gets the standalone send below, which is the one write per Pump #25 bounds it
+    /// at. The ride is declined whenever the flush would not carry it out this Pump — a counter
+    /// remainder still draining (<see cref="PeerSlot.PendingDeliveryCounterBytesToSend"/>), or a Peer
+    /// <see cref="PeerSlot.AwaitingResumeCounter"/>, whose flush is a deliberate no-op (issue #127) and
+    /// which is exactly the Peer the far end is waiting on a counter from.
+    /// </para>
+    /// <para>
     /// <b>Ordering.</b> This runs before <see cref="FlushPendingRetentionWrites"/> in <see cref="Pump"/>,
     /// so a counter due this Frame reaches the wire ahead of anything this Frame's own
     /// <see cref="Send"/> calls queued — harmless, since the counter names Messages the *peer* sent, an
@@ -1453,6 +1481,21 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 // IsInterrupted (issue #119) guards the same way against a Peer whose read advanced this
                 // count and whose socket then failed a write in the very same Frame's dispatcher pass —
                 // its transport is already gone, so there is nowhere left to send this record.
+                continue;
+            }
+
+            if (slot.HasPendingRetentionWrite
+                && slot.PendingDeliveryCounterBytesToSend is not { Length: > 0 }
+                && !slot.AwaitingResumeCounter)
+            {
+                // Ride this Pump's already-due retention write rather than opening one of this own
+                // (issue #132). Building the record now rather than at flush time keeps the count this
+                // record names the same one the standalone path would have named — nothing between here
+                // and FlushPendingRetentionWrites reads from a socket, so the two are identical, and
+                // writing it here keeps SendDeliveryCounterOrArm the only other place that touches this
+                // buffer.
+                MessageFramingCodec.WriteDeliveryCounter(slot.DeliveryCounterRecord, slot.Counters.MessagesReceived);
+                slot.DeliveryCounterRidesRetentionWrite = true;
                 continue;
             }
 
@@ -1712,22 +1755,47 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// far end already has. <see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm
     /// clears the flag the moment the far end's own first post-resume counter answers that question.
     /// </para>
+    /// <para>
+    /// When <see cref="EmitDeliveryCounters"/> has marked this Peer's counter to ride this write
+    /// (<see cref="PeerSlot.DeliveryCounterRidesRetentionWrite"/>, issue #132), the record leads the
+    /// gather write (<see cref="FlushRetentionWithDeliveryCounter"/>) and this method's own one-run-at-
+    /// a-time path is not used. The mark is consumed either way — a ride declined here, because the
+    /// ring turned out to have nothing unsent after all, falls back to the standalone send rather than
+    /// being carried into a later Pump against a stale count.
+    /// </para>
     /// </remarks>
     private void FlushRetention(SlotHandle handle, PeerSlot slot)
     {
+        bool ridingDeliveryCounter = slot.DeliveryCounterRidesRetentionWrite;
+        slot.DeliveryCounterRidesRetentionWrite = false;
+
         if (slot.IsInterrupted || slot.AwaitingResumeCounter)
         {
             return;
         }
 
-        (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) = _retention.GetUnsent(handle.Index);
-        if (first.Length == 0)
+        (ArraySegment<byte> first, ArraySegment<byte> second) = _retention.GetUnsentSegments(handle.Index);
+        if (first.Count == 0)
         {
+            if (ridingDeliveryCounter)
+            {
+                // Nothing to ride after all: the marker said a write was due, but everything this Peer
+                // had retained was already on the wire. The record still owes the far end its count, so
+                // it goes out on its own — one write, exactly what a purely receiving Peer pays.
+                SendDeliveryCounterOrArm(handle, slot);
+            }
+
             TryCloseAfterRetentionDrained(handle, slot);
             return;
         }
 
-        TcpLinkSendResult firstResult = slot.Link.Send(first.Span);
+        if (ridingDeliveryCounter)
+        {
+            FlushRetentionWithDeliveryCounter(handle, slot, first, second);
+            return;
+        }
+
+        TcpLinkSendResult firstResult = slot.Link.Send(first.AsSpan());
         if (!firstResult.IsSuccess)
         {
             InterruptOrCloseOnTransportFailure(handle, slot);
@@ -1740,19 +1808,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             MarkSendActivity(slot);
         }
 
-        if (firstResult.BytesSent < first.Length)
+        if (firstResult.BytesSent < first.Count)
         {
             _dispatcher.ArmWritable(slot.Link.Socket);
             return;
         }
 
-        if (second.Length == 0)
+        if (second.Count == 0)
         {
             TryCloseAfterRetentionDrained(handle, slot);
             return;
         }
 
-        TcpLinkSendResult secondResult = slot.Link.Send(second.Span);
+        TcpLinkSendResult secondResult = slot.Link.Send(second.AsSpan());
         if (!secondResult.IsSuccess)
         {
             InterruptOrCloseOnTransportFailure(handle, slot);
@@ -1765,7 +1833,91 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             MarkSendActivity(slot);
         }
 
-        if (secondResult.BytesSent < second.Length)
+        if (secondResult.BytesSent < second.Count)
+        {
+            _dispatcher.ArmWritable(slot.Link.Socket);
+            return;
+        }
+
+        TryCloseAfterRetentionDrained(handle, slot);
+    }
+
+    /// <summary>
+    /// The one write that carries both this Peer's delivery-counter record and its unsent retention
+    /// bytes (issue #132): the record leads, <paramref name="first"/> and any wrapped
+    /// <paramref name="second"/> follow, and the socket is offered all of them in a single gather send
+    /// (<see cref="TcpLink.Send(IList{ArraySegment{byte}})"/>). This is what makes #25's stated cost
+    /// true — a Peer with two-way traffic pays no record and no syscall for the counter beyond the
+    /// write its own outbound Messages were already going to take.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A gather send reports one count spanning the segments in order, so a short write is split at the
+    /// record's own boundary. A count short of the record's length means the record itself is only
+    /// partly out and no retention byte moved: the remainder is armed exactly as a standalone counter
+    /// send would arm it (<see cref="PeerSlot.PendingDeliveryCounterBytesToSend"/>), and
+    /// <see cref="OnPeerWritable"/> drains it and re-marks retention pending — the same recovery both
+    /// paths already had. Anything beyond the record's length is retention bytes and is marked sent as
+    /// one run: <see cref="RetentionArena.MarkSent"/> counts oldest-first across the wrap, so one call
+    /// covers what the unridden path spends two on.
+    /// </para>
+    /// <para>
+    /// Ordering on the wire is unchanged from the standalone send — the counter still precedes this
+    /// Pump's Messages, because it is the first segment rather than an earlier write. That is what
+    /// keeps <see cref="EmitDeliveryCounters"/>'s ordering argument, and every test written against it,
+    /// true of this path as well.
+    /// </para>
+    /// </remarks>
+    private void FlushRetentionWithDeliveryCounter(
+        SlotHandle handle,
+        PeerSlot slot,
+        ArraySegment<byte> first,
+        ArraySegment<byte> second)
+    {
+        ArraySegment<byte> record = new(slot.DeliveryCounterRecord);
+        ArraySegment<byte>[] segments;
+        if (second.Count == 0)
+        {
+            _counterAndOneRun[0] = record;
+            _counterAndOneRun[1] = first;
+            segments = _counterAndOneRun;
+        }
+        else
+        {
+            _counterAndBothRuns[0] = record;
+            _counterAndBothRuns[1] = first;
+            _counterAndBothRuns[2] = second;
+            segments = _counterAndBothRuns;
+        }
+
+        TcpLinkSendResult result = slot.Link.Send(segments);
+        if (!result.IsSuccess)
+        {
+            InterruptOrCloseOnTransportFailure(handle, slot);
+            return;
+        }
+
+        if (result.BytesSent > 0)
+        {
+            MarkSendActivity(slot);
+        }
+
+        if (result.BytesSent < record.Count)
+        {
+            slot.PendingDeliveryCounterBytesToSend = slot.DeliveryCounterRecord.AsMemory(result.BytesSent);
+            _dispatcher.ArmWritable(slot.Link.Socket);
+            return;
+        }
+
+        slot.PendingDeliveryCounterBytesToSend = null;
+
+        int retentionSent = result.BytesSent - record.Count;
+        if (retentionSent > 0)
+        {
+            _retention.MarkSent(handle.Index, retentionSent);
+        }
+
+        if (retentionSent < first.Count + second.Count)
         {
             _dispatcher.ArmWritable(slot.Link.Socket);
             return;
@@ -2855,6 +3007,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// sentinel does.
         /// </summary>
         public ReadOnlyMemory<byte>? PendingDeliveryCounterBytesToSend { get; set; }
+
+        /// <summary>
+        /// Set by <see cref="EmitDeliveryCounters"/> when this Peer's counter record — already written
+        /// into <see cref="DeliveryCounterRecord"/> — is to lead this Pump's retention write rather than
+        /// take a write of its own (issue #132), and consumed by <see cref="FlushRetention"/> the moment
+        /// it visits this Peer. Never outlives the Pump that set it: the two run back to back inside a
+        /// single <see cref="Pump"/>, and the flush clears it whether or not the ride turns out to be
+        /// possible, so a later Pump can never put a stale count on the wire.
+        /// </summary>
+        public bool DeliveryCounterRidesRetentionWrite { get; set; }
 
         /// <summary>
         /// Set by <see cref="Send"/> when it appends to this Peer's retention ring, and again by

@@ -7,7 +7,7 @@ namespace ReactorSockets.Transports;
 /// L1: one connected (or connecting) TCP socket, produced either by a listening Link's accept or by
 /// dialling out. Carries the socket and its bound local address, and — like <see cref="UdpLink"/> —
 /// is built out incrementally in its own slice: reads (<see cref="Receive"/>), sends
-/// (<see cref="Send"/>) and half-close (<see cref="Shutdown"/>) all land here.
+/// (<see cref="Send(ReadOnlySpan{byte})"/>) and half-close (<see cref="Shutdown"/>) all land here.
 /// </summary>
 internal sealed class TcpLink : IDisposable
 {
@@ -69,11 +69,11 @@ internal sealed class TcpLink : IDisposable
     /// implicitly on accept, so <see cref="LocalEndPoint"/> is read back from the socket rather than
     /// supplied by the caller — and so is <see cref="RemoteEndPoint"/>, since an accepted socket is
     /// already connected and therefore already knows who to. Put into non-blocking mode here, for the
-    /// same reason <see cref="Dial"/> puts a dialled socket into non-blocking mode: <see cref="Send"/>
+    /// same reason <see cref="Dial"/> puts a dialled socket into non-blocking mode: <see cref="Send(ReadOnlySpan{byte})"/>
     /// must never stall the caller's thread waiting for buffer room, and <see cref="Socket.Accept()"/>
     /// hands back a blocking socket by default regardless of the listening socket's own mode. Nagle is
     /// disabled here too, unconditionally: <see cref="TcpLink"/> is shared by both profiles (ADR 0007),
-    /// and <see cref="Send"/> never batches or queues (ADR 0008) for either one, so a Session's
+    /// and <see cref="Send(ReadOnlySpan{byte})"/> never batches or queues (ADR 0008) for either one, so a Session's
     /// documented Nagle-off profile property (ADR 0011) is simply the honest setting for a socket whose
     /// writes are already unbatched everywhere this type is used.
     /// </summary>
@@ -257,6 +257,38 @@ internal sealed class TcpLink : IDisposable
         try
         {
             int sent = Socket.Send(payload, SocketFlags.None);
+            return TcpLinkSendResult.ForSent(sent);
+        }
+        catch (SocketException exception) when (exception.SocketErrorCode == SocketError.WouldBlock)
+        {
+            return TcpLinkSendResult.ForSent(0);
+        }
+        catch (SocketException exception)
+        {
+            return TcpLinkSendResult.ForFailed(exception.SocketErrorCode);
+        }
+    }
+
+    /// <summary>
+    /// The gather form of <see cref="Send(ReadOnlySpan{byte})"/> (issue #132): offers
+    /// <paramref name="segments"/> to the socket as one call — <c>WSASend</c> on Windows,
+    /// <c>writev</c> elsewhere — so bytes living in two unrelated buffers reach the wire in a single
+    /// write rather than one write each. Identical in every other respect: it still takes only what
+    /// the socket will accept right now, still reports that count, still never blocks, copies or
+    /// queues, and still translates <see cref="SocketError.WouldBlock"/> into a successful send of
+    /// zero bytes. The reported count spans the segments in order, so a caller that offered two
+    /// segments learns how far into them the socket reached by subtracting the first's length.
+    /// </summary>
+    /// <remarks>
+    /// This adds no queueing and no policy — the two things ADR 0008 rules out of a Link — it only
+    /// lets one caller-owned write describe bytes that are not contiguous. The public Raw surface is
+    /// unchanged: this overload is internal, reached only by the stream Session profile's own flush.
+    /// </remarks>
+    public TcpLinkSendResult Send(IList<ArraySegment<byte>> segments)
+    {
+        try
+        {
+            int sent = Socket.Send(segments, SocketFlags.None);
             return TcpLinkSendResult.ForSent(sent);
         }
         catch (SocketException exception) when (exception.SocketErrorCode == SocketError.WouldBlock)
