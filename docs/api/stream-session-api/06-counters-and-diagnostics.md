@@ -23,8 +23,8 @@ Interrupted Peer, right up to the close.
 | `AdmissionDeferrals` | Times a listening endpoint turned its backlog away because the admission cap was reached. Coarse — one declining per endpoint, not per connection. |
 | `SinkFaulted` | Times your Sink threw. Non-zero means diagnostics are off for the rest of this Reactor's life. |
 
-`DatagramsSent`, `DatagramsReceived`, `AdmissionDiscards` and `UnknownSourceDiscards` stay at zero
-here. They are true zeros, not gaps — this profile carries no datagram transport, and it answers a
+`DatagramsSent`, `DatagramsReceived`, `AdmissionDiscards`, `UnknownSourceDiscards` and
+`MalformedSessionDiscards` stay at zero here. They are true zeros, not gaps — this profile carries no datagram transport, and it answers a
 refused connection in protocol rather than discarding it.
 
 A capacity refusal touches neither admission counter. Read `PeerRefused` (300) for those; it names

@@ -120,7 +120,7 @@ public class DatagramSessionDataDatagramParseTests
 
         // Act
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
@@ -144,7 +144,7 @@ public class DatagramSessionDataDatagramParseTests
 
         // Act
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
 
         // Assert — exactly one discard for the whole datagram, not one per record.
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
@@ -170,7 +170,7 @@ public class DatagramSessionDataDatagramParseTests
 
         // Act
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
@@ -193,7 +193,7 @@ public class DatagramSessionDataDatagramParseTests
 
         // Act
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
@@ -349,7 +349,7 @@ public class DatagramSessionDataDatagramParseTests
 
         // Act
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
@@ -373,7 +373,7 @@ public class DatagramSessionDataDatagramParseTests
 
         // Act
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
@@ -397,7 +397,7 @@ public class DatagramSessionDataDatagramParseTests
 
         // Act
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
@@ -420,7 +420,7 @@ public class DatagramSessionDataDatagramParseTests
 
         // Act
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
@@ -445,7 +445,7 @@ public class DatagramSessionDataDatagramParseTests
 
         // Act
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
@@ -817,15 +817,19 @@ public class DatagramSessionDataDatagramParseTests
     }
 
     /// <summary>
-    /// The shared assertion every malformed-shape test makes, matching
-    /// <see cref="DatagramSessionMalformedInputTests"/>'s helper of the same name: exactly one
+    /// The shared assertion every malformed-shape test makes: exactly one
     /// <see cref="DiagnosticId.DatagramMalformed"/> record reached the Sink, the drain is empty, and the
-    /// discard counter rose by exactly one.
+    /// discard counter rose by exactly one. Every datagram in this file names the live Session
+    /// <see cref="EstablishLiveSessionId"/> set up, so the counter is
+    /// <see cref="ReactorCounters.MalformedSessionDiscards"/> and not
+    /// <see cref="ReactorCounters.UnknownSourceDiscards"/> (issue #275) — which is the one thing this
+    /// helper no longer shares with <see cref="DatagramSessionMalformedInputTests"/>'s helper of the
+    /// same name, whose datagrams name no Session.
     /// </summary>
     private static void AssertOneMalformedDiscard(DatagramSessionReactorHarness accepter, int expectedBytesReceived)
     {
         accepter.DrainToList().Should().BeEmpty();
-        accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(1);
+        accepter.Reactor.Counters.MalformedSessionDiscards.Should().Be(1);
 
         DiagnosticRecord record = accepter.Sink.Received.Should()
             .ContainSingle(r => r.Id == DiagnosticId.DatagramMalformed)
