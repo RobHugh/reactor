@@ -63,6 +63,49 @@ public class DatagramSessionFragmentDeliveryTests
     }
 
     [Fact]
+    public void Pump_ADatagramCarryingANonContiguousSubsetOfOneGroup_IsAdmittedAndTheSetStillCompletes()
+    {
+        // Arrange — issue #274: the shape selective retransmission produces. A three-Fragment set whose
+        // index 1 was acked while 0 and 2 both expired packs those two into one datagram, with no index
+        // 1 in it. That is honest traffic, so the set check admits it: what makes a set well-formed is
+        // the claimed range each Fragment declares, not whether the pieces sharing a datagram form a
+        // gap-free run.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+        PeerCounters before = accepter.Reactor.CountersOf(accepterPeer);
+
+        byte[] subsetDatagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 3, payload: [0x01, 0x02]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 2, fragmentCount: 3, payload: [0x05]),
+        ];
+
+        // Act — the gapped subset first, then the missing middle piece in a datagram of its own.
+        SendAndPumpUntilReceived(accepter, client, clientLink, subsetDatagram);
+        List<byte[]> deliveredFromSubset = accepter.DrainPayloads();
+
+        byte[] remainderDatagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 3, payload: [0x03, 0x04]),
+        ];
+        SendAndPumpUntilReceived(accepter, client, clientLink, remainderDatagram);
+        List<byte[]> delivered = accepter.DrainPayloads();
+
+        // Assert — the gapped datagram was not discarded: its two Fragments were held, and the set
+        // completes and assembles in index order once the missing one arrives.
+        deliveredFromSubset.Should().BeEmpty("an incomplete set is held, not delivered");
+        accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(0, "a gapped subset of one group is honest traffic, not a forgery");
+        delivered.Should().ContainSingle().Which.Should().Equal(new byte[] { 0x01, 0x02, 0x03, 0x04, 0x05 });
+        PeerCounters after = accepter.Reactor.CountersOf(accepterPeer);
+        after.MessagesReceived.Should().Be(before.MessagesReceived + 1);
+    }
+
+    [Fact]
     public void Pump_AFragmentArrivingAfterItsGroupAlreadyDelivered_DeliversNothingFurther()
     {
         // Arrange — a two-piece ReliableUnordered set completes and delivers.
