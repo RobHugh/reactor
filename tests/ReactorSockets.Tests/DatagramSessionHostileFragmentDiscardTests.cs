@@ -299,7 +299,7 @@ public class DatagramSessionHostileFragmentDiscardTests
         Action sendHostileDatagram = () =>
         {
             client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), hostileDatagram);
-            accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+            accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
         };
 
         // Assert — nothing throws, the whole datagram is discarded (both the malformed tail and the
@@ -311,7 +311,7 @@ public class DatagramSessionHostileFragmentDiscardTests
         deliveredFromHostileDatagram.Should().BeEmpty(
             "a datagram is a container, not a Message: a forged tail must discard the well-formed " +
             "record that parsed ahead of it too");
-        accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(1);
+        accepter.Reactor.Counters.MalformedSessionDiscards.Should().Be(1);
         accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.DatagramMalformed);
         if (alsoReported is DiagnosticId expectedId)
         {

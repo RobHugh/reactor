@@ -11,8 +11,9 @@ namespace ReactorSockets.Tests;
 /// <see cref="PeerCounters.BytesReceived"/>, <see cref="PeerCounters.PacketsRetransmitted"/>,
 /// <see cref="PeerCounters.DuplicatePackets"/>, <see cref="PeerCounters.OutOfWindowPackets"/>,
 /// <see cref="PeerCounters.HorizonDeferrals"/>, <see cref="PeerCounters.RetentionHighWaterBytes"/>) and the
-/// three Reactor-scope figures (<see cref="ReactorCounters.DatagramsSent"/>,
-/// <see cref="ReactorCounters.DatagramsReceived"/>, <see cref="ReactorCounters.UnknownSourceDiscards"/>).
+/// four Reactor-scope figures (<see cref="ReactorCounters.DatagramsSent"/>,
+/// <see cref="ReactorCounters.DatagramsReceived"/>, <see cref="ReactorCounters.UnknownSourceDiscards"/>,
+/// <see cref="ReactorCounters.MalformedSessionDiscards"/>).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -240,20 +241,42 @@ public class DatagramSessionCounterExchangeTests
             bytesReceivedBeforeStray, "a datagram naming no Peer charges no Peer's bytes received");
 
         // ------------------------------------------------------------------------------------------
-        // Reactor-scope DatagramsSent and DatagramsReceived, literals 6 and 11 — the exact count of
+        // Phase 9 — MalformedSessionDiscards, literal 1, charged to the Reactor and to no Peer, and
+        // leaving Phase 8's figure where it was (issue #275). A datagram stopping mid-header at 12
+        // bytes, carrying the live session id: the id resolves, so this is the other cause — traffic
+        // that named a Peer and then failed to parse — and the two must move separately or a reader in
+        // the field cannot tell a scan from an established Peer sending bytes this Reactor cannot read.
+        // ------------------------------------------------------------------------------------------
+        ulong malformedSessionDiscardsBefore = node.Reactor.Counters.MalformedSessionDiscards;
+        ulong unknownSourceDiscardsAfterPhase8 = node.Reactor.Counters.UnknownSourceDiscards;
+        ulong bytesReceivedBeforeMalformed = node.Reactor.CountersOf(nodePeer).BytesReceived;
+
+        byte[] truncatedDatagram = BuildHeader(sessionId)[..12];
+        client.SendTo(clientLink, Source.FromIPEndPoint(node.Endpoint), truncatedDatagram);
+        node.PumpUntil(() => node.Reactor.Counters.MalformedSessionDiscards > malformedSessionDiscardsBefore);
+
+        (node.Reactor.Counters.MalformedSessionDiscards - malformedSessionDiscardsBefore).Should().Be(
+            1UL, "the one truncated datagram named a live Session and then failed to parse");
+        node.Reactor.Counters.UnknownSourceDiscards.Should().Be(
+            unknownSourceDiscardsAfterPhase8, "a datagram that named a live Session is not an unknown source");
+        node.Reactor.CountersOf(nodePeer).BytesReceived.Should().Be(
+            bytesReceivedBeforeMalformed, "a datagram that did not parse charges no Peer's bytes received");
+
+        // ------------------------------------------------------------------------------------------
+        // Reactor-scope DatagramsSent and DatagramsReceived, literals 6 and 12 — the exact count of
         // flushes Node performed (Phases 1, 3, 4 and 5: 2 + 2 + 1 + 1) and datagrams the client sent
-        // Node (Phases 2, 5's reconcile ping, 6, 7 and 8: 1 + 1 + 4 + 4 + 1), each stated up front by
-        // this test's own script rather than read from any other counter.
+        // Node (Phases 2, 5's reconcile ping, 6, 7, 8 and 9: 1 + 1 + 4 + 4 + 1 + 1), each stated up
+        // front by this test's own script rather than read from any other counter.
         // ------------------------------------------------------------------------------------------
         (node.Reactor.Counters.DatagramsSent - reactorDatagramsSentBaseline).Should().Be(
             6UL, "six flushes left Node: two in Phase 1, two in Phase 3, one in Phase 4, one in Phase 5");
         (node.Reactor.Counters.DatagramsReceived - reactorDatagramsReceivedBaseline).Should().Be(
-            11UL, "eleven datagrams reached Node: Phase 2 (1), Phase 5's reconcile ping (1), Phase 6 (4), Phase 7 (4), Phase 8 (1)");
+            12UL, "twelve datagrams reached Node: Phase 2 (1), Phase 5's reconcile ping (1), Phase 6 (4), Phase 7 (4), Phase 8 (1), Phase 9 (1)");
 
         // ------------------------------------------------------------------------------------------
-        // Monotonicity — every figure's final reading is at least its own baseline, for each of the ten
-        // figures this exchange moved, confirming no assertion above read a lower value than an earlier
-        // one for the same figure.
+        // Monotonicity — every figure's final reading is at least its own baseline, for each of the
+        // eleven figures this exchange moved, confirming no assertion above read a lower value than an
+        // earlier one for the same figure.
         // ------------------------------------------------------------------------------------------
         PeerCounters final = node.Reactor.CountersOf(nodePeer);
         final.BytesSent.Should().BeGreaterThanOrEqualTo(bytesSentAfterPhase1);
@@ -264,8 +287,9 @@ public class DatagramSessionCounterExchangeTests
         final.OutOfWindowPackets.Should().BeGreaterThanOrEqualTo(outOfWindowBefore + 4);
         final.DuplicatePackets.Should().BeGreaterThanOrEqualTo(duplicateBefore + 3);
         node.Reactor.Counters.DatagramsSent.Should().BeGreaterThanOrEqualTo(reactorDatagramsSentBaseline + 6);
-        node.Reactor.Counters.DatagramsReceived.Should().BeGreaterThanOrEqualTo(reactorDatagramsReceivedBaseline + 11);
+        node.Reactor.Counters.DatagramsReceived.Should().BeGreaterThanOrEqualTo(reactorDatagramsReceivedBaseline + 12);
         node.Reactor.Counters.UnknownSourceDiscards.Should().BeGreaterThanOrEqualTo(unknownSourceDiscardsBefore + 1);
+        node.Reactor.Counters.MalformedSessionDiscards.Should().BeGreaterThanOrEqualTo(malformedSessionDiscardsBefore + 1);
     }
 
     /// <summary>

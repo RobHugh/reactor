@@ -904,7 +904,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out uint reliableUnorderedAckBase,
                 out uint reliableUnorderedAckBits))
         {
-            DiscardMalformed(source, datagram.Length);
+            DiscardMalformedForSession(source, datagram.Length);
             return;
         }
 
@@ -927,7 +927,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                         source, remainder[0] & DatagramSessionProtocol.ModeMask));
                 }
 
-                DiscardMalformed(source, datagram.Length);
+                DiscardMalformedForSession(source, datagram.Length);
                 return;
             }
 
@@ -940,7 +940,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // malformed record rather than reaching classification.
         if (!FragmentSetsAreWellFormed(body))
         {
-            DiscardMalformed(source, datagram.Length);
+            DiscardMalformedForSession(source, datagram.Length);
             return;
         }
 
@@ -984,8 +984,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // The proof above is what attributes this Datagram to slot's Peer: it names an established
         // session id (ProcessDataDatagram's own lookup) and every record in it parses. Only from this
         // point on is the whole Datagram's length, header included, counted against that Peer (issue
-        // #231) — a malformed one, even if it named a real session, falls to DiscardMalformed's
-        // Reactor-scope figure instead, above, and never reaches here.
+        // #231) — a malformed one, even if it named a real session, falls to
+        // DiscardMalformedForSession's Reactor-scope figure instead, above, and never reaches here.
         slot.Counters.RecordBytesReceived((ulong)datagram.Length);
 
         TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
@@ -2651,9 +2651,31 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
     }
 
+    /// <summary>
+    /// Discards a datagram nothing in which could be attributed to a Peer — a control datagram that
+    /// did not read, a control reply answering no dial, or a session id naming no Session — and counts
+    /// it on <see cref="ReactorCounters.UnknownSourceDiscards"/>. A data datagram that failed to parse
+    /// <em>after</em> its session id resolved goes to <see cref="DiscardMalformedForSession"/>
+    /// instead (issue #275).
+    /// </summary>
     private void DiscardMalformed(Source source, int bytesReceived)
     {
         _counters.RecordUnknownSourceDiscard();
+        _diagnostics.Log(DiagnosticRecord.ForDatagramMalformed(source, bytesReceived));
+    }
+
+    /// <summary>
+    /// Discards a data datagram that named a live Session and then failed to parse, counting it on
+    /// <see cref="ReactorCounters.MalformedSessionDiscards"/> rather than
+    /// <see cref="ReactorCounters.UnknownSourceDiscards"/> (issue #275): the id resolved, which is the
+    /// only reason parsing was reached at all, so this is not traffic that named nobody. The
+    /// Diagnostic is the same <see cref="DiagnosticId.DatagramMalformed"/> and stays Source-subjected
+    /// — a body that did not parse is no proof the sender is the Peer whose id it carried, so neither
+    /// the record nor the figure is charged to that Peer.
+    /// </summary>
+    private void DiscardMalformedForSession(Source source, int bytesReceived)
+    {
+        _counters.RecordMalformedSessionDiscard();
         _diagnostics.Log(DiagnosticRecord.ForDatagramMalformed(source, bytesReceived));
     }
 
