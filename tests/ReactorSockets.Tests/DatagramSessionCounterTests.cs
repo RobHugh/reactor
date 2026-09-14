@@ -87,10 +87,11 @@ public class DatagramSessionCounterTests
     [Fact]
     public void CountersOf_UnknownPeerId_ThrowsMatchingStreamProfilesCountersOfConvention()
     {
-        // Arrange — a PeerId this Reactor never issued, mirroring
+        // Arrange — Origin 0 is reserved and issued to no Reactor, so this PeerId cannot address a Peer of
+        // any Reactor in this process. Mirrors
         // StreamSessionSendRetentionTests.Send_UnknownPeerId_ThrowsMatchingCountersOfsConvention.
         using DatagramSessionReactorHarness harness = new();
-        PeerId unknown = new(Origin: 1, Index: 0, Generation: 1);
+        PeerId unknown = new(Origin: 0, Index: 0, Generation: 1);
 
         // Act
         Action act = () => harness.Reactor.CountersOf(unknown);

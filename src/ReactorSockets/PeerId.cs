@@ -26,12 +26,14 @@ namespace ReactorSockets;
 /// </remarks>
 /// <param name="Origin">
 /// Which Reactor issued this <see cref="PeerId"/>. Opaque and process-local — it is compared for
-/// equality and nothing else, orders nothing, and never appears on the wire. Not a
-/// <see cref="Source"/>, which names a remote address; this names a Reactor of this process.
+/// equality and nothing else, orders nothing, and never appears on the wire. Never 0: that value is
+/// reserved and no Reactor is ever issued it, so a <see langword="default"/> <see cref="PeerId"/>
+/// addresses nothing twice over. Not a <see cref="Source"/>, which names a remote address; this
+/// names a Reactor of this process.
 /// </param>
 /// <param name="Index">The zero-based Slot this Peer occupies.</param>
 /// <param name="Generation">
 /// The generation that Slot was on when this Peer was admitted. Live Slots begin at 1, so a
 /// <see langword="default"/> <see cref="PeerId"/> — generation 0 — addresses nothing.
 /// </param>
-public readonly record struct PeerId(ulong Origin, int Index, ulong Generation);
+public readonly record struct PeerId(uint Origin, int Index, ulong Generation);

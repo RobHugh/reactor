@@ -29,18 +29,20 @@ namespace ReactorSockets.Core;
 /// <para>
 /// <b>Why the Origin.</b> Index and generation alone are only unique <i>within</i> one table, and
 /// every table starts life identically: the first occupant of any of them is Slot 0, generation 1.
-/// A handle from one Reactor therefore resolved cleanly against another's table and addressed a
-/// Share-holder it had never named — the consumer's mistake, but silent, and it closed a live Peer.
-/// Stamping each table with a process-unique number makes the two tables' handles disjoint, so the
-/// mistake resolves to nothing and is answered by whatever the caller's <c>Close</c> does with an id
-/// that addresses nothing.
+/// A handle from one Reactor therefore resolved cleanly against another Reactor's table and
+/// addressed a Share-holder it had never named — the consumer's mistake, but silent, and it closed a
+/// live Peer. Stamping every handle with the <see cref="ReactorOrigin"/> its Reactor drew at
+/// construction makes two Reactors' handles disjoint, so the mistake resolves to nothing and is
+/// answered by whatever the caller's <c>Close</c> does with an id that addresses nothing.
 /// </para>
 /// </remarks>
 /// <param name="Origin">
-/// The <see cref="ShareHolderTable{T}.Origin"/> of the table that issued this handle. Opaque and
-/// process-local: it orders nothing and means nothing outside this process, and it exists only to
-/// be compared for equality.
+/// The Origin of the Reactor that issued this handle, drawn from <see cref="ReactorOrigin"/> and
+/// held by the <see cref="ShareHolderTable{T}"/> that stamped it. Opaque and process-local: it
+/// orders nothing and means nothing outside this process, and it exists only to be compared for
+/// equality. Never 0, so a <see langword="default"/> handle is unresolvable by its Origin as well as
+/// by its generation.
 /// </param>
 /// <param name="Index">The zero-based Slot the occupant sits in.</param>
 /// <param name="Generation">The generation that Slot was on when the occupant was admitted.</param>
-internal readonly record struct SlotHandle(ulong Origin, int Index, ulong Generation);
+internal readonly record struct SlotHandle(uint Origin, int Index, ulong Generation);

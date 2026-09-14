@@ -87,9 +87,9 @@ public class StreamSessionSendRetentionTests
     [Fact]
     public void Send_UnknownPeerId_ThrowsMatchingCountersOfsConvention()
     {
-        // Arrange — a PeerId that was never issued by this Reactor at all.
+        // Arrange — Origin 0 is reserved and issued to no Reactor, so this PeerId was never issued at all.
         using StreamSessionReactorHarness accepter = new();
-        PeerId unknown = new(Origin: 1, Index: 0, Generation: 1);
+        PeerId unknown = new(Origin: 0, Index: 0, Generation: 1);
 
         // Act
         Action act = () => accepter.Reactor.Send(unknown, [1, 2, 3]);
