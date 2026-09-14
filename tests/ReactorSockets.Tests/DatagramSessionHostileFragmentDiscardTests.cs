@@ -8,7 +8,8 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #255: the codec's refusal of impossible Fragment metadata (#253); issue #256 extends this
 /// file with the claimed-set forgeries a Fragment can pass #253 individually and still commit — a
-/// non-contiguous group and two groups whose ranges overlap. Both are proved against a live Session
+/// group claiming one index twice (a gap in the indices present is honest traffic since #274) and two
+/// groups whose ranges overlap. Both are proved against a live Session
 /// rather than in isolation — a real attacker sits at a hostile peer driving an established Session,
 /// not at a unit test calling the codec directly. Every datagram here is built and sent by hand over a
 /// bare <see cref="RawReactor"/> — the same instrument <see cref="HostilePeer"/> is built from, and the
@@ -82,15 +83,18 @@ public class DatagramSessionHostileFragmentDiscardTests
     }
 
     [Fact]
-    public void Pump_HostileFragmentGroupWithANonContiguousGap_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
+    public void Pump_HostileFragmentGroupWithARepeatedIndex_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
     {
-        // Arrange — issue #256: both Fragments are individually legal (#253) and both resolve to the
-        // same group (firstSeq = 1: 1 - 0 = 1, and 3 - 2 = 1), but index 1 is missing between them — a
-        // gap no honest sender, which fills a group's indices in order, could ever produce.
+        // Arrange — issue #256, narrowed by #274 to what a claimed set actually rules out. A gap in the
+        // indices present is honest traffic once retransmission coalesces (see
+        // DatagramSessionFragmentDeliveryTests), but one index claimed twice is not: both Fragments here
+        // are individually legal (#253) and both resolve to the same group (firstSeq = 1), and both call
+        // themselves index 0 of it, so the piece that index names has two different contents. A sender
+        // that cuts each index once can never produce it.
         byte[] forgedTail =
         [
             .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 0, fragmentCount: 3, payload: [0xB0]),
-            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 3, fragmentIndex: 2, fragmentCount: 3, payload: [0xB2]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 0, fragmentCount: 3, payload: [0xB2]),
         ];
 
         AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
@@ -134,19 +138,22 @@ public class DatagramSessionHostileFragmentDiscardTests
     }
 
     [Fact]
-    public void Pump_HostileFragmentGroupNonContiguousAcrossTheSequenceWrap_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
+    public void Pump_HostileFragmentGroupDisagreeingOnItsCountAcrossTheSequenceWrap_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
     {
         // Arrange — proves FragmentGroup.FirstSequenceOf's group identity is correct at the u32 wrap
-        // (carried over from #254), through the only seam a test may use: a set that reads as
-        // non-contiguous ONLY if the wrap is handled correctly is refused. Sequence uint.MaxValue - 1 at
-        // index 0 and sequence 0 at index 2 both name firstSeq = uint.MaxValue - 1 under wrap-aware
-        // unsigned subtraction, and index 1 between them is missing — a gap. A naive, non-wrap-aware
+        // (carried over from #254), through the only seam a test may use: a set that reads as a forgery
+        // ONLY if the wrap is handled correctly is refused. Sequence uint.MaxValue - 1 at index 0 and
+        // sequence 0 at index 2 both name firstSeq = uint.MaxValue - 1 under wrap-aware unsigned
+        // subtraction, so they are one group — and that group's members disagree on the count they
+        // declare, 2 against 3, which leaves the set's own shape ambiguous. A naive, non-wrap-aware
         // subtraction would compute two unrelated first-sequences instead, and each lone Fragment would
-        // trivially "pass" as its own one-member group — so this datagram is only ever discarded if the
-        // wrap is handled correctly.
+        // trivially "pass" as its own one-member group, its declared range (uint.MaxValue - 1 ..
+        // uint.MaxValue) nowhere near the other's — so this datagram is only ever discarded if the wrap
+        // is handled correctly. The gap between indices 0 and 2 is not what refuses it: since #274 a
+        // gapped subset is honest traffic.
         byte[] forgedTail =
         [
-            .. BuildFragmentRecord(ModeReliableOrdered, sequence: uint.MaxValue - 1, fragmentIndex: 0, fragmentCount: 3, payload: [0xD0]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: uint.MaxValue - 1, fragmentIndex: 0, fragmentCount: 2, payload: [0xD0]),
             .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 2, fragmentCount: 3, payload: [0xD2]),
         ];
 

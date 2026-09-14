@@ -1044,9 +1044,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// one a later datagram contradicts, needs state only reassembly owns (a future sub-slice); this
     /// method holds nothing across calls beyond its own preallocated scratch (below) and knows nothing
     /// beyond <paramref name="body"/>'s own bytes. A partial set — fewer Fragments than
-    /// <see cref="PacketRecordCodec.TryRead"/>'s <c>fragmentCount</c> promises, so long as the indices
-    /// actually present are contiguous — is not a violation: an honest sender's Fragments of one group
-    /// may simply be spread across datagrams.
+    /// <see cref="PacketRecordCodec.TryRead"/>'s <c>fragmentCount</c> promises — is not a violation, and
+    /// neither is a gap in the indices it does carry (issue #274): an honest sender's Fragments of one
+    /// group may be spread across datagrams, and selective retransmission packs whichever of them
+    /// expired, which is a subset chosen by what was acked rather than a run (see
+    /// <see cref="TryCloseContiguousRun"/>'s own remarks). What each group's members must agree on is
+    /// their declared count, and no index may appear twice.
     /// </para>
     /// <para>
     /// <b>Overlap is judged on each same-mode group's DECLARED range, not on what is merely observed.</b>
@@ -1071,7 +1074,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// mode occupying the key's high bits so one mode's entries never interleave with another's) so
     /// every Fragment of one (mode, first sequence) group becomes one contiguous
     /// run — O(n log n) rather than O(n) group lookups each costing O(n). Each run is checked for a
-    /// gap in one further linear pass and, if it passes, contributes one entry to
+    /// disagreed count and a repeated index and, if it passes, contributes one entry to
     /// <see cref="_distinctGroupFirstSequenceAndCount"/> (<see cref="TryCloseContiguousRun"/>), which
     /// packs that group's mode alongside its first sequence and declared count. Because the runs above
     /// were closed in (mode, first sequence) order, the distinct groups already sit in contiguous
@@ -1170,38 +1173,58 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Closes the run <c>[runStart, runEnd)</c> of <see cref="_fragmentGroupKey"/> and
     /// <see cref="_fragmentGroupIndexAndCount"/> — every Fragment the datagram's walk found that shares
-    /// one group's mode and first sequence, now contiguous in the sorted arrays — checking that every
-    /// member agrees on its declared count and that the indices actually present leave no gap, exactly
-    /// as the pre-sort double-walk did. A group's Fragments disagreeing on the count they claim makes
-    /// the set's shape ambiguous, the same forgery as a literal gap: neither describes a set an honest
-    /// sender, which uses one count per Message, could ever produce. On success, appends one entry to
+    /// one group's mode and first sequence, now contiguous in the sorted arrays (the run is what is
+    /// contiguous here, not the indices it carries) — checking that every member agrees on its declared
+    /// count and that no index appears twice. A group's Fragments disagreeing on the count they claim
+    /// makes the set's shape ambiguous, and one index claimed by two Fragments makes its content
+    /// ambiguous: neither describes a set an honest sender, which uses one count per Message and cuts
+    /// each index once, could ever produce. On success, appends one entry to
     /// <see cref="_distinctGroupFirstSequenceAndCount"/> — mode, first sequence and declared count all
     /// packed together — for the per-mode overlap sweep that follows.
     /// </summary>
+    /// <remarks>
+    /// <b>The indices present need only be a subset of <c>[0, declaredCount)</c> with no duplicates, not
+    /// a gap-free run (issue #274).</b> Requiring a run was right while the only way to see a gap was a
+    /// forgery, but selective retransmission produces one honestly: a Message cut into Fragments 0, 1
+    /// and 2 whose index 1 is acked while 0 and 2 both expire packs those two into one datagram, with no
+    /// index 1 anywhere in it. What issue #256 rejects is ambiguity about which wire sequence belongs to
+    /// which group, and that lives in the <em>claimed</em> set — the declared count each Fragment carries
+    /// and the range it implies, checked here and in <see cref="NoTwoDeclaredRangesOverlap"/> — not in
+    /// which pieces of a set happen to share one datagram. The subset's upper bound is already
+    /// established before this pass: <see cref="PacketRecordCodec.TryRead"/> refuses any Fragment whose
+    /// index is at or beyond its own count (issue #253) and <see cref="ParseDataDatagram"/> proves every
+    /// record legal there first, so once the members agree on one declared count every index is inside
+    /// it.
+    /// </remarks>
     private bool TryCloseContiguousRun(int runStart, int runEnd, ref int distinctGroupCount)
     {
         ushort declaredCount = UnpackCount(_fragmentGroupIndexAndCount[runStart]);
-        ushort minIndexSeen = ushort.MaxValue;
-        ushort maxIndexSeen = 0;
 
         for (int i = runStart; i < runEnd; i++)
         {
-            ushort index = UnpackIndex(_fragmentGroupIndexAndCount[i]);
-            ushort count = UnpackCount(_fragmentGroupIndexAndCount[i]);
-
-            if (count != declaredCount)
+            if (UnpackCount(_fragmentGroupIndexAndCount[i]) != declaredCount)
             {
                 return false;
             }
 
-            minIndexSeen = Math.Min(minIndexSeen, index);
-            maxIndexSeen = Math.Max(maxIndexSeen, index);
+            // Cannot happen: an index at or beyond its own count already failed the read (issue #253),
+            // and every member of this run has just been proved to carry declaredCount as that count.
+            Debug.Assert(
+                UnpackIndex(_fragmentGroupIndexAndCount[i]) < declaredCount,
+                "A Fragment whose index is outside its declared count reached the set check.");
         }
 
-        int occurrences = runEnd - runStart;
-        if (maxIndexSeen - minIndexSeen + 1 != occurrences)
+        // Sorting the run by its packed index-and-count puts any repeated index beside its twin, so one
+        // further linear pass finds a duplicate — O(k log k) for a k-member group, nothing allocated, and
+        // the sort cannot disturb this group's pairing with _fragmentGroupKey: every key in the run is
+        // equal by construction, so reordering only the values leaves each pair intact.
+        Array.Sort(_fragmentGroupIndexAndCount, runStart, runEnd - runStart);
+        for (int i = runStart + 1; i < runEnd; i++)
         {
-            return false;
+            if (UnpackIndex(_fragmentGroupIndexAndCount[i]) == UnpackIndex(_fragmentGroupIndexAndCount[i - 1]))
+            {
+                return false;
+            }
         }
 
         byte mode = UnpackMode(_fragmentGroupKey[runStart]);
