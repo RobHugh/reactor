@@ -223,7 +223,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             options.ResolvedFragmentSize);
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Reactor.Sink, options.Reactor.MinimumLevel, _counters);
-        _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity);
+        _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity, ReactorOrigin.Next());
         _entropy = options.Entropy;
         _cookies = new CookieMinter(options.Reactor.TimeProvider, _entropy);
         _admissionCap = options.Reactor.ResolvedAdmissionCap;

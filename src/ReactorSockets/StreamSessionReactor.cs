@@ -92,7 +92,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             options.RetentionBytes,
             options.Reactor.Capacity,
             MessageFramingCodec.LengthPrefixSize);
-        _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity);
+        _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity, ReactorOrigin.Next());
         _entropy = options.Entropy;
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
         _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);

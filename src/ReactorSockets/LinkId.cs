@@ -17,11 +17,13 @@ namespace ReactorSockets;
 /// </remarks>
 /// <param name="Origin">
 /// Which Reactor issued this <see cref="LinkId"/>. Opaque and process-local — compared for equality
-/// and nothing else, ordering nothing and meaning nothing outside this process.
+/// and nothing else, ordering nothing and meaning nothing outside this process. Never 0: that value
+/// is reserved and no Reactor is ever issued it, so a <see langword="default"/>
+/// <see cref="LinkId"/> addresses nothing twice over.
 /// </param>
 /// <param name="Index">The zero-based Slot this Link occupies.</param>
 /// <param name="Generation">
 /// The generation that Slot was on when this Link was admitted. Live Slots begin at 1, so a
 /// <see langword="default"/> <see cref="LinkId"/> — generation 0 — addresses nothing.
 /// </param>
-public readonly record struct LinkId(ulong Origin, int Index, ulong Generation);
+public readonly record struct LinkId(uint Origin, int Index, ulong Generation);
