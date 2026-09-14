@@ -2,7 +2,7 @@ using System.Net.Sockets;
 
 namespace ReactorSockets.Transports;
 
-/// <summary>The result of one <see cref="TcpLink.Send"/> call.</summary>
+/// <summary>The result of one <see cref="TcpLink.Send(ReadOnlySpan{byte})"/> call.</summary>
 internal readonly struct TcpLinkSendResult
 {
     private TcpLinkSendResult(bool isSuccess, int bytesSent, SocketError error)
