@@ -157,7 +157,11 @@ internal static class DatagramSessionProtocol
 
     /// <summary>
     /// The bit marking a packet record as a fragment of a larger Message rather than a complete one
-    /// (ADR 0004, ADR 0009). Only the two reliable modes ever set it. Setting it grows the record by
+    /// (ADR 0004, ADR 0009). Only the two reliable modes ever set it, and both ends now enforce that
+    /// rather than merely observe it: <see cref="DatagramSessionReactor.Send"/> answers
+    /// <see cref="SendOutcome.MessageTooLarge"/> rather than fragment an unreliable Message (issue
+    /// #246), and <see cref="PacketRecordLegality.ShapeOf"/> refuses the shape on the way in, failing
+    /// the read and discarding the whole Datagram (issue #273). Setting it grows the record by
     /// the fragment index and fragment count that follow the length field — an unfragmented Message
     /// pays one bit rather than the four bytes those fields would cost every record if they were
     /// always present.

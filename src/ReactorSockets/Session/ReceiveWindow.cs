@@ -142,10 +142,7 @@ internal sealed class ReceiveWindow
     /// </summary>
     private readonly bool _slides;
 
-    /// <summary>The sequence at the window's lower edge. See <see cref="Base"/>.</summary>
-    private uint _base;
-
-    /// <summary>The ring position in <see cref="_admitted"/> that <see cref="_base"/> currently occupies.</summary>
+    /// <summary>The ring position in <see cref="_admitted"/> that <see cref="Base"/> currently occupies.</summary>
     private int _baseSlot;
 
     /// <summary>
@@ -219,7 +216,7 @@ internal sealed class ReceiveWindow
         _admitted = admitted;
         _fragmentLengths = fragmentLengths;
         _fragmentGroups = fragmentGroups;
-        _base = 0;
+        Base = 0;
         _baseSlot = 0;
         _slides = slides;
     }
@@ -231,7 +228,7 @@ internal sealed class ReceiveWindow
     /// and only ever advances, by exactly one sequence per already-admitted slot <see cref="Classify(uint)"/>
     /// passes over.
     /// </summary>
-    internal uint Base => _base;
+    internal uint Base { get; private set; }
 
     /// <summary>The number of sequence slots the window spans, fixed at construction.</summary>
     internal int Capacity { get; }
@@ -303,7 +300,7 @@ internal sealed class ReceiveWindow
         LastAbandonedFragmentSet = default;
         ringSlot = -1;
 
-        bool atOrAboveBase = sequence == _base || SequenceNumber.IsNewerThan(sequence, _base);
+        bool atOrAboveBase = sequence == Base || SequenceNumber.IsNewerThan(sequence, Base);
         if (!atOrAboveBase)
         {
             // Below the base: already admitted or already retired. Never a duplicate report — a
@@ -316,7 +313,7 @@ internal sealed class ReceiveWindow
         // ordering check above — which already establishes sequence is at or after base within the
         // half-space IsNewerThan resolves correctly — this recovers the true forward distance even
         // across the u32 wrap.
-        uint offset = unchecked(sequence - _base);
+        uint offset = unchecked(sequence - Base);
         if (offset >= (uint)Capacity)
         {
             if (!_slides)
@@ -327,7 +324,7 @@ internal sealed class ReceiveWindow
             }
 
             SlideTo(sequence);
-            offset = unchecked(sequence - _base);
+            offset = unchecked(sequence - Base);
         }
 
         int slot = (int)((_baseSlot + offset) % (uint)Capacity);
@@ -574,7 +571,7 @@ internal sealed class ReceiveWindow
     /// to answer for it.
     /// </returns>
     internal bool TryGetRingSlot(uint sequence, out int ringSlot) =>
-        FragmentGroupCompleteness.TryGetRingSlot(sequence, Capacity, _base, _baseSlot, out ringSlot);
+        FragmentGroupCompleteness.TryGetRingSlot(sequence, Capacity, Base, _baseSlot, out ringSlot);
 
     /// <summary>
     /// Whether every Fragment of the group starting at <paramref name="groupFirstSequence"/> and
@@ -611,7 +608,7 @@ internal sealed class ReceiveWindow
         }
 
         return FragmentGroupCompleteness.IsComplete(
-            _admitted.Span, _fragmentLengths.Span, Capacity, _base, _baseSlot, groupFirstSequence, fragmentCount);
+            _admitted.Span, _fragmentLengths.Span, Capacity, Base, _baseSlot, groupFirstSequence, fragmentCount);
     }
 
     /// <summary>
@@ -667,13 +664,13 @@ internal sealed class ReceiveWindow
     /// <remarks>
     /// <para>
     /// A pure read: it classifies nothing, admits nothing, and moves no base. It is generated fresh
-    /// from <see cref="_admitted"/>, <see cref="_base"/> and <see cref="_baseSlot"/> on every call
+    /// from <see cref="_admitted"/>, <see cref="Base"/> and <see cref="_baseSlot"/> on every call
     /// rather than accumulated, so a window that has just retired a hole through
     /// <see cref="AdvanceBase"/> describes the new base and the bitfield that goes with it, never the
     /// state from before that call.
     /// </para>
     /// <para>
-    /// Wrap correctness is inherited, not reinvented: <see cref="_base"/> and <see cref="_baseSlot"/>
+    /// Wrap correctness is inherited, not reinvented: <see cref="Base"/> and <see cref="_baseSlot"/>
     /// already track the window correctly across the <c>u32</c> wrap — that is what
     /// <see cref="SequenceNumber.IsNewerThan"/> inside <see cref="Classify(uint)"/> establishes — so this
     /// method only ever walks ring positions relative to <see cref="_baseSlot"/> and never compares
@@ -706,7 +703,7 @@ internal sealed class ReceiveWindow
             }
         }
 
-        return (_base, bits);
+        return (Base, bits);
     }
 
     /// <summary>
@@ -725,14 +722,14 @@ internal sealed class ReceiveWindow
         _admitted.Span.Clear();
         _fragmentLengths.Span.Clear();
         _fragmentGroups.Span.Clear();
-        _base = 0;
+        Base = 0;
         _baseSlot = 0;
         LastSlideLoss = 0;
         LastAbandonedFragmentSet = default;
     }
 
     /// <summary>
-    /// Advances <see cref="_base"/> one slot at a time while the slot it currently occupies is
+    /// Advances <see cref="Base"/> one slot at a time while the slot it currently occupies is
     /// admitted, clearing each slot as it passes so the ring can reuse it once the base wraps back
     /// around. Stops at the first hole — a slot not yet admitted — which is exactly where the next
     /// arrival still needs to land. A single admitted arrival that fills the last hole below a run of
@@ -745,7 +742,7 @@ internal sealed class ReceiveWindow
         {
             admitted[_baseSlot] = 0;
             _baseSlot = _baseSlot + 1 == Capacity ? 0 : _baseSlot + 1;
-            _base = unchecked(_base + 1);
+            Base = unchecked(Base + 1);
         }
     }
 
@@ -763,7 +760,7 @@ internal sealed class ReceiveWindow
     private void SlideTo(uint sequence)
     {
         uint newBase = unchecked(sequence - (uint)Capacity + 1);
-        uint retiredCount = unchecked(newBase - _base);
+        uint retiredCount = unchecked(newBase - Base);
         int slotsToWalk = retiredCount < (uint)Capacity ? (int)retiredCount : Capacity;
 
         Span<byte> admitted = _admitted.Span;
@@ -787,7 +784,7 @@ internal sealed class ReceiveWindow
             lost += retiredCount - (uint)Capacity;
         }
 
-        _base = newBase;
+        Base = newBase;
         LastSlideLoss = lost;
     }
 }

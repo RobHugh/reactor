@@ -186,6 +186,8 @@ apart reads the diagnostics, which is what diagnostics are for.
 | 202 | `VersionRefused` | `Warn` | Source | version offered / version required |
 | 203 | `FragmentSetAbandoned` | `Warn` | Peer | fragments held / fragments expected |
 | 204 | `RetransmissionTimerBackedOff` | `Trace` | Peer | new RTO in ms / consecutive backoffs |
+| 205 | `OversizedFragmentSet` | `Warn` | Peer | declared count / largest legal count |
+| 206 | `UnreliableFragment` | `Warn` | Source | claimed mode bits / — |
 
 ### Stream session
 

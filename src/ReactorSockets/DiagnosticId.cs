@@ -147,6 +147,30 @@ public enum DiagnosticId
     OversizedFragmentSet = 205,
 
     /// <summary>
+    /// A packet record carried the fragment shape in one of the two unreliable modes, which ADR 0004
+    /// forbids — you may only fragment what you can retransmit — and the read failed outright, taking
+    /// the whole Datagram with it (issue #273). Subject is the claimed Source, not the Peer, matching
+    /// the <see cref="DatagramMalformed"/> that is raised alongside it: a discarded Datagram is never
+    /// attributed to the Session it named, and no byte of it is counted against that Peer.
+    /// <c>Value0</c> is the mode the record claimed, as the two mode bits' wire value — 0 for
+    /// <c>Unreliable</c>, 1 for <c>UnreliableSequenced</c>; <c>Value1</c> is unused.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="DiagnosticLevel.Warn"/>, for the same reason as <see cref="DatagramMalformed"/>: a
+    /// remote can produce this at will, and nothing is wrong with this Reactor.
+    /// </para>
+    /// <para>
+    /// Distinct from <see cref="DatagramMalformed"/> rather than folded into it because the two say
+    /// different things to a consumer. A malformed Datagram is rubbish from anywhere; this one is
+    /// well-formed at every level but the rule, which means the sender is running a build that
+    /// fragments in modes this profile does not — a misconfiguration a consumer can act on, and the
+    /// send path already refuses to produce.
+    /// </para>
+    /// </remarks>
+    UnreliableFragment = 206,
+
+    /// <summary>
     /// A dialler was refused in-protocol during the stream handshake, either because it announced a
     /// different protocol version or because every capacity Slot was occupied. Subject is the claimed
     /// Source: at refusal time there is no Peer, only a claimed origin. For a capacity refusal,
