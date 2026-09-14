@@ -46,9 +46,12 @@ public class DatagramSessionHostileFragmentDiscardTests
     private const int UnfragmentedRecordSize = 7;
     private const int FragmentRecordSize = 11;
 
+    private const byte ModeUnreliable = 0b0000_0000;
+    private const byte ModeUnreliableSequenced = 0b0000_0001;
     private const byte ModeReliableUnordered = 0b0000_0010;
     private const byte ModeReliableOrdered = 0b0000_0011;
     private const byte FragmentBit = 0b0000_0100;
+    private const byte SpareBit = 0b0000_1000;
 
     [Fact]
     public void Pump_HostileFragmentWithIndexAtItsCount_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
@@ -210,6 +213,36 @@ public class DatagramSessionHostileFragmentDiscardTests
         AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
     }
 
+    [Theory]
+    [InlineData(ModeUnreliable)]
+    [InlineData(ModeUnreliableSequenced)]
+    public void Pump_HostileFragmentInAnUnreliableMode_DiscardsWholeDatagramAndReportsTheRefusal(byte modeBits)
+    {
+        // Arrange — issue #273: fragmentation is reliable-only (ADR 0004), and the send path already
+        // refuses to produce this. Nothing but a hostile or broken peer can put a Fragment on the wire
+        // in an unreliable mode, so the read fails outright rather than admitting a record this profile
+        // has no reassembly path for. The index and count here are entirely well-formed (#253) and the
+        // set they claim is contiguous (#256): the mode alone is what refuses it.
+        byte[] forgedTail = BuildFragmentRecord(
+            modeBits, sequence: 1, fragmentIndex: 0, fragmentCount: 2, payload: [0x9A]);
+
+        AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(
+            forgedTail, alsoReported: DiagnosticId.UnreliableFragment);
+    }
+
+    [Fact]
+    public void Pump_HostileFragmentInAnUnreliableModeCarryingASpareBit_ReportsOnlyTheMalformedDiscard()
+    {
+        // Arrange — issue #273: a spare bit set is refused before the flags byte is read for anything
+        // else, so a record breaking both rules reports the one that actually fired rather than also
+        // claiming the unreliable-Fragment refusal.
+        byte[] forgedTail = BuildFragmentRecord(
+            ModeUnreliable, sequence: 1, fragmentIndex: 0, fragmentCount: 2, payload: [0x9B]);
+        forgedTail[0] |= SpareBit;
+
+        AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
+    }
+
     /// <summary>
     /// The index/count-refusal cases above build their own single-record forged tail (#253) and drive
     /// it through the shared body every case in this file uses.
@@ -230,8 +263,16 @@ public class DatagramSessionHostileFragmentDiscardTests
     /// (#256), or a single record #253 refuses outright — then a genuinely well-formed datagram that
     /// resends sequence 0 alone, proving the window never saw the first one.
     /// </summary>
+    /// <param name="forgedFragmentTail">The forged record or records that follow the well-formed one.</param>
+    /// <param name="alsoReported">
+    /// A second Diagnostic this forgery raises alongside the malformed discard, or
+    /// <see langword="null"/> when the discard is all that is reported. Every case here raises
+    /// <see cref="DiagnosticId.DatagramMalformed"/>; only the unreliable-Fragment refusal (issue #273)
+    /// names which rule the record broke as well.
+    /// </param>
     private static void AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(
-        byte[] forgedFragmentTail)
+        byte[] forgedFragmentTail,
+        DiagnosticId? alsoReported = null)
     {
         // Arrange
         using DatagramSessionReactorHarness accepter = new();
@@ -265,6 +306,15 @@ public class DatagramSessionHostileFragmentDiscardTests
             "record that parsed ahead of it too");
         accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(1);
         accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.DatagramMalformed);
+        if (alsoReported is DiagnosticId expectedId)
+        {
+            accepter.Sink.Received.Should().ContainSingle(r => r.Id == expectedId)
+                .Which.Level.Should().Be(DiagnosticLevel.Warn);
+        }
+        else
+        {
+            accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.UnreliableFragment);
+        }
 
         PeerCounters afterDiscard = accepter.Reactor.CountersOf(accepterPeer);
         afterDiscard.Should().Be(before, "a discarded datagram never reaches record classification at all");

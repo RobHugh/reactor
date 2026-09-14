@@ -867,10 +867,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// spare bit set, a length running past the end, or truncation inside a record — discards the
     /// whole datagram rather than whatever records parsed before it, because a partial admission would
     /// let a forged tail poison an otherwise legitimate send. A record with the fragment bit set is not
-    /// by itself bad: <see cref="PacketRecordCodec.TryRead"/> reads the Fragment shape same as the
-    /// unfragmented one, and this method routes it into its Space the same way — <see cref="ClassifyRecord"/>
+    /// by itself bad, so long as it is in one of the two reliable modes: <see cref="PacketRecordCodec.TryRead"/>
+    /// reads the Fragment shape same as the unfragmented one, and this method routes it into its Space
+    /// the same way — <see cref="ClassifyRecord"/>
     /// is what diverts an admitted Fragment away from delivery and into its Space's receive-window slot
-    /// instead (issue #257). Parsing therefore runs in
+    /// instead (issue #257). The fragment bit in an unreliable mode <em>is</em> by itself bad and fails
+    /// the read outright, the same discard as any other malformed record, since ADR 0004 caps those two
+    /// modes at a single Datagram and no reassembly path exists for them (issue #273); the first pass
+    /// below names that refusal on the Diagnostic stream as well, because it says the sender fragments
+    /// in modes this profile does not rather than that rubbish arrived. Parsing therefore runs in
     /// three passes over the same bytes: the first confirms every record is well-formed without
     /// touching any Space; the second, once <see cref="FragmentSetsAreWellFormed"/> also stands, walks
     /// every record again to refuse — with a close, not a discard — a declared <c>fragmentCount</c>
@@ -910,6 +915,18 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
             {
+                // One refusal out of the several this read can reach is worth naming separately
+                // (issue #273): a Fragment in an unreliable mode is well-formed at every level but
+                // ADR 0004's rule, so it says the sender fragments in modes this profile does not,
+                // rather than that rubbish arrived. The malformed discard below still fires — this
+                // adds which rule broke, it does not replace the outcome.
+                if (PacketRecordLegality.RefusedAsUnreliableFragment(remainder)
+                    && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                {
+                    _diagnostics.Log(DiagnosticRecord.ForUnreliableFragment(
+                        source, remainder[0] & DatagramSessionProtocol.ModeMask));
+                }
+
                 DiscardMalformed(source, datagram.Length);
                 return;
             }
@@ -936,8 +953,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // datagram carrying other, legal records ahead of the offending Fragment still closes the Peer
         // having classified none of them — no receive-window slot or Fragment-group bookkeeping is
         // created for any record of this datagram once the check fires. Only ReliableOrdered and
-        // ReliableUnordered ever carry the fragment shape (ADR 0004), matching ClassifyRecord's own
-        // gate, so a stray fragment bit on an unreliable record is not evaluated here at all.
+        // ReliableUnordered ever carry the fragment shape (ADR 0004) — a Fragment in an unreliable mode
+        // already failed the read in the first pass above (issue #273), so the mode test here and
+        // ClassifyRecord's matching one now restate a guarantee rather than establish it, and stay as
+        // the local statement of which modes this arm is about.
         remainder = body;
         while (remainder.Length > 0)
         {

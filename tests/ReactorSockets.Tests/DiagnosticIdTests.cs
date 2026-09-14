@@ -17,6 +17,8 @@ public class DiagnosticIdTests
     [InlineData(DiagnosticId.VersionRefused, 202)]
     [InlineData(DiagnosticId.FragmentSetAbandoned, 203)]
     [InlineData(DiagnosticId.RetransmissionTimerBackedOff, 204)]
+    [InlineData(DiagnosticId.OversizedFragmentSet, 205)]
+    [InlineData(DiagnosticId.UnreliableFragment, 206)]
     [InlineData(DiagnosticId.PeerRefused, 300)]
     [InlineData(DiagnosticId.LingerNegotiated, 301)]
     [InlineData(DiagnosticId.MalformedFraming, 302)]
