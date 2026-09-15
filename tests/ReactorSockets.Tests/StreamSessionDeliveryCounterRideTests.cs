@@ -11,23 +11,16 @@ namespace ReactorSockets.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>What this file can and cannot assert.</b> How many socket writes produced a run of bytes is not
-/// observable through the seam (tests/CLAUDE.md, ADR 0015): the far end sees a TCP stream, and two
-/// back-to-back writes inside one Pump land in the counterparty's receive buffer before it reads, so
-/// even a <see cref="WireObserver"/>'s per-read Segments cannot separate them — verified, not assumed.
-/// It separates writes only across Pumps, which is why <see cref="StreamSessionWriteBatchingTests"/>
-/// can use it for #90's per-Pump claim and this file cannot use it for #132's per-write one. No
-/// Counter reports socket writes, and adding a seam to reach the call count is exactly what
-/// tests/CLAUDE.md forbids.
+/// <b>How the write count is observed.</b> Two back-to-back writes inside one Pump land in the
+/// counterparty's receive buffer before it reads, so a <see cref="WireObserver"/>'s per-read Segments
+/// cannot separate them. The write count is instead read from <see cref="PeerCounters.SocketWrites"/>
+/// (issue #325), the Counter seam tests/CLAUDE.md sanctions.
 /// </para>
 /// <para>
-/// So what is asserted here is everything the ride is observable by, and asserted against the byte
-/// stream rather than any read boundary in it: the record lands immediately ahead of the Message the
-/// same Pump queued, whole, unaltered, once, carrying the right count — the properties a gather write
-/// that split, reordered, duplicated or dropped either part would break — plus the receiving-only
-/// case, where there is no write to ride and the record is the whole of what goes out. That the two
-/// leave in one write is carried by <c>FlushRetentionWithDeliveryCounter</c> being the single call
-/// that sends both, which is a reading of the code rather than a claim this file proves.
+/// The byte stream is still asserted, rather than any read boundary in it: the record lands
+/// immediately ahead of the Message the same Pump queued, whole, unaltered, once, carrying the right
+/// count — the properties a gather write that split, reordered, duplicated or dropped either part
+/// would break.
 /// </para>
 /// </remarks>
 public class StreamSessionDeliveryCounterRideTests
@@ -150,6 +143,44 @@ public class StreamSessionDeliveryCounterRideTests
     }
 
     [Fact]
+    public void Pump_TwoWayTraffic_TakesNoSocketWriteForTheDeliveryCounter()
+    {
+        // Arrange — the same stimulus as the ordering test above: a Send queued before every Pump, so
+        // whichever Pump reads the counterparty's Message already owes a retention write.
+        const int maxMessageSize = 32;
+        using StreamSessionReactorHarness dialler = new(maxMessageSize: maxMessageSize);
+        using WireObserver observer = new();
+        PeerId peer = EstablishSession(dialler, observer);
+        ulong writesBefore = dialler.Reactor.CountersOf(peer).SocketWrites;
+
+        byte[] outbound = PayloadOf(16, 8);
+        observer.SendOnAcceptedLink(observer.AcceptedLinks[0], BuildFrame(PayloadOf(16, 9)));
+
+        // Act
+        ulong pumpsWithASendQueued = 0;
+        PumpDeadline deadline = PumpDeadline.Start();
+        while (dialler.Reactor.CountersOf(peer).MessagesReceived == 0)
+        {
+            if (deadline.Expired)
+            {
+                throw new InvalidOperationException("The counterparty's Message was never delivered within the Pump budget.");
+            }
+
+            dialler.Reactor.Send(peer, outbound).Should().Be(SendOutcome.Sent);
+            pumpsWithASendQueued++;
+            dialler.Reactor.Pump();
+            dialler.DrainToList();
+            observer.Pump();
+            PumpDeadline.Yield();
+        }
+
+        // Assert — one write per Pump for this end's own Message, and none added by the counter.
+        (dialler.Reactor.CountersOf(peer).SocketWrites - writesBefore).Should().Be(
+            pumpsWithASendQueued,
+            "the delivery counter rides the retention write its Pump already owed rather than taking one of its own");
+    }
+
+    [Fact]
     public void Pump_PurelyReceivingPeer_StillEmitsTheDeliveryCounterWithNothingToRide()
     {
         // Arrange — the other half of #25's cost statement: a Peer that never Sends has no write for the
@@ -160,6 +191,7 @@ public class StreamSessionDeliveryCounterRideTests
         using WireObserver observer = new();
         PeerId peer = EstablishSession(dialler, observer);
         int baseline = observer.ReceivedSegments.Count;
+        ulong writesBefore = dialler.Reactor.CountersOf(peer).SocketWrites;
 
         byte[] inbound = PayloadOf(16, 5);
 
@@ -186,6 +218,9 @@ public class StreamSessionDeliveryCounterRideTests
         BytesSinceBaseline(observer, baseline).Should().Equal(
             StreamSessionTestRecords.BuildDeliveryCounterRecord(1),
             "with nothing of its own queued, the counter record is the whole of what this end writes");
+        (dialler.Reactor.CountersOf(peer).SocketWrites - writesBefore).Should().Be(
+            1,
+            "with no write to ride, the counter takes exactly one write of its own");
     }
 
     /// <summary>

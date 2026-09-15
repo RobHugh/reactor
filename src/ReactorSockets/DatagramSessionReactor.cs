@@ -1712,6 +1712,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         UdpLinkSendResult result = slot.Link.SendTo(slot.Remote, _outboundDatagramBuffer.AsSpan(0, packer.BytesWritten));
+        slot.Counters.RecordSocketWrite();
         slot.Counters.RecordBytesSent((ulong)packer.BytesWritten);
         if (result.IsSuccess)
         {

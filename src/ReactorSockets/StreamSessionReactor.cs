@@ -1088,7 +1088,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>Sends a Refusal record, arming for a short send exactly as a Hello record does.</summary>
     private void SendRefusalRecord(RefusalSlot refusal, byte[] record)
     {
-        if (SendPendingRecord(refusal.Link, record, out ReadOnlyMemory<byte> remainder) == PendingRecordSendOutcome.ShortSend)
+        if (SendPendingRecord(refusal.Link, null, record, out ReadOnlyMemory<byte> remainder) == PendingRecordSendOutcome.ShortSend)
         {
             refusal.PendingBytesToSend = remainder;
             return;
@@ -1105,7 +1105,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        if (SendPendingRecord(refusal.Link, pending, out ReadOnlyMemory<byte> remainder) == PendingRecordSendOutcome.ShortSend)
+        if (SendPendingRecord(refusal.Link, null, pending, out ReadOnlyMemory<byte> remainder) == PendingRecordSendOutcome.ShortSend)
         {
             refusal.PendingBytesToSend = remainder;
             return;
@@ -1241,7 +1241,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        switch (SendPendingRecord(slot.Link, record, out ReadOnlyMemory<byte> remainder))
+        switch (SendPendingRecord(slot.Link, slot.Counters, record, out ReadOnlyMemory<byte> remainder))
         {
             case PendingRecordSendOutcome.Failed:
                 ClosePeer(handle, closeReasonAfterSend ?? DisconnectReason.TransportFailed);
@@ -1282,7 +1282,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         if (slot.PendingHandshakeBytesToSend is { Length: > 0 } pending)
         {
-            switch (SendPendingRecord(slot.Link, pending, out ReadOnlyMemory<byte> remainder))
+            switch (SendPendingRecord(slot.Link, slot.Counters, pending, out ReadOnlyMemory<byte> remainder))
             {
                 case PendingRecordSendOutcome.Failed:
                     ClosePeer(handle, slot.PendingCloseReason ?? DisconnectReason.TransportFailed);
@@ -1313,7 +1313,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         if (slot.PendingDeliveryCounterBytesToSend is { Length: > 0 } pendingCounter)
         {
-            switch (SendPendingRecord(slot.Link, pendingCounter, out ReadOnlyMemory<byte> remainder))
+            switch (SendPendingRecord(slot.Link, slot.Counters, pendingCounter, out ReadOnlyMemory<byte> remainder))
             {
                 case PendingRecordSendOutcome.Failed:
                     InterruptOrCloseOnTransportFailure(handle, slot);
@@ -1357,10 +1357,17 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// send left <paramref name="remainder"/> for the caller to store and re-arm for. Arming on a short
     /// send happens here, since every caller does the same thing with it; what a failure or a complete
     /// send means — close, or close only if a reason was given — differs per caller and is left to it.
+    /// <paramref name="counters"/> is the Peer the write is charged to (issue #325), or
+    /// <see langword="null"/> for a Refusal, which has no Peer.
     /// </summary>
-    private PendingRecordSendOutcome SendPendingRecord(TcpLink link, ReadOnlyMemory<byte> record, out ReadOnlyMemory<byte> remainder)
+    private PendingRecordSendOutcome SendPendingRecord(
+        TcpLink link,
+        PeerCounterSet? counters,
+        ReadOnlyMemory<byte> record,
+        out ReadOnlyMemory<byte> remainder)
     {
         TcpLinkSendResult result = link.Send(record.Span);
+        counters?.RecordSocketWrite();
         if (!result.IsSuccess)
         {
             remainder = default;
@@ -1526,7 +1533,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         MessageFramingCodec.WriteDeliveryCounter(slot.DeliveryCounterRecord, slot.Counters.MessagesReceived);
 
-        switch (SendPendingRecord(slot.Link, slot.DeliveryCounterRecord, out ReadOnlyMemory<byte> remainder))
+        switch (SendPendingRecord(slot.Link, slot.Counters, slot.DeliveryCounterRecord, out ReadOnlyMemory<byte> remainder))
         {
             case PendingRecordSendOutcome.Failed:
                 InterruptOrCloseOnTransportFailure(handle, slot);
@@ -1796,6 +1803,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
 
         TcpLinkSendResult firstResult = slot.Link.Send(first.AsSpan());
+        slot.Counters.RecordSocketWrite();
         if (!firstResult.IsSuccess)
         {
             InterruptOrCloseOnTransportFailure(handle, slot);
@@ -1821,6 +1829,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
 
         TcpLinkSendResult secondResult = slot.Link.Send(second.AsSpan());
+        slot.Counters.RecordSocketWrite();
         if (!secondResult.IsSuccess)
         {
             InterruptOrCloseOnTransportFailure(handle, slot);
@@ -1891,6 +1900,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
 
         TcpLinkSendResult result = slot.Link.Send(segments);
+        slot.Counters.RecordSocketWrite();
         if (!result.IsSuccess)
         {
             InterruptOrCloseOnTransportFailure(handle, slot);
