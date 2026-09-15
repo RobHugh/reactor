@@ -155,83 +155,68 @@ public class DatagramSessionSendIdlePingTests
     // =========================================================================================
 
     /// <remarks>
-    /// This codebase's send-side <c>RetentionPool.Release</c> has no production caller yet anywhere in
-    /// <see cref="DatagramSessionReactor"/> (a pre-existing gap this ticket does not touch — acknowledging
-    /// a reliable record today updates <c>OutstandingReliableSequences</c>' own bookkeeping only, not
-    /// retention), so a live Peer's <c>ReliableUnordered</c> retention cannot currently be freed mid-Session
-    /// by a real acknowledgement through the public surface. The one retention-free path this codebase's
-    /// send side does wire up — <c>ResetShareHolder</c>, called on admission — is what
-    /// <see cref="DatagramSessionRetentionSlotRecycleTests"/> already exercises for "the Slot's retention
-    /// is reset on admission": a capacity Slot's retention outlives whichever Peer occupies it, and a new
-    /// Peer admitted into a Slot a previous Peer filled finds it empty. This test uses that same, real
-    /// mechanism to free the Slot: closing the first Peer and admitting a second one into the Slot it
-    /// vacated (capacity is pinned to one, forcing the reuse), then proving the second Peer's own first
-    /// eligible Pump emits the Ping the first Peer's exhausted retention could never have let out.
+    /// Issue #345 wired up <c>RetentionPool.Release</c>'s only production caller: an acknowledgement now
+    /// frees the retention slot of every reliable record it releases, so a live Peer's
+    /// <c>ReliableUnordered</c> retention can be freed mid-Session by a real acknowledgement through the
+    /// public surface, on the very Peer that filled it — this test proves the slot frees on the same
+    /// Peer via its own ack, rather than through <c>ResetShareHolder</c>'s admission-time reset, which
+    /// <see cref="DatagramSessionRetentionSlotRecycleTests"/> already proves directly as its own,
+    /// separate mechanism.
     /// </remarks>
     [Fact]
-    public void Pump_ReliableUnorderedRetentionFull_EmitsNoPingThatPump_AndEmitsItOnceTheSlotIsFreedByReuse()
+    public void Pump_ReliableUnorderedRetentionFull_EmitsNoPingThatPump_AndEmitsItOnTheSamePeersFirstPumpAfterAnAckFreesTheSlot()
     {
-        // Arrange — one ReliableUnordered retention slot, on a Reactor pinned to capacity one, so a
-        // single unacknowledged reliable Send exhausts the Space the Ping also draws from and a second
-        // Peer can only be admitted into the same Slot once the first vacates it. fragmentSize is 600 —
-        // RFC 791's 576-byte guaranteed reassembly minimum is DatagramSessionOptions' own floor — rather
-        // than anything smaller.
+        // Arrange — one ReliableUnordered retention slot, so a single unacknowledged reliable Send
+        // exhausts the Space the Ping also draws from. fragmentSize is 600 — RFC 791's 576-byte
+        // guaranteed reassembly minimum is DatagramSessionOptions' own floor — rather than anything
+        // smaller. Linger is pushed far out so no RTO ever fires mid-run: this test is entirely about
+        // the ack releasing the slot the Ping needs.
         const int fragmentSize = 600;
         using DatagramSessionReactorHarness dialler = new(
-            capacity: 1, bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize,
+            bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize,
             maxMessageSize: fragmentSize, linger: TimeSpan.FromHours(1), sendIdleInterval: TimeSpan.FromSeconds(1));
-        using DatagramSessionReactorHarness firstRemote = new();
-        using DatagramSessionReactorHarness secondRemote = new();
-        using WireTap firstTap = new(firstRemote.Endpoint, dialler.TimeProvider);
+        using DatagramSessionReactorHarness accepter = new(fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
+        using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
 
-        PeerId first = dialler.Reactor.Connect(firstTap.PublicEndPoint);
-        DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, firstTap, firstRemote);
+        PeerId diallerPeer = dialler.Reactor.Connect(tap.PublicEndPoint);
+        PeerId accepterPeer = DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
 
         // Fill the one ReliableUnordered retention slot and flush it to the wire.
-        dialler.Reactor.Send(first, DeliveryMode.ReliableUnordered, [1, 2, 3]).Should().Be(SendOutcome.Sent);
-        dialler.Reactor.Send(first, DeliveryMode.ReliableUnordered, [4, 5, 6]).Should().Be(
+        dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableUnordered, [1, 2, 3]).Should().Be(SendOutcome.Sent);
+        dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableUnordered, [4, 5, 6]).Should().Be(
             SendOutcome.RetentionExhausted, "the one slot is genuinely filled by the first Send");
-        dialler.Reactor.Pump();
-        firstTap.Pump();
+        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
 
-        int capturesBeforeIdleWait = firstTap.CountInDirection(TapDirection.DiallerToAccepter);
+        int capturesBeforeIdleWait = tap.CountInDirection(TapDirection.DiallerToAccepter);
 
         // Act — the interval elapses while the slot is still held.
         dialler.TimeProvider.Advance(dialler.Options.SendIdleInterval);
         dialler.Reactor.Pump();
-        firstTap.Pump();
+        tap.Pump();
 
         // Assert — nothing new left the dialler: retention had no free slot for a Ping to take.
-        firstTap.CountInDirection(TapDirection.DiallerToAccepter).Should().Be(
+        tap.CountInDirection(TapDirection.DiallerToAccepter).Should().Be(
             capturesBeforeIdleWait, "ReliableUnordered retention is full, so no Ping can be queued this Pump");
 
-        // Act — the first Peer closes, and a second is admitted into the Slot it vacated: this Reactor's
-        // capacity of one forces the reuse, and admission resets that Slot's retention (the mechanism
-        // DatagramSessionRetentionSlotRecycleTests proves directly), so the second Peer's own
-        // ReliableUnordered Space starts empty rather than inheriting the first Peer's exhausted one.
-        dialler.Reactor.Close(first);
+        // Act — the accepter's reply carries the ack that releases the slot, on this same Peer: no close,
+        // no reconnect, no reuse of a Slot vacated by anyone else.
+        accepter.Reactor.Send(accepterPeer, DeliveryMode.Unreliable, [9]).Should().Be(SendOutcome.Sent);
+        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
+
+        int capturesBeforeAckIsRead = tap.CountInDirection(TapDirection.DiallerToAccepter);
+
+        // Act — the very next Pump on this same Peer both reads the ack (freeing the slot) and re-checks
+        // the send-idle timer, which finds the interval already elapsed.
         dialler.Reactor.Pump();
-        firstTap.Pump();
-        dialler.DrainToList();
+        tap.Pump();
 
-        using WireTap secondTap = new(secondRemote.Endpoint, dialler.TimeProvider);
-        dialler.Reactor.Connect(secondTap.PublicEndPoint);
-        DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, secondTap, secondRemote);
+        // Assert — exactly one Ping leaves on this same Pump, on the same Peer: the freed slot's
+        // retention no longer refuses it.
+        tap.CountInDirection(TapDirection.DiallerToAccepter).Should().Be(
+            capturesBeforeAckIsRead + 1, "the freed slot's retention is free, so the Ping goes out the moment the ack is read");
 
-        int capturesOnSecondTapBeforeIdleWait = secondTap.CountInDirection(TapDirection.DiallerToAccepter);
-
-        // Act — the second Peer's own send-idle interval, measured from its own Establish, elapses.
-        dialler.TimeProvider.Advance(dialler.Options.SendIdleInterval);
-        dialler.Reactor.Pump();
-        secondTap.Pump();
-
-        // Assert — exactly one Ping leaves for the second Peer, on this Pump: the freed Slot's retention
-        // no longer refuses it.
-        List<byte[]> afterReuse = [.. secondTap.PayloadsInDirection(TapDirection.DiallerToAccepter)];
-        afterReuse.Should().HaveCount(
-            capturesOnSecondTapBeforeIdleWait + 1, "the reused Slot's retention is free, so the Ping goes out on this Pump");
-
-        DatagramDecodeResult decoded = DatagramDecoder.TryDecode(afterReuse[^1]);
+        byte[] datagram = tap.PayloadsInDirection(TapDirection.DiallerToAccepter).Last();
+        DatagramDecodeResult decoded = DatagramDecoder.TryDecode(datagram);
         decoded.IsSuccess.Should().BeTrue();
         decoded.Datagram!.Records.Should().ContainSingle();
         (decoded.Datagram!.Records[0].Flags & ControlBit).Should().Be(ControlBit, "the record freed onto the wire is the Ping");
