@@ -12,18 +12,26 @@ namespace ReactorSockets.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>How the short send is produced.</b> Both ends of the transport are pinned small and the
-/// counterparty never reads after the handshake, so a burst of Messages fills every buffer between
-/// them, the same stimulus <c>StreamSessionRetentionFlushTests</c>' exhaustion test uses. A
-/// counterparty Message then advances the Reactor's received count, and the delivery counter emitted
-/// for it cannot be accepted, which leaves its whole record pending. Readiness only reports writable
-/// for a socket a short send armed, and a socket nobody reads never becomes writable, so nothing
-/// drains that remainder until the counterparty reads.
+/// <b>How the short send is produced.</b> The Reactor's send buffer is pinned small and the
+/// counterparty never reads after the handshake, so a burst of Messages fills the transport. The
+/// clock is then advanced one send-idle interval per Pump, with nothing queued, so each Pump owes a
+/// heartbeat delivery counter (issue #114). A heartbeat the socket still has room for takes a write. One
+/// the full socket refuses leaves its record pending, and every heartbeat after that returns without a
+/// write, because <c>SendDeliveryCounterOrArm</c> never starts a record over a pending one. A heartbeat
+/// Pump that takes no write is therefore proof the remainder is pending, on any platform and whether
+/// or not the flush guard exists.
 /// </para>
 /// <para>
-/// <b>How a write is observed.</b> A write the socket refuses puts nothing on the wire, so the flush
-/// behind the pending record is read from <see cref="PeerCounters.SocketWrites"/> (issue #325), which
-/// counts every send call however it ended.
+/// A fixed stimulus is not enough. On Linux, bytes keep moving from the Reactor's send buffer to the
+/// counterparty after a Pump returns, freeing room for a 12-byte record that a Windows socket refuses.
+/// The counterparty's receive buffer is left at the OS default for a related reason: pinned small on
+/// Linux, it lets bytes trickle across while nothing reads, and slows the later drain to a few hundred
+/// bytes per 250ms.
+/// </para>
+/// <para>
+/// <b>How a write is observed.</b> A write the socket refuses puts nothing on the wire, so writes are
+/// read from <see cref="PeerCounters.SocketWrites"/> (issue #325), which counts every send call however
+/// it ended.
 /// </para>
 /// <para>
 /// The handshake half of the guard (<c>PendingHandshakeBytesToSend</c>) has no test here. A Hello is
@@ -34,13 +42,23 @@ public class StreamSessionPendingRecordFlushTests
 {
     private const int RecordSize = StreamSessionTestRecords.HandshakeRecordSize;
 
-    private const int DeliveryCounterRecordSize = 12;
-
     private const int MaxMessageSize = 8192;
 
     private const int FillMessageCount = 100;
 
-    private const int PinnedBufferSize = 1024;
+    private const int ReactorSendBufferSize = 1024;
+
+    /// <summary>
+    /// How many heartbeat Pumps <see cref="LeaveADeliveryCounterPending"/> tries before giving up. Each
+    /// one advances the clock a whole send-idle interval.
+    /// </summary>
+    private const int MaxHeartbeatAttempts = 50;
+
+    /// <summary>
+    /// Keeps the receive-idle deadline beyond every heartbeat attempt, so the Peer is never interrupted
+    /// while the counterparty sends nothing.
+    /// </summary>
+    private const int MissedHeartbeats = 1000;
 
     /// <summary>The clock step used while waiting for an interruption and its re-dial.</summary>
     private static readonly TimeSpan _cadence = TimeSpan.FromMilliseconds(50);
@@ -56,10 +74,10 @@ public class StreamSessionPendingRecordFlushTests
     {
         // Arrange
         using StreamSessionReactorHarness accepter = CreateReactor();
-        using Counterparty peer = Counterparty.Connect(accepter.Endpoint, PinnedBufferSize);
+        using Counterparty peer = Counterparty.Connect(accepter.Endpoint);
         PeerId id = EstablishAcceptedSession(accepter, peer);
         FillTransport(accepter, id);
-        LeaveADeliveryCounterPending(accepter, peer, id);
+        LeaveADeliveryCounterPending(accepter, id);
         ulong writesBefore = accepter.Reactor.CountersOf(id).SocketWrites;
 
         // Act
@@ -74,31 +92,29 @@ public class StreamSessionPendingRecordFlushTests
     }
 
     [Fact]
-    public void Pump_AfterADrainingDeliveryCounterRemainderClears_FlushesEveryRetainedByte()
+    public void Pump_AfterADrainingDeliveryCounterRemainderClears_FlushesTheRetentionItHeldBack()
     {
         // Arrange — the same stall as above, with a Message queued behind the pending record.
         using StreamSessionReactorHarness accepter = CreateReactor();
-        using Counterparty peer = Counterparty.Connect(accepter.Endpoint, PinnedBufferSize);
+        using Counterparty peer = Counterparty.Connect(accepter.Endpoint);
         PeerId id = EstablishAcceptedSession(accepter, peer);
         FillTransport(accepter, id);
-        LeaveADeliveryCounterPending(accepter, peer, id);
+        LeaveADeliveryCounterPending(accepter, id);
 
-        byte[] queuedBehindRecord = PayloadOf(16, 7);
-        accepter.Reactor.Send(id, queuedBehindRecord).Should().Be(SendOutcome.Sent);
+        byte[] queuedBehindRecord = BuildFrame(PayloadOf(16, 7));
+        accepter.Reactor.Send(id, PayloadOf(16, 7)).Should().Be(SendOutcome.Sent);
         accepter.Reactor.Pump();
         accepter.DrainToList();
 
-        int expectedBytes = (FillMessageCount * FillFrame.Length)
-            + DeliveryCounterRecordSize
-            + BuildFrame(queuedBehindRecord).Length;
-
         // Act — the counterparty starts reading, which reopens the window for the pending record and
         // then for the retention the guard held back.
-        byte[] received = PumpAndRead(accepter, peer, expectedBytes);
+        byte[] received = PumpAndReadUntilEndsWith(accepter, peer, queuedBehindRecord);
 
-        // Assert
-        received.Should().HaveCount(
-            expectedBytes,
+        // Assert — the Message queued behind the record is the last retention this end owes, so it
+        // arriving last means the skipped flush resumed. How many heartbeat records reached the wire
+        // before the socket filled is platform timing, so the stream's length is not asserted.
+        received.TakeLast(queuedBehindRecord.Length).Should().Equal(
+            queuedBehindRecord,
             "a flush the guard skipped is marked pending again once the record drains, so no retained byte is stranded");
     }
 
@@ -108,12 +124,12 @@ public class StreamSessionPendingRecordFlushTests
         // Arrange — a dialled Session whose delivery counter is left pending, then a reset that loses
         // that connection before the remainder can drain.
         using StreamSessionReactorHarness dialer = CreateReactor();
-        using StalledListener listener = new(PinnedBufferSize);
+        using CounterpartyListener listener = new();
         PeerId id = dialer.Reactor.Connect(listener.Endpoint);
         using Counterparty far = listener.Accept();
         EstablishDialledSession(dialer, far, id);
         FillTransport(dialer, id);
-        LeaveADeliveryCounterPending(dialer, far, id);
+        LeaveADeliveryCounterPending(dialer, id);
 
         far.ResetAbruptly();
         PumpUntilInterrupted(dialer, id);
@@ -134,7 +150,8 @@ public class StreamSessionPendingRecordFlushTests
     private static StreamSessionReactorHarness CreateReactor() => new(
         maxMessageSize: MaxMessageSize,
         retentionBytes: 2 * FillMessageCount * (MaxMessageSize + 4),
-        sendBufferSize: PinnedBufferSize);
+        sendBufferSize: ReactorSendBufferSize,
+        missedHeartbeats: MissedHeartbeats);
 
     /// <summary>
     /// Establishes the Session and reads the accepter's own Hello off <paramref name="peer"/>'s socket,
@@ -175,8 +192,8 @@ public class StreamSessionPendingRecordFlushTests
     }
 
     /// <summary>
-    /// Queues and flushes far more than the pinned transport buffers hold, with nothing reading, so the
-    /// Reactor's socket refuses further writes. Retention is sized to hold every Message twice over,
+    /// Queues and flushes far more than the counterparty's receive buffer and the Reactor's pinned send
+    /// buffer hold together, with nothing reading. Retention is sized to hold every Message twice over,
     /// so the ring never fills.
     /// </summary>
     private static void FillTransport(StreamSessionReactorHarness reactor, PeerId id)
@@ -191,26 +208,31 @@ public class StreamSessionPendingRecordFlushTests
     }
 
     /// <summary>
-    /// Delivers one counterparty Message and pumps until the Reactor has read it. No Send is queued in
-    /// those Pumps, so the counter has no retention write to ride and is sent alone into the full
-    /// socket, which leaves its remainder pending.
+    /// Advances the clock one send-idle interval per Pump, with nothing queued, until a Pump that owes
+    /// a heartbeat takes no socket write — the proof, described in the class remarks, that a
+    /// delivery-counter remainder is pending. Throws if the Peer is interrupted, since an Interrupted
+    /// Peer also takes no write, or if no heartbeat is ever refused.
     /// </summary>
-    private static void LeaveADeliveryCounterPending(StreamSessionReactorHarness reactor, Counterparty counterparty, PeerId id)
+    private static void LeaveADeliveryCounterPending(StreamSessionReactorHarness reactor, PeerId id)
     {
-        counterparty.Send(BuildFrame(PayloadOf(16, 5)));
-
-        PumpDeadline deadline = PumpDeadline.Start();
-        while (reactor.Reactor.CountersOf(id).MessagesReceived == 0)
+        for (int attempt = 0; attempt < MaxHeartbeatAttempts; attempt++)
         {
-            if (deadline.Expired)
+            ulong writesBefore = reactor.Reactor.CountersOf(id).SocketWrites;
+            reactor.TimeProvider.Advance(reactor.SendIdleInterval);
+            reactor.Reactor.Pump();
+            if (reactor.DrainToList().Any(e => e.Kind is SessionEventKind.PeerInterrupted or SessionEventKind.PeerClosed))
             {
-                throw new InvalidOperationException("The counterparty's Message was never delivered within the Pump budget.");
+                throw new InvalidOperationException("The Peer was lost while waiting for a heartbeat to be refused.");
             }
 
-            reactor.Reactor.Pump();
-            reactor.DrainToList();
-            PumpDeadline.Yield();
+            if (reactor.Reactor.CountersOf(id).SocketWrites == writesBefore)
+            {
+                return;
+            }
         }
+
+        throw new InvalidOperationException(
+            $"No heartbeat was refused within {MaxHeartbeatAttempts} attempts, so the transport never filled.");
     }
 
     private static void PumpUntilInterrupted(StreamSessionReactorHarness dialer, PeerId id)
@@ -234,7 +256,7 @@ public class StreamSessionPendingRecordFlushTests
         }
     }
 
-    private static Counterparty AcceptRedial(StreamSessionReactorHarness dialer, StalledListener listener)
+    private static Counterparty AcceptRedial(StreamSessionReactorHarness dialer, CounterpartyListener listener)
     {
         PumpDeadline deadline = PumpDeadline.Start();
         while (true)
@@ -275,21 +297,41 @@ public class StreamSessionPendingRecordFlushTests
     }
 
     /// <summary>
+    /// Alternates Pumps with non-blocking reads until the bytes received end with
+    /// <paramref name="tail"/> or the Pump budget runs out, returning everything received.
+    /// </summary>
+    private static byte[] PumpAndReadUntilEndsWith(StreamSessionReactorHarness reactor, Counterparty counterparty, byte[] tail)
+    {
+        List<byte> received = [];
+        PumpDeadline deadline = PumpDeadline.Start();
+        while (!deadline.Expired)
+        {
+            reactor.Reactor.Pump();
+            reactor.DrainToList();
+            counterparty.ReadAvailable(received);
+            if (received.Count >= tail.Length
+                && received.Skip(received.Count - tail.Length).SequenceEqual(tail))
+            {
+                break;
+            }
+
+            PumpDeadline.Yield();
+        }
+
+        return [.. received];
+    }
+
+    /// <summary>
     /// A plain BCL TCP socket standing in for the far end of a Session, either dialling the Reactor
-    /// under test or accepted from its re-dial. Reads nothing unless a test asks it to.
+    /// under test or accepted from its dial. Reads nothing unless a test asks it to.
     /// </summary>
     private sealed class Counterparty(Socket socket) : IDisposable
     {
-        /// <summary>
-        /// Connects to <paramref name="destination"/> with <paramref name="receiveBufferSize"/> applied
-        /// before <c>Connect</c> (commit 8426ff3).
-        /// </summary>
-        public static Counterparty Connect(IPEndPoint destination, int receiveBufferSize)
+        public static Counterparty Connect(IPEndPoint destination)
         {
             Socket socket = new(destination.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
             {
                 ReceiveTimeout = 5000,
-                ReceiveBufferSize = receiveBufferSize,
             };
             socket.Connect(destination);
             return new Counterparty(socket);
@@ -338,20 +380,17 @@ public class StreamSessionPendingRecordFlushTests
     }
 
     /// <summary>
-    /// A listener whose accepted connections inherit a small receive buffer, set before <c>Listen</c>
-    /// so the window is small from the handshake onward. The shared <c>RawStreamListener</c> has no
-    /// such setting.
+    /// A loopback listener whose accepted connections are <see cref="Counterparty"/> instances, standing
+    /// in for the far end of a Session the Reactor dials. The shared <c>RawStreamListener</c> has no
+    /// non-blocking read, which the drain loops here need.
     /// </summary>
-    private sealed class StalledListener : IDisposable
+    private sealed class CounterpartyListener : IDisposable
     {
         private readonly Socket _listener;
 
-        public StalledListener(int receiveBufferSize)
+        public CounterpartyListener()
         {
-            _listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
-            {
-                ReceiveBufferSize = receiveBufferSize,
-            };
+            _listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             _listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
             _listener.Listen();
             Endpoint = (IPEndPoint?)_listener.LocalEndPoint
