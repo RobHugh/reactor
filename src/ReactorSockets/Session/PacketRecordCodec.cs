@@ -250,6 +250,52 @@ internal static class PacketRecordCodec
     }
 
     /// <summary>
+    /// Writes one in-Session control record — flags byte with <see
+    /// cref="DatagramSessionProtocol.ControlBit"/> set alongside the <c>ReliableUnordered</c> mode
+    /// bits, <c>u32</c> sequence, then a <c>u16</c> length of zero — to the start of <paramref
+    /// name="destination"/>. The unfragmented shape carries a control record: seven bytes, no payload,
+    /// no fragment index or count. A control record is always <c>ReliableUnordered</c> — its first use
+    /// is the idle-triggered Ping (#53), which the parent issue restricts to that mode — so this method
+    /// takes no mode parameter, unlike <see cref="TryWrite(Span{byte}, PacketRecordMode, uint, ReadOnlySpan{byte}, out int)"/>.
+    /// Prefactor only (issue #338): nothing calls this yet, and the receive path still discards a
+    /// record carrying <see cref="DatagramSessionProtocol.ControlBit"/> as a spare bit until a later
+    /// issue teaches it to accept control records.
+    /// </summary>
+    /// <param name="destination">
+    /// The bytes to write into, positioned at the record's first byte. Never partially written: a
+    /// <paramref name="destination"/> shorter than <see cref="DatagramSessionProtocol.UnfragmentedRecordSize"/>
+    /// fails without writing anything, the same as a caller finding the remaining space in a datagram
+    /// already spent.
+    /// </param>
+    /// <param name="sequence">The record's <c>u32</c> sequence number, drawn from the same
+    /// <c>ReliableUnordered</c> space as any other record in that mode.</param>
+    /// <param name="bytesWritten">
+    /// The total bytes written — always <see cref="DatagramSessionProtocol.UnfragmentedRecordSize"/>,
+    /// seven, since a control record never carries a payload — so the caller can advance past it.
+    /// Valid only when this method returns <see langword="true"/>.
+    /// </param>
+    /// <returns>
+    /// <see langword="true"/> if the record fit in <paramref name="destination"/> and was written.
+    /// <see langword="false"/> if it did not fit — nothing is written in that case.
+    /// </returns>
+    public static bool TryWriteControlRecord(Span<byte> destination, uint sequence, out int bytesWritten)
+    {
+        bytesWritten = default;
+
+        if (destination.Length < DatagramSessionProtocol.UnfragmentedRecordSize)
+        {
+            return false;
+        }
+
+        destination[0] = (byte)((byte)PacketRecordMode.ReliableUnordered | DatagramSessionProtocol.ControlBit);
+        BinaryPrimitives.WriteUInt32BigEndian(destination[DatagramSessionProtocol.RecordSequenceOffset..], sequence);
+        BinaryPrimitives.WriteUInt16BigEndian(destination[DatagramSessionProtocol.RecordLengthOffset..], 0);
+
+        bytesWritten = DatagramSessionProtocol.UnfragmentedRecordSize;
+        return true;
+    }
+
+    /// <summary>
     /// Writes one Fragment record — flags byte with the fragment bit set, <c>u32</c> sequence,
     /// <c>u16</c> length, <c>u16</c> fragment index, <c>u16</c> fragment count, then the payload itself
     /// — to the start of <paramref name="destination"/>. The counterpart to <see cref="TryRead"/>'s

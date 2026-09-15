@@ -169,10 +169,24 @@ internal static class DatagramSessionProtocol
     public const byte FragmentBit = 0b0000_0100;
 
     /// <summary>
+    /// The bit marking a packet record as in-Session control rather than a Message (ADR 0009):
+    /// "in-Session control is an ordinary record with a control bit". Its first consumer is the
+    /// idle-triggered reliable Ping (#53), a seven-byte <c>ReliableUnordered</c> record with this bit
+    /// set and zero payload. The lowest of the five spare bits, chosen only because the other four
+    /// remain free for whatever comes after Ping. This constant names the bit the packer can now write
+    /// (issue #338); it does not yet change what the receive path accepts — <see cref="SpareBitsMask"/>
+    /// still includes it, so a record carrying it is still discarded as malformed until the receive
+    /// path is taught to accept control records.
+    /// </summary>
+    public const byte ControlBit = 0b0000_1000;
+
+    /// <summary>
     /// The mask isolating the five spare bits in a packet record's flags byte. These are genuinely
     /// spare, not reserved-and-ignored: with the protocol version matched exactly (ADR 0009), a record
     /// with any spare bit set is a protocol violation and is rejected, not tolerated. Only a version
-    /// bump unlocks them.
+    /// bump unlocks them. Still includes <see cref="ControlBit"/> (issue #338): the receive path does
+    /// not yet accept control records, so a record carrying that bit is still discarded here, the same
+    /// as any other spare bit, until a later issue teaches the receive path to accept it.
     /// </summary>
     public const byte SpareBitsMask = 0b1111_1000;
 }

@@ -14,9 +14,10 @@ namespace ReactorSockets.Session;
 /// through <see cref="PacketRecordCodec.TryWrite(Span{byte}, PacketRecordMode, uint, ReadOnlySpan{byte}, out int)"/>,
 /// and <see cref="TryPackFragmentRecord"/> writes the fragment shape through
 /// <see cref="PacketRecordCodec.TryWrite(Span{byte}, PacketRecordMode, uint, ushort, ushort, ReadOnlySpan{byte}, out int)"/>
-/// (issue #245) — the caller picks whichever shape one record needs; <see cref="BytesWritten"/> and
-/// <see cref="RecordsPacked"/> are running counts shared by both, rather than anything collected
-/// afterward. The header is written once, at construction, through
+/// (issue #245) — the caller picks whichever shape one record needs; <see cref="TryPackControlRecord"/>
+/// writes the seven-byte control shape through <see cref="PacketRecordCodec.TryWriteControlRecord"/>
+/// (issue #338). <see cref="BytesWritten"/> and <see cref="RecordsPacked"/> are running counts shared
+/// by all three, rather than anything collected afterward. The header is written once, at construction, through
 /// <see cref="DatagramHeaderCodec.WriteHeader"/> — both ack blocks always appear, even when the Peer
 /// has received nothing, matching that codec's own unconditional write. A record that does not fit in
 /// the remaining space is left entirely unwritten and the packing method returns
@@ -129,6 +130,33 @@ internal ref struct DatagramRecordPacker
     public bool TryPackFragmentRecord(PacketRecordMode mode, uint sequence, ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload)
     {
         if (!PacketRecordCodec.TryWrite(_destination[BytesWritten..], mode, sequence, fragmentIndex, fragmentCount, payload, out int bytesWritten))
+        {
+            return false;
+        }
+
+        BytesWritten += bytesWritten;
+        RecordsPacked++;
+        return true;
+    }
+
+    /// <summary>
+    /// Appends one in-Session control record — seven bytes: <c>ReliableUnordered</c> mode bits plus
+    /// <see cref="DatagramSessionProtocol.ControlBit"/>, a <c>u32</c> sequence, and a <c>u16</c> length
+    /// of zero — immediately after the bytes already packed, through
+    /// <see cref="PacketRecordCodec.TryWriteControlRecord"/>. Prefactor only (issue #338): nothing
+    /// calls this yet — the idle-triggered Ping (#53) that will is a later issue's work.
+    /// </summary>
+    /// <param name="sequence">The record's <c>u32</c> sequence number, from the <c>ReliableUnordered</c> space.</param>
+    /// <returns>
+    /// <see langword="true"/> if the record fit in the destination buffer's remaining space and was
+    /// written, advancing <see cref="BytesWritten"/> and <see cref="RecordsPacked"/>.
+    /// <see langword="false"/> if it did not fit — nothing is written in that case, the destination's
+    /// bytes past <see cref="BytesWritten"/> are left exactly as they were, and the record is left
+    /// entirely for the caller to pack into a later datagram.
+    /// </returns>
+    public bool TryPackControlRecord(uint sequence)
+    {
+        if (!PacketRecordCodec.TryWriteControlRecord(_destination[BytesWritten..], sequence, out int bytesWritten))
         {
             return false;
         }
