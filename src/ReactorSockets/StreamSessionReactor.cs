@@ -1763,6 +1763,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// clears the flag the moment the far end's own first post-resume counter answers that question.
     /// </para>
     /// <para>
+    /// Also a no-op while a control record's short-send remainder is still draining
+    /// (<see cref="PeerSlot.PendingHandshakeBytesToSend"/> or
+    /// <see cref="PeerSlot.PendingDeliveryCounterBytesToSend"/>, issue #326): retention bytes written now
+    /// would land inside that record on the wire and corrupt both. Nothing is lost by returning:
+    /// <see cref="OnPeerWritable"/> marks this Peer pending again once both remainders have drained.
+    /// </para>
+    /// <para>
     /// When <see cref="EmitDeliveryCounters"/> has marked this Peer's counter to ride this write
     /// (<see cref="PeerSlot.DeliveryCounterRidesRetentionWrite"/>, issue #132), the record leads the
     /// gather write (<see cref="FlushRetentionWithDeliveryCounter"/>) and this method's own one-run-at-
@@ -1776,7 +1783,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         bool ridingDeliveryCounter = slot.DeliveryCounterRidesRetentionWrite;
         slot.DeliveryCounterRidesRetentionWrite = false;
 
-        if (slot.IsInterrupted || slot.AwaitingResumeCounter)
+        if (slot.IsInterrupted
+            || slot.AwaitingResumeCounter
+            || slot.PendingHandshakeBytesToSend is { Length: > 0 }
+            || slot.PendingDeliveryCounterBytesToSend is { Length: > 0 })
         {
             return;
         }
@@ -2595,8 +2605,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// socket, then stops — unlike <see cref="ClosePeer"/>, the Slot is never removed from
     /// <see cref="_peers"/>, so <see cref="PeerId"/> (generation included) stays live,
     /// <see cref="CountersOf"/> keeps answering for it, and its retention ring and any inbound
-    /// Messages still buffered are held exactly as they were rather than reset or discarded. Only the
-    /// pending-retention-write marker is cleared, and only from the bookkeeping set that would
+    /// Messages still buffered are held exactly as they were rather than reset or discarded. Any
+    /// short-sent control record's remainder is dropped with the socket it was begun on (issue #326).
+    /// The pending-retention-write marker is cleared only from the bookkeeping set that would
     /// otherwise hand <see cref="FlushPendingRetentionWrites"/> a disposed socket on this Frame — a
     /// consumer's own <see cref="Send"/> queuing more retention afterwards is #120's concern, not this
     /// one's. Also stamps <see cref="PeerSlot.InterruptedTimestamp"/>, which is what starts this Peer's
@@ -2630,6 +2641,17 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         slot.ReceiveBytesFilled = 0;
         _peersWithBufferedMessages.Remove(handle);
         _peersWithPendingRetentionWrites.Remove(handle);
+
+        // Issue #326: a short-sent record's remainder is the tail of a record begun on the socket just
+        // disposed, so it can never be finished on a later connection, and nothing arms that connection
+        // to drain it. Left in place, FlushRetention's remainder guard would block this Peer's
+        // retention forever after a dialling-side Resume, and SendDeliveryCounterOrArm would never send
+        // another counter. A dropped counter loses nothing: counts are cumulative, and each Resume path
+        // tells the far end this end's received count on its own.
+        slot.PendingHandshakeBytesToSend = null;
+        slot.QueuedHandshakeSend = null;
+        slot.PendingDeliveryCounterBytesToSend = null;
+        slot.DeliveryCounterRidesRetentionWrite = false;
 
         if (slot.DialedEndpoint is not null && !slot.LocalGoodbyeSent && !slot.RemoteGoodbyeReceived)
         {
