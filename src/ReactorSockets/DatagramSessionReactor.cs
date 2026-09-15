@@ -925,7 +925,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ReadOnlySpan<byte> remainder = body;
         while (remainder.Length > 0)
         {
-            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
+            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
             {
                 // One refusal out of the several this read can reach is worth naming separately
                 // (issue #273): a Fragment in an unreliable mode is well-formed at every level but
@@ -974,7 +974,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             PacketRecordCodec.TryRead(
                 remainder, out PacketRecordMode oversizedMode, out _, out _,
-                out bool oversizedIsFragment, out _, out ushort oversizedFragmentCount, out int oversizedBytesConsumed);
+                out bool oversizedIsFragment, out _, out ushort oversizedFragmentCount, out _, out int oversizedBytesConsumed);
 
             if (oversizedIsFragment
                 && oversizedMode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered
@@ -1016,12 +1016,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             // is derived from them the moment it is held.
             PacketRecordCodec.TryRead(
                 remainder, out PacketRecordMode mode, out uint sequence, out ushort length,
-                out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount, out int bytesConsumed);
+                out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount, out bool isControl,
+                out int bytesConsumed);
 
             // The payload is the tail of what this record consumed, so it is sliced from the record's
             // own span rather than re-derived from a header width this method would then have to know.
             ReadOnlySpan<byte> payload = remainder.Slice(bytesConsumed - length, length);
-            ClassifyRecord(slot, mode, sequence, isFragment, fragmentIndex, fragmentCount, payload);
+            ClassifyRecord(slot, mode, sequence, isFragment, isControl, fragmentIndex, fragmentCount, payload);
             remainder = remainder[bytesConsumed..];
         }
     }
@@ -1119,7 +1120,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             PacketRecordCodec.TryRead(
                 remainder, out PacketRecordMode mode, out uint sequence, out _, out bool isFragment,
-                out ushort index, out ushort count, out int bytesConsumed);
+                out ushort index, out ushort count, out _, out int bytesConsumed);
 
             if (isFragment)
             {
@@ -1823,9 +1824,23 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// on ordinary loss as readily as on anything more serious, so nothing here closes, disconnects, or
     /// otherwise changes Session state — that is issue #270's job, off a different signal.
     /// </para>
+    /// <para>
+    /// <b>An admitted control record — a Ping — is acknowledged and never delivered</b> (issue #339).
+    /// <paramref name="isControl"/> comes from <see cref="PacketRecordCodec.TryRead"/>, which reports it
+    /// only for a record that is legally a Ping: <c>ReliableUnordered</c>, unfragmented, zero length.
+    /// Admission runs exactly as it does for any other record — the same <see
+    /// cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/> call above, the same
+    /// duplicate and out-of-window counting, the same ack block once <see
+    /// cref="ReceiveWindowSpaces.GenerateAckBlocks"/> next runs — so a Ping at sequence N is covered by
+    /// the ordinary ack block exactly as a Message at N would be, and a duplicate Ping raises <see
+    /// cref="PeerCounters.DuplicatePackets"/> exactly as a duplicate Message does. What differs is what
+    /// happens once admitted: neither <see cref="DeliverAdmittedRecord"/> nor <see cref="HoldFragment"/>
+    /// is reached for it, so no <see cref="SessionEventKind.MessageReceived"/> is queued and <see
+    /// cref="PeerCounters.MessagesReceived"/> does not rise.
+    /// </para>
     /// </remarks>
     private void ClassifyRecord(
-        PeerSlot slot, PacketRecordMode mode, uint sequence, bool isFragment,
+        PeerSlot slot, PacketRecordMode mode, uint sequence, bool isFragment, bool isControl,
         ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload)
     {
         ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
@@ -1860,7 +1875,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
         else if (outcome == ReceiveWindowOutcome.Admitted)
         {
-            if (isFragment && mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
+            if (isControl)
+            {
+                // A Ping (#339): admitted into its Space's receive window exactly like any other
+                // record above, so the ordinary ack block covers it and a duplicate counts like any
+                // other duplicate, but it carries no payload for a consumer to receive — no delivery
+                // path is reached, so MessagesReceived does not rise.
+            }
+            else if (isFragment && mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
             {
                 bool groupComplete = HoldFragment(slot, mode, sequence, ringSlot, fragmentIndex, fragmentCount, payload);
                 if (groupComplete)

@@ -50,7 +50,10 @@ public class DatagramSessionDataDatagramParseTests
     private const byte ModeReliableUnordered = 0b0000_0010;
     private const byte ModeReliableOrdered = 0b0000_0011;
     private const byte FragmentBit = 0b0000_0100;
-    private const byte OneSpareBit = 0b0000_1000;
+
+    // 0b0000_1000 is now DatagramSessionProtocol.ControlBit (issue #339), not a spare bit — moved to
+    // the next bit up so this still proves the general "unknown bit discards" rule.
+    private const byte OneSpareBit = 0b0001_0000;
 
     [Fact]
     public void Pump_WellFormedHeaderAndSeveralRecords_ParsesToExhaustionAndIsNotReportedMalformed()
