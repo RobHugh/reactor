@@ -143,8 +143,8 @@ internal ref struct DatagramRecordPacker
     /// Appends one in-Session control record — seven bytes: <c>ReliableUnordered</c> mode bits plus
     /// <see cref="DatagramSessionProtocol.ControlBit"/>, a <c>u32</c> sequence, and a <c>u16</c> length
     /// of zero — immediately after the bytes already packed, through
-    /// <see cref="PacketRecordCodec.TryWriteControlRecord"/>. Prefactor only (issue #338): nothing
-    /// calls this yet — the idle-triggered Ping (#53) that will is a later issue's work.
+    /// <see cref="PacketRecordCodec.TryWriteControlRecord"/>. Added by issue #338; the idle-triggered
+    /// Ping (issue #340) packs through it on both its first send and every resend.
     /// </summary>
     /// <param name="sequence">The record's <c>u32</c> sequence number, from the <c>ReliableUnordered</c> space.</param>
     /// <returns>

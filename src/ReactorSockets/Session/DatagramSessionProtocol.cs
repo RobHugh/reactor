@@ -177,8 +177,8 @@ internal static class DatagramSessionProtocol
     /// <see cref="PacketRecordCodec.TryRead"/> now accepts it on read (issue #339) for exactly one
     /// combination — <c>ReliableUnordered</c>, unfragmented, zero length — refusing every other
     /// combination (another mode, the fragment bit, or a nonzero length) as malformed, the same as any
-    /// other protocol violation; legalising those other combinations is #341's job, not this one's. No
-    /// longer part of <see cref="SpareBitsMask"/>, since it is no longer merely spare.
+    /// other protocol violation (issue #341). No longer part of <see cref="SpareBitsMask"/>, since it
+    /// is no longer merely spare.
     /// </summary>
     public const byte ControlBit = 0b0000_1000;
 

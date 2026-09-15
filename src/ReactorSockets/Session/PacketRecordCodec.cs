@@ -67,7 +67,7 @@ internal static class PacketRecordCodec
     /// is otherwise <c>ReliableUnordered</c>, unfragmented, and zero length — a Ping — and
     /// <paramref name="isControl"/> reports it only for that one combination. Every other combination
     /// carrying the bit (another mode, the fragment bit, or a nonzero length) fails the read exactly as
-    /// a spare bit would; legalising those other combinations is #341's job, not this method's. Fails
+    /// a spare bit would, judged by <see cref="PacketRecordLegality.IsLegalControlRecord"/> (issue #341). Fails
     /// without reading past <paramref name="record"/> when: any spare bit (<see
     /// cref="DatagramSessionProtocol.SpareBitsMask"/>) is set; the flags byte names the Fragment shape
     /// in one of the two unreliable modes, which ADR 0004 forbids and
