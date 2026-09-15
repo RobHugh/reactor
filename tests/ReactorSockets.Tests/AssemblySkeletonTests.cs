@@ -69,7 +69,6 @@ public class AssemblySkeletonTests
             nameof(FragmentStallSignature),
             nameof(FragmentPlan),
             nameof(FragmentPlanResult),
-            nameof(FragmentGroupCompleteness),
             nameof(FragmentGroup));
     }
 

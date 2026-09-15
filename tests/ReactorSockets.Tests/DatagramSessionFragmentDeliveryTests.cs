@@ -366,6 +366,93 @@ public class DatagramSessionFragmentDeliveryTests
         PeerCounters after = accepter.Reactor.CountersOf(accepterPeer);
         after.MessagesReceived.Should().Be(before.MessagesReceived + 3, "the crowding record plus both retained groups");
     }
+
+    [Fact]
+    public void Pump_AFragmentSetStraddlingTheRingWrapArrivingInReverse_DeliversOneAssembledMessage()
+    {
+        // Arrange — issue #278: a 3-slot window whose base an ordinary record moves to sequence 1 (ring
+        // slot 1), so the group at sequences 1, 2, 3 occupies ring slots 1, 2, 0 and wraps the ring once.
+        // MaxMessageSize 3600 keeps ReceiveWindowFloor at 3, the group's declared count.
+        const int windowCapacity = 3;
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: windowCapacity, maxMessageSize: 3600);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        SendAndPumpUntilReceived(
+            accepter, client, clientLink, [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableUnordered, sequence: 0, payload: [0x00])]);
+        accepter.DrainPayloads();
+
+        // Act — the piece past the ring wrap arrives first, then the other two, one datagram each.
+        List<byte[]> delivered = [];
+        foreach ((uint sequence, ushort fragmentIndex, byte payload) in new (uint, ushort, byte)[] { (3, 2, 0x03), (2, 1, 0x02), (1, 0, 0x01) })
+        {
+            byte[] datagram =
+            [
+                .. BuildHeader(sessionId),
+                .. BuildFragmentRecord(ModeReliableUnordered, sequence, fragmentIndex, fragmentCount: windowCapacity, payload: [payload]),
+            ];
+            SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
+            delivered.AddRange(accepter.DrainPayloads());
+        }
+
+        // Assert
+        delivered.Should().ContainSingle().Which.Should().Equal(new byte[] { 0x01, 0x02, 0x03 });
+    }
+
+    [Fact]
+    public void Pump_AFragmentSetStraddlingTheRingWrapMissingThePieceAfterTheWrap_DeliversNothing()
+    {
+        // Arrange — the same wrapping shape as above, but sequence 3 (ring slot 0) never arrives.
+        const int windowCapacity = 3;
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: windowCapacity, maxMessageSize: 3600);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        SendAndPumpUntilReceived(
+            accepter, client, clientLink, [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableUnordered, sequence: 0, payload: [0x00])]);
+        accepter.DrainPayloads();
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 0, fragmentCount: windowCapacity, payload: [0x01]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 1, fragmentCount: windowCapacity, payload: [0x02]),
+        ];
+
+        // Act
+        SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
+
+        // Assert
+        accepter.DrainPayloads().Should().BeEmpty("sequence 3, the piece past the ring wrap, was never held");
+    }
+
+    [Fact]
+    public void Pump_AGroupWhoseMissingPieceResolvesToASlotHoldingAnAbandonedFragmentsLength_DeliversNothing()
+    {
+        // Arrange — issue #259's stale-residue case. A 4-slot window holds a Fragment at sequence 0 (ring
+        // slot 0) whose partner at sequence 1 never arrives, so the base stops at 1 with slot 0's length
+        // still non-zero. A group at sequences 3, 4 then needs sequence 4, which is ahead of the base and
+        // resolves to that same ring slot 0.
+        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 4, maxMessageSize: 1300);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+
+        byte[] abandoned = [.. BuildHeader(sessionId), .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0xAA])];
+        SendAndPumpUntilReceived(accepter, client, clientLink, abandoned);
+        accepter.DrainPayloads();
+
+        byte[] firstOfNextGroup = [.. BuildHeader(sessionId), .. BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 0, fragmentCount: 2, payload: [0xBB])];
+
+        // Act
+        SendAndPumpUntilReceived(accepter, client, clientLink, firstOfNextGroup);
+
+        // Assert
+        accepter.DrainPayloads().Should().BeEmpty("sequence 4 has not arrived, whatever length its ring slot still holds");
+    }
+
     private static void SendAndPumpUntilReceived(
         DatagramSessionReactorHarness accepter, RawReactor client, LinkId clientLink, byte[] datagram)
     {

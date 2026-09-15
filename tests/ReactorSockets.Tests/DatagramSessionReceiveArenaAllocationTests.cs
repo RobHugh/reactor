@@ -346,9 +346,8 @@ public class DatagramSessionReceiveArenaAllocationTests
     /// Closes issue #258's allocation-free acceptance criterion directly: a sustained run of two-piece
     /// <c>ReliableOrdered</c> Fragment sets whose pieces arrive in <em>reverse</em> order — index 1
     /// before index 0 — so every set is held incomplete by its first datagram and only completes on
-    /// its second, the exact shape <see cref="FragmentGroupCompletenessTests"/> pins directly against
-    /// <see cref="FragmentGroupCompleteness"/> in isolation. Two phases of identical shape run back to
-    /// back; if <see cref="ReceiveWindow.IsGroupComplete"/> — reached through
+    /// its second. Two phases of identical shape run back to
+    /// back; if <c>ReceiveWindow.IsGroupComplete</c> — reached through
     /// <see cref="DatagramSessionReactor"/>'s live receive path here — ever allocated, the second phase
     /// would cost visibly more than the first.
     /// </summary>
