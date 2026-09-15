@@ -240,6 +240,19 @@ two Spaces' loss is not separable from this figure, and a consumer needing that 
 for per-Space counters generally, which is a different decision from this one. The two reliable Spaces
 still contribute nothing, because their windows do not slide.
 
+**Amended (issue #325).** `SocketWrites` joins the per-subject scope, counting socket send calls made
+on a Peer's transport: one per call, whether it wrote everything, part, or failed. It passes the
+derivability test outright — no byte figure says how many calls carried the bytes. It was proposed to
+make a cost claim testable: #132's claim that a delivery counter rides an existing write, and #90's
+one write per Pump. ADR 0015 leaves Counters as the only seam that could observe either, and two
+back-to-back writes inside one Pump reach the far end as one read, so nothing else can. That motive
+alone would not earn a field, and the counter test was applied as written: a Peer's writes rising well
+above the Pump rate names a write path that stopped batching, which a consumer can act on by reporting
+it or by sizing their Pump cadence against it. The cost accepted is the one every field carries, a
+permanent member and one add per send call. On the stream profile the figure includes handshake and
+Resume records, because those are writes on the Peer's connection. On the datagram profile it excludes
+handshake control datagrams, for the same reason bytes sent does: no Peer exists yet to charge.
+
 Sixteen members as first drafted. What the rules **removed** is the more useful half of the exercise:
 
 - **`DatagramDuplicate` and `PacketOutOfWindow`** are per-packet volume driven by loss and reordering.
@@ -271,7 +284,7 @@ retention high-water and discards belong to a Peer. Very few appear in both.
 | Scope | Counters |
 | --- | --- |
 | Reactor | `SinkFaulted`, datagrams sent, datagrams received, datagrams discarded from an unknown Source, arena high-water in bytes, admission deferrals |
-| Per subject | bytes sent, bytes received, packets retransmitted, duplicate packets, out-of-window packets, unreliable loss packets, horizon deferrals, read-share exhaustions, retention high-water in bytes, resumes |
+| Per subject | bytes sent, bytes received, packets retransmitted, duplicate packets, out-of-window packets, unreliable loss packets, horizon deferrals, read-share exhaustions, retention high-water in bytes, resumes, socket writes |
 
 **Counters are monotonic `ulong` and there is no reset.** A reset is a *write* to observation state, and
 observation state is the one thing here with more than one plausible reader: a consumer's metrics export

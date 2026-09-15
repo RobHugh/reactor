@@ -168,6 +168,20 @@ internal sealed class PeerCounterSet
     public ulong BytesReceived { get; private set; }
 
     /// <summary>
+    /// Records one socket send call made on this Peer's transport (issue #325; ADR 0013). Called
+    /// immediately after each send call, whatever its outcome — a short or failed write is still a call
+    /// the Reactor paid for.
+    /// </summary>
+    public void RecordSocketWrite() => SocketWrites++;
+
+    /// <summary>
+    /// The live count of socket send calls made for this Peer so far — the same figure
+    /// <see cref="Snapshot"/> exposes as <see cref="PeerCounters.SocketWrites"/>. Monotonic and never
+    /// reset, exactly like <see cref="MessagesReceived"/>.
+    /// </summary>
+    public ulong SocketWrites { get; private set; }
+
+    /// <summary>
     /// Takes a point-in-time snapshot of every counter belonging to this Peer.
     /// <paramref name="retentionHighWaterBytes"/> is pulled fresh from <see cref="RetentionArena"/> by
     /// the caller (ADR 0005 — Counters are pulled, not pushed) rather than held here, since this set
@@ -184,5 +198,6 @@ internal sealed class PeerCounterSet
             HorizonDeferrals,
             PacketsRetransmitted,
             BytesSent,
-            BytesReceived);
+            BytesReceived,
+            SocketWrites);
 }
