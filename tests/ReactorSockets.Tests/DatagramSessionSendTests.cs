@@ -22,9 +22,9 @@ namespace ReactorSockets.Tests;
 /// drop, and that the other reliable Space and both unreliable modes are entirely unaffected by it.
 /// </remarks>
 /// <remarks>
-/// A reliable Send is refused unless the Peer has learned the remote's announced
-/// <c>MaxMessageSize</c> (issue #284), so every test below pumps a real handshake to completion
-/// before Sending.
+/// A Send under any mode is refused with <see cref="SendOutcome.NotEstablished"/> until the handshake
+/// completes (issue #332), so every test below that expects a Send to go through pumps a real
+/// handshake to completion first.
 /// </remarks>
 public class DatagramSessionSendTests
 {
@@ -143,6 +143,7 @@ public class DatagramSessionSendTests
             bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         byte[] message = [9, 9, 9];
 
         // Act
@@ -158,6 +159,25 @@ public class DatagramSessionSendTests
         // Assert
         outcomes.Should().AllSatisfy(outcome => outcome.Should().Be(SendOutcome.Sent));
         counters.RetentionHighWaterBytes.Should().Be(0UL, "neither unreliable mode ever consumes retention (#43)");
+    }
+
+    [Theory]
+    [InlineData(DeliveryMode.Unreliable)]
+    [InlineData(DeliveryMode.UnreliableSequenced)]
+    [InlineData(DeliveryMode.ReliableUnordered)]
+    [InlineData(DeliveryMode.ReliableOrdered)]
+    public void Send_ToADialledPeerBeforeItsHandshakeCompletesUnderEveryMode_ReturnsNotEstablished(DeliveryMode mode)
+    {
+        // Arrange — issue #332. Connect hands back a PeerId before any Cookie or Accept has arrived.
+        using DatagramSessionReactorHarness harness = new(bindLoopback: false);
+        using DatagramSessionReactorHarness remote = new();
+        PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+
+        // Act
+        SendOutcome outcome = harness.Reactor.Send(peer, mode, [1, 2, 3]);
+
+        // Assert
+        outcome.Should().Be(SendOutcome.NotEstablished);
     }
 
     [Fact]

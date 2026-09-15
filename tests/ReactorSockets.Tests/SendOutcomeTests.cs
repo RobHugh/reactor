@@ -19,6 +19,8 @@ public class SendOutcomeTests
             SendOutcome.RetentionExhausted,
             SendOutcome.Closed,
             SendOutcome.MessageTooLarge,
+            SendOutcome.RemoteMessageTooLarge,
+            SendOutcome.NotEstablished,
         ];
 
         // Act

@@ -426,7 +426,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// already <see cref="SessionEventKind.PeerClosing"/> or on its way to
     /// <see cref="SessionEventKind.PeerClosed"/> (<see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/>)
     /// — since a Message queued after a Goodbye is not one the far end has any business receiving
-    /// (issue #23).
+    /// (issue #23). Also refuses a Peer whose handshake has not reached
+    /// <see cref="HandshakeState.Established"/> with <see cref="SendOutcome.NotEstablished"/> (issue #332):
+    /// flushing that Message would write to a socket whose connect has not resolved, closing the Peer
+    /// with <see cref="DisconnectReason.TransportFailed"/>, or send it before the far end's handshake
+    /// record has been read.
     /// </summary>
     /// <remarks>
     /// <see cref="PeerSlot.IsInterrupted"/> is deliberately not one of the refusal conditions above
@@ -465,6 +469,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         if (slot.LocalGoodbyeSent || slot.PendingCloseReasonAfterRetentionDrains is not null)
         {
             return SendOutcome.Closed;
+        }
+
+        if (slot.State != HandshakeState.Established)
+        {
+            return SendOutcome.NotEstablished;
         }
 
         Span<byte> framed = new byte[MessageFramingCodec.LengthPrefixSize + message.Length];
