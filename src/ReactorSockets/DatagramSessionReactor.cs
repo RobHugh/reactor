@@ -488,6 +488,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="CountersOf"/>: a Peer closing under a caller is an ordinary race, the same reason
     /// <see cref="Close"/> tolerates a stale <see cref="PeerId"/>.
     /// </para>
+    /// <para>
+    /// Sending to a <paramref name="peer"/> whose handshake has not reached
+    /// <see cref="HandshakeState.Established"/> returns <see cref="SendOutcome.NotEstablished"/> under
+    /// every mode (issue #332), checked before any width gate. Before the handshake the Peer has no
+    /// remote-announced <c>MaxMessageSize</c>, so a reliable Send would otherwise be misreported as
+    /// <see cref="SendOutcome.RemoteMessageTooLarge"/>.
+    /// </para>
     /// </remarks>
     /// <param name="peer">The Peer to send to.</param>
     /// <param name="mode">Which of the four delivery modes carries this Message; see <c>docs/delivery-modes.md</c>.</param>
@@ -529,6 +536,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         if (_peers.TryResolve(handle) is not PeerSlot slot)
         {
             return SendOutcome.Closed;
+        }
+
+        if (slot.State != HandshakeState.Established)
+        {
+            return SendOutcome.NotEstablished;
         }
 
         // The fragment size used to cut this Message is this Peer's own, captured on the Slot at
