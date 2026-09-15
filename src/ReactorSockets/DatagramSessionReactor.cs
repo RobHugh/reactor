@@ -1003,8 +1003,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits, effectiveRto);
+        ReleaseRetentionForAck(slot, PacketRecordMode.ReliableOrdered);
         ApplyAckToStallSignature(slot);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableUnordered, reliableUnorderedAckBase, reliableUnorderedAckBits, effectiveRto);
+        ReleaseRetentionForAck(slot, PacketRecordMode.ReliableUnordered);
         ApplyAckToStallSignature(slot);
         ReconcileHorizonDeferrals(slot);
 
@@ -1564,6 +1566,32 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// Frees the retention slot of every sequence the <see cref="OutstandingReliableSequences.ApplyAck"/>
+    /// call that just ran actually released on <paramref name="mode"/>'s reliable Space (issue #345):
+    /// called once per <see cref="OutstandingReliableSequences.ApplyAck"/> call, immediately after it, so
+    /// each Space's own release is read before the other Space's call overwrites
+    /// <see cref="OutstandingReliableSequences.LastAckReleasedSequences"/> — the same idiom
+    /// <see cref="ApplyAckToStallSignature"/> already follows for <see cref="OutstandingReliableSequences.LastAckRelease"/>.
+    /// Without this, nothing ever freed a slot <see cref="_retention"/>'s <see cref="RetentionPool.TryAcquire"/>
+    /// committed: a quiet Session's idle-triggered Pings and a Peer's reliable Sends would both hold
+    /// their slots forever and every further reliable Send would eventually see
+    /// <see cref="RetentionSlotOutcome.Exhausted"/>.
+    /// </summary>
+    /// <remarks>
+    /// Allocates nothing: <see cref="OutstandingReliableSequences.LastAckReleasedSequences"/> is a reused
+    /// scratch span and <c>foreach</c> over a <see cref="ReadOnlySpan{T}"/> does not allocate an
+    /// enumerator, matching this whole ack path's no-allocation discipline.
+    /// </remarks>
+    private void ReleaseRetentionForAck(PeerSlot slot, PacketRecordMode mode)
+    {
+        int spaceIndex = ReliableSpaceIndex(mode);
+        foreach (uint sequence in slot.AckTracker.LastAckReleasedSequences(mode))
+        {
+            _retention.Release(slot.Handle.Index, spaceIndex, sequence);
+        }
+    }
+
+    /// <summary>
     /// Queues every sequence <see cref="ReportExpiredRetransmissions"/> found expired on one reliable
     /// Space back onto <paramref name="slot"/>'s <see cref="PeerSlot.PendingSends"/>, so the same
     /// Pump's <see cref="FlushOutboundDatagrams"/> packs it (subtask 6.6.8, issue #218). No payload
@@ -1709,6 +1737,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     /// <remarks>
     /// <para>
+    /// <b>A record already acked before its flush.</b> An ack read earlier this same Pump (issue #345)
+    /// can release a sequence's retention slot before it reaches this flush — queued for its first send,
+    /// or re-queued for retransmission by <see cref="ReportExpiredRetransmissions"/> — in which case
+    /// <see cref="TryResolvePendingPayload"/> fails and the record below is consumed unsent rather than
+    /// retried: resending an already-released sequence would be a duplicate the far end has already
+    /// acknowledged, and no path on this ticket's live traffic wrote a payload to a released slot.
+    /// </para>
+    /// <para>
     /// <b>A record that does not fit waits for the next Pump</b> (issue #230). Packing stops at the
     /// first record <see cref="DatagramRecordPacker.TryPackRecord"/> refuses — this Datagram is full —
     /// and everything from there to the end of <see cref="PeerSlot.PendingSends"/>, in the order it was
@@ -1826,8 +1862,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// at the reliable Space <paramref name="pending"/>'s mode addresses, which is where <see cref="Send"/>
     /// recorded them and the only place a retransmit — <paramref name="pending"/> itself carries nothing
     /// of the shape — can recover them from (issue #250). Fails — nothing to pack — only if a reliable
-    /// sequence was already released from retention between being queued and this flush, which no path
-    /// on this ticket's live traffic does yet.
+    /// sequence was already released from retention between being queued and this flush: an ack read
+    /// earlier the same Pump (issue #345) is the live path that does this today.
     /// </summary>
     /// <param name="slot">The Peer this record was queued against.</param>
     /// <param name="pending">The queued record whose bytes and shape are being resolved.</param>
