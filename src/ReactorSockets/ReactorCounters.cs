@@ -36,11 +36,24 @@ namespace ReactorSockets;
 /// </param>
 /// <param name="UnknownSourceDiscards">
 /// Datagrams taken from the transport and thrown away because nothing could be attributed to a Peer:
-/// a malformed control datagram, or a session id naming no Session. Reactor-scope rather than
+/// a malformed control datagram, or a session id naming no Session. A data datagram whose session id
+/// <em>did</em> name a live Session and then failed to parse is
+/// <paramref name="MalformedSessionDiscards"/> instead. Reactor-scope rather than
 /// per-Peer precisely because there is no Peer to charge them to — the whole point of the member is
 /// the traffic that failed to name one. Moves only on the datagram Session profile. A rising figure
 /// on a Reactor that is otherwise healthy is a scan or a flood, not a fault, which is why the
 /// matching Diagnostics are <see cref="DiagnosticLevel.Warn"/>.
+/// </param>
+/// <param name="MalformedSessionDiscards">
+/// Data datagrams thrown away for failing to parse after their session id named a live Session: a
+/// short or bad header, a record that does not read, an illegal Fragment set. Kept apart from
+/// <paramref name="UnknownSourceDiscards"/> because the two say different things about who is
+/// sending — this traffic did name a Peer, so it is either an established Peer sending bytes this
+/// Reactor cannot read or a forgery that guessed a live id, where the other figure is traffic that
+/// named nobody at all. Reactor-scope like its neighbour rather than per-Peer: a datagram whose body
+/// did not parse is not proven to have come from the Peer whose id it carries, and charging it there
+/// would let a stranger move an established Peer's figures. Moves only on the datagram Session
+/// profile, and its Diagnostic is the same <see cref="DiagnosticId.DatagramMalformed"/>.
 /// </param>
 public readonly record struct ReactorCounters(
     ulong SinkFaulted,
@@ -49,4 +62,5 @@ public readonly record struct ReactorCounters(
     ulong ArenaHighWaterBytes,
     ulong AdmissionDeferrals,
     ulong AdmissionDiscards,
-    ulong UnknownSourceDiscards);
+    ulong UnknownSourceDiscards,
+    ulong MalformedSessionDiscards);

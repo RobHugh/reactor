@@ -15,7 +15,7 @@ public class DatagramSessionRetransmitResendTests
     /// Comfortably past the RTO, whose ceiling is the harness's one-second Linger, so the deadline has
     /// certainly passed however the estimator has moved.
     /// </summary>
-    private static readonly TimeSpan PastTheRetransmitDeadline = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan _pastTheRetransmitDeadline = TimeSpan.FromSeconds(3);
 
     [Fact]
     public void Pump_AReliableOrderedMessageWhoseOnlyTransmissionWasDropped_ArrivesOnTheRetransmission()
@@ -36,7 +36,7 @@ public class DatagramSessionRetransmitResendTests
         DatagramSessionReactorHarness.PumpRoundThroughProxy(sender, proxy, receiver);
         receiver.DrainPayloads().Should().BeEmpty("the only transmission was dropped");
 
-        sender.TimeProvider.Advance(PastTheRetransmitDeadline);
+        sender.TimeProvider.Advance(_pastTheRetransmitDeadline);
         List<byte[]> delivered = PumpRoundsCollectingPayloads(sender, proxy, receiver, rounds: 12);
 
         // Assert
@@ -70,7 +70,7 @@ public class DatagramSessionRetransmitResendTests
 
         // Act — the deadline has passed and a new Message is Sent in the same Frame, so the resend and
         // the new record have one Datagram to share.
-        sender.TimeProvider.Advance(PastTheRetransmitDeadline);
+        sender.TimeProvider.Advance(_pastTheRetransmitDeadline);
         sender.Reactor.Send(peer, DeliveryMode.ReliableUnordered, fresh);
         sender.Reactor.Pump();
 
@@ -109,7 +109,7 @@ public class DatagramSessionRetransmitResendTests
         receiver.Reactor.Send(receiverPeer, DeliveryMode.Unreliable, [1]);
         PumpRoundsCollectingPayloads(sender, proxy, receiver, rounds: 4);
 
-        sender.TimeProvider.Advance(PastTheRetransmitDeadline);
+        sender.TimeProvider.Advance(_pastTheRetransmitDeadline);
         PumpRoundsCollectingPayloads(sender, proxy, receiver, rounds: 12);
 
         // Assert

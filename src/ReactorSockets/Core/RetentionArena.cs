@@ -94,6 +94,8 @@ internal sealed class RetentionArena
     private readonly ulong[] _highWaterBytes;
     private readonly ulong[] _appendedMessageCount;
     private readonly ulong[] _releasedMessageCount;
+    private readonly ulong[] _sentMessageCount;
+    private readonly ulong[] _sentMessageBoundaryTotal;
     private readonly uint[] _messageBoundaryLow32;
     private readonly int _boundaryEntriesPerShareHolder;
 
@@ -159,6 +161,8 @@ internal sealed class RetentionArena
         _highWaterBytes = new ulong[capacity];
         _appendedMessageCount = new ulong[capacity];
         _releasedMessageCount = new ulong[capacity];
+        _sentMessageCount = new ulong[capacity];
+        _sentMessageBoundaryTotal = new ulong[capacity];
         _messageBoundaryLow32 = new uint[checked(_boundaryEntriesPerShareHolder * capacity)];
     }
 
@@ -269,6 +273,22 @@ internal sealed class RetentionArena
     /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
     public (ReadOnlyMemory<byte> first, ReadOnlyMemory<byte> second) GetUnsent(int shareHolderId)
     {
+        (ArraySegment<byte> first, ArraySegment<byte> second) = GetUnsentSegments(shareHolderId);
+        return (first.AsMemory(), second.AsMemory());
+    }
+
+    /// <summary>
+    /// The same two unsent runs <see cref="GetUnsent"/> reports, expressed as
+    /// <see cref="ArraySegment{T}"/> over the backing array rather than <see cref="ReadOnlyMemory{T}"/>
+    /// — the shape a gather write needs (issue #132), since a scatter/gather socket send takes an
+    /// <see cref="System.Collections.Generic.IList{T}"/> of segments and nothing else. This exists
+    /// beside <see cref="GetUnsent"/>, rather than replacing it, so a caller writing one run at a time
+    /// keeps the span-shaped view it already had, and so neither caller has to prove at runtime that
+    /// this arena's memory is array-backed.
+    /// </summary>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    public (ArraySegment<byte> first, ArraySegment<byte> second) GetUnsentSegments(int shareHolderId)
+    {
         ValidateShareHolderId(shareHolderId);
 
         ulong unsent = _writtenTotal[shareHolderId] - _sentTotal[shareHolderId];
@@ -278,11 +298,11 @@ internal sealed class RetentionArena
 
         if (unsent <= (ulong)spaceToRegionEnd)
         {
-            return (_buffer.AsMemory(regionStart + position, (int)unsent), default);
+            return (new ArraySegment<byte>(_buffer, regionStart + position, (int)unsent), default);
         }
 
-        ReadOnlyMemory<byte> first = _buffer.AsMemory(regionStart + position, spaceToRegionEnd);
-        ReadOnlyMemory<byte> second = _buffer.AsMemory(regionStart, (int)unsent - spaceToRegionEnd);
+        ArraySegment<byte> first = new(_buffer, regionStart + position, spaceToRegionEnd);
+        ArraySegment<byte> second = new(_buffer, regionStart, (int)unsent - spaceToRegionEnd);
         return (first, second);
     }
 
@@ -311,6 +331,37 @@ internal sealed class RetentionArena
         }
 
         _sentTotal[shareHolderId] += (ulong)bytesSent;
+
+        // Walks the sent-Message cursor past every boundary the new sent total reaches. The next boundary
+        // belongs to a Message not yet wholly sent, so not yet released, so its ring entry is still live.
+        // Each Message is walked past once, so the cost is constant per Message over the Session.
+        while (_sentMessageCount[shareHolderId] < _appendedMessageCount[shareHolderId])
+        {
+            ulong nextBoundary = MessageBoundaryTotal(shareHolderId, _sentMessageCount[shareHolderId] + 1);
+            if (nextBoundary > _sentTotal[shareHolderId])
+            {
+                break;
+            }
+
+            _sentMessageCount[shareHolderId]++;
+            _sentMessageBoundaryTotal[shareHolderId] = nextBoundary;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="shareHolderId"/>'s sent total sits exactly on the boundary between two
+    /// appended records, rather than partway through one a short write left half-sent (issue #333). A
+    /// caller about to write its own bytes to the same stream outside this arena — a delivery-counter
+    /// record — asks this first, since bytes written while it is <see langword="false"/> land inside
+    /// that record on the wire. True when nothing has been appended, and whenever everything appended
+    /// has been sent.
+    /// </summary>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    public bool IsSentOnMessageBoundary(int shareHolderId)
+    {
+        ValidateShareHolderId(shareHolderId);
+
+        return _sentTotal[shareHolderId] == _sentMessageBoundaryTotal[shareHolderId];
     }
 
     /// <summary>
@@ -473,6 +524,8 @@ internal sealed class RetentionArena
         {
             bytesRewound = _sentTotal[shareHolderId] - boundaryBytes;
             _sentTotal[shareHolderId] = boundaryBytes;
+            _sentMessageCount[shareHolderId] = messageCount;
+            _sentMessageBoundaryTotal[shareHolderId] = boundaryBytes;
         }
         else
         {
@@ -526,6 +579,8 @@ internal sealed class RetentionArena
         _highWaterBytes[shareHolderId] = 0;
         _appendedMessageCount[shareHolderId] = 0;
         _releasedMessageCount[shareHolderId] = 0;
+        _sentMessageCount[shareHolderId] = 0;
+        _sentMessageBoundaryTotal[shareHolderId] = 0;
     }
 
     /// <summary>
@@ -539,6 +594,19 @@ internal sealed class RetentionArena
     private int BoundaryIndex(int shareHolderId, ulong messageOrdinal) =>
         (shareHolderId * _boundaryEntriesPerShareHolder)
         + (int)((messageOrdinal - 1) % (ulong)_boundaryEntriesPerShareHolder);
+
+    /// <summary>
+    /// The full byte position of <paramref name="shareHolderId"/>'s <paramref name="messageOrdinal"/>th
+    /// appended Message's end, reconstructed from its stored low 32 bits exactly as
+    /// <see cref="ReleaseThroughMessageCount"/> does. Valid only for a Message whose ring entry has not
+    /// been overwritten, which holds for any Message not yet released.
+    /// </summary>
+    private ulong MessageBoundaryTotal(int shareHolderId, ulong messageOrdinal)
+    {
+        ulong writtenTotal = _writtenTotal[shareHolderId];
+        uint delta = unchecked((uint)writtenTotal - _messageBoundaryLow32[BoundaryIndex(shareHolderId, messageOrdinal)]);
+        return writtenTotal - delta;
+    }
 
     private void ValidateShareHolderId(int shareHolderId)
     {

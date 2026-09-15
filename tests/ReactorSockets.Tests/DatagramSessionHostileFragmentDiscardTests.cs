@@ -8,7 +8,8 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #255: the codec's refusal of impossible Fragment metadata (#253); issue #256 extends this
 /// file with the claimed-set forgeries a Fragment can pass #253 individually and still commit — a
-/// non-contiguous group and two groups whose ranges overlap. Both are proved against a live Session
+/// group claiming one index twice (a gap in the indices present is honest traffic since #274) and two
+/// groups whose ranges overlap. Both are proved against a live Session
 /// rather than in isolation — a real attacker sits at a hostile peer driving an established Session,
 /// not at a unit test calling the codec directly. Every datagram here is built and sent by hand over a
 /// bare <see cref="RawReactor"/> — the same instrument <see cref="HostilePeer"/> is built from, and the
@@ -46,9 +47,12 @@ public class DatagramSessionHostileFragmentDiscardTests
     private const int UnfragmentedRecordSize = 7;
     private const int FragmentRecordSize = 11;
 
+    private const byte ModeUnreliable = 0b0000_0000;
+    private const byte ModeUnreliableSequenced = 0b0000_0001;
     private const byte ModeReliableUnordered = 0b0000_0010;
     private const byte ModeReliableOrdered = 0b0000_0011;
     private const byte FragmentBit = 0b0000_0100;
+    private const byte SpareBit = 0b0000_1000;
 
     [Fact]
     public void Pump_HostileFragmentWithIndexAtItsCount_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
@@ -79,15 +83,18 @@ public class DatagramSessionHostileFragmentDiscardTests
     }
 
     [Fact]
-    public void Pump_HostileFragmentGroupWithANonContiguousGap_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
+    public void Pump_HostileFragmentGroupWithARepeatedIndex_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
     {
-        // Arrange — issue #256: both Fragments are individually legal (#253) and both resolve to the
-        // same group (firstSeq = 1: 1 - 0 = 1, and 3 - 2 = 1), but index 1 is missing between them — a
-        // gap no honest sender, which fills a group's indices in order, could ever produce.
+        // Arrange — issue #256, narrowed by #274 to what a claimed set actually rules out. A gap in the
+        // indices present is honest traffic once retransmission coalesces (see
+        // DatagramSessionFragmentDeliveryTests), but one index claimed twice is not: both Fragments here
+        // are individually legal (#253) and both resolve to the same group (firstSeq = 1), and both call
+        // themselves index 0 of it, so the piece that index names has two different contents. A sender
+        // that cuts each index once can never produce it.
         byte[] forgedTail =
         [
             .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 0, fragmentCount: 3, payload: [0xB0]),
-            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 3, fragmentIndex: 2, fragmentCount: 3, payload: [0xB2]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 0, fragmentCount: 3, payload: [0xB2]),
         ];
 
         AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
@@ -131,19 +138,22 @@ public class DatagramSessionHostileFragmentDiscardTests
     }
 
     [Fact]
-    public void Pump_HostileFragmentGroupNonContiguousAcrossTheSequenceWrap_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
+    public void Pump_HostileFragmentGroupDisagreeingOnItsCountAcrossTheSequenceWrap_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
     {
         // Arrange — proves FragmentGroup.FirstSequenceOf's group identity is correct at the u32 wrap
-        // (carried over from #254), through the only seam a test may use: a set that reads as
-        // non-contiguous ONLY if the wrap is handled correctly is refused. Sequence uint.MaxValue - 1 at
-        // index 0 and sequence 0 at index 2 both name firstSeq = uint.MaxValue - 1 under wrap-aware
-        // unsigned subtraction, and index 1 between them is missing — a gap. A naive, non-wrap-aware
+        // (carried over from #254), through the only seam a test may use: a set that reads as a forgery
+        // ONLY if the wrap is handled correctly is refused. Sequence uint.MaxValue - 1 at index 0 and
+        // sequence 0 at index 2 both name firstSeq = uint.MaxValue - 1 under wrap-aware unsigned
+        // subtraction, so they are one group — and that group's members disagree on the count they
+        // declare, 2 against 3, which leaves the set's own shape ambiguous. A naive, non-wrap-aware
         // subtraction would compute two unrelated first-sequences instead, and each lone Fragment would
-        // trivially "pass" as its own one-member group — so this datagram is only ever discarded if the
-        // wrap is handled correctly.
+        // trivially "pass" as its own one-member group, its declared range (uint.MaxValue - 1 ..
+        // uint.MaxValue) nowhere near the other's — so this datagram is only ever discarded if the wrap
+        // is handled correctly. The gap between indices 0 and 2 is not what refuses it: since #274 a
+        // gapped subset is honest traffic.
         byte[] forgedTail =
         [
-            .. BuildFragmentRecord(ModeReliableOrdered, sequence: uint.MaxValue - 1, fragmentIndex: 0, fragmentCount: 3, payload: [0xD0]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: uint.MaxValue - 1, fragmentIndex: 0, fragmentCount: 2, payload: [0xD0]),
             .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 2, fragmentCount: 3, payload: [0xD2]),
         ];
 
@@ -210,6 +220,36 @@ public class DatagramSessionHostileFragmentDiscardTests
         AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
     }
 
+    [Theory]
+    [InlineData(ModeUnreliable)]
+    [InlineData(ModeUnreliableSequenced)]
+    public void Pump_HostileFragmentInAnUnreliableMode_DiscardsWholeDatagramAndReportsTheRefusal(byte modeBits)
+    {
+        // Arrange — issue #273: fragmentation is reliable-only (ADR 0004), and the send path already
+        // refuses to produce this. Nothing but a hostile or broken peer can put a Fragment on the wire
+        // in an unreliable mode, so the read fails outright rather than admitting a record this profile
+        // has no reassembly path for. The index and count here are entirely well-formed (#253) and the
+        // set they claim is contiguous (#256): the mode alone is what refuses it.
+        byte[] forgedTail = BuildFragmentRecord(
+            modeBits, sequence: 1, fragmentIndex: 0, fragmentCount: 2, payload: [0x9A]);
+
+        AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(
+            forgedTail, alsoReported: DiagnosticId.UnreliableFragment);
+    }
+
+    [Fact]
+    public void Pump_HostileFragmentInAnUnreliableModeCarryingASpareBit_ReportsOnlyTheMalformedDiscard()
+    {
+        // Arrange — issue #273: a spare bit set is refused before the flags byte is read for anything
+        // else, so a record breaking both rules reports the one that actually fired rather than also
+        // claiming the unreliable-Fragment refusal.
+        byte[] forgedTail = BuildFragmentRecord(
+            ModeUnreliable, sequence: 1, fragmentIndex: 0, fragmentCount: 2, payload: [0x9B]);
+        forgedTail[0] |= SpareBit;
+
+        AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(forgedTail);
+    }
+
     /// <summary>
     /// The index/count-refusal cases above build their own single-record forged tail (#253) and drive
     /// it through the shared body every case in this file uses.
@@ -230,8 +270,16 @@ public class DatagramSessionHostileFragmentDiscardTests
     /// (#256), or a single record #253 refuses outright — then a genuinely well-formed datagram that
     /// resends sequence 0 alone, proving the window never saw the first one.
     /// </summary>
+    /// <param name="forgedFragmentTail">The forged record or records that follow the well-formed one.</param>
+    /// <param name="alsoReported">
+    /// A second Diagnostic this forgery raises alongside the malformed discard, or
+    /// <see langword="null"/> when the discard is all that is reported. Every case here raises
+    /// <see cref="DiagnosticId.DatagramMalformed"/>; only the unreliable-Fragment refusal (issue #273)
+    /// names which rule the record broke as well.
+    /// </param>
     private static void AssertForgedFragmentTailDiscardsWholeDatagramAndLeavesTheWindowUntouched(
-        byte[] forgedFragmentTail)
+        byte[] forgedFragmentTail,
+        DiagnosticId? alsoReported = null)
     {
         // Arrange
         using DatagramSessionReactorHarness accepter = new();
@@ -251,7 +299,7 @@ public class DatagramSessionHostileFragmentDiscardTests
         Action sendHostileDatagram = () =>
         {
             client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), hostileDatagram);
-            accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+            accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
         };
 
         // Assert — nothing throws, the whole datagram is discarded (both the malformed tail and the
@@ -263,8 +311,17 @@ public class DatagramSessionHostileFragmentDiscardTests
         deliveredFromHostileDatagram.Should().BeEmpty(
             "a datagram is a container, not a Message: a forged tail must discard the well-formed " +
             "record that parsed ahead of it too");
-        accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(1);
+        accepter.Reactor.Counters.MalformedSessionDiscards.Should().Be(1);
         accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.DatagramMalformed);
+        if (alsoReported is DiagnosticId expectedId)
+        {
+            accepter.Sink.Received.Should().ContainSingle(r => r.Id == expectedId)
+                .Which.Level.Should().Be(DiagnosticLevel.Warn);
+        }
+        else
+        {
+            accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.UnreliableFragment);
+        }
 
         PeerCounters afterDiscard = accepter.Reactor.CountersOf(accepterPeer);
         afterDiscard.Should().Be(before, "a discarded datagram never reaches record classification at all");

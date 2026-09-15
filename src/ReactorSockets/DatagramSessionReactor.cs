@@ -223,7 +223,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             options.ResolvedFragmentSize);
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Reactor.Sink, options.Reactor.MinimumLevel, _counters);
-        _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity);
+        _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity, ReactorOrigin.Next());
         _entropy = options.Entropy;
         _cookies = new CookieMinter(options.Reactor.TimeProvider, _entropy);
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
@@ -488,6 +488,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="CountersOf"/>: a Peer closing under a caller is an ordinary race, the same reason
     /// <see cref="Close"/> tolerates a stale <see cref="PeerId"/>.
     /// </para>
+    /// <para>
+    /// Sending to a <paramref name="peer"/> whose handshake has not reached
+    /// <see cref="HandshakeState.Established"/> returns <see cref="SendOutcome.NotEstablished"/> under
+    /// every mode (issue #332), checked before any width gate. Before the handshake the Peer has no
+    /// remote-announced <c>MaxMessageSize</c>, so a reliable Send would otherwise be misreported as
+    /// <see cref="SendOutcome.RemoteMessageTooLarge"/>.
+    /// </para>
     /// </remarks>
     /// <param name="peer">The Peer to send to.</param>
     /// <param name="mode">Which of the four delivery modes carries this Message; see <c>docs/delivery-modes.md</c>.</param>
@@ -529,6 +536,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         if (_peers.TryResolve(handle) is not PeerSlot slot)
         {
             return SendOutcome.Closed;
+        }
+
+        if (slot.State != HandshakeState.Established)
+        {
+            return SendOutcome.NotEstablished;
         }
 
         // The fragment size used to cut this Message is this Peer's own, captured on the Slot at
@@ -867,10 +879,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// spare bit set, a length running past the end, or truncation inside a record — discards the
     /// whole datagram rather than whatever records parsed before it, because a partial admission would
     /// let a forged tail poison an otherwise legitimate send. A record with the fragment bit set is not
-    /// by itself bad: <see cref="PacketRecordCodec.TryRead"/> reads the Fragment shape same as the
-    /// unfragmented one, and this method routes it into its Space the same way — <see cref="ClassifyRecord"/>
+    /// by itself bad, so long as it is in one of the two reliable modes: <see cref="PacketRecordCodec.TryRead"/>
+    /// reads the Fragment shape same as the unfragmented one, and this method routes it into its Space
+    /// the same way — <see cref="ClassifyRecord"/>
     /// is what diverts an admitted Fragment away from delivery and into its Space's receive-window slot
-    /// instead (issue #257). Parsing therefore runs in
+    /// instead (issue #257). The fragment bit in an unreliable mode <em>is</em> by itself bad and fails
+    /// the read outright, the same discard as any other malformed record, since ADR 0004 caps those two
+    /// modes at a single Datagram and no reassembly path exists for them (issue #273); the first pass
+    /// below names that refusal on the Diagnostic stream as well, because it says the sender fragments
+    /// in modes this profile does not rather than that rubbish arrived. Parsing therefore runs in
     /// three passes over the same bytes: the first confirms every record is well-formed without
     /// touching any Space; the second, once <see cref="FragmentSetsAreWellFormed"/> also stands, walks
     /// every record again to refuse — with a close, not a discard — a declared <c>fragmentCount</c>
@@ -899,7 +916,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out uint reliableUnorderedAckBase,
                 out uint reliableUnorderedAckBits))
         {
-            DiscardMalformed(source, datagram.Length);
+            DiscardMalformedForSession(source, datagram.Length);
             return;
         }
 
@@ -910,7 +927,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
             {
-                DiscardMalformed(source, datagram.Length);
+                // One refusal out of the several this read can reach is worth naming separately
+                // (issue #273): a Fragment in an unreliable mode is well-formed at every level but
+                // ADR 0004's rule, so it says the sender fragments in modes this profile does not,
+                // rather than that rubbish arrived. The malformed discard below still fires — this
+                // adds which rule broke, it does not replace the outcome.
+                if (PacketRecordLegality.RefusedAsUnreliableFragment(remainder)
+                    && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                {
+                    _diagnostics.Log(DiagnosticRecord.ForUnreliableFragment(
+                        source, remainder[0] & DatagramSessionProtocol.ModeMask));
+                }
+
+                DiscardMalformedForSession(source, datagram.Length);
                 return;
             }
 
@@ -923,7 +952,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // malformed record rather than reaching classification.
         if (!FragmentSetsAreWellFormed(body))
         {
-            DiscardMalformed(source, datagram.Length);
+            DiscardMalformedForSession(source, datagram.Length);
             return;
         }
 
@@ -936,8 +965,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // datagram carrying other, legal records ahead of the offending Fragment still closes the Peer
         // having classified none of them — no receive-window slot or Fragment-group bookkeeping is
         // created for any record of this datagram once the check fires. Only ReliableOrdered and
-        // ReliableUnordered ever carry the fragment shape (ADR 0004), matching ClassifyRecord's own
-        // gate, so a stray fragment bit on an unreliable record is not evaluated here at all.
+        // ReliableUnordered ever carry the fragment shape (ADR 0004) — a Fragment in an unreliable mode
+        // already failed the read in the first pass above (issue #273), so the mode test here and
+        // ClassifyRecord's matching one now restate a guarantee rather than establish it, and stay as
+        // the local statement of which modes this arm is about.
         remainder = body;
         while (remainder.Length > 0)
         {
@@ -965,8 +996,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // The proof above is what attributes this Datagram to slot's Peer: it names an established
         // session id (ProcessDataDatagram's own lookup) and every record in it parses. Only from this
         // point on is the whole Datagram's length, header included, counted against that Peer (issue
-        // #231) — a malformed one, even if it named a real session, falls to DiscardMalformed's
-        // Reactor-scope figure instead, above, and never reaches here.
+        // #231) — a malformed one, even if it named a real session, falls to
+        // DiscardMalformedForSession's Reactor-scope figure instead, above, and never reaches here.
         slot.Counters.RecordBytesReceived((ulong)datagram.Length);
 
         TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
@@ -1025,9 +1056,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// one a later datagram contradicts, needs state only reassembly owns (a future sub-slice); this
     /// method holds nothing across calls beyond its own preallocated scratch (below) and knows nothing
     /// beyond <paramref name="body"/>'s own bytes. A partial set — fewer Fragments than
-    /// <see cref="PacketRecordCodec.TryRead"/>'s <c>fragmentCount</c> promises, so long as the indices
-    /// actually present are contiguous — is not a violation: an honest sender's Fragments of one group
-    /// may simply be spread across datagrams.
+    /// <see cref="PacketRecordCodec.TryRead"/>'s <c>fragmentCount</c> promises — is not a violation, and
+    /// neither is a gap in the indices it does carry (issue #274): an honest sender's Fragments of one
+    /// group may be spread across datagrams, and selective retransmission packs whichever of them
+    /// expired, which is a subset chosen by what was acked rather than a run (see
+    /// <see cref="TryCloseContiguousRun"/>'s own remarks). What each group's members must agree on is
+    /// their declared count, and no index may appear twice.
     /// </para>
     /// <para>
     /// <b>Overlap is judged on each same-mode group's DECLARED range, not on what is merely observed.</b>
@@ -1052,7 +1086,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// mode occupying the key's high bits so one mode's entries never interleave with another's) so
     /// every Fragment of one (mode, first sequence) group becomes one contiguous
     /// run — O(n log n) rather than O(n) group lookups each costing O(n). Each run is checked for a
-    /// gap in one further linear pass and, if it passes, contributes one entry to
+    /// disagreed count and a repeated index and, if it passes, contributes one entry to
     /// <see cref="_distinctGroupFirstSequenceAndCount"/> (<see cref="TryCloseContiguousRun"/>), which
     /// packs that group's mode alongside its first sequence and declared count. Because the runs above
     /// were closed in (mode, first sequence) order, the distinct groups already sit in contiguous
@@ -1151,38 +1185,58 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Closes the run <c>[runStart, runEnd)</c> of <see cref="_fragmentGroupKey"/> and
     /// <see cref="_fragmentGroupIndexAndCount"/> — every Fragment the datagram's walk found that shares
-    /// one group's mode and first sequence, now contiguous in the sorted arrays — checking that every
-    /// member agrees on its declared count and that the indices actually present leave no gap, exactly
-    /// as the pre-sort double-walk did. A group's Fragments disagreeing on the count they claim makes
-    /// the set's shape ambiguous, the same forgery as a literal gap: neither describes a set an honest
-    /// sender, which uses one count per Message, could ever produce. On success, appends one entry to
+    /// one group's mode and first sequence, now contiguous in the sorted arrays (the run is what is
+    /// contiguous here, not the indices it carries) — checking that every member agrees on its declared
+    /// count and that no index appears twice. A group's Fragments disagreeing on the count they claim
+    /// makes the set's shape ambiguous, and one index claimed by two Fragments makes its content
+    /// ambiguous: neither describes a set an honest sender, which uses one count per Message and cuts
+    /// each index once, could ever produce. On success, appends one entry to
     /// <see cref="_distinctGroupFirstSequenceAndCount"/> — mode, first sequence and declared count all
     /// packed together — for the per-mode overlap sweep that follows.
     /// </summary>
+    /// <remarks>
+    /// <b>The indices present need only be a subset of <c>[0, declaredCount)</c> with no duplicates, not
+    /// a gap-free run (issue #274).</b> Requiring a run was right while the only way to see a gap was a
+    /// forgery, but selective retransmission produces one honestly: a Message cut into Fragments 0, 1
+    /// and 2 whose index 1 is acked while 0 and 2 both expire packs those two into one datagram, with no
+    /// index 1 anywhere in it. What issue #256 rejects is ambiguity about which wire sequence belongs to
+    /// which group, and that lives in the <em>claimed</em> set — the declared count each Fragment carries
+    /// and the range it implies, checked here and in <see cref="NoTwoDeclaredRangesOverlap"/> — not in
+    /// which pieces of a set happen to share one datagram. The subset's upper bound is already
+    /// established before this pass: <see cref="PacketRecordCodec.TryRead"/> refuses any Fragment whose
+    /// index is at or beyond its own count (issue #253) and <see cref="ParseDataDatagram"/> proves every
+    /// record legal there first, so once the members agree on one declared count every index is inside
+    /// it.
+    /// </remarks>
     private bool TryCloseContiguousRun(int runStart, int runEnd, ref int distinctGroupCount)
     {
         ushort declaredCount = UnpackCount(_fragmentGroupIndexAndCount[runStart]);
-        ushort minIndexSeen = ushort.MaxValue;
-        ushort maxIndexSeen = 0;
 
         for (int i = runStart; i < runEnd; i++)
         {
-            ushort index = UnpackIndex(_fragmentGroupIndexAndCount[i]);
-            ushort count = UnpackCount(_fragmentGroupIndexAndCount[i]);
-
-            if (count != declaredCount)
+            if (UnpackCount(_fragmentGroupIndexAndCount[i]) != declaredCount)
             {
                 return false;
             }
 
-            minIndexSeen = Math.Min(minIndexSeen, index);
-            maxIndexSeen = Math.Max(maxIndexSeen, index);
+            // Cannot happen: an index at or beyond its own count already failed the read (issue #253),
+            // and every member of this run has just been proved to carry declaredCount as that count.
+            Debug.Assert(
+                UnpackIndex(_fragmentGroupIndexAndCount[i]) < declaredCount,
+                "A Fragment whose index is outside its declared count reached the set check.");
         }
 
-        int occurrences = runEnd - runStart;
-        if (maxIndexSeen - minIndexSeen + 1 != occurrences)
+        // Sorting the run by its packed index-and-count puts any repeated index beside its twin, so one
+        // further linear pass finds a duplicate — O(k log k) for a k-member group, nothing allocated, and
+        // the sort cannot disturb this group's pairing with _fragmentGroupKey: every key in the run is
+        // equal by construction, so reordering only the values leaves each pair intact.
+        Array.Sort(_fragmentGroupIndexAndCount, runStart, runEnd - runStart);
+        for (int i = runStart + 1; i < runEnd; i++)
         {
-            return false;
+            if (UnpackIndex(_fragmentGroupIndexAndCount[i]) == UnpackIndex(_fragmentGroupIndexAndCount[i - 1]))
+            {
+                return false;
+            }
         }
 
         byte mode = UnpackMode(_fragmentGroupKey[runStart]);
@@ -1670,6 +1724,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         UdpLinkSendResult result = slot.Link.SendTo(slot.Remote, _outboundDatagramBuffer.AsSpan(0, packer.BytesWritten));
+        slot.Counters.RecordSocketWrite();
         slot.Counters.RecordBytesSent((ulong)packer.BytesWritten);
         if (result.IsSuccess)
         {
@@ -2609,9 +2664,31 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
     }
 
+    /// <summary>
+    /// Discards a datagram nothing in which could be attributed to a Peer — a control datagram that
+    /// did not read, a control reply answering no dial, or a session id naming no Session — and counts
+    /// it on <see cref="ReactorCounters.UnknownSourceDiscards"/>. A data datagram that failed to parse
+    /// <em>after</em> its session id resolved goes to <see cref="DiscardMalformedForSession"/>
+    /// instead (issue #275).
+    /// </summary>
     private void DiscardMalformed(Source source, int bytesReceived)
     {
         _counters.RecordUnknownSourceDiscard();
+        _diagnostics.Log(DiagnosticRecord.ForDatagramMalformed(source, bytesReceived));
+    }
+
+    /// <summary>
+    /// Discards a data datagram that named a live Session and then failed to parse, counting it on
+    /// <see cref="ReactorCounters.MalformedSessionDiscards"/> rather than
+    /// <see cref="ReactorCounters.UnknownSourceDiscards"/> (issue #275): the id resolved, which is the
+    /// only reason parsing was reached at all, so this is not traffic that named nobody. The
+    /// Diagnostic is the same <see cref="DiagnosticId.DatagramMalformed"/> and stays Source-subjected
+    /// — a body that did not parse is no proof the sender is the Peer whose id it carried, so neither
+    /// the record nor the figure is charged to that Peer.
+    /// </summary>
+    private void DiscardMalformedForSession(Source source, int bytesReceived)
+    {
+        _counters.RecordMalformedSessionDiscard();
         _diagnostics.Log(DiagnosticRecord.ForDatagramMalformed(source, bytesReceived));
     }
 

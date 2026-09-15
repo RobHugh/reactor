@@ -85,11 +85,45 @@ public class StreamSessionSendRetentionTests
     }
 
     [Fact]
+    public void Send_ToADialledPeerBeforeItsHandshakeCompletes_ReturnsNotEstablished()
+    {
+        // Arrange — issue #332. Connect hands back a PeerId at once, before the TCP connect resolves.
+        using StreamSessionReactorHarness accepter = new();
+        using StreamSessionReactorHarness dialler = new();
+        PeerId peerId = dialler.Reactor.Connect(accepter.Endpoint);
+
+        // Act
+        SendOutcome outcome = dialler.Reactor.Send(peerId, [1, 2, 3]);
+
+        // Assert
+        outcome.Should().Be(SendOutcome.NotEstablished);
+    }
+
+    [Fact]
+    public void Send_RefusedBeforeEstablishment_LeavesThePeerToConnectAndAcceptSendsAfterward()
+    {
+        // Arrange — issue #332. Before the refusal existed, the queued Message was flushed to a socket
+        // still connecting, and the Peer closed with TransportFailed instead of connecting.
+        using StreamSessionReactorHarness accepter = new();
+        using StreamSessionReactorHarness dialler = new();
+        PeerId peerId = dialler.Reactor.Connect(accepter.Endpoint);
+        dialler.Reactor.Send(peerId, [1, 2, 3]).Should().Be(SendOutcome.NotEstablished);
+
+        // Act
+        (var diallerEvents, _) = StreamSessionReactorHarness.PumpBothUntilConnected(dialler, accepter);
+        SendOutcome afterConnected = dialler.Reactor.Send(peerId, [1, 2, 3]);
+
+        // Assert
+        diallerEvents.Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerConnected);
+        afterConnected.Should().Be(SendOutcome.Sent);
+    }
+
+    [Fact]
     public void Send_UnknownPeerId_ThrowsMatchingCountersOfsConvention()
     {
-        // Arrange — a PeerId that was never issued by this Reactor at all.
+        // Arrange — Origin 0 is reserved and issued to no Reactor, so this PeerId was never issued at all.
         using StreamSessionReactorHarness accepter = new();
-        PeerId unknown = new(Origin: 1, Index: 0, Generation: 1);
+        PeerId unknown = new(Origin: 0, Index: 0, Generation: 1);
 
         // Act
         Action act = () => accepter.Reactor.Send(unknown, [1, 2, 3]);

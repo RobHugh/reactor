@@ -102,7 +102,11 @@ public class DatagramSessionDataFuzzTests
 
         // Assert — every datagram either parsed (silently, per #163) or was counted as a malformed
         // discard; nothing vanished unaccounted for.
-        ulong discards = accepter.Reactor.Counters.UnknownSourceDiscards;
+        // Both discard figures count, because the corpus mutates the session id too: a datagram still
+        // naming the live Session lands on MalformedSessionDiscards, one whose id was mutated away
+        // from it on UnknownSourceDiscards (issue #275).
+        ulong discards = accepter.Reactor.Counters.MalformedSessionDiscards
+            + accepter.Reactor.Counters.UnknownSourceDiscards;
         discards.Should().BeLessThanOrEqualTo((ulong)corpus.Count);
 
         // Assert — the Reactor stays usable afterwards: a well-formed datagram sent after the whole

@@ -57,4 +57,13 @@ public enum SendOutcome
     /// which the caller has no way to know in advance.
     /// </summary>
     RemoteMessageTooLarge = 4,
+
+    /// <summary>
+    /// The Peer's handshake has not completed: a dial is still connecting, or waiting for the far end's
+    /// handshake record. Nothing was copied and nothing about the Session changed. Wait for
+    /// <see cref="SessionEventKind.PeerConnected"/> for this Peer before Sending (issue #332). Refusing
+    /// here rather than queueing keeps a Message from reaching a socket whose connect has not resolved,
+    /// or going out before this end knows the far end's version and announced <c>MaxMessageSize</c>.
+    /// </summary>
+    NotEstablished = 5,
 }

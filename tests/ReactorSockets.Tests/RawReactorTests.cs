@@ -316,30 +316,62 @@ public class RawReactorTests
     }
 
     /// <summary>
+    /// How many ports this will try before giving up and letting the assertion fail. A port that
+    /// nothing holds produces the record on the first attempt; each retry exists only for the port
+    /// having been taken between the probe and the send, and a fresh probe gets a different one.
+    /// </summary>
+    private const int ClosedPortAttempts = 3;
+
+    /// <summary>
     /// Sends to a port nothing is listening on and Pumps until the resulting ICMP port-unreachable
     /// comes back as a record, returning everything drained along the way. Bounded by a real-time
     /// deadline rather than a Pump count (issue #153, <see cref="PumpDeadline"/>): an ICMP reply is
     /// delivered on the OS clock, not on how many times this process asks for it, so a platform that
     /// never reports it fails the assertion rather than hanging.
     /// </summary>
+    /// <remarks>
+    /// <b>Why this retries.</b> The destination is an ephemeral port a probe socket has just released,
+    /// and nothing keeps it released — any of the ~1000 tests in this run that binds port 0 can be
+    /// handed that exact port in the window before the datagram arrives. The datagram is then
+    /// delivered rather than refused, no ICMP is generated, and the pump loop spends its whole budget
+    /// on a port that was never closed. That is what failed on the Windows CI runner, where the
+    /// parallel test load and the two cores make the window far wider than on a developer machine
+    /// (observed on <c>dev</c> in run 33607402844 before this change, on a commit that touched none of
+    /// this). A retry is sound rather than a papered-over flake because a taken port generates nothing
+    /// that can arrive late: loopback ICMP comes back in microseconds, so an attempt that recorded
+    /// nothing in two seconds recorded nothing at all, and the next attempt starts from an empty Sink.
+    /// </remarks>
     private static List<(RawEventKind Kind, LinkId Link, byte[] Payload)> SendToAClosedPortAndPumpUntilReported(
         RawReactorHarness harness)
     {
         LinkId link = harness.Reactor.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
-        int closedPort;
-        using (Socket probe = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp))
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = [];
+        for (int attempt = 1; ; attempt++)
         {
-            probe.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+            Source destination = Source.FromIPEndPoint(new IPEndPoint(IPAddress.Loopback, ProbeForAClosedPort()));
+            harness.Reactor.SendTo(link, destination, [1, 2, 3]).IsSuccess.Should().BeTrue();
+            drained.AddRange(harness.PumpUntilDrained(_ => harness.Sink.Received.Count > 0));
 
-            // `!` works around a framework limitation: Socket.LocalEndPoint is typed EndPoint? for a
-            // Socket's whole lifetime, but this one has just returned from Bind.
-            closedPort = ((IPEndPoint)probe.LocalEndPoint!).Port;
+            if (harness.Sink.Received.Count > 0 || attempt == ClosedPortAttempts)
+            {
+                return drained;
+            }
         }
+    }
 
-        Source destination = Source.FromIPEndPoint(new IPEndPoint(IPAddress.Loopback, closedPort));
-        harness.Reactor.SendTo(link, destination, [1, 2, 3]).IsSuccess.Should().BeTrue();
+    /// <summary>
+    /// A loopback port that was free a moment ago: bound by a probe socket and released when it
+    /// closes. This is as close to "closed" as a test can ask the OS for — a port cannot be reserved
+    /// and closed at the same time — which is why the caller retries.
+    /// </summary>
+    private static int ProbeForAClosedPort()
+    {
+        using Socket probe = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        probe.Bind(new IPEndPoint(IPAddress.Loopback, 0));
 
-        return harness.PumpUntilDrained(_ => harness.Sink.Received.Count > 0);
+        // `!` works around a framework limitation: Socket.LocalEndPoint is typed EndPoint? for a
+        // Socket's whole lifetime, but this one has just returned from Bind.
+        return ((IPEndPoint)probe.LocalEndPoint!).Port;
     }
 }

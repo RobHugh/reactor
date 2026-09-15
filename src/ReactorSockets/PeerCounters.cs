@@ -124,6 +124,20 @@ namespace ReactorSockets;
 /// lifetime is the Peer's, not the transport's, so a Resume does not zero it. A freshly connected Peer
 /// reads zero.
 /// </param>
+/// <param name="SocketWrites">
+/// How many socket send calls this Reactor has made on this Peer's transport (issue #325; ADR 0013).
+/// One per call, whatever it carried and however it ended — a whole write, a short write and a failed
+/// call each count once — because the figure measures what the Reactor paid in syscalls, not what the
+/// socket accepted. On the stream profile every write on the Peer's connection counts: handshake and
+/// Resume records, delivery-counter records sent alone, and each retention write, where a delivery
+/// counter riding that write (issue #132) adds nothing. On the datagram profile it counts one per data
+/// Datagram a flush hands the transport, beside <see cref="BytesSent"/>; a handshake's control
+/// datagrams are never counted, for the same reason they never reach <see cref="BytesSent"/>. Not
+/// derivable from any byte figure, since how many bytes went out says nothing about how many calls
+/// carried them, and a rate well above the Pump rate for one Peer names a write path that is not
+/// batching. Monotonic and never reset, exactly like <see cref="HorizonDeferrals"/>: its lifetime is
+/// the Peer's, not the transport's, so a Resume does not zero it.
+/// </param>
 public readonly record struct PeerCounters(
     ulong MessagesReceived,
     ulong RetentionHighWaterBytes,
@@ -134,4 +148,5 @@ public readonly record struct PeerCounters(
     ulong HorizonDeferrals,
     ulong PacketsRetransmitted,
     ulong BytesSent,
-    ulong BytesReceived);
+    ulong BytesReceived,
+    ulong SocketWrites);

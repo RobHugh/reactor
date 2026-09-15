@@ -19,9 +19,8 @@ namespace ReactorSockets.Tests;
 /// the byte offsets <see cref="DatagramSessionWireFormatTests"/> pins, rather than inferred.
 /// </remarks>
 /// <remarks>
-/// A reliable Send is refused unless its Peer has learned the remote's announced
-/// <c>MaxMessageSize</c> (issue #284); the one test below that also drives a reliable Send pumps a
-/// real handshake to completion first.
+/// A Send under any mode is refused with <see cref="SendOutcome.NotEstablished"/> until the handshake
+/// completes (issue #332), so every test below pumps a real handshake to completion first.
 /// </remarks>
 public class DatagramSessionUnreliableFragmentRefusalTests
 {
@@ -48,6 +47,7 @@ public class DatagramSessionUnreliableFragmentRefusalTests
             fragmentSize: fragmentSize);
         using DatagramSessionReactorHarness remote = new();
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         byte[] maximumMessage = new byte[maxMessageSize];
 
         // Act

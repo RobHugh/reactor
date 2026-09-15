@@ -111,7 +111,7 @@ public sealed class RawReactor : IDisposable
         _arena = new FrameArena(arenaSize, options.Capacity);
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Sink, options.MinimumLevel, _counters);
-        _links = new ShareHolderTable<LinkSlot>(options.Capacity);
+        _links = new ShareHolderTable<LinkSlot>(options.Capacity, ReactorOrigin.Next());
         _scratchBuffer = new byte[resolvedScratchBufferSize];
         _admissionCap = options.ResolvedAdmissionCap;
     }

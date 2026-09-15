@@ -23,8 +23,8 @@ Interrupted Peer, right up to the close.
 | `AdmissionDeferrals` | Times a listening endpoint turned its backlog away because the admission cap was reached. Coarse — one declining per endpoint, not per connection. |
 | `SinkFaulted` | Times your Sink threw. Non-zero means diagnostics are off for the rest of this Reactor's life. |
 
-`DatagramsSent`, `DatagramsReceived`, `AdmissionDiscards` and `UnknownSourceDiscards` stay at zero
-here. They are true zeros, not gaps — this profile carries no datagram transport, and it answers a
+`DatagramsSent`, `DatagramsReceived`, `AdmissionDiscards`, `UnknownSourceDiscards` and
+`MalformedSessionDiscards` stay at zero here. They are true zeros, not gaps — this profile carries no datagram transport, and it answers a
 refused connection in protocol rather than discarding it.
 
 A capacity refusal touches neither admission counter. Read `PeerRefused` (300) for those; it names
@@ -37,6 +37,7 @@ the remote, which a counter cannot.
 | `MessagesReceived` | Whole Messages handed to the arena for delivery. Counted at delivery only, so bytes arriving without this moving means a Message is buffered, not lost. |
 | `RetentionHighWaterBytes` | The most bytes this Peer's retention ever held at once. Compare against `RetentionBytes` to size it. |
 | `Resumes` | Successful resumes for this Peer. Never reset by a resume, so a flapping path shows itself here. |
+| `SocketWrites` | Socket send calls made on this Peer's connection, handshake records included. Well above your Pump rate means writes are not batching. |
 
 ## Installing a Sink
 

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace ReactorSockets.Core;
 
 /// <summary>
@@ -40,20 +42,26 @@ namespace ReactorSockets.Core;
 internal sealed class ShareHolderTable<T>
     where T : class
 {
-    private static ulong _lastOrigin;
-
     private readonly T?[] _slots;
     private readonly ulong[] _generations;
 
     /// <summary>
-    /// Constructs a table of <paramref name="capacity"/> Slots, every generation starting at 1.
+    /// Constructs a table of <paramref name="capacity"/> Slots, every generation starting at 1,
+    /// stamping every handle it issues with <paramref name="origin"/>.
     /// </summary>
     /// <param name="capacity">
     /// How many Share-holders this table admits. Validated here as a floor rather than against any
     /// profile's rules, which <see cref="ReactorOptions.Validate"/> already applied before this runs.
     /// </param>
-    public ShareHolderTable(int capacity)
+    /// <param name="origin">
+    /// The Origin of the Reactor that owns this table, from <see cref="ReactorOrigin.Next"/>. The
+    /// table does not draw its own: a Reactor holds exactly one table today, but the Origin means
+    /// "which Reactor issued this identity", and only the Reactor can say that.
+    /// </param>
+    public ShareHolderTable(int capacity, uint origin)
     {
+        Debug.Assert(origin != 0, "Origin 0 is reserved as never-issued; ReactorOrigin.Next starts at 1.");
+
         if (capacity < 1)
         {
             throw new ArgumentOutOfRangeException(
@@ -65,11 +73,12 @@ internal sealed class ShareHolderTable<T>
         _slots = new T?[capacity];
         _generations = new ulong[capacity];
         Array.Fill(_generations, 1UL);
+        Origin = origin;
     }
 
     /// <summary>
-    /// What distinguishes this table's handles from every other table's in this process. Assigned
-    /// from a counter shared by all tables, so no two ever hold the same value and none holds 0 —
+    /// What distinguishes this table's handles from every other Reactor's in this process: the
+    /// Origin its owning Reactor was constructed with, from <see cref="ReactorOrigin"/>. Never 0,
     /// which is what keeps a <see langword="default"/> handle unresolvable here as well as by its
     /// generation. Never leaves the process and never appears on the wire; it is compared for
     /// equality and nothing else, so its actual value carries no meaning.
@@ -77,12 +86,12 @@ internal sealed class ShareHolderTable<T>
     /// <remarks>
     /// Counted rather than drawn from entropy: this guards against a consumer handing one Reactor's
     /// id to another, which is a mistake and not an attack, and a counter answers that exactly where
-    /// random values would only answer it with high probability. It is
-    /// <see cref="Interlocked.Increment(ref ulong)"/> because tables on different threads may be
-    /// constructed at once — a Reactor is single-threaded (ADR 0002), but nothing says two Reactors
-    /// share a thread.
+    /// random values would only answer it with high probability. The counter itself lives on
+    /// <see cref="ReactorOrigin"/> and not here — a static on this generic type gave every closed
+    /// instantiation its own sequence, which is exactly how two Session profiles came to issue equal
+    /// <see cref="ReactorSockets.PeerId"/>s.
     /// </remarks>
-    public ulong Origin { get; } = Interlocked.Increment(ref _lastOrigin);
+    public uint Origin { get; }
 
     /// <summary>The number of Slots this table holds, occupied or not.</summary>
     public int Capacity => _slots.Length;

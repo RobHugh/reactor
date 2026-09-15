@@ -64,10 +64,15 @@ internal static class PacketRecordCodec
     /// carried the fragment shape — treating it as a degenerate but legal set would let the fragment bit
     /// mean two different things for the same content. Fails without reading past <paramref
     /// name="record"/> when: any spare bit (<see cref="DatagramSessionProtocol.SpareBitsMask"/>) is set;
+    /// the flags byte names the Fragment shape in one of the two unreliable modes, which ADR 0004
+    /// forbids and <see cref="PacketRecordLegality.ShapeOf"/> therefore refuses (issue #273);
     /// fewer bytes remain than the record's shape needs; <paramref name="length"/> would exceed the
     /// bytes left in the datagram after the record header; or a Fragment's index and count form one of
     /// the impossible combinations above. A malformed Fragment fails exactly as a record too short for
-    /// its shape does — the caller has no new failure case to handle.
+    /// its shape does — the caller has no new failure case to handle. A caller that wants to tell the
+    /// unreliable-Fragment refusal apart from the rest, to report which rule broke, asks
+    /// <see cref="PacketRecordLegality.RefusedAsUnreliableFragment"/> after the fact rather than being
+    /// handed a reason this method's other callers would have to ignore.
     /// </summary>
     /// <param name="record">
     /// The datagram's bytes from this record's first byte onward. Its length is the bytes remaining
