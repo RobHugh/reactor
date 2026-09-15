@@ -324,6 +324,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             _dispatcher.Pump();
             RetryPendingFragmentDeliveries();
             ReportExpiredRetransmissions();
+            EnforceSendIdleTimer();
             FlushOutboundDatagrams();
             ReportDeclinedAdmissions();
         }
@@ -925,7 +926,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ReadOnlySpan<byte> remainder = body;
         while (remainder.Length > 0)
         {
-            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
+            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
             {
                 // One refusal out of the several this read can reach is worth naming separately
                 // (issue #273): a Fragment in an unreliable mode is well-formed at every level but
@@ -974,7 +975,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             PacketRecordCodec.TryRead(
                 remainder, out PacketRecordMode oversizedMode, out _, out _,
-                out bool oversizedIsFragment, out _, out ushort oversizedFragmentCount, out int oversizedBytesConsumed);
+                out bool oversizedIsFragment, out _, out ushort oversizedFragmentCount, out _, out int oversizedBytesConsumed);
 
             if (oversizedIsFragment
                 && oversizedMode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered
@@ -1002,8 +1003,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits, effectiveRto);
+        ReleaseRetentionForAck(slot, PacketRecordMode.ReliableOrdered);
         ApplyAckToStallSignature(slot);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableUnordered, reliableUnorderedAckBase, reliableUnorderedAckBits, effectiveRto);
+        ReleaseRetentionForAck(slot, PacketRecordMode.ReliableUnordered);
         ApplyAckToStallSignature(slot);
         ReconcileHorizonDeferrals(slot);
 
@@ -1016,12 +1019,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             // is derived from them the moment it is held.
             PacketRecordCodec.TryRead(
                 remainder, out PacketRecordMode mode, out uint sequence, out ushort length,
-                out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount, out int bytesConsumed);
+                out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount, out bool isControl,
+                out int bytesConsumed);
 
             // The payload is the tail of what this record consumed, so it is sliced from the record's
             // own span rather than re-derived from a header width this method would then have to know.
             ReadOnlySpan<byte> payload = remainder.Slice(bytesConsumed - length, length);
-            ClassifyRecord(slot, mode, sequence, isFragment, fragmentIndex, fragmentCount, payload);
+            ClassifyRecord(slot, mode, sequence, isFragment, isControl, fragmentIndex, fragmentCount, payload);
             remainder = remainder[bytesConsumed..];
         }
     }
@@ -1119,7 +1123,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             PacketRecordCodec.TryRead(
                 remainder, out PacketRecordMode mode, out uint sequence, out _, out bool isFragment,
-                out ushort index, out ushort count, out int bytesConsumed);
+                out ushort index, out ushort count, out _, out int bytesConsumed);
 
             if (isFragment)
             {
@@ -1562,6 +1566,32 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// Frees the retention slot of every sequence the <see cref="OutstandingReliableSequences.ApplyAck"/>
+    /// call that just ran actually released on <paramref name="mode"/>'s reliable Space (issue #345):
+    /// called once per <see cref="OutstandingReliableSequences.ApplyAck"/> call, immediately after it, so
+    /// each Space's own release is read before the other Space's call overwrites
+    /// <see cref="OutstandingReliableSequences.LastAckReleasedSequences"/> — the same idiom
+    /// <see cref="ApplyAckToStallSignature"/> already follows for <see cref="OutstandingReliableSequences.LastAckRelease"/>.
+    /// Without this, nothing ever freed a slot <see cref="_retention"/>'s <see cref="RetentionPool.TryAcquire"/>
+    /// committed: a quiet Session's idle-triggered Pings and a Peer's reliable Sends would both hold
+    /// their slots forever and every further reliable Send would eventually see
+    /// <see cref="RetentionSlotOutcome.Exhausted"/>.
+    /// </summary>
+    /// <remarks>
+    /// Allocates nothing: <see cref="OutstandingReliableSequences.LastAckReleasedSequences"/> is a reused
+    /// scratch span and <c>foreach</c> over a <see cref="ReadOnlySpan{T}"/> does not allocate an
+    /// enumerator, matching this whole ack path's no-allocation discipline.
+    /// </remarks>
+    private void ReleaseRetentionForAck(PeerSlot slot, PacketRecordMode mode)
+    {
+        int spaceIndex = ReliableSpaceIndex(mode);
+        foreach (uint sequence in slot.AckTracker.LastAckReleasedSequences(mode))
+        {
+            _retention.Release(slot.Handle.Index, spaceIndex, sequence);
+        }
+    }
+
+    /// <summary>
     /// Queues every sequence <see cref="ReportExpiredRetransmissions"/> found expired on one reliable
     /// Space back onto <paramref name="slot"/>'s <see cref="PeerSlot.PendingSends"/>, so the same
     /// Pump's <see cref="FlushOutboundDatagrams"/> packs it (subtask 6.6.8, issue #218). No payload
@@ -1624,6 +1654,78 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// Queues one Ping for every Established Peer that has sent no data datagram for
+    /// <see cref="DatagramSessionOptions.SendIdleInterval"/> (issue #340, subtask 8.1.4), run once per
+    /// <see cref="Pump"/> ahead of <see cref="FlushOutboundDatagrams"/> so a Ping this call queues rides
+    /// the same Pump's flush out — a Peer this method queues against is never left waiting a whole
+    /// further Pump just to reach the wire. A Ping is a Heartbeat, and a Heartbeat is not a keepalive:
+    /// it proves the party behind this Session is still there to receive and eventually acknowledge
+    /// application data, not merely that some NAT mapping between here and there is still open — a bare
+    /// keepalive a middlebox itself could answer would prove nothing about the party ADR 0011's
+    /// liveness deadline (#54) actually cares about.
+    /// </summary>
+    /// <remarks>
+    /// Reads <see cref="PeerSlot.LastSendTimestamp"/> against this Reactor's own
+    /// <see cref="ReactorOptions.TimeProvider"/>, never the ambient clock, matching every other timer in
+    /// this Reactor. A Peer still mid-handshake is skipped exactly as <see cref="FlushOutboundDatagrams"/>
+    /// skips one — there is no established Session yet for a Heartbeat to prove anything about.
+    /// </remarks>
+    private void EnforceSendIdleTimer()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            {
+                continue;
+            }
+
+            if (_options.Reactor.TimeProvider.GetElapsedTime(slot.LastSendTimestamp) < _options.SendIdleInterval)
+            {
+                continue;
+            }
+
+            QueuePing(slot);
+        }
+    }
+
+    /// <summary>
+    /// Queues one seven-byte control record — the send-idle Ping (issue #340) — on
+    /// <paramref name="slot"/>'s <see cref="PeerSlot.PendingSends"/>, exactly as an ordinary
+    /// single-Fragment reliable <see cref="Send"/> queues one: the same <c>ReliableUnordered</c>
+    /// sequence allocation and retention commit, with <see cref="RetentionPool.TryAcquire"/>'s
+    /// <c>isControl</c> flag set so <see cref="TryResolvePendingPayload"/> — on this send and on every
+    /// later resend <see cref="ReportExpiredRetransmissions"/> re-queues — packs it through
+    /// <see cref="Session.DatagramRecordPacker.TryPackControlRecord"/> rather than as an ordinary
+    /// zero-length Message. A Ping is always <c>ReliableUnordered</c> (ADR 0009's control-record shape,
+    /// issue #338): ordering a Heartbeat against application data would only ever add a head-of-line
+    /// dependency neither needs.
+    /// </summary>
+    /// <remarks>
+    /// Spends nothing on a refusal, the same contract issue #244 established for <see cref="Send"/>: the
+    /// sequence is only read, never allocated, until <see cref="RetentionPool.TryAcquire"/> commits, so a
+    /// Peer whose <c>ReliableUnordered</c> Space has no free slot this Pump leaves its next sequence
+    /// exactly where it was and is tried again — this same check, unconditionally, every Pump — the next
+    /// time <see cref="EnforceSendIdleTimer"/> finds it still idle.
+    /// </remarks>
+    private void QueuePing(PeerSlot slot)
+    {
+        const PacketRecordMode mode = PacketRecordMode.ReliableUnordered;
+        int spaceIndex = ReliableSpaceIndex(mode);
+
+        uint sequence = slot.OutboundSequences.Peek(mode);
+        RetentionSlotOutcome outcome = _retention.TryAcquire(
+            slot.Handle.Index, spaceIndex, sequence, ReadOnlySpan<byte>.Empty, isControl: true);
+
+        if (outcome != RetentionSlotOutcome.Committed)
+        {
+            return;
+        }
+
+        slot.OutboundSequences.Allocate(mode);
+        slot.PendingSends.Add(new PendingOutboundRecord { Mode = mode, Sequence = sequence });
+    }
+
+    /// <summary>
     /// Packs as much as fits of <paramref name="slot"/>'s queue into one data Datagram, in Send order,
     /// and sends it (issue #216): the 20-byte header — this Peer's own <see cref="PeerSlot.RemoteSessionId"/>
     /// stamped as the session, since that is the id the far end asked to be stamped on datagrams sent to
@@ -1634,6 +1736,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// (<see cref="TryResolvePendingPayload"/>).
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>A record already acked before its flush.</b> An ack read earlier this same Pump (issue #345)
+    /// can release a sequence's retention slot before it reaches this flush — queued for its first send,
+    /// or re-queued for retransmission by <see cref="ReportExpiredRetransmissions"/> — in which case
+    /// <see cref="TryResolvePendingPayload"/> fails and the record below is consumed unsent rather than
+    /// retried: resending an already-released sequence would be a duplicate the far end has already
+    /// acknowledged, and no path on this ticket's live traffic wrote a payload to a released slot.
+    /// </para>
     /// <para>
     /// <b>A record that does not fit waits for the next Pump</b> (issue #230). Packing stops at the
     /// first record <see cref="DatagramRecordPacker.TryPackRecord"/> refuses — this Datagram is full —
@@ -1674,15 +1784,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         foreach (PendingOutboundRecord pending in slot.PendingSends)
         {
             if (!TryResolvePendingPayload(
-                slot, pending, out ReadOnlySpan<byte> payload, out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount))
+                slot, pending, out ReadOnlySpan<byte> payload, out bool isFragment, out ushort fragmentIndex,
+                out ushort fragmentCount, out bool isControl))
             {
                 consumed++;
                 continue;
             }
 
-            bool packed = isFragment
-                ? packer.TryPackFragmentRecord(pending.Mode, pending.Sequence, fragmentIndex, fragmentCount, payload)
-                : packer.TryPackRecord(pending.Mode, pending.Sequence, payload);
+            // A control record — the send-idle Ping (issue #340) — is packed through its own seven-byte
+            // shape, never through TryPackRecord: retention marked it control at TryAcquire, and that
+            // mark is what routes a first send and every later resend through the same packing call.
+            bool packed = isControl
+                ? packer.TryPackControlRecord(pending.Sequence)
+                : isFragment
+                    ? packer.TryPackFragmentRecord(pending.Mode, pending.Sequence, fragmentIndex, fragmentCount, payload)
+                    : packer.TryPackRecord(pending.Mode, pending.Sequence, payload);
 
             if (!packed)
             {
@@ -1730,6 +1846,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             _counters.RecordDatagramSent();
         }
+
+        // A data datagram just left for this Peer — this flush packed at least one record, or the
+        // RecordsPacked == 0 return above would already have exited — so the send-idle interval
+        // restarts from now (issue #340): the Ping this same flush may just have packed counts as a
+        // sent datagram exactly like any other, which is what keeps a Session that has nothing but
+        // Pings to send from ever emitting a second one before the next interval elapses.
+        slot.LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
     }
 
     /// <summary>
@@ -1739,8 +1862,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// at the reliable Space <paramref name="pending"/>'s mode addresses, which is where <see cref="Send"/>
     /// recorded them and the only place a retransmit — <paramref name="pending"/> itself carries nothing
     /// of the shape — can recover them from (issue #250). Fails — nothing to pack — only if a reliable
-    /// sequence was already released from retention between being queued and this flush, which no path
-    /// on this ticket's live traffic does yet.
+    /// sequence was already released from retention between being queued and this flush: an ack read
+    /// earlier the same Pump (issue #345) is the live path that does this today.
     /// </summary>
     /// <param name="slot">The Peer this record was queued against.</param>
     /// <param name="pending">The queued record whose bytes and shape are being resolved.</param>
@@ -1748,13 +1871,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <param name="isFragment">Whether the record is one piece of a Message cut into Fragments.</param>
     /// <param name="fragmentIndex">This piece's position within its Message, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
     /// <param name="fragmentCount">The Message's total piece count, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
+    /// <param name="isControl">
+    /// Whether this record is a control record — an idle-triggered Ping (issue #340) — rather than a
+    /// Message a consumer Sent, read back from <see cref="_retention"/> exactly as <paramref name="isFragment"/>
+    /// is. Always <see langword="false"/> for an unreliable record: nothing but a reliable
+    /// <c>ReliableUnordered</c> send-idle Ping is ever marked control.
+    /// </param>
     private bool TryResolvePendingPayload(
         PeerSlot slot,
         PendingOutboundRecord pending,
         out ReadOnlySpan<byte> payload,
         out bool isFragment,
         out ushort fragmentIndex,
-        out ushort fragmentCount)
+        out ushort fragmentCount,
+        out bool isControl)
     {
         if (pending.UnreliablePayload is byte[] bytes)
         {
@@ -1762,12 +1892,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             isFragment = false;
             fragmentIndex = 0;
             fragmentCount = 0;
+            isControl = false;
             return true;
         }
 
         int spaceIndex = ReliableSpaceIndex(pending.Mode);
         return _retention.TryRead(
-            slot.Handle.Index, spaceIndex, pending.Sequence, out payload, out isFragment, out fragmentIndex, out fragmentCount);
+            slot.Handle.Index, spaceIndex, pending.Sequence, out payload, out isFragment, out fragmentIndex, out fragmentCount, out isControl);
     }
 
     /// <summary>
@@ -1823,9 +1954,23 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// on ordinary loss as readily as on anything more serious, so nothing here closes, disconnects, or
     /// otherwise changes Session state — that is issue #270's job, off a different signal.
     /// </para>
+    /// <para>
+    /// <b>An admitted control record — a Ping — is acknowledged and never delivered</b> (issue #339).
+    /// <paramref name="isControl"/> comes from <see cref="PacketRecordCodec.TryRead"/>, which reports it
+    /// only for a record that is legally a Ping: <c>ReliableUnordered</c>, unfragmented, zero length.
+    /// Admission runs exactly as it does for any other record — the same <see
+    /// cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/> call above, the same
+    /// duplicate and out-of-window counting, the same ack block once <see
+    /// cref="ReceiveWindowSpaces.GenerateAckBlocks"/> next runs — so a Ping at sequence N is covered by
+    /// the ordinary ack block exactly as a Message at N would be, and a duplicate Ping raises <see
+    /// cref="PeerCounters.DuplicatePackets"/> exactly as a duplicate Message does. What differs is what
+    /// happens once admitted: neither <see cref="DeliverAdmittedRecord"/> nor <see cref="HoldFragment"/>
+    /// is reached for it, so no <see cref="SessionEventKind.MessageReceived"/> is queued and <see
+    /// cref="PeerCounters.MessagesReceived"/> does not rise.
+    /// </para>
     /// </remarks>
     private void ClassifyRecord(
-        PeerSlot slot, PacketRecordMode mode, uint sequence, bool isFragment,
+        PeerSlot slot, PacketRecordMode mode, uint sequence, bool isFragment, bool isControl,
         ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload)
     {
         ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
@@ -1860,7 +2005,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
         else if (outcome == ReceiveWindowOutcome.Admitted)
         {
-            if (isFragment && mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
+            if (isControl)
+            {
+                // A Ping (#339): admitted into its Space's receive window exactly like any other
+                // record above, so the ordinary ack block covers it and a duplicate counts like any
+                // other duplicate, but it carries no payload for a consumer to receive — no delivery
+                // path is reached, so MessagesReceived does not rise.
+            }
+            else if (isFragment && mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
             {
                 bool groupComplete = HoldFragment(slot, mode, sequence, ringSlot, fragmentIndex, fragmentCount, payload);
                 if (groupComplete)
@@ -2518,6 +2670,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         slot.RemoteMaxMessageSize = remoteMaxMessageSize;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
         slot.State = HandshakeState.Established;
+        slot.LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
 
         _dialsByNonce.Remove(clientNonce);
         _peersBySessionId[slot.LocalSessionId] = slot.Handle;
@@ -2601,6 +2754,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
+            LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp(),
         };
     }
 
@@ -2910,6 +3064,18 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>How far through the handshake this Peer has got.</summary>
         public required HandshakeState State { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> reading of this Peer's most recent data
+        /// datagram sent — set the moment this Peer reaches <see cref="HandshakeState.Established"/>,
+        /// on both the dialling path (<see cref="DatagramSessionReactor.OnAccept"/>) and the accepting
+        /// one (<see cref="DatagramSessionReactor.NewAcceptedPeer"/>), and restarted by
+        /// <see cref="DatagramSessionReactor.FlushPeer"/> every time a data Datagram actually reaches
+        /// the wire for this Peer (issue #340). The handshake's own control datagrams never touch this:
+        /// they are not data datagrams, and a Session that took several retransmitted Hellos to connect
+        /// should not start its idle clock earlier than the moment it actually became a Session.
+        /// </summary>
+        public long LastSendTimestamp { get; set; }
 
         /// <summary>
         /// This Peer's own mutable counters (ADR 0013), incremented on the hot path and read only

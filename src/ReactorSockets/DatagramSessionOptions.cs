@@ -169,10 +169,21 @@ public sealed class DatagramSessionOptions
     public required int RetentionBytes { get; init; }
 
     /// <summary>
-    /// How long a Session may go without sending before it sends a heartbeat instead. Required:
+    /// How long a Session may go without sending before it sends a Ping instead (issue #340). Required:
     /// shorter costs bandwidth on an idle link, longer costs time to notice a dead Peer, and only the
-    /// consumer knows which they would rather spend.
+    /// consumer knows which they would rather spend. There is no option to disable this: every
+    /// Established Peer that has sent no data datagram for this long is always sent one seven-byte
+    /// control record, whatever else it did or did not receive.
     /// </summary>
+    /// <remarks>
+    /// The Ping this produces is a Heartbeat, and a Heartbeat is not a keepalive: it proves the party
+    /// behind this Session is still there — able to receive and eventually acknowledge application data
+    /// — not merely that some NAT mapping between here and there is still open, which a bare keepalive a
+    /// middlebox itself could answer would not prove. Only the send side is built here
+    /// (<see cref="DatagramSessionReactor"/>'s send-idle timer); the receive-idle deadline that declares
+    /// a silent peer gone, and the missed-heartbeat count it is measured against, are a later slice's
+    /// (ADR 0011).
+    /// </remarks>
     public required TimeSpan SendIdleInterval { get; init; }
 
     /// <summary>

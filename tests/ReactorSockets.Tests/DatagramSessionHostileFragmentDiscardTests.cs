@@ -52,7 +52,11 @@ public class DatagramSessionHostileFragmentDiscardTests
     private const byte ModeReliableUnordered = 0b0000_0010;
     private const byte ModeReliableOrdered = 0b0000_0011;
     private const byte FragmentBit = 0b0000_0100;
-    private const byte SpareBit = 0b0000_1000;
+
+    // 0b0000_1000 is now DatagramSessionProtocol.ControlBit (issue #339), not a spare bit — this test
+    // needs a bit that is still genuinely spare to prove the general "unknown bit discards" rule, so it
+    // uses the next one up instead.
+    private const byte SpareBit = 0b0001_0000;
 
     [Fact]
     public void Pump_HostileFragmentWithIndexAtItsCount_DiscardsWholeDatagramAndLeavesTheWindowUntouched()
