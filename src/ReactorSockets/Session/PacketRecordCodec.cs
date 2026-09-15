@@ -201,13 +201,14 @@ internal static class PacketRecordCodec
             fragmentCount = candidateFragmentCount;
         }
 
-        // The control bit (#339) is legal on exactly one combination: ReliableUnordered, unfragmented,
-        // zero length — a Ping. Every other combination carrying the bit is refused here rather than
-        // treated as a spare bit, since SpareBitsMask no longer covers it: another mode, the fragment
-        // bit, or a nonzero length would let the bit mean something #341 has not yet decided, so this
-        // method fails the read instead of letting an unproven combination reach the caller.
+        // The control bit (#339) is legal on exactly one combination — ReliableUnordered, unfragmented,
+        // zero length, a Ping — stated once in PacketRecordLegality.IsLegalControlRecord (#341) rather
+        // than restated here. Every other combination carrying the bit is refused rather than treated as
+        // a spare bit, since SpareBitsMask no longer covers it: another mode, the fragment bit, or a
+        // nonzero length would let the bit mean something unproven, so this method fails the read
+        // instead of letting it reach the caller.
         isControl = (flags & DatagramSessionProtocol.ControlBit) != 0;
-        if (isControl && (mode != PacketRecordMode.ReliableUnordered || isFragment || length != 0))
+        if (isControl && !PacketRecordLegality.IsLegalControlRecord(mode, isFragment, length))
         {
             mode = default;
             sequence = default;
