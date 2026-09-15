@@ -42,7 +42,9 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
         bool bindLoopback = true,
         IReadOnlyList<IPEndPoint>? endpoints = null,
         RandomNumberGenerator? entropy = null,
-        FakeTimeProvider? timeProvider = null)
+        FakeTimeProvider? timeProvider = null,
+        TimeSpan? linger = null,
+        TimeSpan? sendIdleInterval = null)
     {
         IReactorDiagnostics? installedSink = withoutDiagnostics ? null : sinkOverride ?? Sink;
         Entropy = entropy ?? RandomNumberGenerator.Create();
@@ -63,8 +65,11 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
             FragmentSize = fragmentSize,
             ReceiveWindowFragments = receiveWindowFragments,
             MissedHeartbeats = missedHeartbeats,
-            SendIdleInterval = TimeSpan.FromSeconds(1),
-            Linger = TimeSpan.FromSeconds(1),
+            // Defaults far out (issue #340): a test that never mentions the send-idle timer should
+            // never see a Ping arrive uninvited mid-scenario and upset a wire-count assertion it wrote
+            // long before the Ping existed. Tests exercising the timer itself pass their own short value.
+            SendIdleInterval = sendIdleInterval ?? TimeSpan.FromHours(1),
+            Linger = linger ?? TimeSpan.FromSeconds(1),
             Endpoints = endpoints ?? (bindLoopback ? [new IPEndPoint(IPAddress.Loopback, 0)] : []),
             Entropy = Entropy,
         };
