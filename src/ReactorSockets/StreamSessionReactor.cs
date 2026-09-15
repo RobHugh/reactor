@@ -1456,7 +1456,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// so a counter due this Frame reaches the wire ahead of anything this Frame's own
     /// <see cref="Send"/> calls queued — harmless, since the counter names Messages the *peer* sent, an
     /// entirely separate stream position from this end's own outbound Messages the peer's parser
-    /// distinguishes by sentinel regardless of interleaving. What must never happen is a counter reaching
+    /// distinguishes by sentinel. That holds only at a frame boundary, so a Peer whose retention a short
+    /// write left partway through a frame (<see cref="RetentionArena.IsSentOnMessageBoundary"/>) is kept
+    /// in the set and retried next Pump rather than given a record (issue #333). What must never happen is a counter reaching
     /// the wire once a Goodbye has passed for this Peer in either direction — this end's own
     /// (<see cref="PeerSlot.LocalGoodbyeSent"/>, set the instant <see cref="Close"/> accepts
     /// responsibility for this end's Goodbye, before its bytes necessarily reach the wire) or the far
@@ -1474,8 +1476,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
 
         // Snapshot and clear first, the same shape RetryPeersWithBufferedMessages and
-        // FlushPendingRetentionWrites both use: nothing here repopulates this set synchronously within
-        // the loop, but taking the defensive shape keeps the invariant obvious without relying on that.
+        // FlushPendingRetentionWrites both use. A Peer held back by a half-sent frame below is added back
+        // to the set inside the loop, and the snapshot is what keeps that a retry next Pump rather than
+        // a change to the collection being iterated.
         SlotHandle[] pending = [.. _peersWithAdvancedReceivedCount];
         _peersWithAdvancedReceivedCount.Clear();
 
@@ -1497,6 +1500,18 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 // IsInterrupted (issue #119) guards the same way against a Peer whose read advanced this
                 // count and whose socket then failed a write in the very same Frame's dispatcher pass —
                 // its transport is already gone, so there is nowhere left to send this record.
+                continue;
+            }
+
+            if (!slot.AwaitingResumeCounter && !_retention.IsSentOnMessageBoundary(handle.Index))
+            {
+                // A short retention write left a frame half-sent (issue #333). A record written now, alone
+                // or leading a ride, lands inside that frame on the wire. Retried next Pump, once the
+                // frame's tail has drained; the tail is ahead of the record in the stream either way, so
+                // waiting costs at most one write. A Peer awaiting its resume counter is exempt: its sent
+                // total still describes the lost connection until the rewind, and nothing of retention
+                // has reached the new one.
+                _peersWithAdvancedReceivedCount.Add(handle);
                 continue;
             }
 
@@ -1685,6 +1700,15 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
             if (_options.Reactor.TimeProvider.GetElapsedTime(slot.LastSendTimestamp) < _options.SendIdleInterval)
             {
+                continue;
+            }
+
+            if (!slot.AwaitingResumeCounter && !_retention.IsSentOnMessageBoundary(slot.Handle.Index))
+            {
+                // Mirrors EmitDeliveryCounters' frame-boundary gate (issue #333): a heartbeat written while
+                // a short retention write left a frame half-sent lands inside that frame. Nothing needs
+                // re-queueing, since this scan asks again next Pump and the send-idle interval stays
+                // elapsed until something is written.
                 continue;
             }
 
