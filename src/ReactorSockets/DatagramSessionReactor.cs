@@ -2661,7 +2661,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out uint remoteSessionId,
                 out uint remoteMaxMessageSize,
                 out ulong remoteSendIdleIntervalMilliseconds,
-                out _, // The dialler's Linger: storing and negotiating it is issue #363, out of scope here.
+                out ulong remoteLingerMilliseconds,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2694,8 +2694,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         TimeSpan remoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
         if (_peers.TryAdd(NewAcceptedPeer(
-                source, link, remoteSessionId, remoteMaxMessageSize, remoteSendIdleInterval, remoteResumeSecret, clientNonce))
+                source, link, remoteSessionId, remoteMaxMessageSize, remoteSendIdleInterval, remoteLinger, remoteResumeSecret, clientNonce))
             is not SlotHandle handle)
         {
             _counters.RecordAdmissionDiscard();
@@ -2769,7 +2770,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out uint remoteSessionId,
                 out uint remoteMaxMessageSize,
                 out ulong remoteSendIdleIntervalMilliseconds,
-                out _, // The accepter's Linger: storing it to negotiate the effective value is issue #363, out of scope here.
+                out ulong remoteLingerMilliseconds,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2782,20 +2783,27 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        // ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize or send-idle
-        // interval at parse (issue #287, issue #348), so both values are already trusted by the time
-        // this Peer reaches Established — an internal invariant to assert rather than input to
-        // re-validate, mirroring NewAcceptedPeer's asserts on the accepting path.
+        // ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize, send-idle
+        // interval or Linger at parse (issue #287, issue #348, issue #362), so all three values are
+        // already trusted by the time this Peer reaches Established — an internal invariant to assert
+        // rather than input to re-validate, mirroring NewAcceptedPeer's asserts on the accepting path.
         Debug.Assert(
             remoteMaxMessageSize != 0,
             "ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize before this is called.");
         Debug.Assert(
             remoteSendIdleIntervalMilliseconds != 0,
             "ControlDatagramCodec.TryReadAccept rejects a zero-announced send-idle interval before this is called.");
+        Debug.Assert(
+            remoteLingerMilliseconds != 0,
+            "ControlDatagramCodec.TryReadAccept rejects a zero-announced Linger before this is called.");
+
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
 
         slot.RemoteSessionId = remoteSessionId;
         slot.RemoteMaxMessageSize = remoteMaxMessageSize;
         slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
+        slot.RemoteLinger = remoteLinger;
+        slot.EffectiveLinger = _options.Linger < remoteLinger ? _options.Linger : remoteLinger;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
         slot.State = HandshakeState.Established;
 
@@ -2865,22 +2873,27 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         uint remoteSessionId,
         uint remoteMaxMessageSize,
         TimeSpan remoteSendIdleInterval,
+        TimeSpan remoteLinger,
         ReadOnlySpan<byte> remoteResumeSecret,
         ulong clientNonce)
     {
-        // ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize or
-        // send-idle interval at parse (issue #287, issue #347), so by the time a Peer is built here,
-        // straight into Established, both values are already trusted — an internal invariant to
-        // assert rather than input to re-validate.
+        // ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize,
+        // send-idle interval or Linger at parse (issue #287, issue #347, issue #361), so by the time a
+        // Peer is built here, straight into Established, all three values are already trusted — an
+        // internal invariant to assert rather than input to re-validate.
         Debug.Assert(
             remoteMaxMessageSize != 0,
             "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize before this is called.");
         Debug.Assert(
             remoteSendIdleInterval > TimeSpan.Zero,
             "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced send-idle interval before this is called.");
+        Debug.Assert(
+            remoteLinger > TimeSpan.Zero,
+            "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced Linger before this is called.");
 
         RetransmissionTimer retransmitTimer = new();
         long now = _options.Reactor.TimeProvider.GetTimestamp();
+        TimeSpan effectiveLinger = _options.Linger < remoteLinger ? _options.Linger : remoteLinger;
         return new()
         {
             Remote = source,
@@ -2891,6 +2904,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RemoteSessionId = remoteSessionId,
             RemoteMaxMessageSize = remoteMaxMessageSize,
             RemoteSendIdleInterval = remoteSendIdleInterval,
+            RemoteLinger = remoteLinger,
+            EffectiveLinger = effectiveLinger,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
             State = HandshakeState.Established,
             AckTracker = NewAckTracker(retransmitTimer),
@@ -3204,6 +3219,28 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// missed-heartbeat count to get this Peer's receive-idle deadline.
         /// </summary>
         public TimeSpan RemoteSendIdleInterval { get; set; }
+
+        /// <summary>
+        /// The Linger the peer itself announced during the handshake (issue #361, issue #362) — never
+        /// this end's own <see cref="DatagramSessionOptions.Linger"/>. Set on both Established paths,
+        /// <see cref="DatagramSessionReactor.NewAcceptedPeer"/> (from the Hello-with-cookie field) and
+        /// <see cref="DatagramSessionReactor.OnAccept"/> (from the Accept field), from the value
+        /// <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> and
+        /// <see cref="ControlDatagramCodec.TryReadAccept"/> already reject as zero at parse. The minimum
+        /// of this and this end's own <see cref="DatagramSessionOptions.Linger"/> governs
+        /// (<see cref="EffectiveLinger"/>, ADR 0012 adopting ADR 0011's shape). The stream profile's
+        /// <see cref="StreamSessionReactor.PeerSlot.RemoteLinger"/> is the model this mirrors.
+        /// </summary>
+        public TimeSpan RemoteLinger { get; set; }
+
+        /// <summary>
+        /// The negotiated Linger — the minimum of this end's own <see cref="DatagramSessionOptions.Linger"/>
+        /// and <see cref="RemoteLinger"/> — set once the Session establishes, on both Established paths,
+        /// exactly where <see cref="RemoteLinger"/> is. Immutable for the Session's lifetime from that
+        /// point on, exactly as every other negotiated parameter is. Nothing reads this yet: the
+        /// Diagnostic is issue #364, the RTO ceiling issue #365 and expiry issue #367.
+        /// </summary>
+        public TimeSpan EffectiveLinger { get; set; }
 
         /// <summary>
         /// This Peer's own fragment size, resolved from <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
