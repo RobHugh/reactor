@@ -1667,6 +1667,31 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="PeerSlot.RemoteSendIdleInterval"/> times <see cref="DatagramSessionOptions.ResolvedMissedHeartbeats"/>.
     /// Mirrors <see cref="StreamSessionReactor.HasExceededReceiveIdleDeadline"/>.
     /// </summary>
+    /// <remarks>
+    /// This profile has an adaptive RTO already, unlike the stream profile, and the deadline is
+    /// deliberately not derived from it (issue #359, ADR 0012). The RTO answers "when do I resend the
+    /// probe", a fact about the current path that must keep adapting. The count answers "how many
+    /// missed intervals before I give up", the consumer's own tolerance, which must not adapt with it.
+    /// Deriving the deadline from the RTO would stretch that tolerance exactly when the path degrades,
+    /// since backing off the RTO is what the estimator does when the path is bad, so the consumer
+    /// would wait longest precisely when it most wanted to be told. It would also tie a consumer-facing
+    /// promise to an estimator that Karn's algorithm is already discarding samples from. The Ping
+    /// still inherits the adaptive RTO for its own retransmission (#343), so the path-adaptivity this
+    /// profile has stays there instead of leaking into liveness. Keeping the deadline a plain count
+    /// also means a consumer moving between the datagram and stream session profiles does not have to
+    /// relearn how liveness works.
+    ///
+    /// Validating this is structural rather than arithmetic: <see cref="DatagramSessionOptions"/>
+    /// rejects a <see cref="DatagramSessionOptions.MissedHeartbeats"/> count below 2 at construction,
+    /// and a count of at least 2 already guarantees room for one probe and one retransmission, because
+    /// the RTO floor is the observed Pump interval (<see cref="ObservedPumpInterval"/>) and the
+    /// send-idle interval necessarily exceeds one Pump. No round-trip term needs to appear in the
+    /// deadline itself. In consumer terms: a peer announcing a 10-second send-idle interval, at the
+    /// default count of 3, is declared lost after 30 seconds of silence from it.
+    ///
+    /// See the tolerance test that degrades the path and confirms the deadline does not stretch with
+    /// it, referred to in this codebase as <c>DatagramSessionLivenessToleranceTests</c>.
+    /// </remarks>
     private bool HasExceededReceiveIdleDeadline(PeerSlot slot) =>
         _options.Reactor.TimeProvider.GetElapsedTime(slot.LastReceiveTimestamp)
             >= slot.RemoteSendIdleInterval * _options.ResolvedMissedHeartbeats;
