@@ -353,7 +353,12 @@ public class DatagramSessionSequenceWrapTests
     private static PeerId FindAccepterPeer(DatagramSessionReactorHarness accepter)
     {
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
-        return drained.First(e => e.Kind == SessionEventKind.PeerConnected).Peer;
+        PeerId peer = drained.First(e => e.Kind == SessionEventKind.PeerConnected).Peer;
+
+        // Establishment itself logs DiagnosticId.LingerNegotiated (issue #364); every test in this
+        // file wants a clean Sink for the arrivals it is actually testing.
+        accepter.Sink.Received.Clear();
+        return peer;
     }
 
     /// <summary>

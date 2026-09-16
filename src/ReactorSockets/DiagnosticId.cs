@@ -185,9 +185,10 @@ public enum DiagnosticId
     PeerRefused = 300,
 
     /// <summary>
-    /// A stream handshake completed and the two ends' announced Linger values were negotiated to their
-    /// minimum (ADR 0011). Subject is the newly established Peer. <c>Value0</c> is this end's own
-    /// Linger in milliseconds; <c>Value1</c> is the effective (minimum) Linger in milliseconds.
+    /// A Session established — on either profile, stream or datagram — and the two ends' announced
+    /// Linger values were negotiated to their minimum (ADR 0011). Subject is the newly established
+    /// Peer. <c>Value0</c> is this end's own Linger in milliseconds; <c>Value1</c> is the effective
+    /// (minimum) Linger in milliseconds.
     /// </summary>
     LingerNegotiated = 301,
 
