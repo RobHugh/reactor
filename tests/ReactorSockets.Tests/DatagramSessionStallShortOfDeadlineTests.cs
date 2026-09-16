@@ -53,14 +53,17 @@ public class DatagramSessionStallShortOfDeadlineTests
 
         // Act — stall the accepter-to-dialler direction for 1.2 intervals: a little over one missed
         // heartbeat, well short of the MissedHeartbeats-count deadline that guards against it.
+        // Pump drops any Event a previous Pump queued but nobody drained, and an Interrupted Peer is never
+        // interrupted again, so every Pump's Events are drained in the step that ran it.
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerEvents = [];
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> accepterEvents = [];
+
         proxy.SetPayloadDropRule(RelayDirection.UpstreamToClient, _ => true);
 
         TimeSpan stall = TimeSpan.FromMilliseconds(_sendIdleInterval.TotalMilliseconds * 1.2);
-        DatagramSessionReactorHarness.SettleThenAdvance(dialler, stall);
+        AdvanceInSteps(stall);
 
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> duringStall =
-            dialler.PumpAndDrainAll(1);
-        duringStall.Should().NotContain(
+        diallerEvents.Should().NotContain(
             e => e.Kind == SessionEventKind.PeerInterrupted, "a stall of a little over one interval is within the default count");
 
         // Act — resume relaying and pump both sides through several more intervals. If
@@ -68,15 +71,12 @@ public class DatagramSessionStallShortOfDeadlineTests
         // deadline measured from establishment would already have elapsed by now.
         proxy.SetPayloadDropRule(RelayDirection.UpstreamToClient, null);
 
-        for (int i = 0; i < MissedHeartbeats * 2; i++)
-        {
-            DatagramSessionReactorHarness.SettleThenAdvance(dialler, _sendIdleInterval);
-            DatagramSessionReactorHarness.PumpRoundThroughProxy(dialler, proxy, accepter);
-        }
+        AdvanceInSteps(_sendIdleInterval * (MissedHeartbeats * 2));
 
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> afterResuming =
-            dialler.PumpAndDrainAll(1);
-        afterResuming.Should().NotContain(e => e.Kind == SessionEventKind.PeerInterrupted);
+        diallerEvents.Should().NotContain(
+            e => e.Kind == SessionEventKind.PeerInterrupted || e.Kind == SessionEventKind.PeerClosed);
+        accepterEvents.Should().NotContain(
+            e => e.Kind == SessionEventKind.PeerInterrupted || e.Kind == SessionEventKind.PeerClosed);
 
         // Assert — the Session still delivers a Message afterwards.
         SendOutcome outcome = accepter.Reactor.Send(accepterPeer, DeliveryMode.ReliableOrdered, "still alive"u8);
@@ -87,5 +87,17 @@ public class DatagramSessionStallShortOfDeadlineTests
 
         dialler.DrainPayloads().Should().ContainSingle(
             payload => System.Text.Encoding.UTF8.GetString(payload) == "still alive");
+
+        void AdvanceInSteps(TimeSpan span)
+        {
+            TimeSpan step = TimeSpan.FromMilliseconds(50);
+            for (TimeSpan elapsed = TimeSpan.Zero; elapsed < span; elapsed += step)
+            {
+                timeProvider.Advance(step);
+                DatagramSessionReactorHarness.PumpRoundThroughProxy(dialler, proxy, accepter);
+                diallerEvents.AddRange(dialler.DrainToList());
+                accepterEvents.AddRange(accepter.DrainToList());
+            }
+        }
     }
 }

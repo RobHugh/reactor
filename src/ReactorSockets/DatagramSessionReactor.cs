@@ -296,6 +296,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     internal TimeSpan ObservedPumpInterval => _pumpIntervalObserver.Interval;
 
+    /// <summary>
+    /// This Reactor's <see cref="DatagramSessionOptions.SendIdleInterval"/> as announced on
+    /// Hello-with-cookie and Accept, in whole milliseconds rounded up. Rounding up keeps a
+    /// sub-millisecond interval from going out as zero, which the peer rejects as malformed, and never
+    /// shortens the deadline the peer derives from it.
+    /// </summary>
+    private ulong AnnouncedSendIdleIntervalMilliseconds => (ulong)Math.Ceiling(_options.SendIdleInterval.TotalMilliseconds);
+
     /// <inheritdoc cref="ISessionEventSource.PendingEventCount"/>
     int ISessionEventSource.PendingEventCount => _pendingEvents.Count;
 
@@ -1699,7 +1707,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Moves every Established Peer that has exceeded <see cref="HasExceededReceiveIdleDeadline"/> to
     /// <see cref="PeerSlot.IsInterrupted"/> and queues its <see cref="SessionEventKind.PeerInterrupted"/>
-    /// (issue #352, subtask 8.2.6), run once per <see cref="Pump"/> ahead of
+    /// (issue #352), run once per <see cref="Pump"/> ahead of
     /// <see cref="EnforceSendIdleTimer"/> — the two timers are independent: this one reads only receive
     /// state, that one only send state, and neither call arms or disarms the other. No
     /// <see cref="DiagnosticGateway"/> record is logged for the transition, since it is already reported
@@ -2720,7 +2728,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             cookie,
             slot.LocalSessionId,
             (uint)_options.MaxMessageSize,
-            (ulong)_options.SendIdleInterval.TotalMilliseconds,
+            AnnouncedSendIdleIntervalMilliseconds,
             slot.LocalResumeSecret);
         SendControl(link, source);
     }
@@ -2890,7 +2898,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             slot.ClientNonce,
             slot.LocalSessionId,
             (uint)_options.MaxMessageSize,
-            (ulong)_options.SendIdleInterval.TotalMilliseconds,
+            AnnouncedSendIdleIntervalMilliseconds,
             slot.LocalResumeSecret);
         SendControl(link, slot.Remote);
     }
@@ -3163,14 +3171,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <summary>
         /// The send-idle interval the peer itself announced during the handshake (issue #349) — never
         /// this end's own <see cref="DatagramSessionOptions.SendIdleInterval"/>. Set on both Established
-        /// paths, <see cref="DatagramSessionReactor.NewAcceptedPeer"/> (from 8.2.1's Hello-with-cookie
-        /// field) and <see cref="DatagramSessionReactor.OnAccept"/> (from 8.2.2's Accept field), from
+        /// paths, <see cref="DatagramSessionReactor.NewAcceptedPeer"/> (from the Hello-with-cookie field,
+        /// issue #347) and <see cref="DatagramSessionReactor.OnAccept"/> (from the Accept field, issue #348), from
         /// the value <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> and
         /// <see cref="ControlDatagramCodec.TryReadAccept"/> already reject as zero at parse, so it is
         /// always positive once a Peer reaches Established. The stream profile's
         /// <see cref="StreamSessionReactor.PeerSlot.RemoteSendIdleInterval"/> is the model this mirrors.
-        /// Nothing reads this yet: the receive-idle deadline that multiplies it by a missed-heartbeats
-        /// count is issue #352.
+        /// <see cref="DatagramSessionReactor.HasExceededReceiveIdleDeadline"/> multiplies it by the
+        /// missed-heartbeat count to get this Peer's receive-idle deadline.
         /// </summary>
         public TimeSpan RemoteSendIdleInterval { get; set; }
 

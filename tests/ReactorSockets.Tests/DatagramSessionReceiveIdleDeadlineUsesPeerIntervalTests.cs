@@ -100,7 +100,7 @@ public class DatagramSessionReceiveIdleDeadlineUsesPeerIntervalTests
         // Assert — at the dialler's own interval × missed heartbeats (3s), nothing has happened: the
         // deadline is computed from the peer's announced interval, not the dialler's own.
         DatagramSessionReactorHarness.SettleThenAdvance(dialler, ownIntervalDeadline);
-        dialler.DrainToList().Should().NotContain(
+        dialler.PumpAndDrainAll(1).Should().NotContain(
             e => e.Kind == SessionEventKind.PeerInterrupted, "the dialler's own send-idle interval must not drive its receive-idle deadline");
 
         // Assert — one Pump interval short of the peer-interval deadline (15s): still nothing.
