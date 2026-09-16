@@ -2552,7 +2552,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 cookie,
                 out uint remoteSessionId,
                 out uint remoteMaxMessageSize,
-                out _, // The dialler's send-idle interval: storing it is issue #349, out of scope here.
+                out ulong remoteSendIdleIntervalMilliseconds,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2584,7 +2584,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        if (_peers.TryAdd(NewAcceptedPeer(source, link, remoteSessionId, remoteMaxMessageSize, remoteResumeSecret, clientNonce))
+        TimeSpan remoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
+        if (_peers.TryAdd(NewAcceptedPeer(
+                source, link, remoteSessionId, remoteMaxMessageSize, remoteSendIdleInterval, remoteResumeSecret, clientNonce))
             is not SlotHandle handle)
         {
             _counters.RecordAdmissionDiscard();
@@ -2656,7 +2658,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out ulong clientNonce,
                 out uint remoteSessionId,
                 out uint remoteMaxMessageSize,
-                out _, // The accepter's send-idle interval: storing it is issue #349, out of scope here.
+                out ulong remoteSendIdleIntervalMilliseconds,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2669,8 +2671,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
+        // ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize or send-idle
+        // interval at parse (issue #287, issue #348), so both values are already trusted by the time
+        // this Peer reaches Established — an internal invariant to assert rather than input to
+        // re-validate, mirroring NewAcceptedPeer's asserts on the accepting path.
+        Debug.Assert(
+            remoteMaxMessageSize != 0,
+            "ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize before this is called.");
+        Debug.Assert(
+            remoteSendIdleIntervalMilliseconds != 0,
+            "ControlDatagramCodec.TryReadAccept rejects a zero-announced send-idle interval before this is called.");
+
         slot.RemoteSessionId = remoteSessionId;
         slot.RemoteMaxMessageSize = remoteMaxMessageSize;
+        slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
         slot.State = HandshakeState.Established;
         slot.LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
@@ -2731,15 +2745,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         UdpLink link,
         uint remoteSessionId,
         uint remoteMaxMessageSize,
+        TimeSpan remoteSendIdleInterval,
         ReadOnlySpan<byte> remoteResumeSecret,
         ulong clientNonce)
     {
-        // ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize at parse
-        // (issue #287), so by the time a Peer is built here, straight into Established, the value is
-        // already trusted — an internal invariant to assert rather than input to re-validate.
+        // ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize or
+        // send-idle interval at parse (issue #287, issue #347), so by the time a Peer is built here,
+        // straight into Established, both values are already trusted — an internal invariant to
+        // assert rather than input to re-validate.
         Debug.Assert(
             remoteMaxMessageSize != 0,
             "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize before this is called.");
+        Debug.Assert(
+            remoteSendIdleInterval > TimeSpan.Zero,
+            "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced send-idle interval before this is called.");
 
         RetransmissionTimer retransmitTimer = new();
         return new()
@@ -2751,6 +2770,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             LocalResumeSecret = NextResumeSecret(),
             RemoteSessionId = remoteSessionId,
             RemoteMaxMessageSize = remoteMaxMessageSize,
+            RemoteSendIdleInterval = remoteSendIdleInterval,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
             State = HandshakeState.Established,
             AckTracker = NewAckTracker(retransmitTimer),
@@ -3048,6 +3068,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// re-establish this value the same way the initial handshake does.
         /// </summary>
         public uint RemoteMaxMessageSize { get; set; }
+
+        /// <summary>
+        /// The send-idle interval the peer itself announced during the handshake (issue #349) — never
+        /// this end's own <see cref="DatagramSessionOptions.SendIdleInterval"/>. Set on both Established
+        /// paths, <see cref="DatagramSessionReactor.NewAcceptedPeer"/> (from 8.2.1's Hello-with-cookie
+        /// field) and <see cref="DatagramSessionReactor.OnAccept"/> (from 8.2.2's Accept field), from
+        /// the value <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> and
+        /// <see cref="ControlDatagramCodec.TryReadAccept"/> already reject as zero at parse, so it is
+        /// always positive once a Peer reaches Established. The stream profile's
+        /// <see cref="StreamSessionReactor.PeerSlot.RemoteSendIdleInterval"/> is the model this mirrors.
+        /// Nothing reads this yet: the receive-idle deadline that multiplies it by a missed-heartbeats
+        /// count is issue #352.
+        /// </summary>
+        public TimeSpan RemoteSendIdleInterval { get; set; }
 
         /// <summary>
         /// This Peer's own fragment size, resolved from <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
