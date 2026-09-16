@@ -1711,8 +1711,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="EnforceSendIdleTimer"/> — the two timers are independent: this one reads only receive
     /// state, that one only send state, and neither call arms or disarms the other. No
     /// <see cref="DiagnosticGateway"/> record is logged for the transition, since it is already reported
-    /// as an Event (ADR 0013). Skips a Peer already <see cref="PeerSlot.IsInterrupted"/> (issue #353), so
-    /// a deadline that stays exceeded after the transition never raises a second Event for it.
+    /// as an Event (ADR 0013). Also stamps <see cref="PeerSlot.InterruptedTimestamp"/> on the same Pump
+    /// (issue #366) — the moment this Peer's effective Linger begins counting down (#55). Skips a Peer
+    /// already <see cref="PeerSlot.IsInterrupted"/> (issue #353), so a deadline that stays exceeded after
+    /// the transition never raises a second Event, and never re-stamps the timestamp, for it.
     /// </summary>
     private void EnforceReceiveIdleTimer()
     {
@@ -1734,6 +1736,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
 
             slot.IsInterrupted = true;
+            slot.InterruptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
             _pendingEvents.Add(new PendingEvent
             {
                 Kind = SessionEventKind.PeerInterrupted,
@@ -3246,6 +3249,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// #353). Leaving Interrupted, and what Interrupted changes about Send or Linger, is #55's.
         /// </summary>
         public bool IsInterrupted { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> value at the instant <see cref="EnforceReceiveIdleTimer"/>
+        /// set <see cref="IsInterrupted"/> (issue #366) — the moment this Peer's effective Linger begins
+        /// counting down (#55). Stamped on the same Pump as <see cref="IsInterrupted"/> and only then:
+        /// the #353 guard that skips a Peer already Interrupted also skips this field, so it is never
+        /// re-stamped while the interruption continues.
+        /// </summary>
+        public long InterruptedTimestamp { get; set; }
 
         /// <summary>
         /// This Peer's own mutable counters (ADR 0013), incremented on the hot path and read only
