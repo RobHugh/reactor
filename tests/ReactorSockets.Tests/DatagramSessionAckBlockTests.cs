@@ -9,23 +9,23 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Subtask 6.3.6 (issue #188): wiring the two reliable ack blocks an arriving live-Session datagram
 /// carries into the receiving Peer's <c>OutstandingReliableSequences</c> tracker. Nothing on this
-/// ticket's live paths ever calls <c>RecordSent</c> â€” the datagram profile has no outbound data send
-/// yet (6.4/6.5's) â€” so a deferral can never actually occur here; what these tests can prove through
+/// ticket's live paths ever calls <c>RecordSent</c> — the datagram profile has no outbound data send
+/// yet (6.4/6.5's) — so a deferral can never actually occur here; what these tests can prove through
 /// the public seam is that arriving nonzero ack blocks are read and applied without disturbing anything
 /// else the parse loop already does, that the horizon-deferral reconciliation this wiring adds still
 /// reads zero exactly as it did before, and that reading two extra ack blocks off every arrival costs no
 /// allocation. Whether <c>ApplyAck</c> itself was actually invoked is not observable through the public
-/// surface at all â€” <c>OutstandingReliableSequences</c> has no public reader â€” so that half of the
+/// surface at all — <c>OutstandingReliableSequences</c> has no public reader — so that half of the
 /// ticket is not asserted here (see the ticket report).
 /// </summary>
 /// <remarks>
 /// <para>
 /// Subtask 6.3.8 (issue #190) extends this file rather than sitting beside it, per that ticket: the
 /// untrusted-ack criterion is the one edge of the ack path genuinely reachable through the public seam
-/// (a peer's own send is not â€” no outbound data datagram is ever produced by this codebase, see the
+/// (a peer's own send is not — no outbound data datagram is ever produced by this codebase, see the
 /// ticket report). These tests drive a raw client's ack blocks with values no legitimate sender could
-/// ever produce â€” every bit set, a base at the <c>u32</c> wrap, a base far ahead of anything sent, and a
-/// long fixed-seed run of wildly flipping bases and bits â€” and assert only what the seam can show: no
+/// ever produce — every bit set, a base at the <c>u32</c> wrap, a base far ahead of anything sent, and a
+/// long fixed-seed run of wildly flipping bases and bits — and assert only what the seam can show: no
 /// <see cref="DiagnosticId.DatagramMalformed"/>, no thrown exception, no Session event, the
 /// <c>HorizonDeferrals</c> counter staying at zero (nothing legitimate was ever sent for the horizon rule
 /// to defer), and the Session still processing an ordinary arrival afterwards.
@@ -37,11 +37,11 @@ namespace ReactorSockets.Tests;
 /// is what a `DatagramSessionReactor`-only seam can prove about that: the per-arrival read of
 /// <c>ObservedPumpInterval</c> and <c>Linger</c> that now feeds every <c>ApplyAck</c> call keeps working,
 /// under no fixed cadence, a very fast one and a very slow one, without a malformed report or a Warn
-/// diagnostic. Everything 6.4.7's own acceptance criteria actually ask for â€” that arming reads the RTO
+/// diagnostic. Everything 6.4.7's own acceptance criteria actually ask for — that arming reads the RTO
 /// fresh rather than at construction, that a horizon slide arms at the RTO current when the slide
 /// happens, that a release feeds the estimator one sample carrying whether the sequence was
 /// retransmitted, that a still-deferred release feeds none, and that two sequences armed at different
-/// moments get different, non-retroactive deadlines â€” needs a sequence to have been recorded as sent at
+/// moments get different, non-retroactive deadlines — needs a sequence to have been recorded as sent at
 /// all. <c>OutstandingReliableSequences</c> is <see langword="internal"/> with no
 /// <c>InternalsVisibleTo</c>, and, as this file's own summary above already says, nothing on any live
 /// path calls <c>RecordSent</c> yet (the datagram profile's outbound data send is still 6.4/6.5's, later
@@ -57,8 +57,8 @@ namespace ReactorSockets.Tests;
 /// it: the horizon withholding deadlines, an arriving ack block releasing outstanding sequences, and a
 /// slide arming what it newly covers, all read through
 /// <see cref="PeerCounters.PacketsRetransmitted"/> and
-/// <see cref="PeerCounters.HorizonDeferrals"/>. The tests in this file keep their own value â€”
-/// they are the untrusted-input and parse-robustness half â€” and their zero-deferral assertions still
+/// <see cref="PeerCounters.HorizonDeferrals"/>. The tests in this file keep their own value —
+/// they are the untrusted-input and parse-robustness half — and their zero-deferral assertions still
 /// hold, because nothing here ever Sends.
 /// </para>
 /// </remarks>
@@ -102,7 +102,7 @@ public class DatagramSessionAckBlockTests
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > receivedBefore);
 
-        // Assert â€” the ack-bearing header parsed without being reported malformed, nothing was
+        // Assert — the ack-bearing header parsed without being reported malformed, nothing was
         // delivered or discarded as a record, and the reconciliation this ticket adds still reads
         // zero: nothing on the live receive path ever arms a deadline, so no deferral can occur.
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
@@ -113,7 +113,7 @@ public class DatagramSessionAckBlockTests
     [Fact]
     public void Pump_HeaderTruncatedInsideAnAckBlock_IsDiscardedWithDatagramMalformedExactlyAsBefore()
     {
-        // Arrange â€” 16 of the header's 20 bytes: past the session id and the whole ReliableOrdered
+        // Arrange — 16 of the header's 20 bytes: past the session id and the whole ReliableOrdered
         // block, but short of the ReliableUnordered block. This proves the ack-block read this ticket
         // added does not change what already made a short header fail to parse.
         using DatagramSessionReactorHarness accepter = new();
@@ -129,7 +129,7 @@ public class DatagramSessionAckBlockTests
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
         accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > before);
 
-        // Assert â€” discarded exactly as an unrecognisable-length datagram always was, and nothing was
+        // Assert — discarded exactly as an unrecognisable-length datagram always was, and nothing was
         // applied: the horizon-deferral figure stays at zero, matching a Peer nothing was ever applied
         // to.
         accepter.Sink.Received.Should().Contain(record => record.Id == DiagnosticId.DatagramMalformed);
@@ -139,7 +139,7 @@ public class DatagramSessionAckBlockTests
     [Fact]
     public void Pump_ASustainedRunOfArrivalsCarryingChangingAckBlocks_DoesNotGrowAllocationAsTheRunContinues()
     {
-        // Arrange â€” the two ack blocks this ticket wires into the receive path are read off every
+        // Arrange — the two ack blocks this ticket wires into the receive path are read off every
         // arrival, whether or not they carry anything new; this proves that reading them and applying
         // them to the Peer's tracker costs no allocation, matching the receive path's existing
         // allocation-free discipline (issue #171 and its neighbours).
@@ -153,7 +153,7 @@ public class DatagramSessionAckBlockTests
 
         RunCycles(accepter, client, clientLink, sessionId, warmupCycles);
 
-        // Act â€” two equal-length phases, each advancing the ack base it sends so every arrival is a
+        // Act — two equal-length phases, each advancing the ack base it sends so every arrival is a
         // fresh, newer block the tracker actually moves its horizon for, not a repeat of the one before.
         GC.Collect();
         GC.WaitForPendingFinalizers();
@@ -169,7 +169,7 @@ public class DatagramSessionAckBlockTests
         RunCycles(accepter, client, clientLink, sessionId, measuredCyclesPerPhase);
         long phaseTwoDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseTwo;
 
-        // Assert â€” a per-datagram L1 cost is expected and unavoidable; what must not happen is that
+        // Assert — a per-datagram L1 cost is expected and unavoidable; what must not happen is that
         // cost climbing as the run goes on, which is what a tracker that allocated on every ack it
         // applied would show up as.
         phaseTwoDelta.Should().BeLessThanOrEqualTo(phaseOneDelta * 2 + 1);
@@ -178,7 +178,7 @@ public class DatagramSessionAckBlockTests
     [Fact]
     public void Pump_AckBlocksWithEveryBitSetInBothReliableSpaces_SurvivesWithoutMalformedOrThrowingAndLeavesHorizonDeferralsAtZero()
     {
-        // Arrange â€” subtask 6.3.8 (#190): an ack block describing sequences the sender never sent is
+        // Arrange — subtask 6.3.8 (#190): an ack block describing sequences the sender never sent is
         // untrusted input. All 32 bits set claims every one of the 32 sequences above the base is
         // outstanding and now acknowledged, none of which this raw client ever sent.
         using DatagramSessionReactorHarness accepter = new();
@@ -199,7 +199,7 @@ public class DatagramSessionAckBlockTests
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > receivedBefore);
 
-        // Assert â€” nothing was ever recorded as sent, so nothing exists to release; the point is that
+        // Assert — nothing was ever recorded as sent, so nothing exists to release; the point is that
         // an all-bits-set block against an empty tracker parses cleanly, is not reported malformed, and
         // never arms a deadline for a sequence that was never sent.
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
@@ -210,7 +210,7 @@ public class DatagramSessionAckBlockTests
     [Fact]
     public void Pump_AckBaseAtUInt32MaxValueWithEveryBitSet_SurvivesTheWrappingAdditionWithoutThrowing()
     {
-        // Arrange â€” subtask 6.3.8 (#190): a base of uint.MaxValue makes every bit's described sequence
+        // Arrange — subtask 6.3.8 (#190): a base of uint.MaxValue makes every bit's described sequence
         // (ackBase + n + 1) wrap past zero. This is the arithmetic edge the untrusted-ack criterion asks
         // for: a hostile base placed exactly where unchecked addition wraps.
         using DatagramSessionReactorHarness accepter = new();
@@ -231,7 +231,7 @@ public class DatagramSessionAckBlockTests
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > receivedBefore);
 
-        // Assert â€” parsed and applied cleanly across the wrap, nothing reported malformed, nothing
+        // Assert — parsed and applied cleanly across the wrap, nothing reported malformed, nothing
         // deferred (nothing was ever sent to defer).
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         accepter.DrainToList().Should().BeEmpty();
@@ -241,8 +241,8 @@ public class DatagramSessionAckBlockTests
     [Fact]
     public void Pump_AckBaseFarAheadOfAnythingEverSent_SurvivesAndAppliesWithoutThrowing()
     {
-        // Arrange â€” subtask 6.3.8 (#190): a base far ahead of anything this Session's Peer could ever
-        // legitimately have sent (nothing has been sent at all â€” no outbound data send exists yet on
+        // Arrange — subtask 6.3.8 (#190): a base far ahead of anything this Session's Peer could ever
+        // legitimately have sent (nothing has been sent at all — no outbound data send exists yet on
         // this profile). The receiving Peer has no way to know that, so it must accept the claim without
         // misbehaving.
         using DatagramSessionReactorHarness accepter = new();
@@ -273,9 +273,9 @@ public class DatagramSessionAckBlockTests
     [Fact]
     public void Pump_ASustainedRunOfWildlyFlippingHostileAckBlocks_NeverThrowsKeepsHorizonDeferralsAtZeroAndLeavesThePeerConnected()
     {
-        // Arrange â€” subtask 6.3.8 (#190): a long run of arrivals whose ack bases and bits flip wildly
-        // between one datagram and the next â€” forward jumps, backward jumps landing on now-stale bases,
-        // the two wrap edges, all-zero and all-one bitfields, and ordinary small values â€” driven from a
+        // Arrange — subtask 6.3.8 (#190): a long run of arrivals whose ack bases and bits flip wildly
+        // between one datagram and the next — forward jumps, backward jumps landing on now-stale bases,
+        // the two wrap edges, all-zero and all-one bitfields, and ordinary small values — driven from a
         // fixed seed so a failure is reproducible. Nothing here was ever legitimately sent, so this is
         // squarely the untrusted-ack criterion: the Peer must survive every shape without throwing,
         // without gaining a deferral that has nothing behind it, and without the Session itself being
@@ -308,14 +308,14 @@ public class DatagramSessionAckBlockTests
             allDrained.AddRange(accepter.DrainToList());
         }
 
-        // Assert â€” no record ever hit the Sink as malformed, nothing was ever delivered or disconnected,
+        // Assert — no record ever hit the Sink as malformed, nothing was ever delivered or disconnected,
         // and the deferral figure stayed at zero throughout: no legitimate send exists for the horizon
         // rule to have anything real to defer.
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         allDrained.Should().BeEmpty();
         accepter.Reactor.CountersOf(accepterPeer).HorizonDeferrals.Should().Be(0);
 
-        // Assert â€” the Peer is still alive and the Reactor still usable: an ordinary further exchange
+        // Assert — the Peer is still alive and the Reactor still usable: an ordinary further exchange
         // still works after the hostile run, proving the run left the Session itself intact rather than
         // merely failing to crash mid-run.
         byte[] ordinaryFollowUp = BuildHeader(sessionId, 0, 0, 0, 0);
@@ -329,10 +329,10 @@ public class DatagramSessionAckBlockTests
     [Fact]
     public void ParseDataDatagram_ArrivalsSeparatedByVaryingPumpCadences_StillDeriveTheEffectiveRtoWithoutMalformedOrWarnDiagnostic()
     {
-        // Arrange â€” subtask 6.4.7 (#197): every arrival's two ApplyAck calls now take an effective RTO
+        // Arrange — subtask 6.4.7 (#197): every arrival's two ApplyAck calls now take an effective RTO
         // read fresh from ObservedPumpInterval and Linger, in place of the constant #197 deletes. This
-        // varies the gap between Pumps under the harness's FakeTimeProvider â€” no advance at all (the
-        // unseeded TimeSpan.MaxValue case), a very fast cadence, then a very slow one â€” so the value fed
+        // varies the gap between Pumps under the harness's FakeTimeProvider — no advance at all (the
+        // unseeded TimeSpan.MaxValue case), a very fast cadence, then a very slow one — so the value fed
         // into ApplyAck actually changes across the run, exercising the new computation rather than
         // leaving it always evaluated once at a single cadence.
         using DatagramSessionReactorHarness accepter = new();
@@ -368,7 +368,7 @@ public class DatagramSessionAckBlockTests
             accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
         }
 
-        // Assert â€” the wiring stayed healthy across every cadence the run exercised: nothing was
+        // Assert — the wiring stayed healthy across every cadence the run exercised: nothing was
         // reported malformed, nothing was delivered or disconnected, no Warn-or-above diagnostic was
         // raised, and the deferral figure stayed at zero, matching a Peer nothing was ever legitimately
         // sent to.
@@ -380,8 +380,8 @@ public class DatagramSessionAckBlockTests
 
     /// <summary>
     /// Draws one hostile <c>u32</c>: mostly a uniformly random value, but biased toward the edges a
-    /// wrap-aware tracker must handle correctly â€” zero, <see cref="uint.MaxValue"/>, and values either
-    /// side of the wrap â€” so the fixed-seed run in
+    /// wrap-aware tracker must handle correctly — zero, <see cref="uint.MaxValue"/>, and values either
+    /// side of the wrap — so the fixed-seed run in
     /// <see cref="Pump_ASustainedRunOfWildlyFlippingHostileAckBlocks_NeverThrowsKeepsHorizonDeferralsAtZeroAndLeavesThePeerConnected"/>
     /// reliably lands on those edges rather than only on the interior of the range.
     /// </summary>
@@ -426,8 +426,8 @@ public class DatagramSessionAckBlockTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
-    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="accepter"/> assigned
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
+    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned
     /// this Peer, mirroring <see cref="DatagramSessionSpaceRoutingTests"/>'s helper of the same name.
     /// </summary>
     private static uint EstablishLiveSessionId(DatagramSessionReactorHarness accepter, RawReactor client, LinkId clientLink)

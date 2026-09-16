@@ -8,8 +8,8 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #259: a completed Fragment set (issue #258's <c>IsGroupComplete</c>) is delivered as one
 /// contiguous Message and its receive-window slots are released. Built the same way
-/// <see cref="DatagramSessionFragmentHoldingTests"/> is â€” a live Session driven by hand from a bare
-/// <see cref="RawReactor"/> â€” since these tests need to construct exact Fragment sequences and byte
+/// <see cref="DatagramSessionFragmentHoldingTests"/> is — a live Session driven by hand from a bare
+/// <see cref="RawReactor"/> — since these tests need to construct exact Fragment sequences and byte
 /// contents no ordinary <c>Send</c> call would produce on its own.
 /// </summary>
 public class DatagramSessionFragmentDeliveryTests
@@ -36,7 +36,7 @@ public class DatagramSessionFragmentDeliveryTests
     [Fact]
     public void Pump_ACompletedReliableUnorderedFragmentSet_DeliversOneAssembledMessageAndRaisesMessagesReceivedOnce()
     {
-        // Arrange â€” three Fragments, the last one shorter than the other two, so the assembled payload
+        // Arrange — three Fragments, the last one shorter than the other two, so the assembled payload
         // proves both concatenation order and that a short final Fragment is handled correctly.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -57,7 +57,7 @@ public class DatagramSessionFragmentDeliveryTests
         SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert â€” one Message, byte-exact concatenation in fragment-index order, one MessagesReceived rise.
+        // Assert — one Message, byte-exact concatenation in fragment-index order, one MessagesReceived rise.
         delivered.Should().ContainSingle().Which.Should().Equal(new byte[] { 0x01, 0x02, 0x03, 0x04, 0x05 });
         PeerCounters after = accepter.Reactor.CountersOf(accepterPeer);
         after.MessagesReceived.Should().Be(before.MessagesReceived + 1, "the completed set is one Message, not three");
@@ -66,7 +66,7 @@ public class DatagramSessionFragmentDeliveryTests
     [Fact]
     public void Pump_ADatagramCarryingANonContiguousSubsetOfOneGroup_IsAdmittedAndTheSetStillCompletes()
     {
-        // Arrange â€” issue #274: the shape selective retransmission produces. A three-Fragment set whose
+        // Arrange — issue #274: the shape selective retransmission produces. A three-Fragment set whose
         // index 1 was acked while 0 and 2 both expired packs those two into one datagram, with no index
         // 1 in it. That is honest traffic, so the set check admits it: what makes a set well-formed is
         // the claimed range each Fragment declares, not whether the pieces sharing a datagram form a
@@ -85,7 +85,7 @@ public class DatagramSessionFragmentDeliveryTests
             .. BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 2, fragmentCount: 3, payload: [0x05]),
         ];
 
-        // Act â€” the gapped subset first, then the missing middle piece in a datagram of its own.
+        // Act — the gapped subset first, then the missing middle piece in a datagram of its own.
         SendAndPumpUntilReceived(accepter, client, clientLink, subsetDatagram);
         List<byte[]> deliveredFromSubset = accepter.DrainPayloads();
 
@@ -97,7 +97,7 @@ public class DatagramSessionFragmentDeliveryTests
         SendAndPumpUntilReceived(accepter, client, clientLink, remainderDatagram);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert â€” the gapped datagram was not discarded: its two Fragments were held, and the set
+        // Assert — the gapped datagram was not discarded: its two Fragments were held, and the set
         // completes and assembles in index order once the missing one arrives.
         deliveredFromSubset.Should().BeEmpty("an incomplete set is held, not delivered");
         accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(0, "a gapped subset of one group is honest traffic, not a forgery");
@@ -109,7 +109,7 @@ public class DatagramSessionFragmentDeliveryTests
     [Fact]
     public void Pump_AFragmentArrivingAfterItsGroupAlreadyDelivered_DeliversNothingFurther()
     {
-        // Arrange â€” a two-piece ReliableUnordered set completes and delivers.
+        // Arrange — a two-piece ReliableUnordered set completes and delivers.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -126,7 +126,7 @@ public class DatagramSessionFragmentDeliveryTests
         accepter.DrainAndDiscard();
         PeerCounters before = accepter.Reactor.CountersOf(accepterPeer);
 
-        // Act â€” the first piece of the same, already-delivered group arrives again (a retransmission
+        // Act — the first piece of the same, already-delivered group arrives again (a retransmission
         // the sender should never have needed to make, but nothing on the wire prevents it).
         byte[] resendDatagram =
         [
@@ -136,7 +136,7 @@ public class DatagramSessionFragmentDeliveryTests
         SendAndPumpUntilReceived(accepter, client, clientLink, resendDatagram);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert â€” nothing further is delivered, and MessagesReceived does not rise again.
+        // Assert — nothing further is delivered, and MessagesReceived does not rise again.
         delivered.Should().BeEmpty("the group already delivered once and its slot was released, not left ready to fire again");
         PeerCounters after = accepter.Reactor.CountersOf(accepterPeer);
         after.MessagesReceived.Should().Be(before.MessagesReceived);
@@ -145,11 +145,11 @@ public class DatagramSessionFragmentDeliveryTests
     [Fact]
     public void Pump_ACompletedFragmentSetFillingTheWholeWindow_ReleasesItsSlotsSoFurtherMessagesStillFitTheWindowBound()
     {
-        // Arrange â€” a window sized to exactly the group's own Fragment count, so completing the group
+        // Arrange — a window sized to exactly the group's own Fragment count, so completing the group
         // is the only way any further sequence could ever be admitted: if its slots were not released,
         // nothing past it could ever be received again. MaxMessageSize is 3600 rather than the original
         // 1300 so that ReceiveWindowFloor (issue #282's own cap on a declared fragmentCount) is exactly
-        // windowCapacity too â€” ceil(3600 / 1200) = 3 â€” since a declared count of 3 over a floor of 2
+        // windowCapacity too — ceil(3600 / 1200) = 3 — since a declared count of 3 over a floor of 2
         // would now close the Peer before the group could ever complete.
         const int windowCapacity = 3;
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: windowCapacity, maxMessageSize: 3600);
@@ -167,7 +167,7 @@ public class DatagramSessionFragmentDeliveryTests
         SendAndPumpUntilReceived(accepter, client, clientLink, completingDatagram);
         accepter.DrainPayloads().Should().ContainSingle().Which.Should().Equal(new byte[] { 0x01, 0x02, 0x03 });
 
-        // Act â€” three more ordinary records, at the sequences right behind the group the window could
+        // Act — three more ordinary records, at the sequences right behind the group the window could
         // only reach if the group's own slots (and the base they were blocking) were actually released.
         byte[] furtherDatagram =
         [
@@ -188,16 +188,16 @@ public class DatagramSessionFragmentDeliveryTests
     [Fact]
     public void Pump_AFragmentSetThatCompletesWhenTheFrameArenaHasNoRoom_IsRetainedAndDeliveredOnALaterPump()
     {
-        // Arrange â€” a frame arena whose per-Peer fair share (ArenaSize / Capacity) fits the ordinary
+        // Arrange — a frame arena whose per-Peer fair share (ArenaSize / Capacity) fits the ordinary
         // record ahead of the Fragment set but not both together: the group's own reservation, as this
         // Peer's second reservation this Frame, is refused past its share. The receive window itself is
         // sized generously (well above the two-piece group), so only the frame arena is under pressure.
         // MaxMessageSize is 2400 rather than the original 64 so that ReceiveWindowFloor (issue #282) is
-        // at least 2 over the default 1200-byte FragmentSize â€” the group below declares a fragmentCount
+        // at least 2 over the default 1200-byte FragmentSize — the group below declares a fragmentCount
         // of 2, which a floor of 1 would now refuse with a Peer close before arena pressure ever mattered.
         // ArenaSize must rise alongside it (an arena cannot be smaller than one maximum Message), but the
-        // arena-pressure mechanism itself â€” a share-holder's first reservation exactly consumes its own
-        // fair share (ArenaSize / Capacity), so any second reservation that Frame is refused past it â€” is
+        // arena-pressure mechanism itself — a share-holder's first reservation exactly consumes its own
+        // fair share (ArenaSize / Capacity), so any second reservation that Frame is refused past it — is
         // scale-invariant: it depends only on the crowding payload equalling the share, computed fresh
         // below, never on the share's absolute size.
         const int maxMessageSize = 2400;
@@ -222,7 +222,7 @@ public class DatagramSessionFragmentDeliveryTests
             .. BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 1, fragmentCount: 2, payload: [0xBB]),
         ];
 
-        // Act â€” the Frame that completes the set: the ordinary record delivers, but the group's own
+        // Act — the Frame that completes the set: the ordinary record delivers, but the group's own
         // reservation is refused for want of arena room, so nothing is delivered for it and nothing is
         // counted as received.
         SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
@@ -233,7 +233,7 @@ public class DatagramSessionFragmentDeliveryTests
         afterFirstPump.MessagesReceived.Should().Be(
             before.MessagesReceived + 1, "only the ordinary record counted as received; the group's reservation failed");
 
-        // Act â€” a later Pump, with nothing further sent: the next Frame's wiped arena has room again,
+        // Act — a later Pump, with nothing further sent: the next Frame's wiped arena has room again,
         // so the retry sweep delivers the group that was held rather than lost.
         accepter.Reactor.Pump();
         List<byte[]> secondDrain = accepter.DrainPayloads();
@@ -247,8 +247,8 @@ public class DatagramSessionFragmentDeliveryTests
     [Fact]
     public void Pump_AMaxMessageSizeFragmentSet_DeliversWholeToAPeerWhoseReadShareIsSmaller()
     {
-        // Arrange â€” four Peers share the frame arena (ADR 0012/0014), so this Peer's fair share is a
-        // quarter of the arena â€” smaller than the MaxMessageSize Message about to complete. Only the
+        // Arrange — four Peers share the frame arena (ADR 0012/0014), so this Peer's fair share is a
+        // quarter of the arena — smaller than the MaxMessageSize Message about to complete. Only the
         // one-whole-Message escape (a share-holder's first reservation in a Frame is bounded by the
         // arena's total free space, not its own share) makes this Message reachable at all.
         const int maxMessageSize = 4096;
@@ -274,7 +274,7 @@ public class DatagramSessionFragmentDeliveryTests
         SendAndPumpUntilReceived(accepter, client, clientLink, [.. datagram]);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert â€” the whole MaxMessageSize Message arrives in one piece despite exceeding this Peer's
+        // Assert — the whole MaxMessageSize Message arrives in one piece despite exceeding this Peer's
         // quarter-share of the frame arena.
         delivered.Should().ContainSingle().Which.Should().Equal(expected);
     }
@@ -284,7 +284,7 @@ public class DatagramSessionFragmentDeliveryTests
     [Fact]
     public void Pump_ASecondOrderedGroupCompletingWhileAnotherIsStillDeferred_DeliversBothMessages()
     {
-        // Arrange â€” two ReliableOrdered groups in the SAME Space. The later group (sequences 2 and 3)
+        // Arrange — two ReliableOrdered groups in the SAME Space. The later group (sequences 2 and 3)
         // completes first, so it must wait its turn behind the hole at sequence 0. The earlier group
         // (sequences 0 and 1) then completes and releases that hole.
         using DatagramSessionReactorHarness accepter = new();
@@ -310,7 +310,7 @@ public class DatagramSessionFragmentDeliveryTests
         SendAndPumpUntilReceived(accepter, client, clientLink, earlierGroup);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert â€” both Messages reach the consumer, in send order.
+        // Assert — both Messages reach the consumer, in send order.
         delivered.Should().HaveCount(2);
         delivered[0].Should().Equal(new byte[] { 0xA1, 0xA2 });
         delivered[1].Should().Equal(new byte[] { 0xC1, 0xC2 });
@@ -318,13 +318,13 @@ public class DatagramSessionFragmentDeliveryTests
     [Fact]
     public void Pump_TwoUnorderedGroupsCompletingWhileTheArenaIsFull_AreBothRetainedAndBothDelivered()
     {
-        // Arrange â€” the same arena pressure as the single-group retry test, but with two groups
+        // Arrange — the same arena pressure as the single-group retry test, but with two groups
         // completing in the one Frame. Both reservations are refused, so both must be held: a single
         // waiting slot per Space would let the second overwrite the first and lose it outright.
         // MaxMessageSize is 2400 rather than the original 64 for the same reason as the single-group
         // retry test above: issue #282's ReceiveWindowFloor must reach the fragmentCount of 2 each group
         // below declares, or the Peer closes before either group can complete. ArenaSize rises alongside
-        // it for the same reason too â€” see that test's comment for why the arena-pressure math is
+        // it for the same reason too — see that test's comment for why the arena-pressure math is
         // unaffected by the scale-up.
         const int maxMessageSize = 2400;
         const int arenaSize = 2400;
@@ -348,11 +348,11 @@ public class DatagramSessionFragmentDeliveryTests
             .. BuildFragmentRecord(ModeReliableUnordered, sequence: 4, fragmentIndex: 1, fragmentCount: 2, payload: [0xDD]),
         ];
 
-        // Act â€” only the ordinary record fits this Frame; both groups are held.
+        // Act — only the ordinary record fits this Frame; both groups are held.
         SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
         accepter.DrainPayloads().Should().ContainSingle().Which.Should().Equal(crowdingPayload);
 
-        // Act â€” later Pumps, with nothing further sent, retry what was held.
+        // Act — later Pumps, with nothing further sent, retry what was held.
         List<byte[]> retried = [];
         for (int pump = 0; pump < 4; pump++)
         {
@@ -360,7 +360,7 @@ public class DatagramSessionFragmentDeliveryTests
             retried.AddRange(accepter.DrainPayloads());
         }
 
-        // Assert â€” neither group was lost, and each was delivered exactly once.
+        // Assert — neither group was lost, and each was delivered exactly once.
         retried.Should().HaveCount(2);
         retried.Should().ContainSingle(payload => payload.SequenceEqual(new byte[] { 0xAA, 0xBB }));
         retried.Should().ContainSingle(payload => payload.SequenceEqual(new byte[] { 0xCC, 0xDD }));
@@ -371,7 +371,7 @@ public class DatagramSessionFragmentDeliveryTests
     [Fact]
     public void Pump_AFragmentSetStraddlingTheRingWrapArrivingInReverse_DeliversOneAssembledMessage()
     {
-        // Arrange â€” issue #278: a 3-slot window whose base an ordinary record moves to sequence 1 (ring
+        // Arrange — issue #278: a 3-slot window whose base an ordinary record moves to sequence 1 (ring
         // slot 1), so the group at sequences 1, 2, 3 occupies ring slots 1, 2, 0 and wraps the ring once.
         // MaxMessageSize 3600 keeps ReceiveWindowFloor at 3, the group's declared count.
         const int windowCapacity = 3;
@@ -384,7 +384,7 @@ public class DatagramSessionFragmentDeliveryTests
             accepter, client, clientLink, [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableUnordered, sequence: 0, payload: [0x00])]);
         accepter.DrainPayloads();
 
-        // Act â€” the piece past the ring wrap arrives first, then the other two, one datagram each.
+        // Act — the piece past the ring wrap arrives first, then the other two, one datagram each.
         List<byte[]> delivered = [];
         foreach ((uint sequence, ushort fragmentIndex, byte payload) in new (uint, ushort, byte)[] { (3, 2, 0x03), (2, 1, 0x02), (1, 0, 0x01) })
         {
@@ -404,7 +404,7 @@ public class DatagramSessionFragmentDeliveryTests
     [Fact]
     public void Pump_AFragmentSetStraddlingTheRingWrapMissingThePieceAfterTheWrap_DeliversNothing()
     {
-        // Arrange â€” the same wrapping shape as above, but sequence 3 (ring slot 0) never arrives.
+        // Arrange — the same wrapping shape as above, but sequence 3 (ring slot 0) never arrives.
         const int windowCapacity = 3;
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: windowCapacity, maxMessageSize: 3600);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -432,7 +432,7 @@ public class DatagramSessionFragmentDeliveryTests
     [Fact]
     public void Pump_AGroupWhoseMissingPieceResolvesToASlotHoldingAnAbandonedFragmentsLength_DeliversNothing()
     {
-        // Arrange â€” issue #259's stale-residue case. A 4-slot window holds a Fragment at sequence 0 (ring
+        // Arrange — issue #259's stale-residue case. A 4-slot window holds a Fragment at sequence 0 (ring
         // slot 0) whose partner at sequence 1 never arrives, so the base stops at 1 with slot 0's length
         // still non-zero. A group at sequences 3, 4 then needs sequence 4, which is ahead of the base and
         // resolves to that same ring slot 0.
@@ -463,8 +463,8 @@ public class DatagramSessionFragmentDeliveryTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
-    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="accepter"/> assigned
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
+    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned
     /// this Peer, mirroring <see cref="DatagramSessionFragmentHoldingTests"/>'s helper of the same name.
     /// </summary>
     private static uint EstablishLiveSessionId(DatagramSessionReactorHarness accepter, RawReactor client, LinkId clientLink)

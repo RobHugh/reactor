@@ -7,18 +7,18 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// Issue #261: the central claim behind reassembly inside the receive window (#257-#260) is a memory
-/// property, not a code-shape one â€” flooding partial Fragment sets fills only the flooding Peer's own
+/// property, not a code-shape one — flooding partial Fragment sets fills only the flooding Peer's own
 /// receive window, because there is no separate reassembly buffer for a hostile sender to grow. Asserted
 /// here by measurement, the same way <see cref="DatagramSessionReceiveArenaAllocationTests"/> measures
-/// the arena's own preallocation: a bare <see cref="RawReactor"/> peer â€” the hand-built-datagram
+/// the arena's own preallocation: a bare <see cref="RawReactor"/> peer — the hand-built-datagram
 /// instrument <see cref="HostilePeer"/> wraps, and the one
 /// <see cref="DatagramSessionHostileFragmentDiscardTests"/> and
-/// <see cref="DatagramSessionFragmentInterleavingTests"/> already drive a live Session with â€” opens many
+/// <see cref="DatagramSessionFragmentInterleavingTests"/> already drive a live Session with — opens many
 /// Fragment groups that never complete, sustained far past the point a per-group allocation would show
 /// up in <see cref="GC.GetAllocatedBytesForCurrentThread"/>. The flooded Peer's own window is what limits
 /// the damage, on the existing <see cref="PeerCounters.OutOfWindowPackets"/> and
 /// <see cref="PeerCounters.DuplicatePackets"/> figures rather than a new counter; other Peers on the same
-/// Reactor are unaffected; and nothing ever expires an incomplete set on a timer â€” see the doc comments
+/// Reactor are unaffected; and nothing ever expires an incomplete set on a timer — see the doc comments
 /// this issue adds to <see cref="ReceiveWindow"/> for why no such timer or constant exists.
 /// </summary>
 public class DatagramSessionPartialFragmentFloodMemoryTests
@@ -48,8 +48,8 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
     /// <summary>
     /// Closes #261's first two acceptance criteria together: a sustained flood of single-piece "index 0
     /// of 2" Fragment records at strictly consecutive sequences. Each record is individually a legal,
-    /// admissible Fragment (#253) and each opens a brand-new group â€” <c>FragmentGroup.FirstSequenceOf</c>
-    /// resolves a Fragment's own sequence back to itself when its index is zero â€” but because no gap is
+    /// admissible Fragment (#253) and each opens a brand-new group — <c>FragmentGroup.FirstSequenceOf</c>
+    /// resolves a Fragment's own sequence back to itself when its index is zero — but because no gap is
     /// ever left between one group's lone piece and the next group's, the receive window's base advances
     /// over every one of them immediately, exactly like ordinary in-order traffic, so the flood never
     /// once hits the window's far edge and is never refused. Every group opened this way stays open
@@ -77,10 +77,10 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
         uint sequence = FloodNeverCompletingGroups(
             accepter, client, clientLink, sessionId, startingSequence: 0, groupCount: warmupGroups, perDatagram: groupsPerDatagram);
 
-        // Act â€” two equal-length phases run back to back, deep into the flood so far: thousands of
+        // Act — two equal-length phases run back to back, deep into the flood so far: thousands of
         // never-completing groups already sit behind phase two before it even starts. If reassembly
-        // accumulated anything per group, phase two â€” identical in shape to phase one, just further
-        // along â€” would allocate visibly more.
+        // accumulated anything per group, phase two — identical in shape to phase one, just further
+        // along — would allocate visibly more.
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
@@ -97,11 +97,11 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
             accepter, client, clientLink, sessionId, sequence, measuredGroupsPerPhase, groupsPerDatagram);
         long phaseTwoDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseTwo;
 
-        // Assert â€” a per-datagram cost from the socket layer (L1, not this ticket's concern) is expected
+        // Assert — a per-datagram cost from the socket layer (L1, not this ticket's concern) is expected
         // and unavoidable, exactly as DatagramSessionReceiveArenaAllocationTests's own sustained-run test
         // accepts; what must not happen is that cost climbing as thousands more never-completing groups
-        // pile up behind the flood. The multiple is generous headroom against GC noise â€” that file's
-        // allocation tests are known to flake under parallel test execution â€” not a tight bound.
+        // pile up behind the flood. The multiple is generous headroom against GC noise — that file's
+        // allocation tests are known to flake under parallel test execution — not a tight bound.
         phaseTwoDelta.Should().BeLessThanOrEqualTo(phaseOneDelta * 2 + 1);
     }
 
@@ -110,14 +110,14 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
     /// damage, and an arrival beyond it is refused and counted by the existing
     /// <see cref="PeerCounters.OutOfWindowPackets"/> and <see cref="PeerCounters.DuplicatePackets"/>
     /// figures rather than a new one invented for this case. Unlike the memory test above, every group
-    /// here leaves a permanent hole â€” its index-0 piece is sent, its index-1 piece never is â€” so the
+    /// here leaves a permanent hole — its index-0 piece is sent, its index-1 piece never is — so the
     /// base can never advance past the very first hole (<c>ReliableOrdered</c> never slides), which
     /// pins the window's reachable span for the rest of the flood.
     /// </summary>
     [Fact]
     public void Pump_AFloodOfPartialGroupsFarExceedingTheWindow_RefusesArrivalsAndCountsThemOnTheExistingWindowCounters()
     {
-        // Arrange â€” a window of 8 sequences can admit at most 8 offsets from its (permanently pinned)
+        // Arrange — a window of 8 sequences can admit at most 8 offsets from its (permanently pinned)
         // base; sending far more index-0 pieces than that proves the excess is refused rather than
         // silently accepted into some other, unbounded store.
         const int windowCapacity = 8;
@@ -131,7 +131,7 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
 
         PeerCounters before = accepter.Reactor.CountersOf(accepterPeer);
 
-        // Act â€” far more attempted groups than the window can ever admit, each individually a legal
+        // Act — far more attempted groups than the window can ever admit, each individually a legal
         // Fragment (#253) but hostile in aggregate: a flood that never lets a single group complete.
         for (int i = 0; i < attemptedGroups; i++)
         {
@@ -147,13 +147,13 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
         accepter.DrainAndDiscard();
         PeerCounters afterFlood = accepter.Reactor.CountersOf(accepterPeer);
 
-        // Assert â€” the flood's own window refused most of it, counted on the same existing figure any
+        // Assert — the flood's own window refused most of it, counted on the same existing figure any
         // other far-ahead arrival raises (ADR 0013); no group in this flood ever completed, because none
         // of them ever could.
         (afterFlood.OutOfWindowPackets - before.OutOfWindowPackets).Should().BeGreaterThan(0);
         afterFlood.MessagesReceived.Should().Be(before.MessagesReceived, "no group in this flood ever completed");
 
-        // Act â€” sequence 4 (the third group's index-0 piece) was admitted above and, being above the
+        // Act — sequence 4 (the third group's index-0 piece) was admitted above and, being above the
         // pinned base, is still sitting in its slot: resending it is a duplicate of a sequence still
         // inside the window, not an out-of-window one.
         byte[] resend =
@@ -164,7 +164,7 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
         SendAndPumpUntilReceived(accepter, client, clientLink, resend);
         PeerCounters afterResend = accepter.Reactor.CountersOf(accepterPeer);
 
-        // Assert â€” the resend is classified as a duplicate, on the same existing figure, and nothing
+        // Assert — the resend is classified as a duplicate, on the same existing figure, and nothing
         // about the out-of-window figure moves for it.
         (afterResend.DuplicatePackets - afterFlood.DuplicatePackets).Should().BeGreaterThan(0);
         afterResend.OutOfWindowPackets.Should().Be(afterFlood.OutOfWindowPackets);
@@ -174,7 +174,7 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
     /// Closes #261's fourth acceptance criterion: a hostile Peer flooding never-completing Fragment
     /// groups does not disturb another, ordinary Peer sharing the same Reactor. The ordinary Peer here
     /// is a full <see cref="DatagramSessionReactorHarness"/> dialer, sending and receiving one Message
-    /// every round through the normal <c>Send</c>/Drain surface â€” interleaved with one flood datagram
+    /// every round through the normal <c>Send</c>/Drain surface — interleaved with one flood datagram
     /// per round on the hostile Peer's own Space.
     /// </summary>
     [Fact]
@@ -195,7 +195,7 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
 
         uint hostileSessionId = EstablishLiveSessionId(accepter, hostileClient, hostileLink);
 
-        // Act â€” each round floods one more never-completing group on the hostile Peer's Space, and
+        // Act — each round floods one more never-completing group on the hostile Peer's Space, and
         // sends and confirms delivery of one ordinary Message on the normal Peer's, on the same Reactor.
         uint floodSequence = 0;
         for (int round = 0; round < rounds; round++)
@@ -234,13 +234,13 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
                 PumpDeadline.Yield();
             }
 
-            // Assert â€” the round's own Message, undisturbed by the flood arriving on the same Reactor
+            // Assert — the round's own Message, undisturbed by the flood arriving on the same Reactor
             // for an entirely different Peer.
             delivered.Should().ContainSingle().Which.Should().Equal(payload);
 
             // A few more Pumps let the accepter's acknowledgement flow back to the dialler so this
             // round's Message is released from the dialler's send retention before the next round sends
-            // another â€” otherwise a long run of rounds would exhaust retention on unacked backlog that
+            // another — otherwise a long run of rounds would exhaust retention on unacked backlog that
             // has nothing to do with the flood this test is about.
             for (int settle = 0; settle < 5; settle++)
             {
@@ -249,7 +249,7 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
             }
         }
 
-        // Assert â€” the normal Peer received every Message the flood ran alongside, and its own counters
+        // Assert — the normal Peer received every Message the flood ran alongside, and its own counters
         // carry none of the flooded Peer's refusals: OutOfWindow and Duplicate are scoped per Peer.
         PeerCounters normalPeerCounters = accepter.Reactor.CountersOf(accepterPeerForDialer);
         normalPeerCounters.MessagesReceived.Should().Be((ulong)rounds);
@@ -259,7 +259,7 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
 
     /// <summary>
     /// Closes #261's fifth acceptance criterion: no timer ever expires an incomplete Fragment set. Proved
-    /// as a consequence rather than an absence â€” a held group's slot is still exactly where the flood
+    /// as a consequence rather than an absence — a held group's slot is still exactly where the flood
     /// left it after the clock advances far past any RTO, ack-horizon or retransmit interval this design
     /// actually has, the flooded Peer keeps classifying arrivals by its window's ordinary rules
     /// throughout, and the Reactor stays serviceable for a brand-new Peer afterwards.
@@ -267,7 +267,7 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
     [Fact]
     public void Pump_ASustainedFloodFarBeyondAnyPlausibleTimeout_KeepsClassifyingByTheWindowsOwnRulesAndTheReactorStaysServiceable()
     {
-        // Arrange â€” a lone index-0 piece above the base, permanently held: sequence 2 leaves a hole at
+        // Arrange — a lone index-0 piece above the base, permanently held: sequence 2 leaves a hole at
         // sequence 0 that pins the base at 0 forever, so slot 2 is never reclaimed by the base advancing
         // past it.
         const int windowCapacity = 8;
@@ -285,7 +285,7 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
         SendAndPumpUntilReceived(accepter, client, clientLink, openingDatagram);
         accepter.DrainAndDiscard();
 
-        // Act â€” advance the clock by a full year and keep Pumping across that span. No timer fires for
+        // Act — advance the clock by a full year and keep Pumping across that span. No timer fires for
         // the incomplete set: nothing is delivered and nothing about the Peer's state changes because
         // time passed.
         accepter.TimeProvider.Advance(TimeSpan.FromDays(365));
@@ -296,10 +296,10 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
 
         List<byte[]> deliveredAfterLongIdle = accepter.DrainPayloads();
 
-        // Assert â€” still incomplete a year later.
+        // Assert — still incomplete a year later.
         deliveredAfterLongIdle.Should().BeEmpty("no timer ever completes or discards an incomplete Fragment set");
 
-        // Act â€” the year-old held piece is resent.
+        // Act — the year-old held piece is resent.
         PeerCounters beforeResend = accepter.Reactor.CountersOf(accepterPeer);
         byte[] resend =
         [
@@ -309,12 +309,12 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
         SendAndPumpUntilReceived(accepter, client, clientLink, resend);
         PeerCounters afterResend = accepter.Reactor.CountersOf(accepterPeer);
 
-        // Assert â€” still classified as a duplicate of a slot the window itself still holds, exactly as
+        // Assert — still classified as a duplicate of a slot the window itself still holds, exactly as
         // it would be seconds after the original arrival: the window's rules, not a clock, decide this.
         (afterResend.DuplicatePackets - beforeResend.DuplicatePackets).Should().Be(
             1, "the year-old incomplete group's slot is still exactly where the flood left it");
 
-        // Assert â€” the Reactor stayed serviceable throughout: a brand-new Peer can still connect after
+        // Assert — the Reactor stayed serviceable throughout: a brand-new Peer can still connect after
         // the long idle flood, and the flooded Peer's own counters remain readable.
         using RawReactor freshClient = new(new ReactorOptions { Capacity = 4 });
         LinkId freshLink = freshClient.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -326,8 +326,8 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
     }
 
     /// <summary>
-    /// Sends <paramref name="groupCount"/> consecutive, single-piece "index 0 of 2" Fragment records â€”
-    /// each starting a brand-new group at its own sequence, none of them ever completed â€” split into
+    /// Sends <paramref name="groupCount"/> consecutive, single-piece "index 0 of 2" Fragment records —
+    /// each starting a brand-new group at its own sequence, none of them ever completed — split into
     /// datagrams of <paramref name="perDatagram"/> records apiece so a large flood costs few sends.
     /// Returns the next unused sequence, so a caller can keep extending the same flood across calls.
     /// </summary>
@@ -373,8 +373,8 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
-    /// <see cref="RawReactor"/>, exactly what <see cref="HostilePeer"/> is built from â€” and returns the
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
+    /// <see cref="RawReactor"/>, exactly what <see cref="HostilePeer"/> is built from — and returns the
     /// wire session id <paramref name="accepter"/> assigned this Peer, mirroring
     /// <see cref="DatagramSessionFragmentInterleavingTests"/>'s helper of the same name.
     /// </summary>

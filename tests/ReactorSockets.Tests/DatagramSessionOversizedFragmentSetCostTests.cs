@@ -10,8 +10,8 @@ namespace ReactorSockets.Tests;
 /// Issue #286's two cost-shaped acceptance criteria for the oversized-Fragment-set refusal
 /// <see cref="DatagramSessionReactor.ParseDataDatagram"/> applies (issue #282): the refusal itself
 /// allocates nothing on the receive path, and closing the offending Peer never touches any other Peer
-/// this Reactor holds open. Issue #285 owns the refusal's own behaviour â€” the close reason and the
-/// inclusive boundary of <c>_maxLegalFragmentCount</c> â€” and is proved in
+/// this Reactor holds open. Issue #285 owns the refusal's own behaviour — the close reason and the
+/// inclusive boundary of <c>_maxLegalFragmentCount</c> — and is proved in
 /// <c>DatagramSessionOversizedFragmentSetTests</c>; this file does not restate either.
 /// </summary>
 public class DatagramSessionOversizedFragmentSetCostTests
@@ -39,7 +39,7 @@ public class DatagramSessionOversizedFragmentSetCostTests
 
     /// <summary>
     /// The measurement Reactor's shape: fragment size equal to max message size gives a
-    /// <c>ReceiveWindowFloor</c>, and so <c>_maxLegalFragmentCount</c>, of exactly 1 â€” so the smallest
+    /// <c>ReceiveWindowFloor</c>, and so <c>_maxLegalFragmentCount</c>, of exactly 1 — so the smallest
     /// legal Fragment record (a lone Fragment declaring <c>fragmentCount = 2</c>) is already oversized,
     /// with nothing else about the datagram needing to be unusual.
     /// </summary>
@@ -50,22 +50,22 @@ public class DatagramSessionOversizedFragmentSetCostTests
 
     /// <summary>
     /// Closes issue #286's "allocates nothing" criterion. A thousand-plus repeated oversized claims
-    /// cannot be fed down one Session, because the very first one closes it (issue #282) â€” so each
+    /// cannot be fed down one Session, because the very first one closes it (issue #282) — so each
     /// iteration here re-establishes a fresh Session over the same accepter and client sockets before
     /// sending its claim, and the measured cost is therefore handshake-plus-refusal together, not the
     /// refusal alone.
     /// </summary>
     /// <remarks>
     /// <b>How the refusal's own cost is isolated from setup's.</b> Both measured phases run the exact
-    /// same number of identically-shaped cycles â€” handshake, then one oversized claim â€” so a per-cycle
+    /// same number of identically-shaped cycles — handshake, then one oversized claim — so a per-cycle
     /// cost that is fixed (the handshake's own allocation, and whatever the socket layer costs per
     /// datagram) is present equally in both phases and cancels out of the comparison. What the
     /// comparison actually tests is whether that per-cycle cost <em>climbs</em> as more cycles run.
     /// <see cref="DatagramSessionReactor.ParseDataDatagram"/>'s oversized-Fragment check itself does
     /// only a field read and a comparison before closing the Peer (see its own XML doc, issue #282), so
-    /// it has nothing left to grow â€” an accumulating dictionary, list or cache anywhere on this path
+    /// it has nothing left to grow — an accumulating dictionary, list or cache anywhere on this path
     /// would instead show up here as phase two costing more than phase one. It would not isolate the
-    /// refusal's bytes to an exact figure â€” the handshake's own allocation dominates the total â€” but
+    /// refusal's bytes to an exact figure — the handshake's own allocation dominates the total — but
     /// that is not this criterion: the criterion is that the refusal adds no growing cost of its own.
     /// Diagnostics are disabled on the harness so the Warn-level log the refusal emits
     /// (<see cref="DatagramSessionReactor"/>'s own doc references <c>ForOversizedFragmentSet</c>) does
@@ -87,7 +87,7 @@ public class DatagramSessionOversizedFragmentSetCostTests
         ulong nonce = 1;
         RunOversizedFragmentCycles(accepter, client, clientLink, destination, ref nonce, WarmupIterations);
 
-        // Act â€” two equal-length phases of the same handshake-then-refusal cycle, run back to back.
+        // Act — two equal-length phases of the same handshake-then-refusal cycle, run back to back.
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
@@ -102,7 +102,7 @@ public class DatagramSessionOversizedFragmentSetCostTests
         RunOversizedFragmentCycles(accepter, client, clientLink, destination, ref nonce, MeasuredIterationsPerPhase);
         long phaseTwoDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseTwo;
 
-        // Assert â€” the multiple is generous headroom against GC noise, not a tight bound, mirroring
+        // Assert — the multiple is generous headroom against GC noise, not a tight bound, mirroring
         // DatagramSessionReceiveArenaAllocationTests' own sustained-run assertions: a per-cycle cost
         // from the handshake and the socket layer is expected and unavoidable, what must not happen is
         // that cost climbing as the run goes on.
@@ -113,7 +113,7 @@ public class DatagramSessionOversizedFragmentSetCostTests
     /// Runs <paramref name="cycles"/> cycles of "establish a Session, then send one oversized Fragment
     /// claim on it", each cycle re-using <paramref name="accepter"/>'s freed capacity Slot and
     /// <paramref name="client"/>'s one bound socket rather than allocating a new Reactor or socket per
-    /// iteration â€” that allocation would swamp the measurement with something this criterion is not
+    /// iteration — that allocation would swamp the measurement with something this criterion is not
     /// about. Non-inlined so neither phase's call frame is folded into its caller by the JIT.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -140,15 +140,15 @@ public class DatagramSessionOversizedFragmentSetCostTests
 
     /// <summary>
     /// Closes issue #286's "closes one Session only" criterion: three Peers live on one accepter
-    /// Reactor, one of them â€” built on a bare <see cref="RawReactor"/>, per this file's own scope note
-    /// â€” sends a Fragment claim declaring more Fragments than this accepter's floor allows. The other
+    /// Reactor, one of them — built on a bare <see cref="RawReactor"/>, per this file's own scope note
+    /// — sends a Fragment claim declaring more Fragments than this accepter's floor allows. The other
     /// two keep sending and are still delivered, both before and after the violation, across the same
     /// Pumps that process it.
     /// </summary>
     [Fact]
     public void ParseDataDatagram_OneOversizedFragmentClaimAmongSeveralPeers_ClosesOnlyThatPeersSession()
     {
-        // Arrange â€” three live Peers on one accepter Reactor.
+        // Arrange — three live Peers on one accepter Reactor.
         using DatagramSessionReactorHarness accepter = new(
             capacity: 4,
             maxMessageSize: MeasurementFragmentSize,
@@ -165,13 +165,13 @@ public class DatagramSessionOversizedFragmentSetCostTests
         (uint SessionId, PeerId Peer) peerB = EstablishLiveSession(accepter, clientB, linkB, destination, nonce: 0x1002);
         (uint SessionId, PeerId Peer) peerC = EstablishLiveSession(accepter, clientC, linkC, destination, nonce: 0x1003);
 
-        // Act â€” before the violation, every Peer, survivors and the eventual violator alike, carries
+        // Act — before the violation, every Peer, survivors and the eventual violator alike, carries
         // ordinary reliable traffic and is delivered.
         SendReliableRecordAndAssertDelivered(accepter, clientA, linkA, destination, peerA.SessionId, sequence: 0, payload: [0xA0]);
         SendReliableRecordAndAssertDelivered(accepter, clientB, linkB, destination, peerB.SessionId, sequence: 0, payload: [0xB0]);
         SendReliableRecordAndAssertDelivered(accepter, clientC, linkC, destination, peerC.SessionId, sequence: 0, payload: [0xC0]);
 
-        // Act â€” PeerC claims a Fragment set larger than this accepter's own floor allows.
+        // Act — PeerC claims a Fragment set larger than this accepter's own floor allows.
         byte[] oversizedDatagram =
             [.. BuildHeader(peerC.SessionId), .. BuildFragmentRecord(sequence: 1, fragmentIndex: 0, fragmentCount: 2)];
         ulong receivedBefore = accepter.Reactor.Counters.DatagramsReceived;
@@ -179,18 +179,18 @@ public class DatagramSessionOversizedFragmentSetCostTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > receivedBefore);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.DrainToList();
 
-        // Act â€” after the violation, the two survivors keep exchanging Messages across further Pumps,
+        // Act — after the violation, the two survivors keep exchanging Messages across further Pumps,
         // over the very same accepter this Reactor and the same Pump calls the violation was processed on.
         SendReliableRecordAndAssertDelivered(accepter, clientA, linkA, destination, peerA.SessionId, sequence: 1, payload: [0xA1]);
         SendReliableRecordAndAssertDelivered(accepter, clientB, linkB, destination, peerB.SessionId, sequence: 1, payload: [0xB1]);
 
-        // Assert â€” exactly one Session closed this whole test, and it is PeerC's. Which reason it
+        // Assert — exactly one Session closed this whole test, and it is PeerC's. Which reason it
         // closed with is DatagramSessionOversizedFragmentSetTests' own criterion, not restated here.
         events.Where(e => e.Kind == SessionEventKind.PeerClosed)
             .Should().ContainSingle()
             .Which.Peer.Should().Be(peerC.Peer);
 
-        // Assert â€” the survivors are untouched: still open, still resolving, and their counters show
+        // Assert — the survivors are untouched: still open, still resolving, and their counters show
         // exactly the two Messages each actually received, before and after the violation.
         Action peerAStillOpen = () => accepter.Reactor.CountersOf(peerA.Peer);
         Action peerBStillOpen = () => accepter.Reactor.CountersOf(peerB.Peer);
@@ -199,7 +199,7 @@ public class DatagramSessionOversizedFragmentSetCostTests
         accepter.Reactor.CountersOf(peerA.Peer).MessagesReceived.Should().Be(2);
         accepter.Reactor.CountersOf(peerB.Peer).MessagesReceived.Should().Be(2);
 
-        // Assert â€” PeerC's own Session, by contrast, is gone: its Slot was freed by the close.
+        // Assert — PeerC's own Session, by contrast, is gone: its Slot was freed by the close.
         Action peerCClosed = () => accepter.Reactor.CountersOf(peerC.Peer);
         peerCClosed.Should().Throw<ArgumentException>();
     }
@@ -207,7 +207,7 @@ public class DatagramSessionOversizedFragmentSetCostTests
     /// <summary>
     /// Sends one unfragmented <c>ReliableOrdered</c> record carrying <paramref name="payload"/> at
     /// <paramref name="sequence"/>, pumps the accepter until it arrives, and asserts it was delivered
-    /// as the single Message expected â€” the shared "ordinary traffic still flows" step both the
+    /// as the single Message expected — the shared "ordinary traffic still flows" step both the
     /// before- and after-violation halves of the multi-Peer test use.
     /// </summary>
     private static void SendReliableRecordAndAssertDelivered(
@@ -229,8 +229,8 @@ public class DatagramSessionOversizedFragmentSetCostTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
-    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="accepter"/> assigned
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
+    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned
     /// this Peer, then finds and returns the <see cref="PeerId"/> the accepter drained for it.
     /// </summary>
     private static (uint SessionId, PeerId Peer) EstablishLiveSession(
@@ -249,8 +249,8 @@ public class DatagramSessionOversizedFragmentSetCostTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
-    /// <see cref="RawReactor"/> â€” using <paramref name="nonce"/> as the client nonce, and returns the
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
+    /// <see cref="RawReactor"/> — using <paramref name="nonce"/> as the client nonce, and returns the
     /// wire session id <paramref name="accepter"/> assigned this Peer. Mirrors
     /// <see cref="DatagramSessionHostileFragmentDiscardTests"/>'s helper of the same name, generalised
     /// to take the nonce and destination as parameters so one accepter can be handshaken with
@@ -366,7 +366,7 @@ public class DatagramSessionOversizedFragmentSetCostTests
     /// Builds one <c>ReliableOrdered</c> Fragment record: the unfragmented shape's bytes with the
     /// fragment bit set, followed by a two-byte fragment index and a two-byte fragment count, then a
     /// one-byte payload. <paramref name="fragmentCount"/> of 2 is already oversized against this file's
-    /// measurement Reactor, whose floor is exactly 1 â€” the smallest declared count that is individually
+    /// measurement Reactor, whose floor is exactly 1 — the smallest declared count that is individually
     /// legal (issue #253: a count of 0 or 1 is refused outright, before this check is ever reached) is
     /// already enough to trigger the refusal under test.
     /// </summary>

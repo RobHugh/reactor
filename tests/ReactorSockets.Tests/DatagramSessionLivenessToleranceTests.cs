@@ -6,18 +6,18 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// Issue #358 (parent #54): the datagram profile's receive-idle deadline is
-/// <c>RemoteSendIdleInterval Ã— ResolvedMissedHeartbeats</c> (issue #352), not anything derived from the
+/// <c>RemoteSendIdleInterval × ResolvedMissedHeartbeats</c> (issue #352), not anything derived from the
 /// adaptive RTO. This file proves the two stay independent under exactly the condition that would expose
 /// a deadline wired to the RTO instead: a path degraded so the Reactor under test's own reliable sends
 /// are never acknowledged and its RTO backs off far past the liveness deadline, while its peer's own
 /// traffic keeps arriving often enough that the Session never has reason to consider the peer dead. Only
-/// once the peer's own traffic stops too does the deadline that actually governs â€” <c>peerSendIdle Ã—
-/// count</c>, unmoved by how far the RTO had backed off â€” fire.
+/// once the peer's own traffic stops too does the deadline that actually governs — <c>peerSendIdle ×
+/// count</c>, unmoved by how far the RTO had backed off — fire.
 /// </summary>
 /// <remarks>
 /// <b>Which direction degrades.</b> The dialler is the Reactor under test. Every datagram it sends
 /// (<see cref="RelayDirection.ClientToUpstream"/>) is dropped for the rest of the run, so nothing it ever
-/// sends â€” its seeded probe's retransmissions included â€” is ever acknowledged: its RTO backs off without
+/// sends — its seeded probe's retransmissions included — is ever acknowledged: its RTO backs off without
 /// limit, up to the ten-minute Linger ceiling this file configures precisely so the RTO has room to climb
 /// far past the three-second liveness deadline before anything else intervenes. The accepter's own
 /// traffic (<see cref="RelayDirection.UpstreamToClient"/>) is left flowing: with its own
@@ -34,7 +34,7 @@ public class DatagramSessionLivenessToleranceTests
 
     private const int MissedHeartbeats = 3;
 
-    /// <summary>The RTO's ceiling (ADR 0009): long enough that consecutive losses can back the RTO off far past <see cref="_sendIdleInterval"/> Ã— <see cref="MissedHeartbeats"/> before saturating.</summary>
+    /// <summary>The RTO's ceiling (ADR 0009): long enough that consecutive losses can back the RTO off far past <see cref="_sendIdleInterval"/> × <see cref="MissedHeartbeats"/> before saturating.</summary>
     private static readonly TimeSpan _linger = TimeSpan.FromMinutes(10);
 
     /// <summary>The round trip the estimator is seeded with, matching <see cref="DatagramSessionAdaptiveRtoTests"/>'s own figure: smoothed 20ms plus four variances of 10ms seeds a 60ms timeout.</summary>
@@ -62,7 +62,7 @@ public class DatagramSessionLivenessToleranceTests
     /// The accepter's own retention, sized for far more than the roughly twenty Pings its one-second
     /// send-idle timer queues over <see cref="_degradationWindow"/>. Large on purpose: with
     /// <see cref="RelayDirection.ClientToUpstream"/> permanently dropped, the dialler never acknowledges
-    /// any of them, so nothing ever frees a slot â€” a default-sized pool would exhaust after only a
+    /// any of them, so nothing ever frees a slot — a default-sized pool would exhaust after only a
     /// handful of Pings (a known trap: it holds roughly three in-flight records) and the accepter would
     /// stop being able to queue a fresh one, silently starving the very traffic this file's degradation
     /// phase depends on to keep the dialler's receive-idle deadline from being judged early. Each fresh
@@ -73,15 +73,15 @@ public class DatagramSessionLivenessToleranceTests
     private const int AccepterRetentionBytes = 1200 * 40;
 
     // =========================================================================================
-    // AC1/AC2 (issue #358) â€” the RTO backs off far past the liveness deadline while the peer's own
-    // traffic keeps the Session alive, and PeerInterrupted arrives at peerSendIdle Ã— count, not later,
+    // AC1/AC2 (issue #358) — the RTO backs off far past the liveness deadline while the peer's own
+    // traffic keeps the Session alive, and PeerInterrupted arrives at peerSendIdle × count, not later,
     // only once that traffic stops too.
     // =========================================================================================
 
     [Fact]
     public void Pump_RtoBacksOffFarPastPeerSendIdleTimesMissedHeartbeatsOnLostAcksAlone_InterruptsExactlyAtThatDeadlineOnceThePeersOwnTrafficAlsoStops()
     {
-        // Arrange â€” one clock shared by both Reactors and the proxy, so a single advance moves every
+        // Arrange — one clock shared by both Reactors and the proxy, so a single advance moves every
         // timer in the scenario together (see this file's own remarks and FragmentSizeDiagnosisFixture).
         FakeTimeProvider clock = new();
         using DatagramSessionReactorHarness dialler = new(
@@ -103,7 +103,7 @@ public class DatagramSessionLivenessToleranceTests
 
         SeedTheEstimator(dialler, proxy, accepter, peer, accepterPeer);
 
-        // Act â€” every datagram the dialler sends from here on is read off the wire and never forwarded:
+        // Act — every datagram the dialler sends from here on is read off the wire and never forwarded:
         // nothing it sends, including the probe below and its own retransmissions, is ever acknowledged.
         proxy.SetPayloadDropRule(RelayDirection.ClientToUpstream, _ => true);
 
@@ -125,7 +125,7 @@ public class DatagramSessionLivenessToleranceTests
             accepter.DrainToList();
         }
 
-        // Assert â€” the RTO backed off far past the liveness deadline (a concrete bound, not merely > 0),
+        // Assert — the RTO backed off far past the liveness deadline (a concrete bound, not merely > 0),
         // and the Session never once considered the peer dead while that was happening.
         TimeSpan livenessDeadline = _sendIdleInterval * MissedHeartbeats;
         List<(long Rto, long Count)> backedOff = BackedOffRecords(dialler, peer);
@@ -139,7 +139,7 @@ public class DatagramSessionLivenessToleranceTests
             e => e.Kind == SessionEventKind.PeerInterrupted,
             "the accepter's own periodic Ping kept arriving well inside the liveness deadline throughout, however far the dialler's own RTO backed off");
 
-        // Act â€” one more datagram lands at a known instant, marking exactly when the peer's own traffic
+        // Act — one more datagram lands at a known instant, marking exactly when the peer's own traffic
         // last reached the dialler before the path goes silent in both directions.
         ulong datagramsBeforeTheLastOne = dialler.Reactor.Counters.DatagramsReceived;
         accepter.Reactor.Send(accepterPeer, DeliveryMode.Unreliable, [9]).Should().Be(SendOutcome.Sent);
@@ -150,28 +150,28 @@ public class DatagramSessionLivenessToleranceTests
             datagramsBeforeTheLastOne, "this datagram must actually have landed, to anchor the deadline measured below");
         dialler.DrainToList();
 
-        // Act â€” now every datagram either way is silently lost, so LastReceiveTimestamp never moves again.
+        // Act — now every datagram either way is silently lost, so LastReceiveTimestamp never moves again.
         proxy.StopRelayingBothDirections();
 
-        // Assert â€” one Pump interval short of the deadline measured from that last arrival: nothing has
+        // Assert — one Pump interval short of the deadline measured from that last arrival: nothing has
         // happened yet, however far the RTO had backed off before relaying stopped.
         DatagramSessionReactorHarness.SettleThenAdvance(dialler, livenessDeadline - _margin);
         dialler.DrainToList().Should().NotContain(
             e => e.Kind == SessionEventKind.PeerInterrupted, "the receive-idle deadline has not passed yet");
 
-        // Act â€” the final millisecond: the deadline has now passed.
+        // Act — the final millisecond: the deadline has now passed.
         dialler.TimeProvider.Advance(_margin);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = dialler.PumpAndDrainAll(1);
 
-        // Assert â€” PeerInterrupted arrives at exactly peerSendIdle Ã— count, not later, and not because
+        // Assert — PeerInterrupted arrives at exactly peerSendIdle × count, not later, and not because
         // the RTO said so.
         events.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted && e.Peer.Equals(peer));
     }
 
     /// <summary>
     /// Sends one ReliableOrdered Message from the dialler, flushes it, and acknowledges it exactly
-    /// <see cref="_seedRoundTrip"/> later through the accepter's own reply â€” the only way an ack block
-    /// reaches the wire â€” so the Peer's shared <see cref="RetransmissionTimer"/> takes its one clean first
+    /// <see cref="_seedRoundTrip"/> later through the accepter's own reply — the only way an ack block
+    /// reaches the wire — so the Peer's shared <see cref="RetransmissionTimer"/> takes its one clean first
     /// sample and the probe armed after this method returns inherits that estimate. Matches
     /// <see cref="DatagramSessionPingRetransmissionTests.SeedEstimator"/>'s shape.
     /// </summary>

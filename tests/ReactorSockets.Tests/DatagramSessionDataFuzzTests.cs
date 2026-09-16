@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #166: a fuzzed hostile-input corpus for the data path â€” the parse loop
+/// Issue #166: a fuzzed hostile-input corpus for the data path — the parse loop
 /// <see cref="DatagramSessionDataDatagramParseTests"/> proves the shape of, aimed here at a live
 /// Session with random noise, boundary truncations, mutated flag bytes, overrunning lengths, and a
 /// zero-length body naming a live Session. Every one of them either parses or produces
@@ -14,8 +14,8 @@ namespace ReactorSockets.Tests;
 /// volume and randomness on top of that ticket's hand-picked shapes.
 /// </summary>
 /// <remarks>
-/// A live Session id is not exposed by the public surface, so â€” exactly as
-/// <see cref="DatagramSessionDataDatagramParseTests"/> does â€” every test here first completes an
+/// A live Session id is not exposed by the public surface, so — exactly as
+/// <see cref="DatagramSessionDataDatagramParseTests"/> does — every test here first completes an
 /// ordinary handshake by hand over a bare <see cref="RawReactor"/> and reads the wire session id the
 /// accepter assigned out of its Accept reply.
 /// </remarks>
@@ -47,13 +47,13 @@ public class DatagramSessionDataFuzzTests
 
     /// <summary>
     /// The corpus size: large enough to exercise every mutation family many times over while staying
-    /// fast â€” see the class remarks on measured runtime.
+    /// fast — see the class remarks on measured runtime.
     /// </summary>
     private const int CorpusSize = 5000;
 
     /// <summary>
     /// The fixed seed for every fuzz test's <see cref="Random"/>: 20260820, the date this test was
-    /// written, chosen only so a failure is reproducible across runs and machines â€” never re-rolled to
+    /// written, chosen only so a failure is reproducible across runs and machines — never re-rolled to
     /// make a flaky case pass.
     /// </summary>
     private const int Seed = 20260820;
@@ -71,7 +71,7 @@ public class DatagramSessionDataFuzzTests
         List<byte[]> corpus = BuildCorpus(random, sessionId);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> allDrained = [];
 
-        // Act â€” every datagram in the corpus goes out, pumping in batches so the receive queue never
+        // Act — every datagram in the corpus goes out, pumping in batches so the receive queue never
         // grows unbounded, exactly as the control-path fuzz test in DatagramSessionMalformedInputTests
         // does.
         Action fuzz = () =>
@@ -89,10 +89,10 @@ public class DatagramSessionDataFuzzTests
             allDrained.AddRange(accepter.PumpAndDrainAll(5));
         };
 
-        // Assert â€” nothing throws.
+        // Assert — nothing throws.
         fuzz.Should().NotThrow();
 
-        // Assert â€” no Session event the format does not justify. Every datagram in the corpus is
+        // Assert — no Session event the format does not justify. Every datagram in the corpus is
         // either a mutation of a well-formed shape or outright noise. A mutation that happens to stay
         // well-formed can now be admitted and delivered (#217, #219), so MessageReceived is justified;
         // a PeerConnected already happened during the handshake, and nothing here may raise
@@ -101,7 +101,7 @@ public class DatagramSessionDataFuzzTests
             e => e.Kind != SessionEventKind.MessageReceived,
             "a fuzzed datagram may deliver a Message but must never close or disconnect the Peer");
 
-        // Assert â€” every datagram either parsed (silently, per #163) or was counted as a malformed
+        // Assert — every datagram either parsed (silently, per #163) or was counted as a malformed
         // discard; nothing vanished unaccounted for.
         // Both discard figures count, because the corpus mutates the session id too: a datagram still
         // naming the live Session lands on MalformedSessionDiscards, one whose id was mutated away
@@ -110,7 +110,7 @@ public class DatagramSessionDataFuzzTests
             + accepter.Reactor.Counters.UnknownSourceDiscards;
         discards.Should().BeLessThanOrEqualTo((ulong)corpus.Count);
 
-        // Assert â€” the Reactor stays usable afterwards: a well-formed datagram sent after the whole
+        // Assert — the Reactor stays usable afterwards: a well-formed datagram sent after the whole
         // corpus still parses and is not reported malformed.
         ulong malformedBefore = CountMalformed(accepter);
         byte[] wellFormed =
@@ -135,7 +135,7 @@ public class DatagramSessionDataFuzzTests
     /// thread without also asserting something about L1's receive path, which is not this ticket's
     /// parse-path claim. Instead this measures per-datagram allocation against a ceiling far below
     /// what parsing the claimed lengths or record counts would cost if the parse path allocated
-    /// proportionally to attacker-controlled input â€” the same technique
+    /// proportionally to attacker-controlled input — the same technique
     /// <c>StreamSessionMalformedFramingTests</c> uses for an oversized length claim.
     /// </summary>
     [Fact]
@@ -171,7 +171,7 @@ public class DatagramSessionDataFuzzTests
         accepter.PumpAndDrainAll(5);
         long allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
 
-        // Assert â€” a generous per-datagram ceiling (2 KB) that would be blown through many times over
+        // Assert — a generous per-datagram ceiling (2 KB) that would be blown through many times over
         // if a record's claimed length or the header's ack-block words drove a proportional
         // allocation, while comfortably covering whatever Socket.ReceiveFrom's own EndPoint churn
         // costs.
@@ -249,7 +249,7 @@ public class DatagramSessionDataFuzzTests
         }
 
         // A well-formed header naming the live Session with a zero-length body: no records at all,
-        // which is legal â€” a container fitting zero records.
+        // which is legal — a container fitting zero records.
         corpus.Add(BuildHeader(sessionId));
 
         // Random mutations of well-formed multi-record datagrams: flip a random subset of bytes in an

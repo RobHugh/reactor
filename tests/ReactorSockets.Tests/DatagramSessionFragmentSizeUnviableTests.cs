@@ -7,7 +7,7 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// Issue #303 (parent #270): what a consumer actually sees once <see cref="FragmentStallSignature"/>
-/// fires and <see cref="DatagramSessionReactor"/> acts on it â€” the Peer that stalled on Fragments is
+/// fires and <see cref="DatagramSessionReactor"/> acts on it — the Peer that stalled on Fragments is
 /// closed with <see cref="DisconnectReason.FragmentSizeUnviable"/> named on the drained Event, nothing
 /// else about the wire or the Session's other Peers changes because of it.
 /// </summary>
@@ -17,21 +17,21 @@ namespace ReactorSockets.Tests;
 /// <see cref="FragmentStallSignature"/>'s own tests (issue #294) and <c>ReportExpiredRetransmissions</c>'s
 /// one call site to speak for them. <b>Once-only:</b> closing removes the Peer's Slot outright, so a
 /// consumer draining several more times after the close must never see a second
-/// <see cref="SessionEventKind.PeerClosed"/> for the same Peer â€” a duplicate would tell a consumer to
+/// <see cref="SessionEventKind.PeerClosed"/> for the same Peer — a duplicate would tell a consumer to
 /// expect a second close that will never come. <b>Nothing recovered:</b> the diagnosis is silent on the
-/// wire â€” no probe, no announcement, nothing beyond the ordinary retransmissions already in flight â€” the
+/// wire — no probe, no announcement, nothing beyond the ordinary retransmissions already in flight — the
 /// diagnosed Peer's own Fragments never change size across every one of those retransmissions, and the
 /// fragment size that caused it is unchanged for every other Peer, so a consumer's own configuration
 /// is exactly where it left it. <b>One path, not the Reactor:</b> a second Peer that never matches the
-/// signature keeps working â€” sending and receiving â€” while the first is being diagnosed and after it is
+/// signature keeps working — sending and receiving — while the first is being diagnosed and after it is
 /// gone, proving the close is scoped to the one Peer whose path could not carry a Fragment.
 /// </para>
 /// <para>
 /// <b>Driving the stall without ever acking a Fragment.</b> The predicate
 /// (<see cref="FragmentStallSignature.IsFragmentSizeStall"/>) needs an unfragmented reliable record acked
 /// at or after the Fragment window opened, while no Fragment is ever acked. The two records are sent in
-/// different reliable Spaces â€” the large, fragmented Message as <see cref="DeliveryMode.ReliableOrdered"/>,
-/// the small, unfragmented one as <see cref="DeliveryMode.ReliableUnordered"/> â€” so one crafted ack
+/// different reliable Spaces — the large, fragmented Message as <see cref="DeliveryMode.ReliableOrdered"/>,
+/// the small, unfragmented one as <see cref="DeliveryMode.ReliableUnordered"/> — so one crafted ack
 /// naming only the <c>ReliableUnordered</c> block, with the <c>ReliableOrdered</c> block left at its
 /// initial zeroed state, releases the small record without ever touching a Fragment sequence. That ack
 /// also seeds the Peer's round-trip estimator (matching <see cref="DatagramSessionAdaptiveRtoTests"/>'s
@@ -39,16 +39,16 @@ namespace ReactorSockets.Tests;
 /// unseeded RTO that resolves to the harness's Linger (<see cref="RetransmissionTimer.EffectiveTimeout"/>),
 /// so the first of the four rounds this test needs waits out that full second.
 /// <see cref="RetransmissionTimer.BackOff"/> runs unconditionally on every round before the re-arm, so
-/// even that first re-arm already reflects one doubling of the seeded 60ms timeout â€” 120ms â€” and each
+/// even that first re-arm already reflects one doubling of the seeded 60ms timeout — 120ms — and each
 /// wait after it doubles again, to 240 and then 480. <see cref="FragmentStallSignature.StallRoundCount"/>
 /// is referenced rather than hardcoded so a change to that constant cannot silently desynchronise this
 /// file's clock advances from what the signature actually requires.
 /// </para>
 /// <para>
 /// <b>The instrument.</b> A live <see cref="DatagramSessionReactor"/> node with two Peers, each a
-/// hand-built client over a bare <see cref="RawReactor"/> â€” the same instrument
+/// hand-built client over a bare <see cref="RawReactor"/> — the same instrument
 /// <see cref="DatagramSessionAdaptiveRtoTests"/> and <see cref="DatagramSessionFragmentSetAbandonedTests"/>
-/// use: the scenario needs an ack the test chooses â€” one Space released, the other left untouched â€” which
+/// use: the scenario needs an ack the test chooses — one Space released, the other left untouched — which
 /// no ordinary Session produces.
 /// </para>
 /// </remarks>
@@ -134,7 +134,7 @@ public class DatagramSessionFragmentSizeUnviableTests
         // Act
         DriveFragmentSizeStall(node, clientA, clientALink, sessionIdA, peerA, peerADatagrams, events);
 
-        // Assert â€” the Event names the Peer and the reason explicitly, not merely "some non-generic reason".
+        // Assert — the Event names the Peer and the reason explicitly, not merely "some non-generic reason".
         events.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed && e.Peer.Equals(peerA))
             .Which.Reason.Should().Be(
                 DisconnectReason.FragmentSizeUnviable,
@@ -157,13 +157,13 @@ public class DatagramSessionFragmentSizeUnviableTests
 
         events.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed && e.Peer.Equals(peerA));
 
-        // Act â€” several more Pumps once the Peer's Slot is already gone.
+        // Act — several more Pumps once the Peer's Slot is already gone.
         for (int i = 0; i < 5; i++)
         {
             PumpAndCollect(node, clientA, peerADatagrams, events);
         }
 
-        // Assert â€” the close happened exactly once: removing the Slot means there is nothing left for a
+        // Assert — the close happened exactly once: removing the Slot means there is nothing left for a
         // later Pump to close a second time.
         events.Count(e => e.Kind == SessionEventKind.PeerClosed && e.Peer.Equals(peerA)).Should().Be(
             1, "the Peer's Slot was removed by the first close, so no later Pump can produce a second PeerClosed for it");
@@ -187,7 +187,7 @@ public class DatagramSessionFragmentSizeUnviableTests
         int datagramCountAtDiagnosis = peerADatagrams.Count;
 
         // A "probe" would be some datagram this scenario's own sends and retransmissions cannot account
-        // for â€” an extra control-shaped message, a record naming a sequence or Space outside the two the
+        // for — an extra control-shaped message, a record naming a sequence or Space outside the two the
         // test sent, or anything at all arriving after the close. ReportExpiredRetransmissions closes the
         // Peer in place of re-arming it (ReactorSockets/DatagramSessionReactor.cs, ~line 1457) and never
         // queues anything of its own, so nothing here should exist to find.
@@ -196,11 +196,11 @@ public class DatagramSessionFragmentSizeUnviableTests
             PumpAndCollect(node, clientA, peerADatagrams, events);
         }
 
-        // Assert â€” every datagram received decodes as an ordinary data datagram for the established
+        // Assert — every datagram received decodes as an ordinary data datagram for the established
         // session, carrying only records the test itself sent. Decoded by hand rather than through
         // DatagramDecoder: that decoder assumes every record uses the unfragmented, 7-byte header shape
         // (ReactorSockets.Tests/DatagramDecoder.cs), so it cannot walk a datagram carrying a Fragment
-        // record's 11-byte header without misreading everything after it â€” DecodeKnownRecords below is
+        // record's 11-byte header without misreading everything after it — DecodeKnownRecords below is
         // this file's own reader, the same fragment-aware walk CountRecords already uses.
         peerADatagrams.Should().NotBeEmpty("the fragmented and unfragmented Messages must have reached the client at least once");
         foreach (byte[] datagram in peerADatagrams)
@@ -208,27 +208,27 @@ public class DatagramSessionFragmentSizeUnviableTests
             uint session = BinaryPrimitives.ReadUInt32BigEndian(datagram.AsSpan(0, 4));
             session.Should().Be(
                 DialerSessionId,
-                "every datagram the node sends to this client is addressed with the session id the client announced in its own Hello â€” the opposite direction from sessionIdA, which is what this client addresses the node with");
+                "every datagram the node sends to this client is addressed with the session id the client announced in its own Hello — the opposite direction from sessionIdA, which is what this client addresses the node with");
 
             foreach ((byte mode, uint sequence, ushort _) in DecodeKnownRecords(datagram))
             {
                 bool isKnownFragment = mode == (byte)DeliveryMode.ReliableOrdered && sequence <= HighestFragmentSequence;
                 bool isKnownUnfragmentedRecord = mode == (byte)DeliveryMode.ReliableUnordered && sequence == UnfragmentedRecordSequence;
                 (isKnownFragment || isKnownUnfragmentedRecord).Should().BeTrue(
-                    $"record mode {mode} sequence {sequence} is not one of the two Messages this test sent â€” a probe would show up as exactly this kind of unaccounted-for record");
+                    $"record mode {mode} sequence {sequence} is not one of the two Messages this test sent — a probe would show up as exactly this kind of unaccounted-for record");
             }
         }
 
-        // Assert â€” nothing new appeared once the Peer was diagnosed and closed.
+        // Assert — nothing new appeared once the Peer was diagnosed and closed.
         peerADatagrams.Count.Should().Be(
             datagramCountAtDiagnosis,
-            "the closed Peer's Slot was removed, so no further flush can reach the client â€” a probe sent from outside the ordinary flush path would have shown up here instead");
+            "the closed Peer's Slot was removed, so no further flush can reach the client — a probe sent from outside the ordinary flush path would have shown up here instead");
     }
 
     [Fact]
     public void Pump_ASecondPeerNeverMeetingTheSignature_KeepsItsConfiguredFragmentSizeAndStaysUsable()
     {
-        // Arrange â€” a second Peer over its own client, established alongside the one that will be driven
+        // Arrange — a second Peer over its own client, established alongside the one that will be driven
         // to the stall, sharing the same Reactor and so the same configured fragment size.
         using DatagramSessionReactorHarness node = NewNode();
         using RawReactor clientA = NewClient();
@@ -244,18 +244,18 @@ public class DatagramSessionFragmentSizeUnviableTests
         List<byte[]> peerADatagrams = [];
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = [];
 
-        // Act â€” drive the first Peer to its close, leaving the second untouched throughout.
+        // Act — drive the first Peer to its close, leaving the second untouched throughout.
         DriveFragmentSizeStall(node, clientA, clientALink, sessionIdA, peerA, peerADatagrams, events);
         events.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed && e.Peer.Equals(peerA));
 
-        // Act â€” after the close, a Message wider than the fragment size, sent to the second Peer.
+        // Act — after the close, a Message wider than the fragment size, sent to the second Peer.
         byte[] messageToPeerB = Enumerable.Range(0, BigMessageLength).Select(i => (byte)(i % 256)).ToArray();
         node.Reactor.Send(peerB, DeliveryMode.ReliableOrdered, messageToPeerB).Should().Be(SendOutcome.Sent);
         List<byte[]> peerBDatagrams = [];
         PumpAndCollect(node, clientB, peerBDatagrams, events);
         byte[] datagramToPeerB = peerBDatagrams.Last();
 
-        // Assert â€” proven observably rather than against the test's own init-only options object: the
+        // Assert — proven observably rather than against the test's own init-only options object: the
         // Message reaching the second Peer is still cut at the configured fragment size, unaffected by
         // the first Peer's close.
         CountRecords(datagramToPeerB).Should().Be(
@@ -263,7 +263,7 @@ public class DatagramSessionFragmentSizeUnviableTests
         FirstRecordLength(datagramToPeerB).Should().Be(
             (ushort)FragmentSize, "the second Peer's Message is cut to the same fragment size the first Peer's was, proving the setting itself never moved");
 
-        // Act â€” the second Peer sends its own record back, unreliable so no ack machinery is needed to
+        // Act — the second Peer sends its own record back, unreliable so no ack machinery is needed to
         // prove receipt.
         byte[] payloadFromPeerB = [0x11, 0x22, 0x33];
         byte[] recordFromPeerB = BuildUnreliableRecordDatagram(sessionIdB, sequence: 0, payloadFromPeerB);
@@ -272,11 +272,11 @@ public class DatagramSessionFragmentSizeUnviableTests
         node.PumpUntil(() => node.Reactor.Counters.DatagramsReceived > before);
         List<byte[]> received = node.DrainPayloads();
 
-        // Assert â€” the second Peer completes both directions: a send the client received, cut correctly,
+        // Assert — the second Peer completes both directions: a send the client received, cut correctly,
         // and a receive the node delivered whole.
         received.Should().ContainSingle().Which.Should().Equal(payloadFromPeerB, "the second Peer's own record reached the node and was delivered");
 
-        // Assert â€” the second Peer was never touched by the first Peer's diagnosis.
+        // Assert — the second Peer was never touched by the first Peer's diagnosis.
         events.Should().NotContain(
             e => e.Kind == SessionEventKind.PeerClosed && e.Peer.Equals(peerB),
             "the second Peer never matched the stall signature and must stay connected");
@@ -297,7 +297,7 @@ public class DatagramSessionFragmentSizeUnviableTests
         List<byte[]> peerADatagrams = [];
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = [];
 
-        // Act â€” the whole run: the original cut and every retransmission round the stall signature
+        // Act — the whole run: the original cut and every retransmission round the stall signature
         // needs, up to and including the round that diagnoses and closes the Peer.
         DriveFragmentSizeStall(node, clientA, clientALink, sessionIdA, peerA, peerADatagrams, events);
         events.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed && e.Peer.Equals(peerA));
@@ -307,13 +307,13 @@ public class DatagramSessionFragmentSizeUnviableTests
         // as one of this Message's Fragment sequences (0 through HighestFragmentSequence) carrying a
         // shorter declared length on a later retransmission than it carried on an earlier one, for the
         // two Fragments (sequence 0 and 1) that are not the set's short remainder. This test's own
-        // remarks are explicit that ReportExpiredRetransmissions never re-cuts anything â€” it only closes
-        // the Peer in place of re-arming it â€” so no such shrink should exist to find; this proves that by
+        // remarks are explicit that ReportExpiredRetransmissions never re-cuts anything — it only closes
+        // the Peer in place of re-arming it — so no such shrink should exist to find; this proves that by
         // reading every Fragment this Peer's Message was ever sent as, across every round, rather than
         // trusting the absence of a re-cut path in the source.
         const ushort finalFragmentLength = (ushort)(BigMessageLength - (int)HighestFragmentSequence * FragmentSize);
 
-        // Act â€” flatten every Fragment record belonging to the big Message, across every datagram sent
+        // Act — flatten every Fragment record belonging to the big Message, across every datagram sent
         // to Peer A during the whole drive, in the order the wire carried them.
         List<(uint Sequence, ushort Length)> fragmentRecords = [];
         foreach (byte[] datagram in peerADatagrams)
@@ -327,23 +327,23 @@ public class DatagramSessionFragmentSizeUnviableTests
             }
         }
 
-        // Assert â€” the set was actually retransmitted more than once, so this proves size across
+        // Assert — the set was actually retransmitted more than once, so this proves size across
         // repeated re-sends rather than only the original cut.
         fragmentRecords.Should().HaveCountGreaterThan(
             (int)HighestFragmentSequence + 1, "the four stall rounds each retransmit the whole unacked Fragment set at least once beyond the original send");
 
-        // Assert â€” every occurrence of the two full-size Fragments, original send and every
+        // Assert — every occurrence of the two full-size Fragments, original send and every
         // retransmission alike, carries exactly the configured fragment size.
         fragmentRecords.Where(r => r.Sequence < HighestFragmentSequence).Should().AllSatisfy(
             r => r.Length.Should().Be(
                 (ushort)FragmentSize,
                 "a recovering implementation would have shrunk this Fragment on a later round; this Peer's own Fragments never move from the size they were originally cut at"));
 
-        // Assert â€” the set's short remainder likewise never changes size across every round it was resent.
+        // Assert — the set's short remainder likewise never changes size across every round it was resent.
         fragmentRecords.Where(r => r.Sequence == HighestFragmentSequence).Should().AllSatisfy(
             r => r.Length.Should().Be(
                 finalFragmentLength,
-                "the remainder Fragment is shorter than the others by construction, not because anything re-cut it â€” it stays at that same remainder size on every retransmission"));
+                "the remainder Fragment is shorter than the others by construction, not because anything re-cut it — it stays at that same remainder size on every retransmission"));
     }
 
     /// <summary>
@@ -396,7 +396,7 @@ public class DatagramSessionFragmentSizeUnviableTests
         // Four rounds: the Fragments were armed before the ack above, at the unseeded RTO that resolves
         // to the Linger ceiling, so the first wait is a full second. RetransmissionTimer.BackOff() runs
         // unconditionally before every re-arm, so even the very first re-arm already reflects one
-        // doubling of the seeded 60ms timeout â€” 120ms, not 60ms â€” and each wait after it doubles again:
+        // doubling of the seeded 60ms timeout — 120ms, not 60ms — and each wait after it doubles again:
         // 240, then 480. Each wait is stepped in small increments rather than one large Advance, because
         // EffectiveTimeout floors the RTO against PumpIntervalObserver's own most recently observed gap
         // (issue #191): a single one-second jump right before a round fires would re-floor that round's
@@ -481,7 +481,7 @@ public class DatagramSessionFragmentSizeUnviableTests
         }
     }
 
-    /// <summary>The first record's declared length â€” the size the first Fragment of a data datagram was cut to.</summary>
+    /// <summary>The first record's declared length — the size the first Fragment of a data datagram was cut to.</summary>
     private static ushort FirstRecordLength(byte[] datagram) =>
         BinaryPrimitives.ReadUInt16BigEndian(datagram.AsSpan(DatagramHeaderSize + 5, 2));
 
@@ -561,8 +561,8 @@ public class DatagramSessionFragmentSizeUnviableTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
-    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="node"/> assigned this
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
+    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="node"/> assigned this
     /// Peer, mirroring <see cref="DatagramSessionAdaptiveRtoTests"/>'s helper of the same name.
     /// </summary>
     private static uint EstablishLiveSessionId(DatagramSessionReactorHarness node, RawReactor client, LinkId clientLink)

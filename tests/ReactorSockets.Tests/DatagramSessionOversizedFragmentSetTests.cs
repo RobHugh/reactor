@@ -9,7 +9,7 @@ namespace ReactorSockets.Tests;
 /// Issue #285: a Fragment declaring more pieces than this Reactor's own <c>MaxMessageSize</c> could ever
 /// back is a claim that end could never honour, not merely a malformed record (#282). Rather than
 /// discarding just the offending datagram, the Peer that made the claim is closed with
-/// <see cref="DisconnectReason.ProtocolViolation"/> â€” the same treatment #253's individually-illegal
+/// <see cref="DisconnectReason.ProtocolViolation"/> — the same treatment #253's individually-illegal
 /// Fragment metadata and #256's forged sets ultimately fall back to when they cannot be trusted, but
 /// stronger, because an oversized claim survives both of those checks (it is individually legal and its
 /// own set is internally consistent) and is refused for a reason neither of them tests: the Message it
@@ -17,11 +17,11 @@ namespace ReactorSockets.Tests;
 /// </summary>
 /// <remarks>
 /// Modeled on <see cref="DatagramSessionHostileFragmentDiscardTests"/>: a live Session established by
-/// hand over a bare <see cref="RawReactor"/> â€” the same instrument <see cref="HostilePeer"/> is built
-/// from â€” then driven with hand-built datagrams so the exact wire shape under test is never left to
+/// hand over a bare <see cref="RawReactor"/> — the same instrument <see cref="HostilePeer"/> is built
+/// from — then driven with hand-built datagrams so the exact wire shape under test is never left to
 /// <c>Send</c>'s own chunking. Where that file's technique needs adapting is the outcome itself: an
 /// oversized claim does not merely discard a datagram and leave the Peer alive to prove the window
-/// untouched by resending at the same sequence â€” it closes the Peer outright, so there is no Peer left
+/// untouched by resending at the same sequence — it closes the Peer outright, so there is no Peer left
 /// to resend to. Each test below says how it adapts to that.
 /// </remarks>
 public class DatagramSessionOversizedFragmentSetTests
@@ -51,7 +51,7 @@ public class DatagramSessionOversizedFragmentSetTests
     [Fact]
     public void Pump_FragmentDeclaringOneMoreThanReceiveWindowFloor_ClosesThePeerWithProtocolViolation()
     {
-        // Arrange â€” the default harness resolves MaxMessageSize 4096 and FragmentSize 1200 to a
+        // Arrange — the default harness resolves MaxMessageSize 4096 and FragmentSize 1200 to a
         // ReceiveWindowFloor of 4 (ceil(4096 / 1200)). A single Fragment declaring 5 is individually
         // legal (#253: index 0 < count 5) and trivially its own well-formed one-member set (#256), so it
         // reaches only the new #282 check, which is the one thing this test proves.
@@ -81,10 +81,10 @@ public class DatagramSessionOversizedFragmentSetTests
     [Fact]
     public void Pump_OversizedFragmentSetTrailingAWellFormedRecord_DeliversNoMessageFromEitherRecord()
     {
-        // Arrange â€” a well-formed ReliableOrdered record at sequence 0 ahead of the oversized Fragment
+        // Arrange — a well-formed ReliableOrdered record at sequence 0 ahead of the oversized Fragment
         // tail, exactly the shape DatagramSessionHostileFragmentDiscardTests uses to prove a discarded
-        // datagram takes its whole content down with it. Here the tail does not merely fail parsing â€”
-        // it closes the Peer â€” so the assertion is the same "nothing was delivered" one, read off the
+        // datagram takes its whole content down with it. Here the tail does not merely fail parsing —
+        // it closes the Peer — so the assertion is the same "nothing was delivered" one, read off the
         // drain rather than off a resend, since there is no Peer left to resend to afterward.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -100,8 +100,8 @@ public class DatagramSessionOversizedFragmentSetTests
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
             accepter.PumpUntilDrained(all => all.Any(e => e.Kind == SessionEventKind.PeerClosed));
 
-        // Assert â€” the Peer closes, and neither record â€” not the leading well-formed one, not the
-        // oversized Fragment â€” ever reached the consumer as a Message.
+        // Assert — the Peer closes, and neither record — not the leading well-formed one, not the
+        // oversized Fragment — ever reached the consumer as a Message.
         drained.Should().Contain(e => e.Kind == SessionEventKind.PeerClosed && e.Reason == DisconnectReason.ProtocolViolation);
         drained.Should().NotContain(e => e.Kind == SessionEventKind.MessageReceived);
     }
@@ -109,10 +109,10 @@ public class DatagramSessionOversizedFragmentSetTests
     [Fact]
     public void Pump_OversizedFragmentSetClosesThePeer_TheFreedSlotAdmitsANewPeerCleanly()
     {
-        // Arrange â€” issue #285's third criterion is that the oversized set occupies no receive-window
-        // slot, but DatagramSessionHostileFragmentDiscardTests' own technique for proving that â€”
+        // Arrange — issue #285's third criterion is that the oversized set occupies no receive-window
+        // slot, but DatagramSessionHostileFragmentDiscardTests' own technique for proving that —
         // resending the same sequence to the SAME Peer and checking it is admitted rather than refused
-        // as a duplicate â€” has no Peer left to run against here: the oversized claim ends the Session,
+        // as a duplicate — has no Peer left to run against here: the oversized claim ends the Session,
         // not merely the datagram. What the public surface still lets a test observe is the Slot the
         // closed Peer occupied: this harness is built with capacity 1, so closing the only Peer frees
         // the only Slot, and establishing a second Session necessarily reuses it. That new Peer's
@@ -134,11 +134,11 @@ public class DatagramSessionOversizedFragmentSetTests
             .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 0, fragmentCount: 5, payload: [0xBB]),
         ];
 
-        // Act â€” the attack closes the only Peer this capacity-1 Reactor holds.
+        // Act — the attack closes the only Peer this capacity-1 Reactor holds.
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), oversizedDatagram);
         accepter.PumpUntilDrained(all => all.Any(e => e.Kind == SessionEventKind.PeerClosed));
 
-        // Act â€” a second Session, necessarily admitted into the Slot the first Peer just vacated.
+        // Act — a second Session, necessarily admitted into the Slot the first Peer just vacated.
         uint secondSessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x2000_0000_0000_0002UL);
         byte[] followUpDatagram =
         [
@@ -151,7 +151,7 @@ public class DatagramSessionOversizedFragmentSetTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > receivedBefore);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert â€” sequence 0 admits for the new Peer exactly as it would for any freshly connected one:
+        // Assert — sequence 0 admits for the new Peer exactly as it would for any freshly connected one:
         // the window it landed in carried nothing over from the closed Peer's aborted, oversized claim.
         delivered.Should().ContainSingle().Which.Should().Equal(new byte[] { 0xCC });
     }
@@ -159,7 +159,7 @@ public class DatagramSessionOversizedFragmentSetTests
     [Fact]
     public void Pump_FragmentDeclaringExactlyReceiveWindowFloor_IsAcceptedAndDeliveredWhole()
     {
-        // Arrange â€” the inclusive boundary: MaxMessageSize 3600 over the default 1200-byte FragmentSize
+        // Arrange — the inclusive boundary: MaxMessageSize 3600 over the default 1200-byte FragmentSize
         // resolves ReceiveWindowFloor to exactly 3, so a set declaring 3 is the largest a Peer may
         // legally claim. Three Fragments, the last shorter than the other two, so the assembled payload
         // also proves concatenation order survives right at the boundary.
@@ -182,7 +182,7 @@ public class DatagramSessionOversizedFragmentSetTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert â€” the set at exactly the floor is legal, completes, and delivers as one Message; no
+        // Assert — the set at exactly the floor is legal, completes, and delivers as one Message; no
         // Peer is closed.
         delivered.Should().ContainSingle().Which.Should().Equal(new byte[] { 0x01, 0x02, 0x03, 0x04, 0x05 });
         accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.OversizedFragmentSet);
@@ -191,7 +191,7 @@ public class DatagramSessionOversizedFragmentSetTests
     [Fact]
     public void Pump_UnreliableRecordWithTheFragmentBitAndALargeDeclaredCount_DoesNotCloseThePeerAndStillDelivers()
     {
-        // Arrange â€” the #282 check gates on the two reliable modes only (matching ClassifyRecord's own
+        // Arrange — the #282 check gates on the two reliable modes only (matching ClassifyRecord's own
         // gate, per this Reactor's own remarks): a stray fragment bit riding an Unreliable-mode record
         // is never evaluated by it at all, however large its declared count. Unreliable delivery ignores
         // the fragment bit entirely (DeliverUnreliableRecord has no isFragment branch), so this record
@@ -213,7 +213,7 @@ public class DatagramSessionOversizedFragmentSetTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.DrainToList();
 
-        // Assert â€” no close, and the record's payload reaches the consumer as an ordinary Unreliable
+        // Assert — no close, and the record's payload reaches the consumer as an ordinary Unreliable
         // delivery.
         events.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
         accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.OversizedFragmentSet);
@@ -225,7 +225,7 @@ public class DatagramSessionOversizedFragmentSetTests
     [Fact]
     public void Pump_FragmentDeclaringCountAboveFloorButWithinAWidenedReceiveWindow_IsAdmittedAndDeliveredWhole()
     {
-        // Arrange â€” issue #264's rework: a receive window widened past ReceiveWindowFloor stands in
+        // Arrange — issue #264's rework: a receive window widened past ReceiveWindowFloor stands in
         // for a conforming peer whose own FragmentSize is smaller than this end's, so it legally cuts
         // a within-MaxMessageSize Message into more pieces than the floor alone would allow. Capacity 2,
         // FragmentSize 576 (the RFC 791 minimum) and MaxMessageSize 4096 resolve ReceiveWindowFloor to 8
@@ -233,7 +233,7 @@ public class DatagramSessionOversizedFragmentSetTests
         // of 10 sits strictly between the two: above the floor, at or below the window. The memory bill
         // (DatagramSessionOptions.ReceiveBudgetBytes) at these numbers is Capacity(2) x 20 x (2 reliable
         // Spaces x (576 + 2 length bytes) + 4 admission bytes) + Capacity(2) x 2 x 10 pending-group
-        // entries x 6 bytes = 46,640 bytes â€” trivial, so the whole 10-piece set is sent and delivered
+        // entries x 6 bytes = 46,640 bytes — trivial, so the whole 10-piece set is sent and delivered
         // rather than merely proving the first piece is accepted.
         const int capacity = 2;
         const int fragmentSize = 576;
@@ -255,7 +255,7 @@ public class DatagramSessionOversizedFragmentSetTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert â€” a count above the floor but within the widened window is admitted, assembles and
+        // Assert — a count above the floor but within the widened window is admitted, assembles and
         // delivers whole; no Peer is closed and no oversized-set diagnostic is raised.
         delivered.Should().ContainSingle().Which.Should().Equal(ExpectedWholeFragmentSetPayload(fragmentCount));
         accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.OversizedFragmentSet);
@@ -264,9 +264,9 @@ public class DatagramSessionOversizedFragmentSetTests
     [Fact]
     public void Pump_FragmentDeclaringOneMoreThanAWidenedReceiveWindow_ClosesThePeerWithProtocolViolation()
     {
-        // Arrange â€” the bound moved with the window, it did not disappear: at the same widened options
-        // as the admitted case above (ReceiveWindowFragments 20), a declared count of 21 â€” one past the
-        // window â€” is still refused, exactly as a count one past ReceiveWindowFloor is refused at
+        // Arrange — the bound moved with the window, it did not disappear: at the same widened options
+        // as the admitted case above (ReceiveWindowFragments 20), a declared count of 21 — one past the
+        // window — is still refused, exactly as a count one past ReceiveWindowFloor is refused at
         // default options in the first test in this file.
         const int capacity = 2;
         const int fragmentSize = 576;
@@ -301,7 +301,7 @@ public class DatagramSessionOversizedFragmentSetTests
     [Fact]
     public void Pump_FragmentDeclaringExactlyAWidenedReceiveWindow_IsAdmittedAndDeliveredWhole()
     {
-        // Arrange â€” the inclusive boundary at the widened bound: a declared count of exactly
+        // Arrange — the inclusive boundary at the widened bound: a declared count of exactly
         // ReceiveWindowFragments (20) is the largest a Peer may legally claim once the window is
         // widened past the floor, mirroring the default-options boundary test above but at the wider
         // window this rework exists to admit. Same options, and so the same trivial memory bill, as the
@@ -325,7 +325,7 @@ public class DatagramSessionOversizedFragmentSetTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert â€” the set at exactly the widened window is legal, completes, and delivers as one
+        // Assert — the set at exactly the widened window is legal, completes, and delivers as one
         // Message; no Peer is closed.
         delivered.Should().ContainSingle().Which.Should().Equal(ExpectedWholeFragmentSetPayload(receiveWindowFragments));
         accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.OversizedFragmentSet);
@@ -366,11 +366,11 @@ public class DatagramSessionOversizedFragmentSetTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
-    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="accepter"/> assigned
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
+    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned
     /// this Peer, mirroring <see cref="DatagramSessionHostileFragmentDiscardTests"/>'s helper of the
     /// same name. Takes an explicit <paramref name="clientNonce"/> so a test establishing more than one
-    /// Session over the same <paramref name="client"/> link â€” the Slot-reuse test above â€” never risks
+    /// Session over the same <paramref name="client"/> link — the Slot-reuse test above — never risks
     /// the accepter mistaking a second Hello for a retransmission of the first.
     /// </summary>
     private static uint EstablishLiveSessionId(

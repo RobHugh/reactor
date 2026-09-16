@@ -7,11 +7,11 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// Issue #257: an admitted Fragment is diverted into its Space's receive-window slot instead of being
-/// delivered â€” no frame-arena reservation, no pending <see cref="SessionEventKind.MessageReceived"/>,
+/// delivered — no frame-arena reservation, no pending <see cref="SessionEventKind.MessageReceived"/>,
 /// no rise in <see cref="PeerCounters.MessagesReceived"/>. Recognising a complete Fragment set is
 /// issue #258's concern, not this one's: these tests only prove a held Fragment is invisible to a
 /// consumer and that an ordinary record alongside it is unaffected. Built the same way
-/// <see cref="DatagramSessionHostileFragmentDiscardTests"/> is â€” a live Session driven by hand from a
+/// <see cref="DatagramSessionHostileFragmentDiscardTests"/> is — a live Session driven by hand from a
 /// bare <see cref="RawReactor"/>, since establishing a Session and then addressing it needs the
 /// bidirectional handshake exchange a bare Reactor gives a test.
 /// </summary>
@@ -41,9 +41,9 @@ public class DatagramSessionFragmentHoldingTests
     [Fact]
     public void Pump_AnAdmittedFragmentAlongsideAnOrdinaryRecord_DeliversOnlyTheOrdinaryRecord()
     {
-        // Arrange â€” one datagram carries a Fragment at sequence 0 (the first of a two-piece set that is
-        // never completed here â€” #258's concern) followed by an ordinary, unfragmented record at
-        // sequence 1, both ReliableUnordered so nothing here is gated behind ordered delivery release â€”
+        // Arrange — one datagram carries a Fragment at sequence 0 (the first of a two-piece set that is
+        // never completed here — #258's concern) followed by an ordinary, unfragmented record at
+        // sequence 1, both ReliableUnordered so nothing here is gated behind ordered delivery release —
         // that behaviour belongs to ReliableOrdered alone and is not what this test is about.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -63,7 +63,7 @@ public class DatagramSessionFragmentHoldingTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before2);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert â€” the Fragment is held, not delivered; the ordinary record beside it is unaffected.
+        // Assert — the Fragment is held, not delivered; the ordinary record beside it is unaffected.
         delivered.Should().ContainSingle().Which.Should().Equal(new byte[] { 0xBB });
 
         PeerCounters after = accepter.Reactor.CountersOf(accepterPeer);
@@ -76,7 +76,7 @@ public class DatagramSessionFragmentHoldingTests
     [Fact]
     public void Pump_ADuplicateFragment_DoesNotDeliverAnythingAndRaisesTheDuplicateCounter()
     {
-        // Arrange â€” a Fragment at sequence 1 admits and is held, leaving sequence 0's slot empty so the
+        // Arrange — a Fragment at sequence 1 admits and is held, leaving sequence 0's slot empty so the
         // window's base stays pinned at 0 rather than advancing past sequence 1 (AdvanceBase only moves
         // the base through a contiguous run starting at its own slot). The same Fragment sent again then
         // lands on a slot the window already marked admitted, inside the window rather than behind it.
@@ -94,7 +94,7 @@ public class DatagramSessionFragmentHoldingTests
         accepter.DrainAndDiscard();
         PeerCounters before = accepter.Reactor.CountersOf(accepterPeer);
 
-        // Act â€” the exact same Fragment record again, with a different payload byte, proving the
+        // Act — the exact same Fragment record again, with a different payload byte, proving the
         // second arrival is refused as a duplicate rather than overwriting the held slot.
         byte[] resent = BuildFragmentRecord(
             ModeReliableOrdered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0xFF]);
@@ -115,7 +115,7 @@ public class DatagramSessionFragmentHoldingTests
     [Fact]
     public void Pump_AnOutOfWindowFragment_DoesNotDeliverAnythingAndRaisesTheOutOfWindowCounter()
     {
-        // Arrange â€” a small window whose base is walked forward past sequence 0 by ordinary records,
+        // Arrange — a small window whose base is walked forward past sequence 0 by ordinary records,
         // so a Fragment arriving late at sequence 0 falls below the base.
         const int windowCapacity = 4;
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: windowCapacity, maxMessageSize: 1300);
@@ -134,7 +134,7 @@ public class DatagramSessionFragmentHoldingTests
 
         PeerCounters before = accepter.Reactor.CountersOf(accepterPeer);
 
-        // Act â€” a Fragment at sequence 0, long since retired behind the base.
+        // Act — a Fragment at sequence 0, long since retired behind the base.
         byte[] staleFragment = BuildFragmentRecord(
             ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0xAA]);
         byte[] staleDatagram = [.. BuildHeader(sessionId), .. staleFragment];
@@ -160,8 +160,8 @@ public class DatagramSessionFragmentHoldingTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
-    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="accepter"/> assigned
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
+    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned
     /// this Peer, mirroring <see cref="DatagramSessionHostileFragmentDiscardTests"/>'s helper of the
     /// same name.
     /// </summary>

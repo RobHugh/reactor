@@ -8,7 +8,7 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Subtask 6.2.6 (issues #173, #176): both unreliable Spaces' receive windows slide their base forward
 /// rather than stalling on a hole (#173's design decision), and every sequence either slide retires
-/// un-admitted raises the one per-Peer loss figure by exactly one â€” with no Diagnostic per gap (ADR 0013),
+/// un-admitted raises the one per-Peer loss figure by exactly one — with no Diagnostic per gap (ADR 0013),
 /// since a lossy path must not fill the Sink with volume. The instrument is the one
 /// <see cref="DatagramSessionSpaceRoutingTests"/> already uses: a raw dialler completing an ordinary
 /// handshake by hand, then hand-built data datagrams sent at the live session id the accepter assigned.
@@ -45,18 +45,18 @@ public class DatagramSessionUnreliableLossTests
     [Fact]
     public void Pump_SequencesZeroToFiveWithThreeOmitted_RaisesUnreliableLossByOneOnceTheWindowPassesThree()
     {
-        // Arrange â€” a 2-fragment window based at 0. Sending 0, 1 and 2 in order advances the base to 3
+        // Arrange — a 2-fragment window based at 0. Sending 0, 1 and 2 in order advances the base to 3
         // with no holes; sequence 3 itself is then a hole the window is waiting on, and sequence 4
         // still fits inside the window without forcing anything. Only sequence 5 sits at the far edge
         // (offset 2 from base 3, at capacity 2), so admitting it slides the base past the still-open
-        // hole at 3 â€” the one loss this test exists to pin.
+        // hole at 3 — the one loss this test exists to pin.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 2, maxMessageSize: 1300);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        // Act â€” 0, 1, 2, 4, 5 in order, deliberately omitting 3.
+        // Act — 0, 1, 2, 4, 5 in order, deliberately omitting 3.
         foreach (uint sequence in new uint[] { 0, 1, 2, 4, 5 })
         {
             byte[] datagram = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence, payload: [])];
@@ -65,7 +65,7 @@ public class DatagramSessionUnreliableLossTests
             accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
         }
 
-        // Assert â€” the window has moved past 3 (base is now 6, past the sequence 5 it just admitted),
+        // Assert — the window has moved past 3 (base is now 6, past the sequence 5 it just admitted),
         // and exactly one loss registered: 3, never seen, retired by the slide that admitted 5.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(1);
@@ -78,9 +78,9 @@ public class DatagramSessionUnreliableLossTests
     [Fact]
     public void Pump_ASequenceArrivingLateButStillInsideTheWindow_DoesNotLeaveAPermanentGapInTheFigure()
     {
-        // Arrange â€” a 2-fragment window based at 0. Sequence 0 admits and advances the base to 1;
+        // Arrange — a 2-fragment window based at 0. Sequence 0 admits and advances the base to 1;
         // sequence 2 then fits inside the window (offset 1 from base 1, still under capacity 2) without
-        // any slide, leaving a hole at 1. Sequence 1 then arrives late, still well inside the window â€”
+        // any slide, leaving a hole at 1. Sequence 1 then arrives late, still well inside the window —
         // no slide is ever needed to admit it.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 2, maxMessageSize: 1300);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -97,7 +97,7 @@ public class DatagramSessionUnreliableLossTests
             accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
         }
 
-        // Assert â€” a gap is provisional: 1 arrived before the window ever had to pass it by, so it
+        // Assert — a gap is provisional: 1 arrived before the window ever had to pass it by, so it
         // never touches the loss figure.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(0);
@@ -110,9 +110,9 @@ public class DatagramSessionUnreliableLossTests
     [Fact]
     public void Pump_ADuplicateInTheUnreliableSpaceAfterALoss_DoesNotChangeTheLossFigure()
     {
-        // Arrange â€” 0, 1 and 2 admit in order (base advances to 3, no loss). 5 then sits at the far
-        // edge from base 3 (offset 2, capacity 2), so admitting it slides past the hole at 3 â€” one
-        // loss â€” to base 4, where it stays held rather than being cleared: 4 itself never arrived, so
+        // Arrange — 0, 1 and 2 admit in order (base advances to 3, no loss). 5 then sits at the far
+        // edge from base 3 (offset 2, capacity 2), so admitting it slides past the hole at 3 — one
+        // loss — to base 4, where it stays held rather than being cleared: 4 itself never arrived, so
         // the base is blocked on it and 5 remains a tracked, still-classifiable admission.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 2, maxMessageSize: 1300);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -130,13 +130,13 @@ public class DatagramSessionUnreliableLossTests
 
         accepter.Reactor.CountersOf(accepterPeer).UnreliableLossPackets.Should().Be(1);
 
-        // Act â€” resend sequence 5, still tracked as admitted, so it classifies as a duplicate.
+        // Act — resend sequence 5, still tracked as admitted, so it classifies as a duplicate.
         byte[] duplicate = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence: 5, payload: [])];
         ulong duplicateDatagramsBefore = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), duplicate);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > duplicateDatagramsBefore);
 
-        // Assert â€” the duplicate is counted on its own figure and the loss figure is untouched.
+        // Assert — the duplicate is counted on its own figure and the loss figure is untouched.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.DuplicatePackets.Should().Be(1);
         counters.UnreliableLossPackets.Should().Be(1);
@@ -149,7 +149,7 @@ public class DatagramSessionUnreliableLossTests
     [Fact]
     public void Pump_LossInTheUnreliableSpace_IsNotMovedByTheTwoReliableSpaces()
     {
-        // Arrange â€” the same 0, 1, 2, 4, 5 sequence, raising the Unreliable Space's loss figure to 1.
+        // Arrange — the same 0, 1, 2, 4, 5 sequence, raising the Unreliable Space's loss figure to 1.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 2, maxMessageSize: 1300);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -166,7 +166,7 @@ public class DatagramSessionUnreliableLossTests
 
         accepter.Reactor.CountersOf(accepterPeer).UnreliableLossPackets.Should().Be(1);
 
-        // Act â€” exercise both reliable Spaces: sequence 0 admits cleanly in each, and a far-ahead
+        // Act — exercise both reliable Spaces: sequence 0 admits cleanly in each, and a far-ahead
         // sequence 5 in each is refused as out of window rather than sliding, because retransmission
         // is what fills a reliable Space's holes.
         byte[] reliableSpaces =
@@ -181,7 +181,7 @@ public class DatagramSessionUnreliableLossTests
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), reliableSpaces);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
 
-        // Assert â€” the loss figure is exactly what it was: a Space whose window never slides cannot
+        // Assert — the loss figure is exactly what it was: a Space whose window never slides cannot
         // contribute to it, whatever it refuses.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(1);
@@ -195,7 +195,7 @@ public class DatagramSessionUnreliableLossTests
     [Fact]
     public void Pump_SequencesZeroToFiveWithThreeOmittedInTheUnreliableSequencedSpace_RaisesUnreliableLossByOne()
     {
-        // Arrange â€” the UnreliableSequenced Space slides on exactly the rule the Unreliable Space does
+        // Arrange — the UnreliableSequenced Space slides on exactly the rule the Unreliable Space does
         // (#173), and its loss lands on the same figure (issue #176): UnreliableLossPackets covers both
         // unreliable Spaces, the way OutOfWindowPackets and DuplicatePackets already cover all four.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 2, maxMessageSize: 1300);
@@ -204,7 +204,7 @@ public class DatagramSessionUnreliableLossTests
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        // Act â€” 0, 1, 2, 4, 5 in order, deliberately omitting 3, exactly as the Unreliable case above.
+        // Act — 0, 1, 2, 4, 5 in order, deliberately omitting 3, exactly as the Unreliable case above.
         foreach (uint sequence in new uint[] { 0, 1, 2, 4, 5 })
         {
             byte[] datagram = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliableSequenced, sequence, payload: [])];
@@ -213,7 +213,7 @@ public class DatagramSessionUnreliableLossTests
             accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
         }
 
-        // Assert â€” one loss: 3, never seen, retired by the slide that admitted 5.
+        // Assert — one loss: 3, never seen, retired by the slide that admitted 5.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(1);
         counters.OutOfWindowPackets.Should().Be(0);
@@ -226,7 +226,7 @@ public class DatagramSessionUnreliableLossTests
     [Fact]
     public void Pump_LossInBothUnreliableSpaces_AccumulatesOntoTheOneFigure()
     {
-        // Arrange â€” the two unreliable Spaces classify independently, so each opens and passes its own
+        // Arrange — the two unreliable Spaces classify independently, so each opens and passes its own
         // hole at 3, and the figure they share is the sum (issue #176).
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 2, maxMessageSize: 1300);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -234,7 +234,7 @@ public class DatagramSessionUnreliableLossTests
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        // Act â€” the same 0, 1, 2, 4, 5 run in each Space, both records carried in one datagram per step.
+        // Act — the same 0, 1, 2, 4, 5 run in each Space, both records carried in one datagram per step.
         foreach (uint sequence in new uint[] { 0, 1, 2, 4, 5 })
         {
             byte[] datagram =
@@ -248,7 +248,7 @@ public class DatagramSessionUnreliableLossTests
             accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
         }
 
-        // Assert â€” two losses on the one figure: sequence 3, lost once in each unreliable Space.
+        // Assert — two losses on the one figure: sequence 3, lost once in each unreliable Space.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(2);
         accepter.Sink.Received.Should().BeEmpty();
@@ -260,7 +260,7 @@ public class DatagramSessionUnreliableLossTests
     [Fact]
     public void Pump_TwoSeparateGapsPassedByTheWindow_RaisesTheLossFigureMonotonicallyAndNeverResets()
     {
-        // Arrange â€” a 2-fragment window. The first gap (0, 1, 2, 4, 5 with 3 omitted) raises the
+        // Arrange — a 2-fragment window. The first gap (0, 1, 2, 4, 5 with 3 omitted) raises the
         // figure to 1; a second gap further up the sequence space raises it again rather than
         // replacing the first.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 2, maxMessageSize: 1300);
@@ -279,15 +279,15 @@ public class DatagramSessionUnreliableLossTests
 
         accepter.Reactor.CountersOf(accepterPeer).UnreliableLossPackets.Should().Be(1);
 
-        // Act â€” the base is now 6, and nothing has been sent for 6 itself. Sending 8 next sits at the
+        // Act — the base is now 6, and nothing has been sent for 6 itself. Sending 8 next sits at the
         // far edge from base 6 (offset 2, at capacity 2) without 6 or 7 ever arriving, so admitting it
-        // slides past the still-open hole at 6 â€” a second, independent loss.
+        // slides past the still-open hole at 6 — a second, independent loss.
         byte[] second = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence: 8, payload: [])];
         ulong before = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), second);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
 
-        // Assert â€” the figure accumulated rather than reset: 2 total losses (3, then 7).
+        // Assert — the figure accumulated rather than reset: 2 total losses (3, then 7).
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(2);
         accepter.Sink.Received.Should().BeEmpty();
@@ -299,10 +299,10 @@ public class DatagramSessionUnreliableLossTests
     [Fact]
     public void Pump_FirstArrivalJumpingFarBeyondTheWindowsCapacity_CountsEverySkippedSequenceIncludingThoseNeverTracked()
     {
-        // Arrange â€” a 2-fragment window based at 0, spanning [0, 1]. The very first arrival is sequence
+        // Arrange — a 2-fragment window based at 0, spanning [0, 1]. The very first arrival is sequence
         // 100: the slide it forces retires the two slots the ring could ever have tracked (both holes),
         // plus every sequence between the old far edge and the new one that never had a slot to be
-        // tracked in at all â€” a jump wider than the window, not merely one past its edge.
+        // tracked in at all — a jump wider than the window, not merely one past its edge.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 2, maxMessageSize: 1300);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -311,12 +311,12 @@ public class DatagramSessionUnreliableLossTests
 
         byte[] farJump = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence: 100, payload: [])];
 
-        // Act â€” the new base is 100 - 2 + 1 = 99, so 99 sequences (0 through 98) are retired un-admitted.
+        // Act — the new base is 100 - 2 + 1 = 99, so 99 sequences (0 through 98) are retired un-admitted.
         ulong before = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), farJump);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
 
-        // Assert â€” admitted (not discarded), and every retired sequence counted, not only the two the
+        // Assert — admitted (not discarded), and every retired sequence counted, not only the two the
         // ring itself had slots for.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(99);
@@ -331,7 +331,7 @@ public class DatagramSessionUnreliableLossTests
     [Fact]
     public void Pump_SequenceBelowTheBaseAfterASlide_ReturnsOutOfWindowWithoutRaisingTheLossFigureFurther()
     {
-        // Arrange â€” the same 0, 1, 2, 4, 5 sequence (3 omitted) that raises the Unreliable Space's loss
+        // Arrange — the same 0, 1, 2, 4, 5 sequence (3 omitted) that raises the Unreliable Space's loss
         // figure to 1 by sliding the base to 6.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 2, maxMessageSize: 1300);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -349,14 +349,14 @@ public class DatagramSessionUnreliableLossTests
 
         accepter.Reactor.CountersOf(accepterPeer).UnreliableLossPackets.Should().Be(1);
 
-        // Act â€” sequence 0 is already retired, below the base the slide left at 6: an ordinary
+        // Act — sequence 0 is already retired, below the base the slide left at 6: an ordinary
         // below-base arrival, not a new far-ahead one, so nothing should slide for it.
         byte[] belowBase = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence: 0, payload: [])];
         ulong before = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), belowBase);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
 
-        // Assert â€” out of window, exactly as a non-sliding window reports a below-base sequence, and
+        // Assert — out of window, exactly as a non-sliding window reports a below-base sequence, and
         // the loss figure is exactly what it was: a below-base arrival is not a slide.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.OutOfWindowPackets.Should().Be(1);
@@ -369,8 +369,8 @@ public class DatagramSessionUnreliableLossTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
-    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="accepter"/> assigned
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
+    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned
     /// this Peer, mirroring <see cref="DatagramSessionSpaceRoutingTests"/>'s helper of the same name.
     /// </summary>
     private static uint EstablishLiveSessionId(DatagramSessionReactorHarness accepter, RawReactor client, LinkId clientLink)
