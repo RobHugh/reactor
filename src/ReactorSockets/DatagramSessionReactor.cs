@@ -1026,7 +1026,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // DiscardMalformedForSession's Reactor-scope figure instead, above, and never reaches here.
         slot.Counters.RecordBytesReceived((ulong)datagram.Length);
 
-        TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
+        TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits, effectiveRto);
         ReleaseRetentionForAck(slot, PacketRecordMode.ReliableOrdered);
         ApplyAckToStallSignature(slot);
@@ -1547,7 +1547,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
+            TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger);
             slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableOrdered, effectiveRto);
             slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableUnordered, effectiveRto);
 
@@ -1927,7 +1927,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 slot.AckTracker.RecordSent(
                     pending.Mode,
                     pending.Sequence,
-                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger),
+                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger),
                     isFragment);
             }
 
@@ -3237,8 +3237,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// The negotiated Linger — the minimum of this end's own <see cref="DatagramSessionOptions.Linger"/>
         /// and <see cref="RemoteLinger"/> — set once the Session establishes, on both Established paths,
         /// exactly where <see cref="RemoteLinger"/> is. Immutable for the Session's lifetime from that
-        /// point on, exactly as every other negotiated parameter is. Nothing reads this yet: the
-        /// Diagnostic is issue #364, the RTO ceiling issue #365 and expiry issue #367.
+        /// point on, exactly as every other negotiated parameter is. This is the RTO's ceiling (subtask
+        /// 6.4, issue #365): every <see cref="RetransmissionTimer.EffectiveTimeout"/> call in
+        /// <see cref="DatagramSessionReactor"/> clamps against this value, never against this end's own
+        /// <see cref="DatagramSessionOptions.Linger"/>, so the ceiling and Linger expiry (issue #367)
+        /// read the same effective value. The Diagnostic is issue #364; expiry is issue #367.
         /// </summary>
         public TimeSpan EffectiveLinger { get; set; }
 
