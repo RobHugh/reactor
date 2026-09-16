@@ -48,9 +48,11 @@ public class DatagramSessionLingerExpiryTests
             // InterruptedTimestamp.
             DatagramSessionReactorHarness.SettleThenAdvance(
                 accepter, _shorterLinger - TimeSpan.FromMilliseconds(1));
+            allAccepterEvents.AddRange(accepter.DrainToList());
             allAccepterEvents.AddRange(accepter.PumpAndDrainAll(1));
 
-            // Assert — held open across every drain so far, including the interruption Pump's own drain.
+            // Assert — held open across every drain so far, including the settle Pump's and the
+            // interruption Pump's own drains.
             allAccepterEvents.Should().NotContain(
                 e => e.Kind == SessionEventKind.PeerClosed,
                 "the effective Linger — the negotiated minimum of 5s, not the accepter's own 8s — has not yet elapsed");
@@ -72,6 +74,7 @@ public class DatagramSessionLingerExpiryTests
             // crosses it, on the same clock the interruption Pump stamped InterruptedTimestamp from.
             DatagramSessionReactorHarness.SettleThenAdvance(
                 accepter, _shorterLinger - TimeSpan.FromMilliseconds(1));
+            allAccepterEvents.AddRange(accepter.DrainToList());
             allAccepterEvents.AddRange(accepter.PumpAndDrainAll(1));
 
             allAccepterEvents.Should().NotContain(
@@ -181,7 +184,8 @@ public class DatagramSessionLingerExpiryTests
         proxy.StopRelayingBothDirections();
 
         DatagramSessionReactorHarness.SettleThenAdvance(accepter, _receiveIdleDeadline);
-        allAccepterEvents = accepter.PumpAndDrainAll(1);
+        allAccepterEvents = accepter.DrainToList();
+        allAccepterEvents.AddRange(accepter.PumpAndDrainAll(1));
 
         allAccepterEvents.Should().ContainSingle(
             e => e.Kind == SessionEventKind.PeerInterrupted,
