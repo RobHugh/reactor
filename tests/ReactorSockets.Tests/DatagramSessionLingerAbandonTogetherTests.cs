@@ -114,6 +114,100 @@ public class DatagramSessionLingerAbandonTogetherTests
     }
 
     /// <summary>
+    /// Issue #55 follow-up (PR #372): the dialler's own configured Linger is 5000.4 ms — not a whole
+    /// millisecond — and the accepter's is 8 s. Both ends must round their own Linger up to whole
+    /// milliseconds once, <em>before</em> negotiating, so both land on the same 5001 ms effective value
+    /// (issue #363 rounds the wire announcement, but before this fix the negotiation itself still read
+    /// the unrounded <c>_options.Linger</c>, so the dialler abandoned around 5000.4 ms while the accepter
+    /// negotiated 5001 ms — proving both ends must round the same way, not merely that each announces a
+    /// rounded value on the wire).
+    /// </summary>
+    [Fact]
+    public void Pump_BothEndsInterrupted_WithFractionalMillisecondLinger_RoundBothEndsToTheSameEffectiveLingerAndCloseTogether()
+    {
+        // Arrange — a 5000.4 ms dialler Linger (never a whole millisecond) against an 8 s accepter
+        // Linger. If negotiation used the unrounded 5000.4 ms, the two ends would compute different
+        // effective Lingers and abandon the Session at different instants.
+        TimeSpan fractionalLinger = TimeSpan.FromTicks(50_004_000); // 5000.4 ms
+        FakeTimeProvider clock = new();
+        using DatagramSessionReactorHarness dialler = new(
+            bindLoopback: false,
+            sendIdleInterval: _sendIdleInterval,
+            linger: fractionalLinger,
+            missedHeartbeats: MissedHeartbeats,
+            timeProvider: clock);
+        using DatagramSessionReactorHarness accepter = new(
+            sendIdleInterval: _sendIdleInterval,
+            linger: _longerLinger,
+            missedHeartbeats: MissedHeartbeats,
+            timeProvider: clock);
+        using LossyProxy proxy = new(accepter.Endpoint, clock);
+
+        dialler.Reactor.Connect(proxy.PublicEndPoint);
+        DatagramSessionReactorHarness.PumpThroughProxyUntilConnected(dialler, proxy, accepter);
+
+        // Assert — the dialler rounded its own 5000.4 ms Linger up to 5001 ms once, and negotiated from
+        // that rounded value, so the LingerNegotiated Diagnostic reports 5001 on both Value0 (this end's
+        // own announced Linger) and Value1 (the negotiated minimum against the accepter's 8 s).
+        dialler.Sink.Received.Where(r => r.Id == DiagnosticId.LingerNegotiated).Should().ContainSingle()
+            .Which.Should().Match<DiagnosticRecord>(r => r.Value0 == 5001 && r.Value1 == 5001);
+
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> allDiallerEvents = [];
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> allAccepterEvents = [];
+
+        // Act — cut the path in both directions, then advance to the shared receive-idle deadline and
+        // pump both, back to back, at the one clock reading that crosses it.
+        proxy.StopRelayingBothDirections();
+        SettleThenAdvanceBoth(dialler, accepter, _receiveIdleDeadline);
+
+        DateTimeOffset interruptInstant = clock.GetUtcNow();
+        (List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> DiallerInterrupt,
+            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> AccepterInterrupt) interrupted =
+            PumpBothAndDrain(dialler, accepter);
+        allDiallerEvents.AddRange(interrupted.DiallerInterrupt);
+        allAccepterEvents.AddRange(interrupted.AccepterInterrupt);
+
+        clock.GetUtcNow().Should().Be(interruptInstant);
+        interrupted.DiallerInterrupt.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted);
+        interrupted.AccepterInterrupt.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted);
+
+        // Act — one tick short of the negotiated 5001 ms, measured from the interruption instant. Before
+        // this fix, the dialler would already have closed around 5000.4 ms — well short of this point.
+        TimeSpan justShortOfEffectiveLinger = TimeSpan.FromMilliseconds(5001) - TimeSpan.FromTicks(1);
+        SettleThenAdvanceBoth(dialler, accepter, justShortOfEffectiveLinger);
+        (List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> DiallerJustInside,
+            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> AccepterJustInside) justInside =
+            PumpBothAndDrain(dialler, accepter);
+        allDiallerEvents.AddRange(justInside.DiallerJustInside);
+        allAccepterEvents.AddRange(justInside.AccepterJustInside);
+
+        allDiallerEvents.Should().NotContain(
+            e => e.Kind == SessionEventKind.PeerClosed,
+            "the negotiated 5001 ms has not yet elapsed on the dialling end");
+        allAccepterEvents.Should().NotContain(
+            e => e.Kind == SessionEventKind.PeerClosed,
+            "the negotiated 5001 ms has not yet elapsed on the accepting end");
+
+        // Act — the final tick crosses the negotiated 5001 ms on the one shared clock, still pumping
+        // both ends back to back at that one reading.
+        clock.Advance(TimeSpan.FromTicks(1));
+        DateTimeOffset expiryInstant = clock.GetUtcNow();
+        (List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> DiallerExpiry,
+            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> AccepterExpiry) expired =
+            PumpBothAndDrain(dialler, accepter);
+
+        // Assert — both close at this same instant, naming LingerExpired: the negotiated 5001 ms, not
+        // the dialler's own 5000.4 ms and not the accepter's own 8 s, is what governs on both ends.
+        clock.GetUtcNow().Should().Be(expiryInstant);
+        expired.DiallerExpiry.Should().ContainSingle(
+            e => e.Kind == SessionEventKind.PeerClosed).Which.Reason.Should().Be(DisconnectReason.LingerExpired);
+        expired.AccepterExpiry.Should().ContainSingle(
+            e => e.Kind == SessionEventKind.PeerClosed,
+            "the negotiated 5001 ms has now elapsed on both ends at the same instant")
+            .Which.Reason.Should().Be(DisconnectReason.LingerExpired);
+    }
+
+    /// <summary>
     /// The two-harness counterpart of <see cref="DatagramSessionReactorHarness.SettleThenAdvance"/>:
     /// splits a large wait on the one clock both harnesses share into "advance to one millisecond short,
     /// Pump both ends once each so each observes a settled, small Pump cadence, then advance the final

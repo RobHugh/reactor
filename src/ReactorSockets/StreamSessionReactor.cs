@@ -1189,6 +1189,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _dispatcher.Register(slot.Link.Socket, () => OnPeerReadable(handle), () => OnPeerWritable(handle));
 
     /// <summary>
+    /// This Reactor's <see cref="StreamSessionOptions.Linger"/> as announced on the Hello record, in
+    /// whole milliseconds rounded up — the stream profile's twin of
+    /// <see cref="DatagramSessionReactor.AnnouncedLingerMilliseconds"/> (issue #55 follow-up). Rounding
+    /// up keeps a sub-millisecond Linger from going out as zero, and never shortens the value the far
+    /// end negotiates the effective (minimum) Linger from. This is also this end's own operand of that
+    /// minimum in <see cref="PeerSlot.EffectiveLinger"/> (<see cref="OnHelloRecordReceived"/>) — rounded
+    /// here once, so both ends negotiate from identical whole-millisecond values and land on the same
+    /// effective Linger, whatever fractional-millisecond <see cref="StreamSessionOptions.Linger"/>
+    /// either end configured.
+    /// </summary>
+    private ulong AnnouncedLingerMilliseconds => (ulong)Math.Ceiling(_options.Linger.TotalMilliseconds);
+
+    /// <summary>
     /// Writes this end's Hello record and sends as much of it as the socket will take right now.
     /// A short send arms this Peer's socket for <see cref="OnPeerWritable"/>, which flushes whatever
     /// remains — the record is 41 bytes, so a short send is not expected in practice, but nothing here
@@ -1202,7 +1215,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             StreamSessionProtocol.Version,
             (uint)_options.MaxMessageSize,
             (ulong)_options.SendIdleInterval.TotalMilliseconds,
-            (ulong)_options.Linger.TotalMilliseconds,
+            AnnouncedLingerMilliseconds,
             slot.LocalResumeSecret);
 
         SendRecordOrArm(handle, slot, record, closeReasonAfterSend: null);
@@ -2554,7 +2567,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
 
         TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
-        TimeSpan effectiveLinger = _options.Linger < remoteLinger ? _options.Linger : remoteLinger;
+        TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
+        TimeSpan effectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
 
         slot.RemoteVersion = version;
         slot.RemoteMaxMessageSize = remoteMaxMessageSize;
@@ -2579,7 +2593,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
         {
             _diagnostics.Log(DiagnosticRecord.ForLingerNegotiated(
-                peer, (long)_options.Linger.TotalMilliseconds, (long)effectiveLinger.TotalMilliseconds));
+                peer, (long)AnnouncedLingerMilliseconds, (long)effectiveLinger.TotalMilliseconds));
         }
     }
 
@@ -3032,13 +3046,21 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// <summary>The send-idle interval the remote announced.</summary>
         public TimeSpan RemoteSendIdleInterval { get; set; }
 
-        /// <summary>The Linger the remote announced. The minimum of the two ends' Lingers governs (ADR 0011).</summary>
+        /// <summary>
+        /// The Linger the remote announced — already whole milliseconds, since the remote rounded it up
+        /// once before sending (its own <see cref="AnnouncedLingerMilliseconds"/>). The minimum of the
+        /// two ends' Lingers governs (ADR 0011).
+        /// </summary>
         public TimeSpan RemoteLinger { get; set; }
 
         /// <summary>
-        /// The negotiated Linger — the minimum of this end's own <see cref="StreamSessionOptions.Linger"/>
-        /// and <see cref="RemoteLinger"/> — set once the Session establishes. Immutable for the
-        /// Session's lifetime from that point on, exactly as every other negotiated parameter is.
+        /// The negotiated Linger — the minimum of this end's own
+        /// <see cref="StreamSessionReactor.AnnouncedLingerMilliseconds"/> (this end's own
+        /// <see cref="StreamSessionOptions.Linger"/> rounded up to whole milliseconds once, the same
+        /// value announced on the wire) and <see cref="RemoteLinger"/> — set once the Session
+        /// establishes. Both operands are already whole milliseconds, so the minimum is exact: no
+        /// further rounding happens here. Immutable for the Session's lifetime from that point on,
+        /// exactly as every other negotiated parameter is.
         /// </summary>
         public TimeSpan EffectiveLinger { get; set; }
 

@@ -309,7 +309,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// Accept, in whole milliseconds rounded up, for the same reason
     /// <see cref="AnnouncedSendIdleIntervalMilliseconds"/> rounds up: a sub-millisecond Linger going out
     /// as zero would be rejected as malformed, and rounding up never shortens the value the far end
-    /// negotiates the effective (minimum) Linger from (issue #363).
+    /// negotiates the effective (minimum) Linger from (issue #363). This is also this end's own operand
+    /// of the minimum in <see cref="PeerSlot.EffectiveLinger"/> — rounded here once, on both the dialling
+    /// (<see cref="OnAccept"/>) and accepting (<see cref="NewAcceptedPeer"/>) paths — so both ends
+    /// negotiate from identical whole-millisecond values and land on the same effective Linger, whatever
+    /// fractional-millisecond <see cref="DatagramSessionOptions.Linger"/> either end configured. The
+    /// stream profile mirrors this with its own equivalent (issue #55 follow-up).
     /// </summary>
     private ulong AnnouncedLingerMilliseconds => (ulong)Math.Ceiling(_options.Linger.TotalMilliseconds);
 
@@ -2750,8 +2755,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         TimeSpan remoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
         TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
+        TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
         if (_peers.TryAdd(NewAcceptedPeer(
-                source, link, remoteSessionId, remoteMaxMessageSize, remoteSendIdleInterval, remoteLinger, remoteResumeSecret, clientNonce))
+                source, link, remoteSessionId, remoteMaxMessageSize, remoteSendIdleInterval, remoteLinger, announcedLinger, remoteResumeSecret, clientNonce))
             is not SlotHandle handle)
         {
             _counters.RecordAdmissionDiscard();
@@ -2777,7 +2783,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
         {
             _diagnostics.Log(DiagnosticRecord.ForLingerNegotiated(
-                peer, (long)_options.Linger.TotalMilliseconds, (long)slot.EffectiveLinger.TotalMilliseconds));
+                peer, (long)AnnouncedLingerMilliseconds, (long)slot.EffectiveLinger.TotalMilliseconds));
         }
 
         SendAccept(link, slot);
@@ -2861,12 +2867,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             "ControlDatagramCodec.TryReadAccept rejects a zero-announced Linger before this is called.");
 
         TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
+        TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
 
         slot.RemoteSessionId = remoteSessionId;
         slot.RemoteMaxMessageSize = remoteMaxMessageSize;
         slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
         slot.RemoteLinger = remoteLinger;
-        slot.EffectiveLinger = _options.Linger < remoteLinger ? _options.Linger : remoteLinger;
+        slot.EffectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
         slot.State = HandshakeState.Established;
 
@@ -2887,7 +2894,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
         {
             _diagnostics.Log(DiagnosticRecord.ForLingerNegotiated(
-                peer, (long)_options.Linger.TotalMilliseconds, (long)slot.EffectiveLinger.TotalMilliseconds));
+                peer, (long)AnnouncedLingerMilliseconds, (long)slot.EffectiveLinger.TotalMilliseconds));
         }
     }
 
@@ -2944,6 +2951,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         uint remoteMaxMessageSize,
         TimeSpan remoteSendIdleInterval,
         TimeSpan remoteLinger,
+        TimeSpan announcedLinger,
         ReadOnlySpan<byte> remoteResumeSecret,
         ulong clientNonce)
     {
@@ -2963,7 +2971,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         RetransmissionTimer retransmitTimer = new();
         long now = _options.Reactor.TimeProvider.GetTimestamp();
-        TimeSpan effectiveLinger = _options.Linger < remoteLinger ? _options.Linger : remoteLinger;
+        TimeSpan effectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
         return new()
         {
             Remote = source,
@@ -3297,19 +3305,22 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <see cref="DatagramSessionReactor.OnAccept"/> (from the Accept field), from the value
         /// <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> and
         /// <see cref="ControlDatagramCodec.TryReadAccept"/> already reject as zero at parse. The minimum
-        /// of this and this end's own <see cref="DatagramSessionOptions.Linger"/> governs
-        /// (<see cref="EffectiveLinger"/>, ADR 0012 adopting ADR 0011's shape). The stream profile's
-        /// <see cref="StreamSessionReactor.PeerSlot.RemoteLinger"/> is the model this mirrors.
+        /// of this end's own <see cref="DatagramSessionReactor.AnnouncedLingerMilliseconds"/> (already whole milliseconds) and
+        /// this governs (<see cref="EffectiveLinger"/>, ADR 0012 adopting ADR 0011's shape). The stream
+        /// profile's <see cref="StreamSessionReactor.PeerSlot.RemoteLinger"/> is the model this mirrors.
         /// </summary>
         public TimeSpan RemoteLinger { get; set; }
 
         /// <summary>
-        /// The negotiated Linger — the minimum of this end's own <see cref="DatagramSessionOptions.Linger"/>
-        /// and <see cref="RemoteLinger"/> — set once the Session establishes, on both Established paths,
-        /// exactly where <see cref="RemoteLinger"/> is. Immutable for the Session's lifetime from that
-        /// point on, exactly as every other negotiated parameter is. This is the RTO's ceiling (subtask
-        /// 6.4, issue #365): every <see cref="RetransmissionTimer.EffectiveTimeout"/> call in
-        /// <see cref="DatagramSessionReactor"/> clamps against this value, never against this end's own
+        /// The negotiated Linger — the minimum of this end's own <see cref="DatagramSessionReactor.AnnouncedLingerMilliseconds"/>
+        /// (this end's <see cref="DatagramSessionOptions.Linger"/> rounded up to whole milliseconds once,
+        /// the same value announced on the wire) and <see cref="RemoteLinger"/> — set once the Session
+        /// establishes, on both Established paths, exactly where <see cref="RemoteLinger"/> is. Both
+        /// operands are already whole milliseconds, so the minimum is exact: no further rounding happens
+        /// here. Immutable for the Session's lifetime from that point on, exactly as every other
+        /// negotiated parameter is. This is the RTO's ceiling (subtask 6.4, issue #365): every
+        /// <see cref="RetransmissionTimer.EffectiveTimeout"/> call in <see cref="DatagramSessionReactor"/>
+        /// clamps against this value, never against this end's own
         /// <see cref="DatagramSessionOptions.Linger"/>, so the ceiling and Linger expiry (issue #367)
         /// read the same effective value. The Diagnostic is issue #364; expiry is issue #367.
         /// </summary>
