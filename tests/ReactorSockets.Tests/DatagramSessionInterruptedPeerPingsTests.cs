@@ -59,7 +59,7 @@ public class DatagramSessionInterruptedPeerPingsTests
         proxy.StopRelayingBothDirections();
 
         TimeSpan receiveIdleDeadline = _sendIdleInterval * MissedHeartbeats;
-        DatagramSessionReactorHarness.SettleThenAdvance(dialler, receiveIdleDeadline);
+        allDiallerEvents.AddRange(SettleThenAdvanceAndDrain(dialler, receiveIdleDeadline));
         allDiallerEvents.AddRange(dialler.PumpAndDrainAll(1));
         proxy.Pump();
 
@@ -75,7 +75,7 @@ public class DatagramSessionInterruptedPeerPingsTests
         // one.
         for (int i = 0; i < 6; i++)
         {
-            DatagramSessionReactorHarness.SettleThenAdvance(dialler, _sendIdleInterval);
+            allDiallerEvents.AddRange(SettleThenAdvanceAndDrain(dialler, _sendIdleInterval));
             allDiallerEvents.AddRange(dialler.PumpAndDrainAll(1));
             proxy.Pump();
         }
@@ -94,6 +94,23 @@ public class DatagramSessionInterruptedPeerPingsTests
 
         controlRecordsAfterInterruption.Count.Should().BeGreaterThan(
             1, "the Interrupted end has no re-dial schedule and keeps probing the path with Pings");
+    }
+
+    /// <summary>
+    /// Runs <see cref="DatagramSessionReactorHarness.SettleThenAdvance"/>'s own settle-then-advance
+    /// sequence against <paramref name="harness"/>, but drains the Pump it issues instead of leaving it
+    /// undrained: <see cref="DatagramSessionReactor.Pump"/> clears any pending Events still sitting from
+    /// a previous, undrained Pump the moment a new one starts, so a <see cref="SessionEventKind.PeerClosed"/>
+    /// raised on this Pump would otherwise never reach an assertion.
+    /// </summary>
+    private static List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> SettleThenAdvanceAndDrain(
+        DatagramSessionReactorHarness harness, TimeSpan interval)
+    {
+        harness.TimeProvider.Advance(interval - TimeSpan.FromMilliseconds(1));
+        harness.Reactor.Pump();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = harness.DrainToList();
+        harness.TimeProvider.Advance(TimeSpan.FromMilliseconds(1));
+        return drained;
     }
 
     /// <summary>
