@@ -39,6 +39,9 @@ public class DatagramSessionWireFormatTests
     // (itself immediately after sessionIdForMe).
     private const int AcceptSendIdleIntervalOffset = AcceptSessionIdForMeOffset + 4 + 4;
 
+    // The dialler's Linger (issue #361), immediately after HelloWithCookie's send-idle interval.
+    private const int HelloWithCookieLingerOffset = HelloWithCookieSendIdleIntervalOffset + 8;
+
     [Fact]
     public void Send_LiveSessionDatagram_FirstTwentyBytesAreTheHeaderSessionIdThenBothAckBlocks()
     {
@@ -259,6 +262,31 @@ public class DatagramSessionWireFormatTests
 
         // Assert
         sendIdleIntervalMillisecondsOnWire.Should().Be((ulong)configuredSendIdleInterval.TotalMilliseconds);
+    }
+
+    [Fact]
+    public void Connect_HelloWithCookie_CarriesTheDiallersConfiguredLingerInMilliseconds()
+    {
+        // Arrange — a dialler configured with a distinctive, easily-misread Linger, so this proves the
+        // actual configured value made it to the wire rather than some other field's value that
+        // happens to look right.
+        TimeSpan configuredLinger = TimeSpan.FromMilliseconds(98_765);
+        using DatagramSessionReactorHarness dialler = new(bindLoopback: false, linger: configuredLinger);
+        using DatagramSessionReactorHarness accepter = new();
+        using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
+        dialler.Reactor.Connect(tap.PublicEndPoint);
+        DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
+
+        // Act — read the Linger straight off the captured Hello-with-cookie's own bytes.
+        byte[] helloWithCookie = tap.Captures.Single(
+            c => c.Direction == TapDirection.DiallerToAccepter
+                && c.Payload.Length == ControlDatagramSize
+                && c.Payload[ControlTypeOffset] == ControlTypeHelloWithCookie).Payload;
+        ulong lingerMillisecondsOnWire = BinaryPrimitives.ReadUInt64BigEndian(
+            helloWithCookie.AsSpan(HelloWithCookieLingerOffset, 8));
+
+        // Assert
+        lingerMillisecondsOnWire.Should().Be((ulong)configuredLinger.TotalMilliseconds);
     }
 
     /// <summary>The first datagram captured travelling in <paramref name="direction"/> whose session id names a live Session rather than the reserved control session id — filters out the handshake's own control datagrams.</summary>

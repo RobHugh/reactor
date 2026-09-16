@@ -49,7 +49,8 @@ public class DatagramSessionCookieTests
         uint maxMessageSize = 4096,
         ReadOnlySpan<byte> resumeSecret = default,
         uint version = ProtocolVersion,
-        ulong sendIdleIntervalMilliseconds = 60_000)
+        ulong sendIdleIntervalMilliseconds = 60_000,
+        ulong lingerMilliseconds = 30_000)
     {
         byte[] datagram = new byte[ControlSize];
         BinaryPrimitives.WriteUInt32BigEndian(datagram.AsSpan(0, 4), 0);
@@ -69,6 +70,8 @@ public class DatagramSessionCookieTests
         BinaryPrimitives.WriteUInt32BigEndian(datagram.AsSpan(offset, 4), maxMessageSize);
         offset += 4;
         BinaryPrimitives.WriteUInt64BigEndian(datagram.AsSpan(offset, 8), sendIdleIntervalMilliseconds);
+        offset += 8;
+        BinaryPrimitives.WriteUInt64BigEndian(datagram.AsSpan(offset, 8), lingerMilliseconds);
         offset += 8;
         if (!resumeSecret.IsEmpty)
         {
@@ -356,6 +359,35 @@ public class DatagramSessionCookieTests
 
         // Assert — discarded as malformed, the same outcome a zero maxMessageSize already produces,
         // and no Session ever came to exist over it.
+        events.Should().NotContain(evt => evt.Kind == SessionEventKind.PeerConnected);
+        harness.Reactor.Counters.UnknownSourceDiscards.Should().Be(1);
+        harness.Sink.Received.Should().Contain(record => record.Id == DiagnosticId.DatagramMalformed);
+    }
+
+    // ---- 8.3.1: a zero-announced Linger fails to read ---------------------------------------
+
+    [Fact]
+    public void OnHelloWithCookie_AnnouncingAZeroLinger_IsDiscardedAsMalformedAndNoPeerConnected()
+    {
+        // Arrange — a genuine cookie, so the only thing standing between this Hello-with-cookie and
+        // Establishment is the zero-announced Linger: TryReadHelloWithCookie fails the read before
+        // cookie verification is even reached, exactly as it already does for a zero-announced
+        // send-idle interval (issue #347) and maxMessageSize (issue #287).
+        using DatagramSessionReactorHarness harness = new();
+        using RawClient client = new();
+        const ulong clientNonce = 34UL;
+        (long epoch, byte[] cookie) = ObtainCookie(harness, client, clientNonce);
+        byte[] resumeSecret = new byte[ResumeSecretLength];
+
+        // Act
+        client.SendTo(
+            harness.Endpoint,
+            BuildHelloWithCookie(clientNonce, epoch, cookie, resumeSecret: resumeSecret, lingerMilliseconds: 0));
+        harness.Reactor.Pump();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = harness.DrainToList();
+
+        // Assert — discarded as malformed, the same outcome a zero send-idle interval or maxMessageSize
+        // already produces, and no Session ever came to exist over it.
         events.Should().NotContain(evt => evt.Kind == SessionEventKind.PeerConnected);
         harness.Reactor.Counters.UnknownSourceDiscards.Should().Be(1);
         harness.Sink.Received.Should().Contain(record => record.Id == DiagnosticId.DatagramMalformed);
