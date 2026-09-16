@@ -304,6 +304,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private ulong AnnouncedSendIdleIntervalMilliseconds => (ulong)Math.Ceiling(_options.SendIdleInterval.TotalMilliseconds);
 
+    /// <summary>
+    /// This Reactor's <see cref="DatagramSessionOptions.Linger"/> as announced on Accept, in whole
+    /// milliseconds rounded up, for the same reason <see cref="AnnouncedSendIdleIntervalMilliseconds"/>
+    /// rounds up: a sub-millisecond Linger going out as zero would be rejected as malformed, and
+    /// rounding up never shortens the value the dialling end negotiates the effective (minimum) Linger
+    /// from (issue #363).
+    /// </summary>
+    private ulong AnnouncedLingerMilliseconds => (ulong)Math.Ceiling(_options.Linger.TotalMilliseconds);
+
     /// <inheritdoc cref="ISessionEventSource.PendingEventCount"/>
     int ISessionEventSource.PendingEventCount => _pendingEvents.Count;
 
@@ -2758,6 +2767,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out uint remoteSessionId,
                 out uint remoteMaxMessageSize,
                 out ulong remoteSendIdleIntervalMilliseconds,
+                out _, // The accepter's Linger: storing it to negotiate the effective value is issue #363, out of scope here.
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2909,6 +2919,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             slot.LocalSessionId,
             (uint)_options.MaxMessageSize,
             AnnouncedSendIdleIntervalMilliseconds,
+            AnnouncedLingerMilliseconds,
             slot.LocalResumeSecret);
         SendControl(link, slot.Remote);
     }
