@@ -305,11 +305,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private ulong AnnouncedSendIdleIntervalMilliseconds => (ulong)Math.Ceiling(_options.SendIdleInterval.TotalMilliseconds);
 
     /// <summary>
-    /// This Reactor's <see cref="DatagramSessionOptions.Linger"/> as announced on Accept, in whole
-    /// milliseconds rounded up, for the same reason <see cref="AnnouncedSendIdleIntervalMilliseconds"/>
-    /// rounds up: a sub-millisecond Linger going out as zero would be rejected as malformed, and
-    /// rounding up never shortens the value the dialling end negotiates the effective (minimum) Linger
-    /// from (issue #363).
+    /// This Reactor's <see cref="DatagramSessionOptions.Linger"/> as announced on Hello-with-cookie and
+    /// Accept, in whole milliseconds rounded up, for the same reason
+    /// <see cref="AnnouncedSendIdleIntervalMilliseconds"/> rounds up: a sub-millisecond Linger going out
+    /// as zero would be rejected as malformed, and rounding up never shortens the value the far end
+    /// negotiates the effective (minimum) Linger from (issue #363).
     /// </summary>
     private ulong AnnouncedLingerMilliseconds => (ulong)Math.Ceiling(_options.Linger.TotalMilliseconds);
 
@@ -2661,6 +2661,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out uint remoteSessionId,
                 out uint remoteMaxMessageSize,
                 out ulong remoteSendIdleIntervalMilliseconds,
+                out _, // The dialler's Linger: storing and negotiating it is issue #363, out of scope here.
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2748,6 +2749,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             slot.LocalSessionId,
             (uint)_options.MaxMessageSize,
             AnnouncedSendIdleIntervalMilliseconds,
+            AnnouncedLingerMilliseconds,
             slot.LocalResumeSecret);
         SendControl(link, source);
     }
