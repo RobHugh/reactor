@@ -562,7 +562,6 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             SessionEventKind.MessageReceived => SessionEvent.ForMessageReceived(
                 pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
             SessionEventKind.PeerClosing => SessionEvent.ForPeerClosing(pending.Peer),
-            SessionEventKind.PeerInterrupted => SessionEvent.ForPeerInterrupted(pending.Peer),
             SessionEventKind.PeerResumed => SessionEvent.ForPeerResumed(pending.Peer),
             _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind."),
         };
