@@ -7,8 +7,8 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #171: the receive arena — the datagram Session profile's receive side of the memory bill,
-/// <c>Capacity × 2 reliable Spaces × ReceiveWindowFragments × FragmentSize</c> — is preallocated once
+/// Issue #171: the receive arena â€” the datagram Session profile's receive side of the memory bill,
+/// <c>Capacity Ã— 2 reliable Spaces Ã— ReceiveWindowFragments Ã— FragmentSize</c> â€” is preallocated once
 /// at <see cref="DatagramSessionReactor"/> construction, regardless of whether any Peer has connected,
 /// and released when the Reactor is disposed. Mirrors the allocation-measurement pattern in
 /// <see cref="StreamSessionRetentionAllocationTests"/>, the send-side equivalent (issue #84).
@@ -18,7 +18,7 @@ public class DatagramSessionReceiveArenaAllocationTests
     /// <summary>
     /// The window size the exact-match measurements below start from, and the Reactor shape they all
     /// share. Every measurement builds the same Reactor and fills every one of its Peer Slots, so the
-    /// only thing that differs between two measurements is the configured window — which makes the
+    /// only thing that differs between two measurements is the configured window â€” which makes the
     /// difference between them exactly the receive side's own bytes, with no allowance for anything
     /// else construction happens to allocate.
     /// </summary>
@@ -29,14 +29,14 @@ public class DatagramSessionReceiveArenaAllocationTests
     private const int MeasurementWindowFragments = 32;
 
     /// <summary>
-    /// Mirrors the internal <c>DatagramSessionOptions.FragmentLengthBytes</c> (#257) — this test file
+    /// Mirrors the internal <c>DatagramSessionOptions.FragmentLengthBytes</c> (#257) â€” this test file
     /// cannot reference it directly (no <c>InternalsVisibleTo</c>, per tests/CLAUDE.md), so it restates
     /// the same width the production bill is computed from.
     /// </summary>
     private const int FragmentLengthBytes = 2;
 
     /// <summary>
-    /// Mirrors the internal <c>DatagramSessionOptions.FragmentGroupEntryBytes</c> (#297) — the six bytes
+    /// Mirrors the internal <c>DatagramSessionOptions.FragmentGroupEntryBytes</c> (#297) â€” the six bytes
     /// per fragment slot that name the group a held Fragment belongs to, distinct from
     /// <see cref="PendingGroupEntryBytes"/>'s six bytes per waiting group.
     /// </summary>
@@ -47,12 +47,12 @@ public class DatagramSessionReceiveArenaAllocationTests
     [Fact]
     public void Construct_AndFillEveryPeerSlot_AllocatesExactlyTheOptionsStatedReceiveBudget()
     {
-        // Act — two Reactors identical but for the window, each with every Peer Slot occupied.
+        // Act â€” two Reactors identical but for the window, each with every Peer Slot occupied.
         WarmUpTheMeasurement();
         long narrow = MeasureReceiveSideAllocation(MeasurementWindowFragments);
         long wide = MeasureReceiveSideAllocation(MeasurementWindowFragments * 2);
 
-        // Assert — the receive budget is linear in the window with no constant term, so doubling the
+        // Assert â€” the receive budget is linear in the window with no constant term, so doubling the
         // window adds exactly one more narrow budget's worth of bytes. Exact, not a lower bound
         // (issue #174): every byte of per-Peer receive state now comes out of the arena, so occupying
         // all eight Slots takes nothing on top of what the options said the receive side would cost.
@@ -62,13 +62,13 @@ public class DatagramSessionReceiveArenaAllocationTests
     [Fact]
     public void Construct_DoublingReceiveWindowFragments_ExactlyDoublesTheMeasuredAllocation()
     {
-        // Act — three points on the same line, at one, two and three windows.
+        // Act â€” three points on the same line, at one, two and three windows.
         WarmUpTheMeasurement();
         long single = MeasureReceiveSideAllocation(MeasurementWindowFragments);
         long doubled = MeasureReceiveSideAllocation(MeasurementWindowFragments * 2);
         long tripled = MeasureReceiveSideAllocation(MeasurementWindowFragments * 3);
 
-        // Assert — each step of one window costs the same, which is what makes the measurement a
+        // Assert â€” each step of one window costs the same, which is what makes the measurement a
         // straight line through a window-independent fixed overhead (sockets, Slot table, Peer state).
         // Subtracting that overhead leaves the receive side alone, and doubling the window doubles it
         // exactly.
@@ -85,7 +85,7 @@ public class DatagramSessionReceiveArenaAllocationTests
         // Act
         long stated = StatedReceiveBudgetBytes(MeasurementWindowFragments);
 
-        // Assert — the stated multiplier says what is actually allocated (issue #174, extended by
+        // Assert â€” the stated multiplier says what is actually allocated (issue #174, extended by
         // #257 and #297). Payload slots exist only for the two reliable Spaces, which retain fragments
         // until a Message is whole; the one-byte-per-slot admission record that lets a window classify a
         // sequence exists for all four, because all four classify; the two-byte-per-slot Fragment
@@ -140,7 +140,7 @@ public class DatagramSessionReceiveArenaAllocationTests
 
     /// <summary>
     /// What the options say the receive side of the memory bill costs for the measurement Reactor at
-    /// <paramref name="receiveWindowFragments"/> — the figure every measurement above is compared
+    /// <paramref name="receiveWindowFragments"/> â€” the figure every measurement above is compared
     /// against.
     /// </summary>
     private static long StatedReceiveBudgetBytes(int receiveWindowFragments) =>
@@ -161,7 +161,7 @@ public class DatagramSessionReceiveArenaAllocationTests
         // Arrange
         WeakReference reactorReference = ConstructAndDispose();
 
-        // Act — nothing in this method still holds a strong reference to the Reactor once
+        // Act â€” nothing in this method still holds a strong reference to the Reactor once
         // ConstructAndDispose has returned, so a full collection reclaims it and everything it
         // preallocated, the receive arena included.
         GC.Collect();
@@ -174,7 +174,7 @@ public class DatagramSessionReceiveArenaAllocationTests
 
     /// <summary>
     /// Isolated in its own non-inlined method so the local <see cref="DatagramSessionReactorHarness"/>
-    /// and its Reactor are out of scope — and so not kept artificially alive by the JIT — by the time
+    /// and its Reactor are out of scope â€” and so not kept artificially alive by the JIT â€” by the time
     /// the caller forces a collection.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -187,11 +187,11 @@ public class DatagramSessionReceiveArenaAllocationTests
     }
 
     /// <summary>
-    /// Closes issue #171's outstanding acceptance criterion — "memory does not grow across a sustained
-    /// run of inbound datagrams" — left unticked when the arena landed because nothing wrote into the
+    /// Closes issue #171's outstanding acceptance criterion â€” "memory does not grow across a sustained
+    /// run of inbound datagrams" â€” left unticked when the arena landed because nothing wrote into the
     /// receive path yet; #172 and #173 wired that up. Each cycle sends every odd offset in the window
-    /// in one datagram, then every even offset in another — the same out-of-order, hole-filling pattern
-    /// the direct <c>ReceiveWindow</c> unit test used before the type went internal (this ticket) — over
+    /// in one datagram, then every even offset in another â€” the same out-of-order, hole-filling pattern
+    /// the direct <c>ReceiveWindow</c> unit test used before the type went internal (this ticket) â€” over
     /// the <c>Unreliable</c> Space, which classifies without retaining any payload, so this measures the
     /// window's own bookkeeping rather than reliable retention.
     /// </summary>
@@ -210,9 +210,9 @@ public class DatagramSessionReceiveArenaAllocationTests
 
         uint cycleBase = RunCycles(accepter, client, clientLink, sessionId, capacity, 0, warmupCycles);
 
-        // Act — two equal-length phases run back to back, deep into the same sustained run. If the
-        // window's bookkeeping grew with how many sequences it had already seen, the second phase —
-        // identical in shape to the first, just further along — would allocate visibly more.
+        // Act â€” two equal-length phases run back to back, deep into the same sustained run. If the
+        // window's bookkeeping grew with how many sequences it had already seen, the second phase â€”
+        // identical in shape to the first, just further along â€” would allocate visibly more.
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
@@ -227,7 +227,7 @@ public class DatagramSessionReceiveArenaAllocationTests
         RunCycles(accepter, client, clientLink, sessionId, capacity, cycleBase, measuredCyclesPerPhase);
         long phaseTwoDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseTwo;
 
-        // Assert — a per-datagram cost from the socket layer (L1, not this ticket's concern) is
+        // Assert â€” a per-datagram cost from the socket layer (L1, not this ticket's concern) is
         // expected and unavoidable; what must not happen is that cost climbing as the run goes on,
         // which is what an accumulating receive window would show up as. The multiple is generous
         // headroom against GC noise, not a tight bound.
@@ -237,7 +237,7 @@ public class DatagramSessionReceiveArenaAllocationTests
     /// <summary>
     /// Closes #174's fifth and last criterion (#181): the sustained-run test above only shows the cost
     /// does not climb, and only for one arrival pattern. This drives two phases of identical datagram
-    /// count and per-datagram shape — same header, same single unfragmented Unreliable-Space record —
+    /// count and per-datagram shape â€” same header, same single unfragmented Unreliable-Space record â€”
     /// through the same live Session, differing only in the sequences the records carry: one phase
     /// strictly in order, the other a mix of duplicates, sequences below the base, and far-ahead jumps
     /// that force <c>SlideTo</c> to walk the full ring. A per-datagram L1 cost is expected in both and
@@ -281,14 +281,14 @@ public class DatagramSessionReceiveArenaAllocationTests
         long mixedDelta = GC.GetAllocatedBytesForCurrentThread() - beforeMixed;
         PeerCounters afterMixedCounters = accepter.Reactor.CountersOf(accepterPeer);
 
-        // Assert — the mixed phase must actually have taken every branch it claims to, not merely sent
+        // Assert â€” the mixed phase must actually have taken every branch it claims to, not merely sent
         // sequences shaped to. A hole left at the base (see RunMixedPhase) is what keeps the "duplicate"
         // block's resends inside the window instead of retiring behind it.
         (afterMixedCounters.DuplicatePackets - beforeMixedCounters.DuplicatePackets).Should().BeGreaterThan(0);
         (afterMixedCounters.OutOfWindowPackets - beforeMixedCounters.OutOfWindowPackets).Should().BeGreaterThan(0);
         (afterMixedCounters.UnreliableLossPackets - beforeMixedCounters.UnreliableLossPackets).Should().BeGreaterThan(0);
 
-        // Assert — same datagram count, same per-datagram shape, so the two deltas differ only by
+        // Assert â€” same datagram count, same per-datagram shape, so the two deltas differ only by
         // whichever Classify branch each phase's sequences took. Exact equality, not a tolerance
         // (#181's third criterion): the measurement is warmed up above, so nothing but that branch
         // choice is left to explain a difference.
@@ -298,13 +298,13 @@ public class DatagramSessionReceiveArenaAllocationTests
     /// <summary>
     /// Closes issue #257's allocation-free acceptance criterion: holding a Fragment (copying its
     /// payload into the receive arena's preallocated slot, recording its length) must not allocate any
-    /// more than an ordinary admitted record does. Two phases of identical shape — a sustained run of
-    /// two-piece <c>ReliableOrdered</c> Fragment sets, each piece its own datagram — run back to back;
+    /// more than an ordinary admitted record does. Two phases of identical shape â€” a sustained run of
+    /// two-piece <c>ReliableOrdered</c> Fragment sets, each piece its own datagram â€” run back to back;
     /// since every sequence admits in order (ADR 0004: a Fragment rides an ordinary sequence, so
     /// <c>AdvanceBase</c> keeps sliding the base forward exactly as it would for unfragmented traffic),
     /// the window never fills and the second phase must cost no more than the first. Every set here
     /// completes the moment its second piece lands (issue #258's <c>IsGroupComplete</c> runs on every
-    /// held Fragment), so this also closes #258's allocation-free criterion for the completeness path —
+    /// held Fragment), so this also closes #258's allocation-free criterion for the completeness path â€”
     /// see also the dedicated reverse-order test below.
     /// </summary>
     [Fact]
@@ -322,7 +322,7 @@ public class DatagramSessionReceiveArenaAllocationTests
 
         uint cursor = RunInOrderFragmentPhase(accepter, client, clientLink, sessionId, 0, warmupSets);
 
-        // Act — two equal-length phases run back to back, deep into the same sustained run.
+        // Act â€” two equal-length phases run back to back, deep into the same sustained run.
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
@@ -337,18 +337,18 @@ public class DatagramSessionReceiveArenaAllocationTests
         RunInOrderFragmentPhase(accepter, client, clientLink, sessionId, cursor, measuredSetsPerPhase);
         long phaseTwoDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseTwo;
 
-        // Assert — the multiple is generous headroom against GC noise, not a tight bound, mirroring
+        // Assert â€” the multiple is generous headroom against GC noise, not a tight bound, mirroring
         // the unfragmented sustained-run test above.
         phaseTwoDelta.Should().BeLessThanOrEqualTo(phaseOneDelta * 2 + 1);
     }
 
     /// <summary>
     /// Closes issue #258's allocation-free acceptance criterion directly: a sustained run of two-piece
-    /// <c>ReliableOrdered</c> Fragment sets whose pieces arrive in <em>reverse</em> order — index 1
-    /// before index 0 — so every set is held incomplete by its first datagram and only completes on
+    /// <c>ReliableOrdered</c> Fragment sets whose pieces arrive in <em>reverse</em> order â€” index 1
+    /// before index 0 â€” so every set is held incomplete by its first datagram and only completes on
     /// its second. Two phases of identical shape run back to
-    /// back; if <c>ReceiveWindow.IsGroupComplete</c> — reached through
-    /// <see cref="DatagramSessionReactor"/>'s live receive path here — ever allocated, the second phase
+    /// back; if <c>ReceiveWindow.IsGroupComplete</c> â€” reached through
+    /// <see cref="DatagramSessionReactor"/>'s live receive path here â€” ever allocated, the second phase
     /// would cost visibly more than the first.
     /// </summary>
     [Fact]
@@ -366,7 +366,7 @@ public class DatagramSessionReceiveArenaAllocationTests
 
         uint cursor = RunReverseOrderCompletingFragmentPhase(accepter, client, clientLink, sessionId, 0, warmupSets);
 
-        // Act — two equal-length phases run back to back, deep into the same sustained run.
+        // Act â€” two equal-length phases run back to back, deep into the same sustained run.
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
@@ -381,7 +381,7 @@ public class DatagramSessionReceiveArenaAllocationTests
         RunReverseOrderCompletingFragmentPhase(accepter, client, clientLink, sessionId, cursor, measuredSetsPerPhase);
         long phaseTwoDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseTwo;
 
-        // Assert — the multiple is generous headroom against GC noise, not a tight bound, mirroring
+        // Assert â€” the multiple is generous headroom against GC noise, not a tight bound, mirroring
         // the unfragmented sustained-run test above.
         phaseTwoDelta.Should().BeLessThanOrEqualTo(phaseOneDelta * 2 + 1);
     }
@@ -389,7 +389,7 @@ public class DatagramSessionReceiveArenaAllocationTests
     /// <summary>
     /// Sends <paramref name="setCount"/> two-piece <c>ReliableOrdered</c> Fragment sets, one datagram
     /// per piece, sequences increasing by two per set starting at <paramref name="startingSequence"/>,
-    /// index 1 sent before index 0 within each set — so the window admits the second piece first (held,
+    /// index 1 sent before index 0 within each set â€” so the window admits the second piece first (held,
     /// incomplete) and completes the set only when the first piece lands. Returns the next unused
     /// sequence.
     /// </summary>
@@ -483,7 +483,7 @@ public class DatagramSessionReceiveArenaAllocationTests
 
     /// <summary>
     /// Sends <paramref name="count"/> single-record Unreliable-Space datagrams, one per sequence
-    /// starting at <paramref name="startingSequence"/> and increasing by one each time — every arrival
+    /// starting at <paramref name="startingSequence"/> and increasing by one each time â€” every arrival
     /// admitted in order, so <c>Classify</c> never takes anything but the plain admit-and-advance
     /// branch. Returns the next unused sequence.
     /// </summary>
@@ -507,8 +507,8 @@ public class DatagramSessionReceiveArenaAllocationTests
     }
 
     /// <summary>
-    /// Sends <c>4 × windowCapacity</c> single-record Unreliable-Space datagrams — the same count and
-    /// shape <see cref="RunInOrderPhase"/> sends — split into four equal blocks that between them
+    /// Sends <c>4 Ã— windowCapacity</c> single-record Unreliable-Space datagrams â€” the same count and
+    /// shape <see cref="RunInOrderPhase"/> sends â€” split into four equal blocks that between them
     /// exercise every non-trivial <c>Classify</c> branch.
     /// </summary>
     /// <remarks>
@@ -516,16 +516,16 @@ public class DatagramSessionReceiveArenaAllocationTests
     /// but never sends <paramref name="startingSequence"/> itself. That gap matters: <c>AdvanceBase</c>
     /// only moves the base past slots it finds already admitted, starting from the base's own slot, so
     /// leaving the base's slot empty pins the base at <paramref name="startingSequence"/> for the rest
-    /// of the phase — the admitted slots above it stay admitted rather than being retired out from
+    /// of the phase â€” the admitted slots above it stay admitted rather than being retired out from
     /// under the next block. Without that gap, a strictly in-order first block retires every slot it
     /// fills as it fills it (the same mechanism the in-order phase relies on), leaving nothing for a
-    /// "duplicate" block to actually duplicate — a resend would land below the base instead, taking the
+    /// "duplicate" block to actually duplicate â€” a resend would land below the base instead, taking the
     /// same branch as the below-base block and never reaching <see cref="ReceiveWindowOutcome.Duplicate"/>.
     /// Each block is padded to <paramref name="windowCapacity"/> sends with an extra below-base resend
     /// so every block, and so the phase as a whole, matches the in-order phase's datagram count exactly.
     /// The last block's jumps start from the base's un-advanced position, each one landing
-    /// <c>2 × windowCapacity</c> past the last, which keeps every jump's offset from the (already
-    /// slid-forward) base at least <paramref name="windowCapacity"/> — enough to force <c>SlideTo</c> to
+    /// <c>2 Ã— windowCapacity</c> past the last, which keeps every jump's offset from the (already
+    /// slid-forward) base at least <paramref name="windowCapacity"/> â€” enough to force <c>SlideTo</c> to
     /// walk the full ring again rather than take the plain single-slot advance.
     /// </remarks>
     private static void RunMixedPhase(
@@ -538,7 +538,7 @@ public class DatagramSessionReceiveArenaAllocationTests
         uint startingSequence,
         uint belowBaseSequence)
     {
-        // Block 1 — new admits at offsets 1..windowCapacity-1, leaving the base's own slot (offset 0)
+        // Block 1 â€” new admits at offsets 1..windowCapacity-1, leaving the base's own slot (offset 0)
         // unfilled so the base does not advance past what this block just admitted.
         for (int offset = 1; offset < windowCapacity; offset++)
         {
@@ -547,7 +547,7 @@ public class DatagramSessionReceiveArenaAllocationTests
 
         SendUnreliableRecord(accepter, client, clientLink, sessionId, destination, belowBaseSequence);
 
-        // Block 2 — duplicates of block 1's range. The base is still pinned at startingSequence, so
+        // Block 2 â€” duplicates of block 1's range. The base is still pinned at startingSequence, so
         // every one of these resends lands on a slot block 1 already marked admitted.
         for (int offset = 1; offset < windowCapacity; offset++)
         {
@@ -556,13 +556,13 @@ public class DatagramSessionReceiveArenaAllocationTests
 
         SendUnreliableRecord(accepter, client, clientLink, sessionId, destination, belowBaseSequence);
 
-        // Block 3 — below-base resends only.
+        // Block 3 â€” below-base resends only.
         for (int i = 0; i < windowCapacity; i++)
         {
             SendUnreliableRecord(accepter, client, clientLink, sessionId, destination, belowBaseSequence);
         }
 
-        // Block 4 — far-ahead jumps. The base is still exactly startingSequence entering this block, so
+        // Block 4 â€” far-ahead jumps. The base is still exactly startingSequence entering this block, so
         // the first jump's offset of windowCapacity already meets the "at or beyond the far edge"
         // threshold SlideTo requires.
         uint farCursor = startingSequence;
@@ -651,11 +651,12 @@ public class DatagramSessionReceiveArenaAllocationTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
     private const int DatagramHeaderSize = 20;
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
-    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
+    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="accepter"/> assigned
     /// this Peer, mirroring <see cref="DatagramSessionSpaceRoutingTests"/>'s helper of the same name.
     /// </summary>
     private static uint EstablishLiveSessionId(DatagramSessionReactorHarness accepter, RawReactor client, LinkId clientLink)
@@ -733,7 +734,7 @@ public class DatagramSessionReceiveArenaAllocationTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -747,6 +748,8 @@ public class DatagramSessionReceiveArenaAllocationTests
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
         offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 
@@ -772,7 +775,7 @@ public class DatagramSessionReceiveArenaAllocationTests
     [Fact]
     public void Construct_ReceiveWindowBelowItsFloor_ThrowsThroughTheReactorWithTheExistingMessage()
     {
-        // Arrange — a window of one fragment cannot hold a Message that occupies four, so the
+        // Arrange â€” a window of one fragment cannot hold a Message that occupies four, so the
         // options' floor refuses it. Asserted through the Reactor rather than the options object
         // alone (issue #171): the arena is taken at construction, so a combination that cannot be
         // afforded must fail before any socket is bound, not later when the first datagram arrives.

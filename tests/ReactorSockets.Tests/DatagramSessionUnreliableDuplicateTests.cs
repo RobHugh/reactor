@@ -15,7 +15,7 @@ namespace ReactorSockets.Tests;
 /// The instrument is the one <see cref="DatagramSessionUnreliableLossTests"/> and
 /// <see cref="DatagramSessionSpaceRoutingTests"/> already use: a raw dialler completing an ordinary
 /// handshake by hand, then hand-built data datagrams sent at the live session id the accepter
-/// assigned. Two live Sessions cannot express these tests — a Send allocates the next sequence in its
+/// assigned. Two live Sessions cannot express these tests â€” a Send allocates the next sequence in its
 /// Space and nothing lets a test replay an old one, which is exactly what a duplicate is.
 /// </remarks>
 public class DatagramSessionUnreliableDuplicateTests
@@ -32,6 +32,7 @@ public class DatagramSessionUnreliableDuplicateTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
 
     private const int DatagramHeaderSize = 20;
     private const byte ModeUnreliable = 0b0000_0000;
@@ -45,7 +46,7 @@ public class DatagramSessionUnreliableDuplicateTests
     [Fact]
     public void Pump_ADuplicateAtDistanceSixtyThree_IsSuppressed()
     {
-        // Arrange — sequence 37 arrives, then 100, which leaves 37 sitting at distance 63: the last
+        // Arrange â€” sequence 37 arrives, then 100, which leaves 37 sitting at distance 63: the last
         // sequence the 64-entry window still remembers.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -60,7 +61,7 @@ public class DatagramSessionUnreliableDuplicateTests
 
         PeerCounters before = accepter.Reactor.CountersOf(accepterPeer);
 
-        // Act — the same sequence again, now at the far edge of the window.
+        // Act â€” the same sequence again, now at the far edge of the window.
         List<byte[]> delivered = SendUnreliable(accepter, client, clientLink, sessionId, replayed, [1]);
 
         // Assert
@@ -71,7 +72,7 @@ public class DatagramSessionUnreliableDuplicateTests
         // The repeat lands on the out-of-window figure rather than the duplicate one: the receive
         // window's base had already passed this sequence, so that window refused and counted it before
         // the suppression window was asked. Both descriptions are true of the same record, and it is
-        // counted once — which is the point. The duplicate figure is what rises when the receive window
+        // counted once â€” which is the point. The duplicate figure is what rises when the receive window
         // admitted a repeat and only the suppression window recognised it.
         (after.OutOfWindowPackets + after.DuplicatePackets)
             .Should().Be(before.OutOfWindowPackets + before.DuplicatePackets + 1, "the repeat was refused and counted exactly once");
@@ -80,7 +81,7 @@ public class DatagramSessionUnreliableDuplicateTests
     [Fact]
     public void Pump_ADuplicateAtDistanceSixtyFive_IsDelivered()
     {
-        // Arrange — sequence 35 arrives, then 100, which puts 35 at distance 65: past everything the
+        // Arrange â€” sequence 35 arrives, then 100, which puts 35 at distance 65: past everything the
         // 64-entry window can still remember.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -95,10 +96,10 @@ public class DatagramSessionUnreliableDuplicateTests
 
         ulong receivedBefore = accepter.Reactor.CountersOf(accepterPeer).MessagesReceived;
 
-        // Act — the same sequence again, now beyond the window.
+        // Act â€” the same sequence again, now beyond the window.
         List<byte[]> delivered = SendUnreliable(accepter, client, clientLink, sessionId, replayed, [1]);
 
-        // Assert — suppression is bounded, so this one is delivered rather than silently dropped.
+        // Assert â€” suppression is bounded, so this one is delivered rather than silently dropped.
         delivered.Should().ContainSingle("a repeat delayed past 64 sequences is delivered")
             .Which.Should().Equal(new byte[] { 1 });
         accepter.Reactor.CountersOf(accepterPeer).MessagesReceived.Should().Be(
@@ -108,7 +109,7 @@ public class DatagramSessionUnreliableDuplicateTests
     [Fact]
     public void Pump_AnOutOfOrderFirstArrivalInsideTheWindow_IsDelivered()
     {
-        // Arrange — unlike UnreliableSequenced, plain Unreliable has no strictly-newer rule: a sequence
+        // Arrange â€” unlike UnreliableSequenced, plain Unreliable has no strictly-newer rule: a sequence
         // arriving out of order is a first arrival, not a stale one, and is delivered.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -120,7 +121,7 @@ public class DatagramSessionUnreliableDuplicateTests
         accepter.DrainAndDiscard();
         ulong receivedBefore = accepter.Reactor.CountersOf(accepterPeer).MessagesReceived;
 
-        // Act — a sequence below the newest, never seen before.
+        // Act â€” a sequence below the newest, never seen before.
         List<byte[]> delivered = SendUnreliable(accepter, client, clientLink, sessionId, Newest - 10, [3]);
 
         // Assert
@@ -133,7 +134,7 @@ public class DatagramSessionUnreliableDuplicateTests
     public void Pump_TheSuppressionWidth_DoesNotFollowTheConsumersReceiveWindow()
     {
         // The 64 is a protocol constant, not a knob. An accepter whose receive window is deliberately
-        // tiny still suppresses a repeat 63 sequences back — had suppression been sized from
+        // tiny still suppresses a repeat 63 sequences back â€” had suppression been sized from
         // ReceiveWindowFragments, this window would be 2 wide and the repeat would be delivered.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 2, maxMessageSize: 1300);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -175,8 +176,8 @@ public class DatagramSessionUnreliableDuplicateTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
-    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
+    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="accepter"/> assigned
     /// this Peer, mirroring <see cref="DatagramSessionUnreliableLossTests"/>'s helper of the same name.
     /// </summary>
     private static uint EstablishLiveSessionId(DatagramSessionReactorHarness accepter, RawReactor client, LinkId clientLink)
@@ -250,7 +251,7 @@ public class DatagramSessionUnreliableDuplicateTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -263,6 +264,9 @@ public class DatagramSessionUnreliableDuplicateTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
+        offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 

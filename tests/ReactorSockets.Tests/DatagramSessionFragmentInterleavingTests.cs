@@ -8,11 +8,11 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #260: reassembly (#257, #258, #259) stays correct while other traffic moves through the same
 /// Peer. Fragment sets can progress in both reliable Spaces at once, unfragmented Messages can arrive
-/// interleaved with — even inside the same datagram as — Fragments, a set's pieces can arrive out of
+/// interleaved with â€” even inside the same datagram as â€” Fragments, a set's pieces can arrive out of
 /// order, and a set can span several datagrams with its completing piece landing anywhere within one.
 /// None of these interleavings is exercised by <see cref="DatagramSessionFragmentHoldingTests"/> or
 /// <see cref="DatagramSessionFragmentDeliveryTests"/>, which each drive a single set in isolation. Built
-/// the same way those two are — a live Session driven by hand from a bare <see cref="RawReactor"/>,
+/// the same way those two are â€” a live Session driven by hand from a bare <see cref="RawReactor"/>,
 /// since these tests need exact Fragment sequences and byte contents no ordinary <c>Send</c> call would
 /// produce on its own.
 /// </summary>
@@ -30,6 +30,7 @@ public class DatagramSessionFragmentInterleavingTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
 
     private const int DatagramHeaderSize = 20;
     private const int UnfragmentedRecordSize = 7;
@@ -41,7 +42,7 @@ public class DatagramSessionFragmentInterleavingTests
     [Fact]
     public void Pump_TwoFragmentSetsInDifferentReliableSpacesArrivingAlternately_BothCompleteAndDeliverToTheRightSpace()
     {
-        // Arrange — a two-piece ReliableOrdered set and a two-piece ReliableUnordered set, both starting
+        // Arrange â€” a two-piece ReliableOrdered set and a two-piece ReliableUnordered set, both starting
         // at sequence 0 in their own Space, sent one piece at a time so the two sets' pieces alternate:
         // Ordered piece 0, Unordered piece 0, Ordered piece 1 (completes Ordered), Unordered piece 1
         // (completes Unordered).
@@ -55,7 +56,7 @@ public class DatagramSessionFragmentInterleavingTests
         byte[] orderedFragment1 = BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x20]);
         byte[] unorderedFragment1 = BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x40]);
 
-        // Act — alternate the two sets' pieces across four separate datagrams.
+        // Act â€” alternate the two sets' pieces across four separate datagrams.
         SendAndPumpUntilReceived(accepter, client, clientLink, [.. BuildHeader(sessionId), .. orderedFragment0]);
         accepter.DrainPayloads().Should().BeEmpty("neither set has a complete piece yet");
 
@@ -68,7 +69,7 @@ public class DatagramSessionFragmentInterleavingTests
         SendAndPumpUntilReceived(accepter, client, clientLink, [.. BuildHeader(sessionId), .. unorderedFragment1]);
         List<byte[]> afterUnorderedCompletes = accepter.DrainPayloads();
 
-        // Assert — each set delivers its own bytes exactly once, at the Pump that completed it.
+        // Assert â€” each set delivers its own bytes exactly once, at the Pump that completed it.
         afterOrderedCompletes.Should().ContainSingle().Which.Should().Equal(new byte[] { 0x10, 0x20 });
         afterUnorderedCompletes.Should().ContainSingle().Which.Should().Equal(new byte[] { 0x30, 0x40 });
     }
@@ -76,7 +77,7 @@ public class DatagramSessionFragmentInterleavingTests
     [Fact]
     public void Pump_AFragmentSetCompletingInOneSpace_DeliversWhileTheOtherSpacesSetStaysIncomplete()
     {
-        // Arrange — separate Spaces exist to remove head-of-line blocking between them; reassembly must
+        // Arrange â€” separate Spaces exist to remove head-of-line blocking between them; reassembly must
         // not reintroduce it through shared state. A ReliableUnordered set is left with only its first
         // piece held while a ReliableOrdered set completes in the same Frame.
         using DatagramSessionReactorHarness accepter = new();
@@ -88,7 +89,7 @@ public class DatagramSessionFragmentInterleavingTests
         byte[] orderedFragment0 = BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]);
         byte[] orderedFragment1 = BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02]);
 
-        // Act — the incomplete Unordered set's only piece, then both pieces of the Ordered set together
+        // Act â€” the incomplete Unordered set's only piece, then both pieces of the Ordered set together
         // in one datagram, completing it.
         SendAndPumpUntilReceived(accepter, client, clientLink, [.. BuildHeader(sessionId), .. unorderedFragment0]);
         accepter.DrainPayloads().Should().BeEmpty("the Unordered set has only one of its two pieces");
@@ -97,7 +98,7 @@ public class DatagramSessionFragmentInterleavingTests
         SendAndPumpUntilReceived(accepter, client, clientLink, completingDatagram);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert — the Ordered set delivers even though the Unordered set, in the other Space, never
+        // Assert â€” the Ordered set delivers even though the Unordered set, in the other Space, never
         // completed; the incomplete set is not what is being waited on.
         delivered.Should().ContainSingle("the Ordered Space's set completed independently of the Unordered Space's incomplete one")
             .Which.Should().Equal(new byte[] { 0x01, 0x02 });
@@ -106,7 +107,7 @@ public class DatagramSessionFragmentInterleavingTests
     [Fact]
     public void Pump_ADatagramCarryingAnUnfragmentedRecordAndACompletingFragmentSet_DeliversBothMessages()
     {
-        // Arrange — one datagram carries an ordinary unfragmented record at sequence 0, then both pieces
+        // Arrange â€” one datagram carries an ordinary unfragmented record at sequence 0, then both pieces
         // of a two-piece ReliableUnordered set at sequences 1 and 2, completing it in the same datagram.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -122,7 +123,7 @@ public class DatagramSessionFragmentInterleavingTests
         SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert — the unfragmented record's own Message and the assembled Fragment set's Message both
+        // Assert â€” the unfragmented record's own Message and the assembled Fragment set's Message both
         // arrive from the one datagram that carried them, in the order their records were processed.
         // byte[].Equals is reference equality, so each element is compared for content individually
         // rather than via List<byte[]>.Should().Equal, which would compare the arrays by reference.
@@ -134,7 +135,7 @@ public class DatagramSessionFragmentInterleavingTests
     [Fact]
     public void Pump_AFragmentSetArrivingInReverseOrder_DeliversTheSameBytesAsOneArrivingInOrder()
     {
-        // Arrange — a three-piece ReliableUnordered set whose records are placed in the datagram, and so
+        // Arrange â€” a three-piece ReliableUnordered set whose records are placed in the datagram, and so
         // classified, in the reverse of fragment-index order: index 2 first, then 1, then 0.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -150,14 +151,14 @@ public class DatagramSessionFragmentInterleavingTests
         SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert — the assembled bytes are ordered by fragment index, not by arrival order.
+        // Assert â€” the assembled bytes are ordered by fragment index, not by arrival order.
         delivered.Should().ContainSingle().Which.Should().Equal(new byte[] { 0x01, 0x02, 0x03 });
     }
 
     [Fact]
     public void Pump_AFragmentSetArrivingShuffled_DeliversTheSameBytesAsOneArrivingInOrder()
     {
-        // Arrange — the same three-piece set as the reverse-order test, placed in a shuffled order that
+        // Arrange â€” the same three-piece set as the reverse-order test, placed in a shuffled order that
         // is neither in-order nor strictly reversed: index 1, then 2, then 0.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -173,14 +174,14 @@ public class DatagramSessionFragmentInterleavingTests
         SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert — the assembled bytes are ordered by fragment index, not by arrival order.
+        // Assert â€” the assembled bytes are ordered by fragment index, not by arrival order.
         delivered.Should().ContainSingle().Which.Should().Equal(new byte[] { 0x01, 0x02, 0x03 });
     }
 
     [Fact]
     public void Pump_ASetSpanningDatagramsWhoseLastFragmentArrivesFirstInItsDatagram_CompletesTheSet()
     {
-        // Arrange — a three-piece ReliableUnordered set with its first two pieces in one datagram and
+        // Arrange â€” a three-piece ReliableUnordered set with its first two pieces in one datagram and
         // its completing third piece in a later datagram, placed first among that later datagram's own
         // records, ahead of an unrelated record.
         using DatagramSessionReactorHarness accepter = new();
@@ -193,7 +194,7 @@ public class DatagramSessionFragmentInterleavingTests
         byte[] fragment2 = BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 2, fragmentCount: 3, payload: [0x03]);
         byte[] unrelated = BuildRecord(ModeReliableUnordered, sequence: 3, payload: [0xCC]);
 
-        // Act — the first datagram leaves the set incomplete; the second completes it, with the
+        // Act â€” the first datagram leaves the set incomplete; the second completes it, with the
         // completing piece first in that datagram.
         SendAndPumpUntilReceived(accepter, client, clientLink, [.. BuildHeader(sessionId), .. fragment0, .. fragment1]);
         accepter.DrainPayloads().Should().BeEmpty("the set's third piece has not arrived yet");
@@ -202,7 +203,7 @@ public class DatagramSessionFragmentInterleavingTests
         SendAndPumpUntilReceived(accepter, client, clientLink, completingDatagram);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert — the set completes and delivers, alongside the unrelated record that followed it.
+        // Assert â€” the set completes and delivers, alongside the unrelated record that followed it.
         // byte[].Equals is reference equality; see the note in the "both messages" test above.
         delivered.Should().HaveCount(2);
         delivered[0].Should().Equal(new byte[] { 0x01, 0x02, 0x03 });
@@ -212,7 +213,7 @@ public class DatagramSessionFragmentInterleavingTests
     [Fact]
     public void Pump_ASetSpanningDatagramsWhoseLastFragmentArrivesLastInItsDatagram_CompletesTheSet()
     {
-        // Arrange — the same shape as the "first in its datagram" test, but with the completing piece
+        // Arrange â€” the same shape as the "first in its datagram" test, but with the completing piece
         // placed last among its datagram's own records, behind the unrelated record instead of ahead of
         // it: the set must complete regardless of where within the datagram its last piece sits.
         using DatagramSessionReactorHarness accepter = new();
@@ -225,7 +226,7 @@ public class DatagramSessionFragmentInterleavingTests
         byte[] fragment2 = BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 2, fragmentCount: 3, payload: [0x03]);
         byte[] unrelated = BuildRecord(ModeReliableUnordered, sequence: 3, payload: [0xCC]);
 
-        // Act — the first datagram leaves the set incomplete; the second completes it, with the
+        // Act â€” the first datagram leaves the set incomplete; the second completes it, with the
         // completing piece last in that datagram.
         SendAndPumpUntilReceived(accepter, client, clientLink, [.. BuildHeader(sessionId), .. fragment0, .. fragment1]);
         accepter.DrainPayloads().Should().BeEmpty("the set's third piece has not arrived yet");
@@ -234,7 +235,7 @@ public class DatagramSessionFragmentInterleavingTests
         SendAndPumpUntilReceived(accepter, client, clientLink, completingDatagram);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert — the unrelated record delivers immediately when its own record is processed, and the
+        // Assert â€” the unrelated record delivers immediately when its own record is processed, and the
         // set completes and delivers when its own, later record is processed. byte[].Equals is
         // reference equality; see the note in the "both messages" test above.
         delivered.Should().HaveCount(2);
@@ -251,8 +252,8 @@ public class DatagramSessionFragmentInterleavingTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
-    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
+    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="accepter"/> assigned
     /// this Peer, mirroring <see cref="DatagramSessionFragmentDeliveryTests"/>'s helper of the same name.
     /// </summary>
     private static uint EstablishLiveSessionId(DatagramSessionReactorHarness accepter, RawReactor client, LinkId clientLink)
@@ -323,7 +324,7 @@ public class DatagramSessionFragmentInterleavingTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -336,6 +337,9 @@ public class DatagramSessionFragmentInterleavingTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
+        offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
         // The remaining ResumeSecretLength bytes are the dialler's resume secret; an all-zero one is
         // fine, since nothing in this ticket's path ever reads it.
         return BuildControlDatagram(HelloWithCookieType, body);

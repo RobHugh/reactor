@@ -7,7 +7,7 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// Subtask 6.7.12 (issue #239): one scripted exchange in which every counter slice 6.7 completes moves
-/// by an amount this test states in advance — the seven per-Peer figures (<see cref="PeerCounters.BytesSent"/>,
+/// by an amount this test states in advance â€” the seven per-Peer figures (<see cref="PeerCounters.BytesSent"/>,
 /// <see cref="PeerCounters.BytesReceived"/>, <see cref="PeerCounters.PacketsRetransmitted"/>,
 /// <see cref="PeerCounters.DuplicatePackets"/>, <see cref="PeerCounters.OutOfWindowPackets"/>,
 /// <see cref="PeerCounters.HorizonDeferrals"/>, <see cref="PeerCounters.RetentionHighWaterBytes"/>) and the
@@ -23,7 +23,7 @@ namespace ReactorSockets.Tests;
 /// <see cref="DatagramSessionUnreliableDuplicateTests"/> already use. A live second Session cannot
 /// express this exchange: out-of-window and duplicate classification need sequences the public
 /// <see cref="DatagramSessionReactor.Send"/> allocator cannot be made to skip or repeat, and the horizon
-/// deferral needs an ack that never arrives — an ordinary counterparty would keep acknowledging. Every
+/// deferral needs an ack that never arrives â€” an ordinary counterparty would keep acknowledging. Every
 /// crafted datagram's ack blocks are left zeroed throughout (<see cref="BuildHeader"/>'s default), so
 /// nothing this test sends is ever acknowledged and nothing outbound is ever released from retention.
 /// </para>
@@ -32,15 +32,15 @@ namespace ReactorSockets.Tests;
 /// expected value is a literal this test states before acting, never one counter's reading used to
 /// compute another's expectation. <see cref="PeerCounters.BytesSent"/> and
 /// <see cref="PeerCounters.RetentionHighWaterBytes"/> use the same delta-of-two-flushes technique
-/// <see cref="DatagramSessionByteCounterTests"/> established (#231) — the two flushes' fixed overhead is
-/// identical, so only the payload bytes this test chose can account for the difference —
+/// <see cref="DatagramSessionByteCounterTests"/> established (#231) â€” the two flushes' fixed overhead is
+/// identical, so only the payload bytes this test chose can account for the difference â€”
 /// rather than assuming any internal header size (ADR 0015).
 /// </para>
 /// <para>
-/// <b>Traps avoided.</b> Retention is sized at 1200 × 48 (<c>DatagramSessionOutboundSequenceSpaceTests</c>'s
+/// <b>Traps avoided.</b> Retention is sized at 1200 Ã— 48 (<c>DatagramSessionOutboundSequenceSpaceTests</c>'s
 /// unit) so the 38 ReliableOrdered records this test never acknowledges, plus the two ReliableUnordered
 /// records the retransmission phase needs, all fit at once. No Frame ever delivers more than one reliable
-/// Message — this test's one duplicate-admission is the only delivery that occurs — so the default
+/// Message â€” this test's one duplicate-admission is the only delivery that occurs â€” so the default
 /// <c>FrameArena</c>'s per-share-holder budget is never in play.
 /// </para>
 /// </remarks>
@@ -58,6 +58,7 @@ public class DatagramSessionCounterExchangeTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
 
     private const int DatagramHeaderSize = 20;
 
@@ -71,7 +72,7 @@ public class DatagramSessionCounterExchangeTests
     [Fact]
     public void Pump_OneScriptedExchange_MovesEveryCompletedCounterByItsOwnDistinctLiteralAmount()
     {
-        // Arrange — a 4-fragment receive window (the smallest this profile's floor allows for the
+        // Arrange â€” a 4-fragment receive window (the smallest this profile's floor allows for the
         // harness's default 4096-byte MaxMessageSize and 1200-byte fragment size), and retention sized
         // for 48 ReliableOrdered/ReliableUnordered records so the 38-send horizon phase and the two
         // retransmission-phase records all fit without RetentionExhausted.
@@ -81,7 +82,7 @@ public class DatagramSessionCounterExchangeTests
         uint sessionId = EstablishLiveSessionId(node, client, clientLink);
         PeerId nodePeer = FindNodePeer(node);
 
-        // Assert — every figure this exchange drives starts at zero, proving each genuinely moves off
+        // Assert â€” every figure this exchange drives starts at zero, proving each genuinely moves off
         // zero below rather than having already moved during the handshake.
         PeerCounters baseline = node.Reactor.CountersOf(nodePeer);
         baseline.BytesSent.Should().Be(0);
@@ -97,11 +98,11 @@ public class DatagramSessionCounterExchangeTests
         ulong reactorDatagramsReceivedBaseline = node.Reactor.Counters.DatagramsReceived;
 
         // ------------------------------------------------------------------------------------------
-        // Phase 1 — BytesSent, literal delta 9. Unreliable: no retention, no ack needed, isolates this
+        // Phase 1 â€” BytesSent, literal delta 9. Unreliable: no retention, no ack needed, isolates this
         // figure from every reliable-Space phase below. BytesSent is cumulative across every flush this
         // Peer has ever sent (like #231's own byte-counter tests), so each flush's own cost is read as a
-        // "before this flush" / "after this flush" pair, and it is those two flushes' own costs — not
-        // the running total — that are compared.
+        // "before this flush" / "after this flush" pair, and it is those two flushes' own costs â€” not
+        // the running total â€” that are compared.
         // ------------------------------------------------------------------------------------------
         ulong bytesSentBeforeEmptyFlush = node.Reactor.CountersOf(nodePeer).BytesSent;
         node.Reactor.Send(nodePeer, DeliveryMode.Unreliable, []).Should().Be(SendOutcome.Sent);
@@ -118,7 +119,7 @@ public class DatagramSessionCounterExchangeTests
             9UL, "the two flushes' fixed overhead is identical, so only the nine payload bytes differ");
 
         // ------------------------------------------------------------------------------------------
-        // Phase 2 — BytesReceived, literal 40: a hand-built Unreliable datagram whose total length this
+        // Phase 2 â€” BytesReceived, literal 40: a hand-built Unreliable datagram whose total length this
         // test knows exactly (20-byte header + 7-byte record framing + 13-byte payload), so the expected
         // value is a literal this test states up front rather than a value read off any other counter.
         // ------------------------------------------------------------------------------------------
@@ -135,7 +136,7 @@ public class DatagramSessionCounterExchangeTests
             40UL, "the whole Datagram this test built, header included, is what BytesReceived attributes to the Peer");
 
         // ------------------------------------------------------------------------------------------
-        // Phase 3 — RetentionHighWaterBytes, literal delta 7. ReliableUnordered, sequences 0 and 1: both
+        // Phase 3 â€” RetentionHighWaterBytes, literal delta 7. ReliableUnordered, sequences 0 and 1: both
         // stay outstanding (never acked) through the rest of this test, so Phase 4 below retransmits
         // exactly these two.
         // ------------------------------------------------------------------------------------------
@@ -151,8 +152,8 @@ public class DatagramSessionCounterExchangeTests
             7UL, "the two flushes' fixed overhead is identical, so only the seven payload bytes differ");
 
         // ------------------------------------------------------------------------------------------
-        // Phase 4 — PacketsRetransmitted, literal 2. At this point the ReliableOrdered Space has never
-        // sent anything, so the sweep below can only find Phase 3's two ReliableUnordered records —
+        // Phase 4 â€” PacketsRetransmitted, literal 2. At this point the ReliableOrdered Space has never
+        // sent anything, so the sweep below can only find Phase 3's two ReliableUnordered records â€”
         // nothing else is outstanding yet to contaminate the count.
         // ------------------------------------------------------------------------------------------
         ulong retransmittedBefore = node.Reactor.CountersOf(nodePeer).PacketsRetransmitted;
@@ -163,7 +164,7 @@ public class DatagramSessionCounterExchangeTests
             2UL, "exactly Phase 3's two never-acknowledged ReliableUnordered records had expired deadlines");
 
         // ------------------------------------------------------------------------------------------
-        // Phase 5 — HorizonDeferrals, literal 5. The ReliableOrdered horizon is [0, 32] (33 sequences);
+        // Phase 5 â€” HorizonDeferrals, literal 5. The ReliableOrdered horizon is [0, 32] (33 sequences);
         // sending 38 (sequences 0 through 37) leaves exactly 5 (33 through 37) beyond it, deferred rather
         // than armed. Nothing ever acknowledges this Space, so the horizon never slides.
         // ------------------------------------------------------------------------------------------
@@ -177,7 +178,7 @@ public class DatagramSessionCounterExchangeTests
 
         // The deferral count above is folded into the Peer's public Counters only when a Datagram from
         // this Peer is next parsed (DatagramSessionReactor.ReconcileHorizonDeferrals), so one more
-        // crafted arrival — carrying no ack of its own — is needed before the figure is observable.
+        // crafted arrival â€” carrying no ack of its own â€” is needed before the figure is observable.
         byte[] reconcilePing = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence: 2, payload: [])];
         ulong datagramsReceivedBeforeReconcile = node.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(node.Endpoint), reconcilePing);
@@ -187,8 +188,8 @@ public class DatagramSessionCounterExchangeTests
             5UL, "sequences 33 through 37 of 0-through-37 sit beyond the [0, 32] horizon, which never slides here");
 
         // ------------------------------------------------------------------------------------------
-        // Phase 6 — OutOfWindowPackets, literal 4. ReliableOrdered inbound, four sequences each
-        // unreachably far ahead of the untouched base at 0 — none ever admits, so the base never moves
+        // Phase 6 â€” OutOfWindowPackets, literal 4. ReliableOrdered inbound, four sequences each
+        // unreachably far ahead of the untouched base at 0 â€” none ever admits, so the base never moves
         // and each of the four discards independently (DatagramSessionSpaceRoutingTests's own pattern).
         // ------------------------------------------------------------------------------------------
         ulong outOfWindowBefore = node.Reactor.CountersOf(nodePeer).OutOfWindowPackets;
@@ -204,8 +205,8 @@ public class DatagramSessionCounterExchangeTests
             4UL, "each of the four far-ahead sequences discarded independently; none ever admitted");
 
         // ------------------------------------------------------------------------------------------
-        // Phase 7 — DuplicatePackets, literal 3. ReliableUnordered inbound, sequence 1 — leaving a hole
-        // at 0 open so the first arrival admits but is not immediately retired below the base — sent
+        // Phase 7 â€” DuplicatePackets, literal 3. ReliableUnordered inbound, sequence 1 â€” leaving a hole
+        // at 0 open so the first arrival admits but is not immediately retired below the base â€” sent
         // once more, then twice more again, so the first arrival is not itself a duplicate.
         // ------------------------------------------------------------------------------------------
         ulong duplicateBefore = node.Reactor.CountersOf(nodePeer).DuplicatePackets;
@@ -222,7 +223,7 @@ public class DatagramSessionCounterExchangeTests
             3UL, "the first of the four arrivals admits; the next three are each counted a duplicate");
 
         // ------------------------------------------------------------------------------------------
-        // Phase 8 — UnknownSourceDiscards, literal 1, charged to the Reactor and to no Peer. A stray
+        // Phase 8 â€” UnknownSourceDiscards, literal 1, charged to the Reactor and to no Peer. A stray
         // datagram naming a session id no Session holds (0 is reserved for control; every assigned id
         // here starts from 1).
         // ------------------------------------------------------------------------------------------
@@ -241,10 +242,10 @@ public class DatagramSessionCounterExchangeTests
             bytesReceivedBeforeStray, "a datagram naming no Peer charges no Peer's bytes received");
 
         // ------------------------------------------------------------------------------------------
-        // Phase 9 — MalformedSessionDiscards, literal 1, charged to the Reactor and to no Peer, and
+        // Phase 9 â€” MalformedSessionDiscards, literal 1, charged to the Reactor and to no Peer, and
         // leaving Phase 8's figure where it was (issue #275). A datagram stopping mid-header at 12
-        // bytes, carrying the live session id: the id resolves, so this is the other cause — traffic
-        // that named a Peer and then failed to parse — and the two must move separately or a reader in
+        // bytes, carrying the live session id: the id resolves, so this is the other cause â€” traffic
+        // that named a Peer and then failed to parse â€” and the two must move separately or a reader in
         // the field cannot tell a scan from an established Peer sending bytes this Reactor cannot read.
         // ------------------------------------------------------------------------------------------
         ulong malformedSessionDiscardsBefore = node.Reactor.Counters.MalformedSessionDiscards;
@@ -263,7 +264,7 @@ public class DatagramSessionCounterExchangeTests
             bytesReceivedBeforeMalformed, "a datagram that did not parse charges no Peer's bytes received");
 
         // ------------------------------------------------------------------------------------------
-        // Reactor-scope DatagramsSent and DatagramsReceived, literals 6 and 12 — the exact count of
+        // Reactor-scope DatagramsSent and DatagramsReceived, literals 6 and 12 â€” the exact count of
         // flushes Node performed (Phases 1, 3, 4 and 5: 2 + 2 + 1 + 1) and datagrams the client sent
         // Node (Phases 2, 5's reconcile ping, 6, 7, 8 and 9: 1 + 1 + 4 + 4 + 1 + 1), each stated up
         // front by this test's own script rather than read from any other counter.
@@ -274,7 +275,7 @@ public class DatagramSessionCounterExchangeTests
             12UL, "twelve datagrams reached Node: Phase 2 (1), Phase 5's reconcile ping (1), Phase 6 (4), Phase 7 (4), Phase 8 (1), Phase 9 (1)");
 
         // ------------------------------------------------------------------------------------------
-        // Monotonicity — every figure's final reading is at least its own baseline, for each of the
+        // Monotonicity â€” every figure's final reading is at least its own baseline, for each of the
         // eleven figures this exchange moved, confirming no assertion above read a lower value than an
         // earlier one for the same figure.
         // ------------------------------------------------------------------------------------------
@@ -293,8 +294,8 @@ public class DatagramSessionCounterExchangeTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
-    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="node"/> assigned this
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
+    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="node"/> assigned this
     /// Peer, mirroring <see cref="DatagramSessionSpaceRoutingTests"/>'s helper of the same name.
     /// </summary>
     private static uint EstablishLiveSessionId(DatagramSessionReactorHarness node, RawReactor client, LinkId clientLink)
@@ -368,7 +369,7 @@ public class DatagramSessionCounterExchangeTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -382,6 +383,8 @@ public class DatagramSessionCounterExchangeTests
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
         offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 

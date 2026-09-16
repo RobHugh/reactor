@@ -10,8 +10,8 @@ namespace ReactorSockets.Tests;
 /// over a real Peer rather than over a <see cref="RetransmissionTimer"/> in isolation, through the
 /// <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record each backoff emits. The parts of
 /// subtask 6.4.7 (issue #197) and 6.4.8 (issue #198) that are only observable once a Peer's estimator
-/// has actually been fed — that releasing an armed sequence samples it, that releasing a deferred one
-/// does not, and that an expired sequence re-arms at the backed-off RTO — are asserted here too, since
+/// has actually been fed â€” that releasing an armed sequence samples it, that releasing a deferred one
+/// does not, and that an expired sequence re-arms at the backed-off RTO â€” are asserted here too, since
 /// the reported RTO is the one instrument that shows them.
 /// </summary>
 /// <remarks>
@@ -22,11 +22,11 @@ namespace ReactorSockets.Tests;
 /// </para>
 /// <para>
 /// <b>The arithmetic these tests are counted against.</b> A single clean round-trip sample of
-/// <see cref="_roundTrip"/> (20ms) seeds the estimator by RFC 6298's first-sample rule — smoothed 20ms,
-/// variance 10ms — so its timeout is <c>20 + 4 x 10 = 60ms</c>, well inside the harness's one-second
+/// <see cref="_roundTrip"/> (20ms) seeds the estimator by RFC 6298's first-sample rule â€” smoothed 20ms,
+/// variance 10ms â€” so its timeout is <c>20 + 4 x 10 = 60ms</c>, well inside the harness's one-second
 /// Linger. Backing off doubles that and nothing else: 120, 240, 480, 960, then 1000 and 1000 as the
 /// Linger ceiling saturates it. Those six figures are what the run below reads back, and they are the
-/// mechanism — a backoff folded into the estimate, a missing ceiling, or a reset that decayed rather
+/// mechanism â€” a backoff folded into the estimate, a missing ceiling, or a reset that decayed rather
 /// than cleared would each produce a different sequence.
 /// </para>
 /// <para>
@@ -50,6 +50,7 @@ public class DatagramSessionAdaptiveRtoTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
 
     private const int DatagramHeaderSize = 20;
     private const int ReliableOrderedAckBlockOffset = 4;
@@ -66,8 +67,8 @@ public class DatagramSessionAdaptiveRtoTests
     private const int SequencesSent = 38;
 
     /// <summary>
-    /// The round trip every seeding ack in this file measures. Chosen so the seeded timeout — three
-    /// times this, by the first-sample rule — sits well below the harness's one-second Linger, leaving
+    /// The round trip every seeding ack in this file measures. Chosen so the seeded timeout â€” three
+    /// times this, by the first-sample rule â€” sits well below the harness's one-second Linger, leaving
     /// room for four doublings before the ceiling takes over.
     /// </summary>
     private static readonly TimeSpan _roundTrip = TimeSpan.FromMilliseconds(20);
@@ -81,7 +82,7 @@ public class DatagramSessionAdaptiveRtoTests
     [Fact]
     public void Pump_ConsecutiveLossesWithNothingAcknowledged_EmitOneRecordEachWithARisingCountAndADoublingRtoThatSaturatesAtLinger()
     {
-        // Arrange — one clean round trip seeds the estimator at a 60ms timeout, then one further
+        // Arrange â€” one clean round trip seeds the estimator at a 60ms timeout, then one further
         // reliable sequence is armed and nothing ever acknowledges it.
         using DatagramSessionReactorHarness node = new(retentionBytes: RetentionForSixtyFourRecords);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -93,7 +94,7 @@ public class DatagramSessionAdaptiveRtoTests
         ArmOneReliableSequence(node, nodePeer);
         node.Sink.Received.Clear();
 
-        // Act — each advance is exactly the deadline currently armed, so every Pump below expires the
+        // Act â€” each advance is exactly the deadline currently armed, so every Pump below expires the
         // one outstanding sequence and backs off once more.
         TimeSpan[] deadlines =
         [
@@ -111,7 +112,7 @@ public class DatagramSessionAdaptiveRtoTests
             node.Reactor.Pump();
         }
 
-        // Assert — the doubling, the rising count, and the ceiling, read back as literal figures.
+        // Assert â€” the doubling, the rising count, and the ceiling, read back as literal figures.
         List<(long Rto, long Count)> reported = BackedOffRecords(node, nodePeer);
         reported.Should().Equal(
             [(120, 1), (240, 2), (480, 3), (960, 4), (1000, 5), (1000, 6)],
@@ -127,7 +128,7 @@ public class DatagramSessionAdaptiveRtoTests
     [Fact]
     public void Pump_AnAckAfterSeveralBackoffs_ResetsTheCountSoTheNextLossReportsOneAndTheRtoIsBackAtTheEstimate()
     {
-        // Arrange — seed the estimator, then back a sequence off twice so there is a run to reset.
+        // Arrange â€” seed the estimator, then back a sequence off twice so there is a run to reset.
         using DatagramSessionReactorHarness node = new(retentionBytes: RetentionForSixtyFourRecords);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -144,7 +145,7 @@ public class DatagramSessionAdaptiveRtoTests
         BackedOffRecords(node, nodePeer).Should().Equal(
             [(120, 1), (240, 2)], "two consecutive losses precede the reset");
 
-        // Act — the twice-retransmitted sequence is acknowledged 200ms after its last arming, inside the
+        // Act â€” the twice-retransmitted sequence is acknowledged 200ms after its last arming, inside the
         // 240ms deadline now armed. Karn's rule must discard that 200ms as ambiguous, while the delivery
         // itself still resets the backoff.
         node.TimeProvider.Advance(TimeSpan.FromMilliseconds(200));
@@ -160,7 +161,7 @@ public class DatagramSessionAdaptiveRtoTests
         node.TimeProvider.Advance(_seededTimeout);
         node.Reactor.Pump();
 
-        // Assert — count back at one, and the RTO back at twice the untouched 60ms estimate. Had the
+        // Assert â€” count back at one, and the RTO back at twice the untouched 60ms estimate. Had the
         // ambiguous 200ms sample been folded in, the estimate would have moved to roughly 250ms and this
         // would read 505 rather than 120; had the reset decayed rather than cleared, the count would not
         // be one.
@@ -172,7 +173,7 @@ public class DatagramSessionAdaptiveRtoTests
     [Fact]
     public void Pump_AnExpiredSequenceReArmedAtTheBackedOffRto_IsNotReportedAgainBeforeThatDeadlinePasses()
     {
-        // Arrange — one expiry, which backs the RTO off to 120ms and re-arms the sequence at it.
+        // Arrange â€” one expiry, which backs the RTO off to 120ms and re-arms the sequence at it.
         using DatagramSessionReactorHarness node = new(retentionBytes: RetentionForSixtyFourRecords);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -188,7 +189,7 @@ public class DatagramSessionAdaptiveRtoTests
         retransmittedAfterTheFirstExpiry.Should().Be(1, "exactly the one armed sequence expired");
         node.Sink.Received.Clear();
 
-        // Act — three more Pumps with the clock standing still, then one 119ms short of the 120ms the
+        // Act â€” three more Pumps with the clock standing still, then one 119ms short of the 120ms the
         // re-arm gave it.
         node.Reactor.Pump();
         node.Reactor.Pump();
@@ -202,7 +203,7 @@ public class DatagramSessionAdaptiveRtoTests
         node.TimeProvider.Advance(TimeSpan.FromMilliseconds(2));
         node.Reactor.Pump();
 
-        // Assert — nothing was reported a second time until the backed-off deadline actually passed, and
+        // Assert â€” nothing was reported a second time until the backed-off deadline actually passed, and
         // when it did the count went to two rather than starting again at one.
         beforeTheDeadlinePasses.Should().Be(
             retransmittedAfterTheFirstExpiry,
@@ -218,7 +219,7 @@ public class DatagramSessionAdaptiveRtoTests
     [Fact]
     public void Pump_AnAckReleasingArmedAndDeferredSequencesTogether_SamplesOnlyTheArmedOnes()
     {
-        // Arrange — 38 outstanding ReliableOrdered sequences: 0 through 32 armed inside the initial
+        // Arrange â€” 38 outstanding ReliableOrdered sequences: 0 through 32 armed inside the initial
         // [0, 32] horizon, 33 through 37 outstanding with no deadline at all.
         using DatagramSessionReactorHarness node = new(retentionBytes: RetentionForSixtyFourRecords);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -237,7 +238,7 @@ public class DatagramSessionAdaptiveRtoTests
 
         node.Reactor.Pump();
 
-        // Act — one ack whose base is past every one of them releases all 38 at once, 20ms after the 33
+        // Act â€” one ack whose base is past every one of them releases all 38 at once, 20ms after the 33
         // armed ones were armed. The five deferred ones were never armed and so have no arming moment to
         // measure from; they must contribute nothing.
         node.TimeProvider.Advance(_roundTrip);
@@ -253,7 +254,7 @@ public class DatagramSessionAdaptiveRtoTests
         node.TimeProvider.Advance(TimeSpan.FromMilliseconds(21));
         node.Reactor.Pump();
 
-        // Assert — 33 identical 20ms samples leave the smoothed value at 20ms and drive the variance to
+        // Assert â€” 33 identical 20ms samples leave the smoothed value at 20ms and drive the variance to
         // almost nothing, so the timeout is 20ms and the first backoff reports 40. A deferred sequence
         // sampled from an arming that never happened would measure the whole life of the clock and push
         // this to the 1000ms ceiling instead.
@@ -265,7 +266,7 @@ public class DatagramSessionAdaptiveRtoTests
     [Fact]
     public void Pump_TheRtoChangingBetweenTwoArms_GivesThemDifferentDeadlinesAndLeavesTheEarlierOneWhereItWas()
     {
-        // Arrange — two ReliableOrdered sequences armed in the same flush, while the estimator is still
+        // Arrange â€” two ReliableOrdered sequences armed in the same flush, while the estimator is still
         // unseeded and so the effective RTO is the one-second Linger. Both deadlines are a second away.
         using DatagramSessionReactorHarness node = new(retentionBytes: RetentionForSixtyFourRecords);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -277,7 +278,7 @@ public class DatagramSessionAdaptiveRtoTests
         node.Reactor.Send(nodePeer, DeliveryMode.ReliableOrdered, [1]).Should().Be(SendOutcome.Sent);
         node.Reactor.Pump();
 
-        // Act — acknowledging only sequence 0, 20ms after it armed, drops the effective RTO from the
+        // Act â€” acknowledging only sequence 0, 20ms after it armed, drops the effective RTO from the
         // 1000ms Linger to the 60ms the sample seeds. Sequence 1 keeps the deadline it was armed with;
         // sequence 2, armed after the change, takes the new one.
         node.TimeProvider.Advance(_roundTrip);
@@ -299,7 +300,7 @@ public class DatagramSessionAdaptiveRtoTests
         node.Reactor.Pump();
         ulong afterTheOlderDeadline = node.Reactor.CountersOf(nodePeer).PacketsRetransmitted - retransmittedBefore;
 
-        // Assert — only the sequence armed at 60ms expired at 60ms. Had the earlier sequence's deadline
+        // Assert â€” only the sequence armed at 60ms expired at 60ms. Had the earlier sequence's deadline
         // been moved to the RTO current now, it would have expired in the same sweep and this would read
         // two. It expires on its own 1000ms deadline instead, in the later sweep, alongside the newer
         // sequence's second, backed-off deadline.
@@ -375,7 +376,7 @@ public class DatagramSessionAdaptiveRtoTests
     /// Builds a live-Session datagram carrying one empty Unreliable record: a 20-byte header naming
     /// <paramref name="session"/>, whose <c>ReliableOrdered</c> ack block is the caller's and whose
     /// <c>ReliableUnordered</c> block is left zeroed. The record exists only to give the datagram a
-    /// recognisable length — an Unreliable one, so it disturbs neither reliable Space.
+    /// recognisable length â€” an Unreliable one, so it disturbs neither reliable Space.
     /// </summary>
     private static byte[] BuildDatagram(
         uint session,
@@ -399,8 +400,8 @@ public class DatagramSessionAdaptiveRtoTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
-    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="node"/> assigned this
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
+    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="node"/> assigned this
     /// Peer, mirroring <see cref="DatagramSessionHorizonTests"/>'s helper of the same name.
     /// </summary>
     private static uint EstablishLiveSessionId(DatagramSessionReactorHarness node, RawReactor client, LinkId clientLink)
@@ -474,7 +475,7 @@ public class DatagramSessionAdaptiveRtoTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -487,6 +488,9 @@ public class DatagramSessionAdaptiveRtoTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
+        offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 }

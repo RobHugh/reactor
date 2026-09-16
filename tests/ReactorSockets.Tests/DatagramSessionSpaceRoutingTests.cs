@@ -7,7 +7,7 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// Subtask 6.2.5 (issue #172): a packet record arriving on a live Session picks its Space from the
-/// mode bits in its flags byte and is classified through that Space's receive window — what the
+/// mode bits in its flags byte and is classified through that Space's receive window â€” what the
 /// window rejects is counted, never logged, and delivery is out of scope (that is #173 and 6.6's).
 /// The instrument is the one <see cref="DatagramSessionDataDatagramParseTests"/> already uses: a raw
 /// dialler completing an ordinary handshake by hand, then hand-built data datagrams sent at the live
@@ -34,6 +34,7 @@ public class DatagramSessionSpaceRoutingTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
 
     private const int DatagramHeaderSize = 20;
 
@@ -45,7 +46,7 @@ public class DatagramSessionSpaceRoutingTests
     [Fact]
     public void Pump_OneSequenceSentUnderAllFourModes_IsAdmittedOncePerSpace()
     {
-        // Arrange — sequence 1 sent once under each of the four modes, deliberately leaving sequence 0
+        // Arrange â€” sequence 1 sent once under each of the four modes, deliberately leaving sequence 0
         // a hole: an admission that fills the base's own slot immediately retires that sequence rather
         // than leaving it classifiable as a duplicate, so a gap is what keeps the evidence in place for
         // the resend below. If a Space were shared, the second, third and fourth arrivals here would
@@ -71,11 +72,11 @@ public class DatagramSessionSpaceRoutingTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
 
-        // Assert — each of the four Spaces admitted sequence 1 independently: no duplicate and no
+        // Assert â€” each of the four Spaces admitted sequence 1 independently: no duplicate and no
         // out-of-window counted, and nothing logged. Three of the four deliver, since an admitted
         // record now delivers (#217, #219); the ReliableOrdered one is held behind the hole this test
         // deliberately left at sequence 0, because that Space delivers in send order (#220). Admission
-        // is what this test is about and all four Spaces admitted — what each Space then does with an
+        // is what this test is about and all four Spaces admitted â€” what each Space then does with an
         // admitted record is its own mode's rule.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.DuplicatePackets.Should().Be(0);
@@ -83,14 +84,14 @@ public class DatagramSessionSpaceRoutingTests
         accepter.Sink.Received.Should().BeEmpty();
         drained.Should().HaveCount(3).And.OnlyContain(e => e.Kind == SessionEventKind.MessageReceived);
 
-        // Act again — the same four records, resent. If each mode kept its own window, all four are
+        // Act again â€” the same four records, resent. If each mode kept its own window, all four are
         // now duplicates; if any two modes shared a window, fewer than four would show as new.
         byte[] secondArrival = firstArrival;
         datagramsReceivedBefore = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), secondArrival);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
 
-        // Assert — all four Spaces independently flagged their own repeat, and a duplicate reaches
+        // Assert â€” all four Spaces independently flagged their own repeat, and a duplicate reaches
         // neither the arena nor the received count (#217): suppressing it is the window's whole
         // purpose, so delivering one would make the suppression invisible in the figure a consumer
         // reads to check it.
@@ -106,7 +107,7 @@ public class DatagramSessionSpaceRoutingTests
     [Fact]
     public void Pump_RecordFarAheadOfItsSpacesWindow_IsDiscardedCountedOnceAndLeavesTheBaseUnmoved()
     {
-        // Arrange — a 4-fragment window based at 0 spans [0, 4); 100 is unreachably far ahead. Uses
+        // Arrange â€” a 4-fragment window based at 0 spans [0, 4); 100 is unreachably far ahead. Uses
         // ReliableOrdered rather than Unreliable: since #173, Unreliable's window slides a far-ahead
         // arrival in rather than discarding it (retransmission fills a reliable Space's holes, so only
         // a reliable Space keeps the discard-and-leave-the-base-unmoved behaviour this test pins).
@@ -123,7 +124,7 @@ public class DatagramSessionSpaceRoutingTests
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), farAhead);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
 
-        // Assert — discarded and counted once, nothing logged, nothing delivered: an out-of-window
+        // Assert â€” discarded and counted once, nothing logged, nothing delivered: an out-of-window
         // record reaches neither the arena nor the received count (#217).
         PeerCounters afterDiscard = accepter.Reactor.CountersOf(accepterPeer);
         afterDiscard.OutOfWindowPackets.Should().Be(1);
@@ -132,7 +133,7 @@ public class DatagramSessionSpaceRoutingTests
         accepter.Sink.Received.Should().BeEmpty();
         accepter.DrainToList().Should().BeEmpty("an out-of-window record delivers nothing");
 
-        // Act — sequence 3, the far edge still inside the untouched window. Left as a gap below it
+        // Act â€” sequence 3, the far edge still inside the untouched window. Left as a gap below it
         // (0, 1 and 2 never arrive), this stays classifiable below rather than being immediately
         // retired the instant it admits, which is what lets the resend below tell admitted-and-held
         // apart from already-out-of-window: were the far-ahead arrival to have dragged the base
@@ -142,12 +143,12 @@ public class DatagramSessionSpaceRoutingTests
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), atTheOldBasesFarEdge);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
 
-        // Assert — admitted: neither counter moved from the discard above.
+        // Assert â€” admitted: neither counter moved from the discard above.
         PeerCounters afterAdmit = accepter.Reactor.CountersOf(accepterPeer);
         afterAdmit.OutOfWindowPackets.Should().Be(1);
         afterAdmit.DuplicatePackets.Should().Be(0);
 
-        // Act — resend sequence 3. Only a sequence the window still tracks as admitted reports a
+        // Act â€” resend sequence 3. Only a sequence the window still tracks as admitted reports a
         // duplicate, which is what confirms the base genuinely never moved off zero.
         datagramsReceivedBefore = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), atTheOldBasesFarEdge);
@@ -174,17 +175,17 @@ public class DatagramSessionSpaceRoutingTests
 
         byte[] datagram = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableOrdered, sequence: 1, payload: [0xAB])];
 
-        // Act — first arrival admits.
+        // Act â€” first arrival admits.
         ulong datagramsReceivedBefore = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
 
-        // Act — a retransmission of the exact same record.
+        // Act â€” a retransmission of the exact same record.
         datagramsReceivedBefore = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
 
-        // Act — a second retransmission, to prove the counter keeps counting rather than latching.
+        // Act â€” a second retransmission, to prove the counter keeps counting rather than latching.
         datagramsReceivedBefore = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
@@ -209,7 +210,7 @@ public class DatagramSessionSpaceRoutingTests
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        // Act — sequence 100 is unreachably far ahead of the ReliableUnordered Space alone. Uses
+        // Act â€” sequence 100 is unreachably far ahead of the ReliableUnordered Space alone. Uses
         // ReliableUnordered rather than Unreliable: since #173, Unreliable's window slides a far-ahead
         // arrival in rather than discarding it, so only a reliable Space still produces an
         // OutOfWindow discard here.
@@ -218,10 +219,10 @@ public class DatagramSessionSpaceRoutingTests
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), farAheadInOneSpace);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
 
-        // Assert — the one discard registered.
+        // Assert â€” the one discard registered.
         accepter.Reactor.CountersOf(accepterPeer).OutOfWindowPackets.Should().Be(1);
 
-        // Act — sequence 0, still reachable in each of the other three Spaces, sent in one datagram.
+        // Act â€” sequence 0, still reachable in each of the other three Spaces, sent in one datagram.
         byte[] admittedInTheOtherThree =
         [
             .. BuildHeader(sessionId),
@@ -233,7 +234,7 @@ public class DatagramSessionSpaceRoutingTests
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), admittedInTheOtherThree);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
 
-        // Assert — every one of the three admitted cleanly: neither counter moved past the single
+        // Assert â€” every one of the three admitted cleanly: neither counter moved past the single
         // discard the first Space alone produced, proving the other three Spaces' bases and counters
         // were untouched by it.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
@@ -248,8 +249,8 @@ public class DatagramSessionSpaceRoutingTests
     [Fact]
     public void Pump_SequenceExactlyAtTheFarEdgeOfANonSlidingWindow_ReturnsOutOfWindowAndLeavesTheBaseUnmoved()
     {
-        // Arrange — a 4-fragment window based at 0 spans [0, 3]; sequence 4 sits exactly one past the
-        // last reachable sequence — the off-by-one boundary, as distinct from the unreachably-far
+        // Arrange â€” a 4-fragment window based at 0 spans [0, 3]; sequence 4 sits exactly one past the
+        // last reachable sequence â€” the off-by-one boundary, as distinct from the unreachably-far
         // sequence 1_000 the far-above-window seam test already covers. ReliableOrdered, because since
         // #173 only a non-sliding Space still refuses a far-edge arrival instead of sliding to admit it.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 4);
@@ -265,19 +266,19 @@ public class DatagramSessionSpaceRoutingTests
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), atTheFarEdge);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
 
-        // Assert — discarded, not admitted.
+        // Assert â€” discarded, not admitted.
         PeerCounters afterDiscard = accepter.Reactor.CountersOf(accepterPeer);
         afterDiscard.OutOfWindowPackets.Should().Be(1);
         afterDiscard.DuplicatePackets.Should().Be(0);
 
-        // Act — sequence 3, the base's own far edge, still inside the untouched window: if the base had
+        // Act â€” sequence 3, the base's own far edge, still inside the untouched window: if the base had
         // moved, admitting 3 would be impossible and this send would itself count as another discard.
         byte[] stillInsideTheWindow = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableOrdered, sequence: 3, payload: [])];
         datagramsReceivedBefore = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), stillInsideTheWindow);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > datagramsReceivedBefore);
 
-        // Assert — admitted: the discard count is still exactly the one from the far-edge arrival.
+        // Assert â€” admitted: the discard count is still exactly the one from the far-edge arrival.
         PeerCounters afterAdmit = accepter.Reactor.CountersOf(accepterPeer);
         afterAdmit.OutOfWindowPackets.Should().Be(1);
         afterAdmit.DuplicatePackets.Should().Be(0);
@@ -290,7 +291,7 @@ public class DatagramSessionSpaceRoutingTests
     [Fact]
     public void Pump_EachContiguousSequenceAdmittedInOrder_RetiresItBelowTheBaseImmediately()
     {
-        // Arrange — a 4-fragment window based at 0. Each sequence, sent in order with no hole ever
+        // Arrange â€” a 4-fragment window based at 0. Each sequence, sent in order with no hole ever
         // opened, should advance the base past itself the instant it admits rather than waiting for a
         // run to finish: resending the same sequence right after it first admits reports OutOfWindow,
         // never Duplicate, which is only true if the base already passed it. ReliableUnordered, so
@@ -301,7 +302,7 @@ public class DatagramSessionSpaceRoutingTests
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        // Act, Assert — 0, 1 and 2 each admit and are immediately retired below the base.
+        // Act, Assert â€” 0, 1 and 2 each admit and are immediately retired below the base.
         foreach (uint sequence in new uint[] { 0, 1, 2 })
         {
             byte[] firstArrival = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableUnordered, sequence, payload: [])];
@@ -315,7 +316,7 @@ public class DatagramSessionSpaceRoutingTests
             accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
         }
 
-        // Assert — every resend classified OutOfWindow, none as Duplicate: the base moved past each
+        // Assert â€” every resend classified OutOfWindow, none as Duplicate: the base moved past each
         // sequence before its resend ever arrived.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.OutOfWindowPackets.Should().Be(3);
@@ -329,7 +330,7 @@ public class DatagramSessionSpaceRoutingTests
     [Fact]
     public void Pump_SequenceArrivingAboveAHole_LeavesTheHoleStillAdmittableAfterwards()
     {
-        // Arrange — sequence 1 arrives before sequence 0. If the base had advanced past the hole at 0,
+        // Arrange â€” sequence 1 arrives before sequence 0. If the base had advanced past the hole at 0,
         // sequence 0 arriving next would be OutOfWindow rather than Admitted; it stays Admitted here,
         // which is what proves the base is still sitting at the hole.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 4);
@@ -350,7 +351,7 @@ public class DatagramSessionSpaceRoutingTests
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), zero);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
 
-        // Assert — both admitted, neither discarded nor flagged a duplicate.
+        // Assert â€” both admitted, neither discarded nor flagged a duplicate.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.OutOfWindowPackets.Should().Be(0);
         counters.DuplicatePackets.Should().Be(0);
@@ -363,7 +364,7 @@ public class DatagramSessionSpaceRoutingTests
     [Fact]
     public void Pump_ArrivalFillingAHole_AdvancesTheBaseAcrossEveryAlreadyAdmittedSequenceAboveItInOneStep()
     {
-        // Arrange — an 8-fragment window. 1, 2 and 3 arrive first and sit behind the hole at 0, each
+        // Arrange â€” an 8-fragment window. 1, 2 and 3 arrive first and sit behind the hole at 0, each
         // admitting on its own but leaving the base at 0.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: 8, maxMessageSize: 8192);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -382,7 +383,7 @@ public class DatagramSessionSpaceRoutingTests
         accepter.Reactor.CountersOf(accepterPeer).OutOfWindowPackets.Should().Be(0);
         accepter.Reactor.CountersOf(accepterPeer).DuplicatePackets.Should().Be(0);
 
-        // Act — filling the hole at 0 should carry the base past 0, 1, 2 and 3 in this one arrival.
+        // Act â€” filling the hole at 0 should carry the base past 0, 1, 2 and 3 in this one arrival.
         byte[] zero = [.. BuildHeader(sessionId), .. BuildRecord(ModeReliableOrdered, sequence: 0, payload: [])];
         ulong beforeFill = accepter.Reactor.Counters.DatagramsReceived;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), zero);
@@ -391,7 +392,7 @@ public class DatagramSessionSpaceRoutingTests
         accepter.Reactor.CountersOf(accepterPeer).OutOfWindowPackets.Should().Be(0);
         accepter.Reactor.CountersOf(accepterPeer).DuplicatePackets.Should().Be(0);
 
-        // Act — resending any of 0, 1, 2 or 3 now reports OutOfWindow, not Duplicate: the whole run is
+        // Act â€” resending any of 0, 1, 2 or 3 now reports OutOfWindow, not Duplicate: the whole run is
         // below the base in one step, not merely admitted-and-held.
         foreach (uint sequence in new uint[] { 0, 1, 2, 3 })
         {
@@ -414,7 +415,7 @@ public class DatagramSessionSpaceRoutingTests
     [Fact]
     public void Pump_APeerReusingASlotAfterAnEarlierPeerClosed_ClassifiesFromACleanWindow()
     {
-        // Arrange — one Slot total, so the second Peer's handshake can only complete by reusing the
+        // Arrange â€” one Slot total, so the second Peer's handshake can only complete by reusing the
         // first Peer's freed Slot (issue #180): the arena's admission bytes for that Slot outlive the
         // first Peer, and this is what proves a reused Slot does not inherit what the first Peer had
         // already admitted there.
@@ -431,7 +432,7 @@ public class DatagramSessionSpaceRoutingTests
         accepter.Reactor.CountersOf(firstPeer).OutOfWindowPackets.Should().Be(0);
         accepter.Reactor.CountersOf(firstPeer).DuplicatePackets.Should().Be(0);
 
-        // Act — the first Peer closes, freeing the one Slot, and a second Peer's handshake takes it.
+        // Act â€” the first Peer closes, freeing the one Slot, and a second Peer's handshake takes it.
         accepter.Reactor.Close(firstPeer);
         accepter.Reactor.Pump();
         accepter.DrainToList();
@@ -441,7 +442,7 @@ public class DatagramSessionSpaceRoutingTests
         uint secondSessionId = EstablishLiveSessionId(accepter, secondClient, secondClientLink);
         PeerId secondPeer = FindAccepterPeer(accepter);
 
-        // Act — sequence 0 again, this time from the second Peer. If the reused Slot's window still
+        // Act â€” sequence 0 again, this time from the second Peer. If the reused Slot's window still
         // carried the first Peer's admission, this would classify as a Duplicate rather than Admitted.
         byte[] sameSequenceFromTheSecondPeer =
             [.. BuildHeader(secondSessionId), .. BuildRecord(ModeReliableOrdered, sequence: 0, payload: [])];
@@ -449,7 +450,7 @@ public class DatagramSessionSpaceRoutingTests
         secondClient.SendTo(secondClientLink, Source.FromIPEndPoint(accepter.Endpoint), sameSequenceFromTheSecondPeer);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
 
-        // Assert — admitted cleanly: neither a duplicate nor an out-of-window discard.
+        // Assert â€” admitted cleanly: neither a duplicate nor an out-of-window discard.
         PeerCounters secondPeerCounters = accepter.Reactor.CountersOf(secondPeer);
         secondPeerCounters.OutOfWindowPackets.Should().Be(0);
         secondPeerCounters.DuplicatePackets.Should().Be(0);
@@ -460,8 +461,8 @@ public class DatagramSessionSpaceRoutingTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
-    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
+    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="accepter"/> assigned
     /// this Peer, mirroring <see cref="DatagramSessionDataDatagramParseTests"/>'s helper of the same
     /// name.
     /// </summary>
@@ -539,7 +540,7 @@ public class DatagramSessionSpaceRoutingTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -553,6 +554,8 @@ public class DatagramSessionSpaceRoutingTests
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
         offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 

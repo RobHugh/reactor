@@ -7,16 +7,16 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// Issue #178: the <c>u32</c> sequence wrap, exercised through the public seam. Ordering in the
-/// datagram data path is decided in exactly one place — <c>SequenceNumber.IsNewerThan</c>, which
+/// datagram data path is decided in exactly one place â€” <c>SequenceNumber.IsNewerThan</c>, which
 /// reinterprets an unsigned difference as signed so a sequence just above the wrap is newer than one
-/// just below it — and until now nothing drove a receive window across that boundary.
+/// just below it â€” and until now nothing drove a receive window across that boundary.
 /// </summary>
 /// <remarks>
 /// <para>
 /// The wrap is reached by arriving at it, not by starting there: no test-only constructor parameter
 /// and no widened member (ADR 0015). The two unreliable Spaces' windows slide their base forward to
-/// admit a far-ahead arrival (#173), so a handful of forward jumps — each well inside the half-space
-/// the serial comparison resolves — walks a window's base from zero up to just below
+/// admit a far-ahead arrival (#173), so a handful of forward jumps â€” each well inside the half-space
+/// the serial comparison resolves â€” walks a window's base from zero up to just below
 /// <see cref="uint.MaxValue"/> at the cost of a few datagrams. The instrument is the one
 /// <see cref="DatagramSessionUnreliableLossTests"/> already uses: a raw dialler completing an ordinary
 /// handshake by hand, then hand-built data datagrams sent at the live session id the accepter
@@ -43,6 +43,7 @@ public class DatagramSessionSequenceWrapTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
 
     private const int DatagramHeaderSize = 20;
     private const int UnfragmentedRecordSize = 7;
@@ -56,7 +57,7 @@ public class DatagramSessionSequenceWrapTests
     /// <summary>
     /// How far one walking jump moves a sliding window's base. Below 2^31, the distance beyond which
     /// serial comparison stops resolving two sequences at all, and large enough that five jumps cover
-    /// the whole <c>u32</c> space — so walking to the wrap costs a handful of datagrams rather than
+    /// the whole <c>u32</c> space â€” so walking to the wrap costs a handful of datagrams rather than
     /// four billion.
     /// </summary>
     private const uint JumpStride = 1_000_000_000;
@@ -66,7 +67,7 @@ public class DatagramSessionSequenceWrapTests
 
     /// <summary>
     /// The fixed seed for the fuzz test's <see cref="Random"/>: the date this test was written, chosen
-    /// only so a failure is reproducible across runs and machines — never re-rolled to make a failing
+    /// only so a failure is reproducible across runs and machines â€” never re-rolled to make a failing
     /// case pass.
     /// </summary>
     private const int Seed = 20260820;
@@ -80,7 +81,7 @@ public class DatagramSessionSequenceWrapTests
     [Fact]
     public void Pump_ASequenceJustAboveTheWrapArrivingAtAWindowJustBelowIt_IsAdmittedRatherThanRefusedAsOlder()
     {
-        // Arrange — walk the Unreliable Space's window up to a base of 0xFFFF_FFF0, so its span ends
+        // Arrange â€” walk the Unreliable Space's window up to a base of 0xFFFF_FFF0, so its span ends
         // sixteen sequences short of the wrap.
         using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: Capacity);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -92,20 +93,20 @@ public class DatagramSessionSequenceWrapTests
 
         PeerCounters afterWalk = accepter.Reactor.CountersOf(accepterPeer);
 
-        // Act — sequence 2, just above the wrap, which is eighteen ahead of the base and so past the
+        // Act â€” sequence 2, just above the wrap, which is eighteen ahead of the base and so past the
         // window's far edge. Numerically it is far below every sequence the window has just seen.
         Send(accepter, client, clientLink, sessionId, ModeUnreliable, sequence: 0x0000_0002);
 
-        // Assert — treated as newer: the window slid it in and admitted it. A plain a > b comparison
+        // Assert â€” treated as newer: the window slid it in and admitted it. A plain a > b comparison
         // would read it as older than the base and refuse it, which this counter would show.
         PeerCounters afterWrap = accepter.Reactor.CountersOf(accepterPeer);
         afterWrap.OutOfWindowPackets.Should().Be(afterWalk.OutOfWindowPackets);
         afterWrap.DuplicatePackets.Should().Be(afterWalk.DuplicatePackets);
 
-        // Act — 0xFFFF_FFF8, just below the wrap, now sits below the base the slide left behind.
+        // Act â€” 0xFFFF_FFF8, just below the wrap, now sits below the base the slide left behind.
         Send(accepter, client, clientLink, sessionId, ModeUnreliable, sequence: 0xFFFF_FFF8);
 
-        // Assert — refused as older, the other half of the same ordering: the sequence just above the
+        // Assert â€” refused as older, the other half of the same ordering: the sequence just above the
         // wrap really did displace the ones just below it.
         PeerCounters afterOlder = accepter.Reactor.CountersOf(accepterPeer);
         afterOlder.OutOfWindowPackets.Should().Be(afterWalk.OutOfWindowPackets + 1);
@@ -119,7 +120,7 @@ public class DatagramSessionSequenceWrapTests
     [Fact]
     public void Pump_ArrivalsSpanningTheWrap_AreAdmittedDeduplicatedAndAdvanceTheBaseAcrossIt()
     {
-        // Arrange — walk to a base of 0xFFFF_FFF0, then let sequence 3 (just above the wrap) slide the
+        // Arrange â€” walk to a base of 0xFFFF_FFF0, then let sequence 3 (just above the wrap) slide the
         // window to a base of 0xFFFF_FFFC. Its span is now [0xFFFF_FFFC, 0x0000_0004): eight slots
         // straddling the wrap, four either side, which is the only arrangement in which one window can
         // be asked to admit, deduplicate and advance across the boundary.
@@ -134,7 +135,7 @@ public class DatagramSessionSequenceWrapTests
 
         PeerCounters straddling = accepter.Reactor.CountersOf(accepterPeer);
 
-        // Act — a scripted run either side of the boundary. The base stays at 0xFFFF_FFFC through the
+        // Act â€” a scripted run either side of the boundary. The base stays at 0xFFFF_FFFC through the
         // first five, since the sequence sitting on it has not arrived yet, which is what keeps every
         // admitted sequence still classifiable rather than immediately retired.
         uint[] arrivals =
@@ -156,7 +157,7 @@ public class DatagramSessionSequenceWrapTests
             Send(accepter, client, clientLink, sessionId, ModeUnreliable, sequence);
         }
 
-        // Assert — four duplicates and one below-the-base refusal, exactly as scripted. Nothing here
+        // Assert â€” four duplicates and one below-the-base refusal, exactly as scripted. Nothing here
         // is derivable from a window that stopped at the wrap: every admission after the third arrival
         // depends on the boundary being invisible to the ordering.
         PeerCounters after = accepter.Reactor.CountersOf(accepterPeer);
@@ -171,7 +172,7 @@ public class DatagramSessionSequenceWrapTests
     [Fact]
     public void Pump_FuzzedArrivalsWalkedOntoTheWrap_ClassifyExactlyAsAReferenceWindowDoes()
     {
-        // Arrange — both sliding Spaces walked to a base 256 short of the wrap, then thousands of
+        // Arrange â€” both sliding Spaces walked to a base 256 short of the wrap, then thousands of
         // randomly generated arrivals around each Space's current base, biased forward so the run
         // carries both windows across the boundary and well beyond it. The reference the outcomes are
         // checked against counts in absolute u64 sequences with ordinary comparisons, so it agrees
@@ -195,7 +196,7 @@ public class DatagramSessionSequenceWrapTests
         ulong expectedLoss = 0;
         int datagramsSent = 0;
 
-        // Act — the corpus is generated and modelled record by record as each datagram is packed, so
+        // Act â€” the corpus is generated and modelled record by record as each datagram is packed, so
         // every arrival is drawn relative to the base its own Space holds at that moment.
         for (int sent = 0; sent < FuzzArrivals; sent += RecordsPerDatagram)
         {
@@ -222,15 +223,15 @@ public class DatagramSessionSequenceWrapTests
             datagramsSent++;
         }
 
-        // Assert — the run really did cross the wrap in both Spaces, so the agreement below is
+        // Assert â€” the run really did cross the wrap in both Spaces, so the agreement below is
         // evidence about the boundary rather than about the ordinary case.
         unreliable.Base.Should().BeGreaterThan(Wrap);
         unreliableSequenced.Base.Should().BeGreaterThan(Wrap);
 
-        // Assert — every datagram arrived, so the reference and the window saw the same input.
+        // Assert â€” every datagram arrived, so the reference and the window saw the same input.
         (accepter.Reactor.Counters.DatagramsReceived - datagramsBefore).Should().Be((ulong)datagramsSent);
 
-        // Assert — the three classification counters match the reference exactly. A single arrival
+        // Assert â€” the three classification counters match the reference exactly. A single arrival
         // classified differently anywhere across the boundary moves at least one of them.
         PeerCounters after = accepter.Reactor.CountersOf(accepterPeer);
         (after.DuplicatePackets - beforeFuzz.DuplicatePackets).Should().Be(expectedDuplicates);
@@ -241,7 +242,7 @@ public class DatagramSessionSequenceWrapTests
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
 
-        // Assert — each production window's own base really is where the reference says it is, and so
+        // Assert â€” each production window's own base really is where the reference says it is, and so
         // really is past the wrap: the counter sums above are aggregates, and only this pins the two
         // bases together. Three probes per Space, at the seam. The models are left behind here, since
         // nothing is asserted against them after this point.
@@ -255,7 +256,7 @@ public class DatagramSessionSequenceWrapTests
             PeerCounters afterBelow = accepter.Reactor.CountersOf(accepterPeer);
             afterBelow.OutOfWindowPackets.Should().Be(beforeProbes.OutOfWindowPackets + 1);
 
-            // The base's own sequence: the one thing the window is waiting on, so admitted — neither
+            // The base's own sequence: the one thing the window is waiting on, so admitted â€” neither
             // refused as retired nor reported as already seen.
             Send(accepter, client, clientLink, sessionId, mode, (uint)basis);
             PeerCounters afterBase = accepter.Reactor.CountersOf(accepterPeer);
@@ -345,7 +346,7 @@ public class DatagramSessionSequenceWrapTests
     }
 
     /// <summary>
-    /// The PeerId the accepter raised for the handshake completed above — the subject every counter
+    /// The PeerId the accepter raised for the handshake completed above â€” the subject every counter
     /// assertion here reads.
     /// </summary>
     private static PeerId FindAccepterPeer(DatagramSessionReactorHarness accepter)
@@ -423,7 +424,7 @@ public class DatagramSessionSequenceWrapTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -436,6 +437,9 @@ public class DatagramSessionSequenceWrapTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
+        offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 
@@ -482,7 +486,7 @@ public class DatagramSessionSequenceWrapTests
     /// <remarks>
     /// Deliberately not a second copy of the same trick: sharing the signed-difference arithmetic
     /// would make the comparison circular. Sliding mirrors what <c>ReceiveWindow</c> promises for a
-    /// <c>slides: true</c> window (#173) — a sequence at or past the far edge moves the base to make
+    /// <c>slides: true</c> window (#173) â€” a sequence at or past the far edge moves the base to make
     /// room and retires every slot the move passes un-admitted.
     /// </remarks>
     private sealed class WindowModel(int capacity)

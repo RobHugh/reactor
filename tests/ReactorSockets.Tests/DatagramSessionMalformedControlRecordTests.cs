@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #341: a control record that is not a legal Ping is refused like any other malformed record —
+/// Issue #341: a control record that is not a legal Ping is refused like any other malformed record â€”
 /// the whole datagram is discarded and nothing in it is admitted, exactly as
 /// <see cref="DatagramSessionDataDatagramParseTests"/> already proves for a spare bit or an overrun
 /// length. <see cref="PacketRecordCodec.TryRead"/> (#339) already refuses the control bit alongside the
@@ -18,7 +18,7 @@ namespace ReactorSockets.Tests;
 /// <see cref="RawReactor"/> plays the remote end and a <see cref="DatagramSessionReactorHarness"/>
 /// accepter is driven through hand-built bytes. Proving "not acked" for the criterion mixing a legal
 /// record ahead of an illegal one needs the accepter's own next outbound datagram, which nothing here
-/// can read directly — <see cref="DatagramSessionOptions"/> exposes no outbound capture — so the
+/// can read directly â€” <see cref="DatagramSessionOptions"/> exposes no outbound capture â€” so the
 /// accepter is made to <c>Send</c> a Message of its own back to the client, whose reply datagram carries
 /// the same header every datagram does (ADR 0009) and is decoded independently by
 /// <see cref="DatagramDecoder"/>, mirroring <see cref="DatagramSessionPingReceiveTests"/>.
@@ -37,6 +37,7 @@ public class DatagramSessionMalformedControlRecordTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
 
     private const int DatagramHeaderSize = 20;
     private const int UnfragmentedRecordSize = 7;
@@ -52,7 +53,7 @@ public class DatagramSessionMalformedControlRecordTests
     [Fact]
     public void Pump_ControlBitSetAlongsideTheFragmentBit_DiscardsTheWholeDatagram()
     {
-        // Arrange — the control bit is legal only on the unfragmented shape; setting it alongside the
+        // Arrange â€” the control bit is legal only on the unfragmented shape; setting it alongside the
         // fragment bit names a combination #341 refuses outright.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -75,7 +76,7 @@ public class DatagramSessionMalformedControlRecordTests
     [Fact]
     public void Pump_ControlRecordWithANonzeroLength_DiscardsTheWholeDatagram()
     {
-        // Arrange — a Ping is always zero length; a control bit on a record carrying a payload is
+        // Arrange â€” a Ping is always zero length; a control bit on a record carrying a payload is
         // refused rather than treated as a Ping with a payload no Ping ever has.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -100,7 +101,7 @@ public class DatagramSessionMalformedControlRecordTests
     [InlineData(ModeReliableOrdered)]
     public void Pump_ControlBitSetInAModeOtherThanReliableUnordered_DiscardsTheWholeDatagram(byte modeBits)
     {
-        // Arrange — a Ping is always ReliableUnordered (#53's parent restriction); the control bit
+        // Arrange â€” a Ping is always ReliableUnordered (#53's parent restriction); the control bit
         // under any other mode's two bits is refused, ReliableOrdered included even though it is
         // otherwise reliable.
         using DatagramSessionReactorHarness accepter = new();
@@ -123,7 +124,7 @@ public class DatagramSessionMalformedControlRecordTests
     [Fact]
     public void Pump_ALegalRecordPrecedesAnIllegalControlRecord_NeitherIsDeliveredOrAcked()
     {
-        // Arrange — a legal ReliableUnordered data record ahead of an illegal control record (control
+        // Arrange â€” a legal ReliableUnordered data record ahead of an illegal control record (control
         // bit under ReliableOrdered's mode bits) in the same datagram. The whole datagram is discarded,
         // so the legal record takes no effect either: not delivered, and its sequence never advances the
         // ReliableUnordered receive window's ack base.
@@ -138,7 +139,7 @@ public class DatagramSessionMalformedControlRecordTests
 
         byte[] datagram = [.. BuildHeader(sessionId), .. legalRecord, .. illegalRecord];
 
-        // Act — the malformed datagram arrives and is discarded, then the accepter Sends a Message of
+        // Act â€” the malformed datagram arrives and is discarded, then the accepter Sends a Message of
         // its own so its next outbound datagram's ack block can be read back.
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
         accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
@@ -148,7 +149,7 @@ public class DatagramSessionMalformedControlRecordTests
         accepter.Reactor.Pump();
         byte[] reply = ExchangeUntilReceived(client, accepter);
 
-        // Assert — not delivered, and the ReliableUnordered ack base stayed at 0: the legal record ahead
+        // Assert â€” not delivered, and the ReliableUnordered ack base stayed at 0: the legal record ahead
         // of the illegal one was never admitted.
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
         payloads.Should().BeEmpty();
@@ -169,8 +170,8 @@ public class DatagramSessionMalformedControlRecordTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
-    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
+    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="accepter"/> assigned
     /// this Peer, mirroring <see cref="DatagramSessionDataDatagramParseTests"/>'s helper of the same
     /// name.
     /// </summary>
@@ -243,7 +244,7 @@ public class DatagramSessionMalformedControlRecordTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -257,6 +258,8 @@ public class DatagramSessionMalformedControlRecordTests
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
         offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 

@@ -8,15 +8,15 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #262: a half-arrived Fragment set survives an interruption of its Peer's transport at no
 /// cost, because the pieces already held live in the ordinary per-Peer receive window
-/// (<see cref="DatagramSessionReactor.HoldFragment"/>'s own remarks) — state a lost and rebuilt
+/// (<see cref="DatagramSessionReactor.HoldFragment"/>'s own remarks) â€” state a lost and rebuilt
 /// transport never touches. The Datagram profile has no wire-level Resume of its own yet (that is
 /// Slice 8, issue #52, still open); what already exists, and is exercised here, is the property that
 /// makes such a Resume unnecessary for this purpose in the first place: a Session is identified by its
 /// wire token rather than by the address or link a datagram arrived on
 /// (<see cref="DatagramSessionReactor.ProcessDataDatagram"/>'s remarks; proved for demultiplexing by
 /// <see cref="DatagramSessionIdentityTests.Pump_WhenALiveSessionsDatagramArrivesFromANewAddress_StillAttributesItToThatSession"/>).
-/// An "interruption" here is therefore a real transport-level outage — a sustained run of dropped
-/// datagrams in both directions — rather than a protocol event, and "resume" is nothing more than the
+/// An "interruption" here is therefore a real transport-level outage â€” a sustained run of dropped
+/// datagrams in both directions â€” rather than a protocol event, and "resume" is nothing more than the
 /// outage ending: no handshake, no counter exchange, nothing this library has to do to make the held
 /// Fragments still be there afterwards.
 /// </summary>
@@ -35,13 +35,13 @@ namespace ReactorSockets.Tests;
 /// (<see cref="DatagramSessionReactor.ParseDataDatagram"/>'s two <c>ApplyAck</c> calls) ever calls
 /// <see cref="RetentionPool.Release"/> for a Datagram Peer's send-side retention. <c>ApplyAck</c> only
 /// releases a sequence from the retransmit-deadline tracker (<see cref="OutstandingReliableSequences"/>)
-/// — a different "release" than freeing its <see cref="RetentionPool"/> slot. The only place
+/// â€” a different "release" than freeing its <see cref="RetentionPool"/> slot. The only place
 /// <see cref="RetentionPool.Release"/> is ever called is nowhere in production code: a Peer's outbound
 /// retention slots for a reliable Space, once filled, stay filled for that Peer's whole life; they are
 /// only reset in bulk when a vacated capacity Slot is reused by a new Peer
 /// (<see cref="RetentionPool.ResetShareHolder"/>, exercised by
 /// <see cref="DatagramSessionRetentionSlotRecycleTests"/>). This is unrelated to receive-side Fragment
-/// survival — the subject of this file — and is left unfixed here, per this ticket's test-only scope;
+/// survival â€” the subject of this file â€” and is left unfixed here, per this ticket's test-only scope;
 /// <see cref="RetentionBytes"/> below is sized generously so this file's own further Sends are never
 /// incidentally blocked by it.
 /// </remarks>
@@ -56,8 +56,8 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
     private const int MaxUdpDatagramSize = 65_507;
 
     /// <summary>
-    /// One full Fragment record leaves under 12 spare bytes in a Datagram — less than even the
-    /// smallest possible second record could need — so every Fragment this test sends, full or short,
+    /// One full Fragment record leaves under 12 spare bytes in a Datagram â€” less than even the
+    /// smallest possible second record could need â€” so every Fragment this test sends, full or short,
     /// rides its own Datagram (matches <see cref="DatagramSessionFragmentRetransmitIdentityTests.FragmentSize"/>).
     /// </summary>
     private const int FragmentSize = MaxUdpDatagramSize - DatagramHeaderSize - FragmentRecordSize - 11;
@@ -74,8 +74,8 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
     /// <summary>
     /// Retention sized to hold every Fragment one Send retains, plus one further slot. Datagram
     /// retention slots are freed only when a Peer's Slot is reused by a new occupant
-    /// (<see cref="RetentionPool.ResetShareHolder"/>) — nothing in the ack path calls
-    /// <see cref="RetentionPool.Release"/> today (see the class remarks) — so the one extra slot is
+    /// (<see cref="RetentionPool.ResetShareHolder"/>) â€” nothing in the ack path calls
+    /// <see cref="RetentionPool.Release"/> today (see the class remarks) â€” so the one extra slot is
     /// what <see cref="Pump_AfterCompletionFollowingTheInterruption_TheGroupsSlotsAreReleasedSoFurtherMessagesStillFitTheWindow"/>
     /// needs room for its own further Send, on top of the original set's four Fragments that stay
     /// retained for this Fixture's whole life.
@@ -95,11 +95,11 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
         using Fixture fixture = Fixture.Build();
         byte[] message = fixture.SendMessageAndCarryItHalfwayThroughAnInterruption(DeliveryMode.ReliableOrdered);
 
-        // Act — the outage ends: nothing further is dropped, so the still-missing Fragments' next
+        // Act â€” the outage ends: nothing further is dropped, so the still-missing Fragments' next
         // retransmission finally lands.
         List<byte[]> delivered = fixture.ResumeAndCollectDeliveredPayloads();
 
-        // Assert — one whole Message, byte-exact, and counted exactly once.
+        // Assert â€” one whole Message, byte-exact, and counted exactly once.
         delivered.Should().ContainSingle("the half-arrived set completes into one Message, not a run of partial ones")
             .Which.Should().Equal(message);
         fixture.Accepter.Reactor.CountersOf(fixture.AccepterPeer).MessagesReceived.Should().Be(
@@ -117,7 +117,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
         // Act
         fixture.ResumeAndCollectDeliveredPayloads();
 
-        // Assert — every Datagram the dialler has transmitted since the pre-interruption ack, captured
+        // Assert â€” every Datagram the dialler has transmitted since the pre-interruption ack, captured
         // by the tap ahead of the proxy so a dropped attempt would show up too, is decoded by hand; the
         // sequences of the two Fragments already acked before the interruption never reappear among
         // them. This is the assertion the ticket turns on: the sender's own retransmission is selective
@@ -144,7 +144,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
         fixture.SendMessageAndCarryItHalfwayThroughAnInterruption(DeliveryMode.ReliableOrdered);
         fixture.ResumeAndCollectDeliveredPayloads().Should().ContainSingle();
 
-        // Act — an ordinary further Message. This is deliberately about the accepter's receive window,
+        // Act â€” an ordinary further Message. This is deliberately about the accepter's receive window,
         // not the dialler's own send-side retention (see the class remarks on RetentionPool.Release
         // never being called): RetentionBytes already gives the dialler's retention pool one spare slot
         // for exactly this Send, so nothing about this Act depends on the completed group's Fragments
@@ -162,7 +162,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
     /// The dual-Space acceptance criterion is about receive-side survival, not the send side's single
     /// per-Peer queue (<see cref="DatagramSessionReactor.FlushPeer"/> packs one Peer's records strictly
     /// in Send order regardless of Space, so two independent live <c>Send</c> calls can never be made to
-    /// progress "at once" — the second Space's own first Fragment would not even reach the wire until
+    /// progress "at once" â€” the second Space's own first Fragment would not even reach the wire until
     /// the first Space's whole queued Message had). Held Fragments are injected by hand through a bare
     /// <see cref="RawReactor"/> instead, exactly as <see cref="DatagramSessionFragmentInterleavingTests"/>
     /// does for the same reason: this proves the receive window, not the retransmit machinery, and #260
@@ -171,7 +171,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
     [Fact]
     public void Pump_AFragmentSetHalfArrivedAcrossBothReliableSpaces_SurvivesTheSameInterruptionAndBothComplete()
     {
-        // Arrange — a two-piece set in each reliable Space, one piece of each held before the outage.
+        // Arrange â€” a two-piece set in each reliable Space, one piece of each held before the outage.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -186,9 +186,9 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
         SendAndPumpUntilReceived(accepter, client, clientLink, [.. BuildHeader(sessionId), .. unorderedFragment0]);
         accepter.DrainPayloads().Should().BeEmpty("only the first piece of each Space's set has arrived");
 
-        // Act — the interruption: no datagram of any kind crosses the wire for a long stretch. Nothing
+        // Act â€” the interruption: no datagram of any kind crosses the wire for a long stretch. Nothing
         // here is a timer this profile owns (no expiry for an incomplete set, by design), so this is
-        // simulated the same way any silence is — Pumping with nothing sent, the clock advanced well
+        // simulated the same way any silence is â€” Pumping with nothing sent, the clock advanced well
         // past every deadline that exists elsewhere in this Reactor, to prove none of them touches an
         // incomplete Fragment group either.
         accepter.TimeProvider.Advance(TimeSpan.FromMinutes(5));
@@ -199,7 +199,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
 
         accepter.DrainPayloads().Should().BeEmpty("the interruption is ongoing; both sets are still exactly half arrived");
 
-        // The resume: nothing renegotiated, nothing handshaken — the remaining piece of each Space's set
+        // The resume: nothing renegotiated, nothing handshaken â€” the remaining piece of each Space's set
         // simply arrives.
         SendAndPumpUntilReceived(accepter, client, clientLink, [.. BuildHeader(sessionId), .. orderedFragment1]);
         List<byte[]> afterOrderedCompletes = accepter.DrainPayloads();
@@ -207,7 +207,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
         SendAndPumpUntilReceived(accepter, client, clientLink, [.. BuildHeader(sessionId), .. unorderedFragment1]);
         List<byte[]> afterUnorderedCompletes = accepter.DrainPayloads();
 
-        // Assert — both Spaces' sets survived the same outage and completed into their own distinct
+        // Assert â€” both Spaces' sets survived the same outage and completed into their own distinct
         // Messages, neither one's progress visible in the other's.
         afterOrderedCompletes.Should().ContainSingle().Which.Should().Equal(new byte[] { 0x10, 0x20 });
         afterUnorderedCompletes.Should().ContainSingle().Which.Should().Equal(new byte[] { 0x30, 0x40 });
@@ -251,6 +251,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
     private const byte ModeReliableOrdered = 0b0000_0011;
     private const byte ModeReliableUnordered = 0b0000_0010;
 
@@ -328,7 +329,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + InjectionResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + InjectionResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -341,6 +342,9 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
+        offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
         // The remaining InjectionResumeSecretLength bytes are the dialler's resume secret; an all-zero
         // one is fine, since nothing in this file's path ever reads it.
         return BuildControlDatagram(HelloWithCookieType, body);
@@ -409,7 +413,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
         /// <summary>
         /// Sends one <see cref="MessageSize"/>-byte Message under <paramref name="mode"/>, lets exactly
         /// <see cref="FragmentsBeforeInterruption"/> of its Fragments arrive and get acked, then starts a
-        /// sustained outage — every remaining transmission, original and retransmitted alike, dropped —
+        /// sustained outage â€” every remaining transmission, original and retransmitted alike, dropped â€”
         /// long enough to outlast more than one retransmit deadline, leaving the set genuinely
         /// interrupted rather than merely slow.
         /// </summary>
@@ -432,8 +436,8 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
             Accepter.DrainPayloads().Should().BeEmpty("only half the set has arrived so far");
             Accepter.Reactor.CountersOf(AccepterPeer).MessagesReceived.Should().Be(0UL);
 
-            // The accepter answers so its ack block — reflecting the Fragments it admitted while the
-            // rest were still missing — travels back before the outage begins. Without this, every
+            // The accepter answers so its ack block â€” reflecting the Fragments it admitted while the
+            // rest were still missing â€” travels back before the outage begins. Without this, every
             // Fragment the dialler is still tracking, acked or not, would eventually be treated as lost.
             Accepter.Reactor.Send(AccepterPeer, DeliveryMode.Unreliable, [0]).Should().Be(SendOutcome.Sent);
             Accepter.Reactor.Pump();
@@ -441,8 +445,8 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
             Tap.Pump();
             Dialler.Reactor.Pump();
 
-            // The interruption: every remaining transmission from here — the still-missing Fragments'
-            // first attempt and at least one retransmission of each — is dropped outright.
+            // The interruption: every remaining transmission from here â€” the still-missing Fragments'
+            // first attempt and at least one retransmission of each â€” is dropped outright.
             int remainingFragments = FragmentCount - FragmentsBeforeInterruption;
             for (int i = 0; i < remainingFragments * 2; i++)
             {
@@ -468,7 +472,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
             return message;
         }
 
-        /// <summary>Ends the interruption — nothing further is dropped — and pumps until the set completes.</summary>
+        /// <summary>Ends the interruption â€” nothing further is dropped â€” and pumps until the set completes.</summary>
         public List<byte[]> ResumeAndCollectDeliveredPayloads()
         {
             Dialler.TimeProvider.Advance(_pastTheRetransmitDeadline);

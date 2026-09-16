@@ -7,27 +7,27 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// Subtasks 6.3.1 (issue #183), 6.3.4 (issue #186) and 6.3.8 (issue #190): what the two ack blocks a
-/// Peer stamps on its outbound datagrams actually say about its receive state — the cumulative base
+/// Peer stamps on its outbound datagrams actually say about its receive state â€” the cumulative base
 /// each reliable Space has reached, plus the 32-bit field describing the 32 sequences above it.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>The instrument.</b> A hand-built client over a bare <see cref="RawReactor"/> drives arrivals at
-/// sequences of this test's own choosing — holes, scattered admissions, and one sequence deliberately
-/// further above the base than any bit can reach — which the public <see cref="DatagramSessionReactor.Send"/>
+/// sequences of this test's own choosing â€” holes, scattered admissions, and one sequence deliberately
+/// further above the base than any bit can reach â€” which the public <see cref="DatagramSessionReactor.Send"/>
 /// allocator cannot be made to produce. What the node then says about them is read off the wire: the
 /// node's own datagram, decoded independently by <see cref="DatagramDecoder"/> (#229) rather than by
 /// the codec under test.
 /// </para>
 /// <para>
 /// <b>Window width.</b> Every Reactor here is built with a 40-fragment receive window, wide enough that
-/// a sequence 35 above the base is inside the window — genuinely admitted, and therefore genuinely
+/// a sequence 35 above the base is inside the window â€” genuinely admitted, and therefore genuinely
 /// undescribable rather than merely refused. At the harness's default width the two facts would be
 /// indistinguishable.
 /// </para>
 /// <para>
 /// <b>Not covered here, and why.</b> The <c>u32</c> wrap. A reliable Space's window never slides
-/// (#173) — retransmission fills its holes — so its base advances only by admitting every sequence in
+/// (#173) â€” retransmission fills its holes â€” so its base advances only by admitting every sequence in
 /// turn, and walking one to the wrap through the seam would take four billion arrivals. The trick
 /// <see cref="DatagramSessionSequenceWrapTests"/> uses, jumping a sliding window's base forward, is
 /// available only to the two unreliable Spaces, which are never acknowledged. With no
@@ -49,6 +49,7 @@ public class DatagramSessionAckBlockDescriptionTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
 
     private const int DatagramHeaderSize = 20;
     private const int UnfragmentedRecordSize = 7;
@@ -74,13 +75,13 @@ public class DatagramSessionAckBlockDescriptionTests
         uint sessionId = EstablishLiveSessionId(node, client, clientLink);
         PeerId nodePeer = FindNodePeer(node);
 
-        // Assert — a Peer that has received nothing still describes both Spaces, as zeroed blocks
+        // Assert â€” a Peer that has received nothing still describes both Spaces, as zeroed blocks
         // rather than as no block at all.
         DecodedDatagram fresh = FlushAndDecode(node, client, nodePeer, marker: 1);
         fresh.ReliableOrderedAck.Should().Be(new AckBlock(0, 0), "nothing has been admitted in either Space");
         fresh.ReliableUnorderedAck.Should().Be(new AckBlock(0, 0));
 
-        // Act — sequences 1, 3 and 7 arrive in ReliableOrdered while 0 never does, so the base stays at
+        // Act â€” sequences 1, 3 and 7 arrive in ReliableOrdered while 0 never does, so the base stays at
         // the hole and each admission is describable only by its own bit: bit 0 is base + 1.
         AdmitAt(node, client, clientLink, sessionId, ModeReliableOrdered, 1, 3, 7);
 
@@ -93,7 +94,7 @@ public class DatagramSessionAckBlockDescriptionTests
         scattered.ReliableUnorderedAck.Should().Be(
             new AckBlock(0, 0), "the two reliable Spaces are independent, and nothing arrived in this one");
 
-        // Act — sequence 35 arrives: inside the 40-slot window, so genuinely admitted, but 35 above the
+        // Act â€” sequence 35 arrives: inside the 40-slot window, so genuinely admitted, but 35 above the
         // base, where no bit reaches.
         AdmitAt(node, client, clientLink, sessionId, ModeReliableOrdered, 35);
 
@@ -103,11 +104,11 @@ public class DatagramSessionAckBlockDescriptionTests
             new AckBlock(0, scatteredBits),
             "a sequence more than 32 above the base has no bit to hold it and is simply not described");
 
-        // Act — the hole is filled. The base advances across 0 and 1 in one step and stops at 2, the
+        // Act â€” the hole is filled. The base advances across 0 and 1 in one step and stops at 2, the
         // next hole, and the bitfield is re-read against the new base rather than carried over.
         AdmitAt(node, client, clientLink, sessionId, ModeReliableOrdered, 0);
 
-        // Assert — sequence 3 is now base + 1 and sequence 7 is base + 5; sequence 35 is base + 33 and
+        // Assert â€” sequence 3 is now base + 1 and sequence 7 is base + 5; sequence 35 is base + 33 and
         // so is still out of reach.
         DecodedDatagram afterTheJump = FlushAndDecode(node, client, nodePeer, marker: 4);
         afterTheJump.ReliableOrderedAck.Should().Be(
@@ -132,7 +133,7 @@ public class DatagramSessionAckBlockDescriptionTests
         AdmitAt(node, client, clientLink, sessionId, ModeReliableOrdered, 2);
         DecodedDatagram third = FlushAndDecode(node, client, nodePeer, marker: 3);
 
-        // Assert — generated fresh from present state each time: unchanged state describes identically,
+        // Assert â€” generated fresh from present state each time: unchanged state describes identically,
         // and an arrival in between is reflected on the very next Datagram with no residue of the old
         // base or the old bits.
         first.ReliableOrderedAck.Should().Be(new AckBlock(2, 1u << 0), "0 and 1 retired, 2 is the hole, 3 is base + 1");
@@ -151,7 +152,7 @@ public class DatagramSessionAckBlockDescriptionTests
         uint sessionId = EstablishLiveSessionId(node, client, clientLink);
         PeerId nodePeer = FindNodePeer(node);
 
-        // Act — 20 sequences admitted in each unreliable Space. Neither is ever acknowledged, so however
+        // Act â€” 20 sequences admitted in each unreliable Space. Neither is ever acknowledged, so however
         // much arrives there, no block moves and no third block appears.
         for (uint sequence = 0; sequence < 20; sequence++)
         {
@@ -165,7 +166,7 @@ public class DatagramSessionAckBlockDescriptionTests
         captured.Decoded.ReliableUnorderedAck.Should().Be(new AckBlock(0, 0));
         captured.Raw.Length.Should().Be(
             DatagramHeaderSize + UnfragmentedRecordSize + 1,
-            "the header is the same 20 bytes carrying exactly two ack blocks — a third would have grown it");
+            "the header is the same 20 bytes carrying exactly two ack blocks â€” a third would have grown it");
     }
 
     [Fact]
@@ -181,7 +182,7 @@ public class DatagramSessionAckBlockDescriptionTests
         // Act
         AdmitAt(node, client, clientLink, sessionId, ModeReliableUnordered, 0, 2);
 
-        // Assert — each block describes its own Space's window and nothing else.
+        // Assert â€” each block describes its own Space's window and nothing else.
         DecodedDatagram decoded = FlushAndDecode(node, client, nodePeer, marker: 1);
         decoded.ReliableUnorderedAck.Should().Be(
             new AckBlock(1, 1u << 0), "0 retired, 1 is the hole, and 2 is base + 1");
@@ -213,7 +214,7 @@ public class DatagramSessionAckBlockDescriptionTests
     }
 
     /// <summary>
-    /// Makes the node flush one Datagram — a Peer is flushed only when it has something queued — and
+    /// Makes the node flush one Datagram â€” a Peer is flushed only when it has something queued â€” and
     /// returns it decoded. <paramref name="marker"/> is the one payload byte the record carries, so the
     /// datagram this call produced is the one picked out of whatever else is in flight.
     /// </summary>
@@ -281,8 +282,8 @@ public class DatagramSessionAckBlockDescriptionTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
-    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="node"/> assigned this
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
+    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="node"/> assigned this
     /// Peer, mirroring <see cref="DatagramSessionCounterExchangeTests"/>'s helper of the same name.
     /// </summary>
     private static uint EstablishLiveSessionId(DatagramSessionReactorHarness node, RawReactor client, LinkId clientLink)
@@ -356,7 +357,7 @@ public class DatagramSessionAckBlockDescriptionTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -369,6 +370,9 @@ public class DatagramSessionAckBlockDescriptionTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
+        offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 }

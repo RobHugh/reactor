@@ -8,13 +8,13 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Subtask 6.3.7 (issue #189), the headline deliverable of issue #41: the horizon rule, proved by the
 /// retransmit timer <em>not starting</em> rather than by delivery eventually succeeding (ADR 0009).
-/// Subtask 6.3.5 (issue #187) — what applying a received ack block releases, and how a slide arms what
-/// it newly covers — is asserted here too rather than beside it, since it is the same instrument and
+/// Subtask 6.3.5 (issue #187) â€” what applying a received ack block releases, and how a slide arms what
+/// it newly covers â€” is asserted here too rather than beside it, since it is the same instrument and
 /// the same horizon.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>The rule.</b> A received ack block can only ever describe <c>[base, base + 32]</c> — a cumulative
+/// <b>The rule.</b> A received ack block can only ever describe <c>[base, base + 32]</c> â€” a cumulative
 /// base plus 32 bits. A sent reliable sequence beyond that span cannot yet be described by any ack the
 /// peer is able to send, so arming its retransmit deadline would resend it the moment the timeout
 /// elapsed although nothing was lost. Such a sequence is recorded as outstanding but left unarmed, and
@@ -22,7 +22,7 @@ namespace ReactorSockets.Tests;
 /// </para>
 /// <para>
 /// <b>What removing the gate would do, and how these tests would show it.</b> Arm every outstanding
-/// sequence on send — delete the horizon branch in <c>OutstandingReliableSequences.RecordSent</c> — and
+/// sequence on send â€” delete the horizon branch in <c>OutstandingReliableSequences.RecordSent</c> â€” and
 /// <see cref="Pump_ThirtyEightOutstandingWithNothingAcknowledged_ResendsOnlyTheThirtyThreeInsideTheHorizon"/>
 /// reads 38 retransmissions instead of 33 on its first sweep and 38 again on its second, and
 /// <see cref="Pump_ThirtyEightOutstandingWithNothingAcknowledged_CountsOneHorizonDeferralPerSequenceHeldBack"/>
@@ -34,12 +34,12 @@ namespace ReactorSockets.Tests;
 /// <c>InternalsVisibleTo</c> (ADR 0015), so "outstanding with no deadline" is asserted the one way a
 /// consumer can observe it: <see cref="PeerCounters.PacketsRetransmitted"/> rises by exactly the number
 /// of <em>armed</em> sequences once the clock passes the deadline, and does not rise for the deferred
-/// ones however far the clock advances. That is the timer not starting — a sequence still outstanding
+/// ones however far the clock advances. That is the timer not starting â€” a sequence still outstanding
 /// (nothing here ever acknowledges it, so nothing releases it) and still never resent.
 /// </para>
 /// <para>
 /// <b>The instrument.</b> A live <see cref="DatagramSessionReactor"/> whose one Peer is a hand-built
-/// client over a bare <see cref="RawReactor"/> — the same instrument
+/// client over a bare <see cref="RawReactor"/> â€” the same instrument
 /// <see cref="DatagramSessionCounterExchangeTests"/> and <c>DatagramSessionSpaceRoutingTests</c> use. A
 /// live counterparty cannot express this: the scenario needs acks that never arrive, and then one ack
 /// naming a base of the test's own choosing, neither of which an ordinary Session will produce.
@@ -59,6 +59,7 @@ public class DatagramSessionHorizonTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
 
     private const int DatagramHeaderSize = 20;
     private const int ReliableOrderedAckBlockOffset = 4;
@@ -81,7 +82,7 @@ public class DatagramSessionHorizonTests
 
     /// <summary>
     /// Comfortably past the RTO, whose ceiling is the harness's one-second Linger, so an armed deadline
-    /// has certainly passed however the estimator has moved —
+    /// has certainly passed however the estimator has moved â€”
     /// <see cref="DatagramSessionRetransmitResendTests"/>'s own constant.
     /// </summary>
     private static readonly TimeSpan _pastTheRetransmitDeadline = TimeSpan.FromSeconds(3);
@@ -97,7 +98,7 @@ public class DatagramSessionHorizonTests
         PeerId nodePeer = FindNodePeer(node);
         node.Reactor.CountersOf(nodePeer).PacketsRetransmitted.Should().Be(0);
 
-        // Act — 38 ReliableOrdered sequences, 0 through 37, all sent in one flush. Nothing ever
+        // Act â€” 38 ReliableOrdered sequences, 0 through 37, all sent in one flush. Nothing ever
         // acknowledges them, so the horizon stays at its initial [0, 32] for the whole test.
         SendReliableOrdered(node, nodePeer, SequencesSent);
         node.Reactor.Pump();
@@ -107,14 +108,14 @@ public class DatagramSessionHorizonTests
         node.Reactor.Pump();
         ulong firstSweep = node.Reactor.CountersOf(nodePeer).PacketsRetransmitted - retransmittedBeforeFirstSweep;
 
-        // Act — the clock advances a second time, well past what the deferred sequences' deadlines would
+        // Act â€” the clock advances a second time, well past what the deferred sequences' deadlines would
         // have been had they ever been armed. Nothing expires that was never armed.
         ulong retransmittedBeforeSecondSweep = node.Reactor.CountersOf(nodePeer).PacketsRetransmitted;
         node.TimeProvider.Advance(_pastTheRetransmitDeadline);
         node.Reactor.Pump();
         ulong secondSweep = node.Reactor.CountersOf(nodePeer).PacketsRetransmitted - retransmittedBeforeSecondSweep;
 
-        // Assert — exactly the 33 sequences the initial horizon covers were armed and resent. Sequences
+        // Assert â€” exactly the 33 sequences the initial horizon covers were armed and resent. Sequences
         // 33 through 37 are still outstanding, and were never resent: the deadline never started.
         firstSweep.Should().Be(
             (ulong)SequencesInsideTheInitialHorizon,
@@ -156,7 +157,7 @@ public class DatagramSessionHorizonTests
         uint sessionId = EstablishLiveSessionId(node, client, clientLink);
         PeerId nodePeer = FindNodePeer(node);
 
-        // Act — 33 sequences, 0 through 32: exactly what one ack block can describe, so the horizon
+        // Act â€” 33 sequences, 0 through 32: exactly what one ack block can describe, so the horizon
         // holds nothing back.
         SendReliableOrdered(node, nodePeer, SequencesInsideTheInitialHorizon);
         node.Reactor.Pump();
@@ -166,7 +167,7 @@ public class DatagramSessionHorizonTests
         node.Reactor.Pump();
         ReconcileHorizonDeferrals(node, client, clientLink, sessionId);
 
-        // Assert — ordinary operation: nothing was ever held back, and every sequence was armed.
+        // Assert â€” ordinary operation: nothing was ever held back, and every sequence was armed.
         node.Reactor.CountersOf(nodePeer).HorizonDeferrals.Should().Be(
             0, "everything outstanding fitted inside the horizon, so nothing was ever deferred");
         (node.Reactor.CountersOf(nodePeer).PacketsRetransmitted - retransmittedBefore).Should().Be(
@@ -176,7 +177,7 @@ public class DatagramSessionHorizonTests
     [Fact]
     public void Pump_AnAckSlidingTheHorizonOverTheDeferredSequences_ArmsExactlyThoseItNowCovers()
     {
-        // Arrange — the same 38-outstanding state, with its first sweep already taken so the 33 armed
+        // Arrange â€” the same 38-outstanding state, with its first sweep already taken so the 33 armed
         // sequences are accounted for before the slide.
         using DatagramSessionReactorHarness node = new(retentionBytes: RetentionForSixtyFourRecords);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -189,7 +190,7 @@ public class DatagramSessionHorizonTests
         node.TimeProvider.Advance(_pastTheRetransmitDeadline);
         node.Reactor.Pump();
 
-        // Act — one ack block whose cumulative base is 33: everything below it is acknowledged in one
+        // Act â€” one ack block whose cumulative base is 33: everything below it is acknowledged in one
         // step, which releases the 33 armed sequences and slides the horizon to [33, 65]. Sequences 33
         // through 37 are the only ones left outstanding, and the slide is what arms them.
         SendCraftedArrival(
@@ -202,7 +203,7 @@ public class DatagramSessionHorizonTests
         node.TimeProvider.Advance(_pastTheRetransmitDeadline);
         node.Reactor.Pump();
 
-        // Assert — exactly the five the slide newly covered, and nothing else: the released 33 are gone
+        // Assert â€” exactly the five the slide newly covered, and nothing else: the released 33 are gone
         // rather than resent, and no sixth sequence appeared from anywhere.
         (node.Reactor.CountersOf(nodePeer).PacketsRetransmitted - retransmittedBeforeSlideSweep).Should().Be(
             (ulong)SequencesBeyondTheInitialHorizon,
@@ -221,7 +222,7 @@ public class DatagramSessionHorizonTests
 
         const int reliableUnorderedSent = 5;
 
-        // Act — 38 in ReliableOrdered, which overflows its own horizon by five, and 5 in
+        // Act â€” 38 in ReliableOrdered, which overflows its own horizon by five, and 5 in
         // ReliableUnordered, which sits well inside its own separate one.
         SendReliableOrdered(node, nodePeer, SequencesSent);
         for (int i = 0; i < reliableUnorderedSent; i++)
@@ -236,7 +237,7 @@ public class DatagramSessionHorizonTests
         node.Reactor.Pump();
         ReconcileHorizonDeferrals(node, client, clientLink, sessionId);
 
-        // Assert — each Space is gated by its own horizon: ReliableUnordered's five all armed, so the
+        // Assert â€” each Space is gated by its own horizon: ReliableUnordered's five all armed, so the
         // deferral count is still exactly ReliableOrdered's five, and the sweep found 33 + 5.
         node.Reactor.CountersOf(nodePeer).HorizonDeferrals.Should().Be(
             (ulong)SequencesBeyondTheInitialHorizon,
@@ -249,7 +250,7 @@ public class DatagramSessionHorizonTests
     [Fact]
     public void Pump_AnAckBitfieldWithScatteredBits_ReleasesExactlyThoseSequencesAndLeavesEveryOtherArmed()
     {
-        // Arrange — ten outstanding ReliableOrdered sequences, 0 through 9, all inside the horizon and
+        // Arrange â€” ten outstanding ReliableOrdered sequences, 0 through 9, all inside the horizon and
         // so all armed.
         using DatagramSessionReactorHarness node = new(retentionBytes: RetentionForSixtyFourRecords);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -260,7 +261,7 @@ public class DatagramSessionHorizonTests
         SendReliableOrdered(node, nodePeer, 10);
         node.Reactor.Pump();
 
-        // Act — a base of 0 acknowledges nothing cumulatively, and the bitfield names sequences 1 and 3
+        // Act â€” a base of 0 acknowledges nothing cumulatively, and the bitfield names sequences 1 and 3
         // alone: bit 0 is base + 1 and bit 2 is base + 3.
         SendCraftedArrival(
             node,
@@ -272,7 +273,7 @@ public class DatagramSessionHorizonTests
         node.TimeProvider.Advance(_pastTheRetransmitDeadline);
         node.Reactor.Pump();
 
-        // Assert — an unset bit is not a release: the eight sequences the bitfield did not name are
+        // Assert â€” an unset bit is not a release: the eight sequences the bitfield did not name are
         // still outstanding and still armed, and they are the eight that expire.
         (node.Reactor.CountersOf(nodePeer).PacketsRetransmitted - retransmittedBefore).Should().Be(
             8, "sequences 1 and 3 were released by their bits, and 0, 2 and 4 through 9 were not");
@@ -291,7 +292,7 @@ public class DatagramSessionHorizonTests
         SendReliableOrdered(node, nodePeer, 10);
         node.Reactor.Pump();
 
-        // Act — a base of 5 releases 0 through 4, then a base of 2 arrives after it. Applying the older
+        // Act â€” a base of 5 releases 0 through 4, then a base of 2 arrives after it. Applying the older
         // block must move nothing backwards: sequences 5 through 9 are outstanding either way, and the
         // stale block cannot un-release, re-release, or unarm anything.
         SendCraftedArrival(
@@ -317,7 +318,7 @@ public class DatagramSessionHorizonTests
     [Fact]
     public void Pump_AnAckReleasingSequencesThatAreStillDeferred_LeavesTheMonotonicDeferralCountWhereItWas()
     {
-        // Arrange — 38 outstanding, five of them deferred beyond the horizon.
+        // Arrange â€” 38 outstanding, five of them deferred beyond the horizon.
         using DatagramSessionReactorHarness node = new(retentionBytes: RetentionForSixtyFourRecords);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -329,7 +330,7 @@ public class DatagramSessionHorizonTests
         ReconcileHorizonDeferrals(node, client, clientLink, sessionId);
         node.Reactor.CountersOf(nodePeer).HorizonDeferrals.Should().Be((ulong)SequencesBeyondTheInitialHorizon);
 
-        // Act — a base of 38 acknowledges every sequence sent, so the five that were deferred simply
+        // Act â€” a base of 38 acknowledges every sequence sent, so the five that were deferred simply
         // leave without ever having been armed.
         SendCraftedArrival(
             node,
@@ -347,13 +348,13 @@ public class DatagramSessionHorizonTests
             0, "everything outstanding was released, so nothing was left to expire");
         node.Reactor.CountersOf(nodePeer).HorizonDeferrals.Should().Be(
             (ulong)SequencesBeyondTheInitialHorizon,
-            "the counter is monotonic — a deferral that later turns out never to have been needed is still a deferral that happened");
+            "the counter is monotonic â€” a deferral that later turns out never to have been needed is still a deferral that happened");
     }
 
     [Fact]
     public void Pump_AnAckForOneReliableSpace_ReleasesNothingInTheOther()
     {
-        // Arrange — five outstanding in each reliable Space, all armed.
+        // Arrange â€” five outstanding in each reliable Space, all armed.
         using DatagramSessionReactorHarness node = new(retentionBytes: RetentionForSixtyFourRecords);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -368,7 +369,7 @@ public class DatagramSessionHorizonTests
 
         node.Reactor.Pump();
 
-        // Act — an ack naming a base of 5 for ReliableOrdered, with ReliableUnordered's block left
+        // Act â€” an ack naming a base of 5 for ReliableOrdered, with ReliableUnordered's block left
         // zeroed.
         SendCraftedArrival(
             node,
@@ -388,7 +389,7 @@ public class DatagramSessionHorizonTests
     [Fact]
     public void Pump_ASlideArmingDeferredSequences_DatesTheirDeadlineFromTheSlideRatherThanFromTheSend()
     {
-        // Arrange — 38 outstanding with five deferred, and the clock already well past the point at
+        // Arrange â€” 38 outstanding with five deferred, and the clock already well past the point at
         // which those five would have expired had they been armed when they were sent.
         using DatagramSessionReactorHarness node = new(retentionBytes: RetentionForSixtyFourRecords);
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -401,7 +402,7 @@ public class DatagramSessionHorizonTests
         node.TimeProvider.Advance(_pastTheRetransmitDeadline);
         node.Reactor.Pump();
 
-        // Act — the slide arms sequences 33 through 37, then the clock advances by less than the RTO,
+        // Act â€” the slide arms sequences 33 through 37, then the clock advances by less than the RTO,
         // whose ceiling is the harness's one-second Linger.
         SendCraftedArrival(
             node,
@@ -418,7 +419,7 @@ public class DatagramSessionHorizonTests
         node.Reactor.Pump();
         ulong afterFullAdvance = node.Reactor.CountersOf(nodePeer).PacketsRetransmitted - retransmittedBeforeShortAdvance;
 
-        // Assert — a backdated deadline would have expired the instant the slide armed it, since these
+        // Assert â€” a backdated deadline would have expired the instant the slide armed it, since these
         // sequences were sent more than a Linger ago. It is measured from the slide instead.
         afterShortAdvance.Should().Be(
             0, "the newly armed deadlines run from the slide, not from a send that happened seconds earlier");
@@ -429,7 +430,7 @@ public class DatagramSessionHorizonTests
     [Fact]
     public void Pump_ASustainedRunOfReliableSendsAndAcks_DoesNotGrowAllocationAsTheRunContinues()
     {
-        // Arrange — every cycle records a sent reliable sequence, generates both ack blocks for the
+        // Arrange â€” every cycle records a sent reliable sequence, generates both ack blocks for the
         // outbound Datagram, and applies an arriving ack that releases what the previous cycle sent, so
         // the outstanding set reaches a steady state rather than growing. Retention is sized for a
         // thousand records, comfortably more than the run needs, since nothing releases a retention slot
@@ -461,7 +462,7 @@ public class DatagramSessionHorizonTests
         RunSendAndAckCycles(node, client, clientLink, sessionId, nodePeer, measuredCyclesPerPhase, ref sent);
         long phaseTwoDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseTwo;
 
-        // Assert — a per-datagram L1 cost is expected and unavoidable; what must not happen is that cost
+        // Assert â€” a per-datagram L1 cost is expected and unavoidable; what must not happen is that cost
         // climbing as the run goes on, which is what a tracker or a block generator that allocated per
         // sequence would show up as.
         phaseTwoDelta.Should().BeLessThanOrEqualTo(phaseOneDelta * 2 + 1);
@@ -504,8 +505,8 @@ public class DatagramSessionHorizonTests
 
     /// <summary>
     /// Folds the tracker's deferral tally into the Peer's public counter, which the Reactor does only
-    /// when a Datagram from that Peer is next parsed. One crafted arrival carrying a zeroed ack block —
-    /// which acknowledges nothing, and so releases nothing — is what makes the figure observable.
+    /// when a Datagram from that Peer is next parsed. One crafted arrival carrying a zeroed ack block â€”
+    /// which acknowledges nothing, and so releases nothing â€” is what makes the figure observable.
     /// </summary>
     private static void ReconcileHorizonDeferrals(
         DatagramSessionReactorHarness node,
@@ -535,7 +536,7 @@ public class DatagramSessionHorizonTests
     /// Builds a live-Session datagram carrying one empty Unreliable record: a 20-byte header naming
     /// <paramref name="session"/>, whose <c>ReliableOrdered</c> ack block is the caller's and whose
     /// <c>ReliableUnordered</c> block is left zeroed. The record exists only to give the datagram a
-    /// recognisable length — an Unreliable one, so it disturbs neither reliable Space.
+    /// recognisable length â€” an Unreliable one, so it disturbs neither reliable Space.
     /// </summary>
     private static byte[] BuildDatagram(
         uint session,
@@ -559,8 +560,8 @@ public class DatagramSessionHorizonTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
-    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="node"/> assigned this
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
+    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="node"/> assigned this
     /// Peer, mirroring <see cref="DatagramSessionCounterExchangeTests"/>'s helper of the same name.
     /// </summary>
     private static uint EstablishLiveSessionId(DatagramSessionReactorHarness node, RawReactor client, LinkId clientLink)
@@ -634,7 +635,7 @@ public class DatagramSessionHorizonTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -647,6 +648,9 @@ public class DatagramSessionHorizonTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
+        offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 }

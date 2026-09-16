@@ -8,7 +8,7 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #300: the held-against-expected figures are the whole value of
 /// <see cref="DiagnosticId.FragmentSetAbandoned"/>, so this file proves them at both ends of the range
-/// a consumer acts on differently — one fragment held and one fragment short — rather than once in the
+/// a consumer acts on differently â€” one fragment held and one fragment short â€” rather than once in the
 /// middle, where a bug that swapped or off-by-oned held and expected would be invisible. It also proves
 /// each abandonment fires exactly once, subjected to the Peer by both kind and id, and that a set which
 /// completes and is delivered normally emits nothing at all: a Diagnostic here marks a loss, and one
@@ -21,7 +21,7 @@ namespace ReactorSockets.Tests;
 /// Fragment set at sequences 0, 1 and 2. Held-one-of-three sends only sequence 0 (held, base advances to
 /// 1); held-two-of-three additionally sends sequence 2 (held, base stays pinned at 1 behind the hole at
 /// sequence 1). Either way, sequence 4 then lands on the exact physical ring slot sequence 0's Fragment
-/// still occupies — the window is only 4 slots wide — and abandons the set.
+/// still occupies â€” the window is only 4 slots wide â€” and abandons the set.
 /// </remarks>
 public class DatagramSessionFragmentSetAbandonedTests
 {
@@ -37,6 +37,7 @@ public class DatagramSessionFragmentSetAbandonedTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
 
     private const int DatagramHeaderSize = 20;
     private const int UnfragmentedRecordSize = 7;
@@ -48,7 +49,7 @@ public class DatagramSessionFragmentSetAbandonedTests
     [Fact]
     public void Pump_RingLapClobbersAnIncompleteFragmentSetsSlot_EmitsFragmentSetAbandonedOnceWithHeldAndDeclaredCounts()
     {
-        // Arrange — a window narrow enough (4 fragments) that a single far-ahead arrival laps the ring
+        // Arrange â€” a window narrow enough (4 fragments) that a single far-ahead arrival laps the ring
         // back onto a still-held, never-completed Fragment's own slot. Only the set's first piece (of
         // three) ever arrives.
         using DatagramSessionReactorHarness accepter = NewNarrowWindowAccepter();
@@ -57,19 +58,19 @@ public class DatagramSessionFragmentSetAbandonedTests
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        // Act — the set's first piece, held with two more still to come.
+        // Act â€” the set's first piece, held with two more still to come.
         SendFragment(accepter, client, clientLink, sessionId, sequence: 0, fragmentIndex: 0, fragmentCount: 3, payload: [0xAA]);
 
-        // Act — sequence 1 (the set's own second piece) never arrives; sequence 4 does, and its ring
+        // Act â€” sequence 1 (the set's own second piece) never arrives; sequence 4 does, and its ring
         // slot is the same physical slot sequence 0's held piece still occupies.
         SendRecord(accepter, client, clientLink, sessionId, sequence: 4, payload: [0xBB]);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
 
-        // Assert — exactly one FragmentSetAbandoned record, subjecting the Peer by kind and id, and
+        // Assert â€” exactly one FragmentSetAbandoned record, subjecting the Peer by kind and id, and
         // carrying 1 fragment held against the 3 the set declared.
         AssertSingleAbandonment(accepter, accepterPeer, expectedHeld: 1, expectedDeclared: 3);
 
-        // Assert — accounting only: the Peer is untouched, nothing closed or disconnected because of it.
+        // Assert â€” accounting only: the Peer is untouched, nothing closed or disconnected because of it.
         drained.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
         Action stillUsable = () => accepter.Reactor.CountersOf(accepterPeer);
         stillUsable.Should().NotThrow("emitting FragmentSetAbandoned is accounting only and must not change Session state");
@@ -78,7 +79,7 @@ public class DatagramSessionFragmentSetAbandonedTests
     [Fact]
     public void Pump_RingLapClobbersASetHeldOneFragmentShortOfComplete_ReportsHeldOneBelowDeclared()
     {
-        // Arrange — the same 3-piece set and 4-slot window, but this time two of its three declared
+        // Arrange â€” the same 3-piece set and 4-slot window, but this time two of its three declared
         // pieces arrive before the clobber: sequence 0 (which advances the base to 1) and sequence 2
         // (which is held behind the hole sequence 1 leaves, since the window never slides past it).
         using DatagramSessionReactorHarness accepter = NewNarrowWindowAccepter();
@@ -87,14 +88,14 @@ public class DatagramSessionFragmentSetAbandonedTests
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        // Act — two of the set's three declared pieces arrive; sequence 1 never does.
+        // Act â€” two of the set's three declared pieces arrive; sequence 1 never does.
         SendFragment(accepter, client, clientLink, sessionId, sequence: 0, fragmentIndex: 0, fragmentCount: 3, payload: [0xAA]);
         SendFragment(accepter, client, clientLink, sessionId, sequence: 2, fragmentIndex: 2, fragmentCount: 3, payload: [0xCC]);
 
-        // Act — sequence 4 laps the ring onto sequence 0's still-held slot.
+        // Act â€” sequence 4 laps the ring onto sequence 0's still-held slot.
         SendRecord(accepter, client, clientLink, sessionId, sequence: 4, payload: [0xBB]);
 
-        // Assert — exactly one FragmentSetAbandoned record, reporting 2 of the 3 declared pieces held —
+        // Assert â€” exactly one FragmentSetAbandoned record, reporting 2 of the 3 declared pieces held â€”
         // one short of complete, not the one-of-three the sibling test proves.
         AssertSingleAbandonment(accepter, accepterPeer, expectedHeld: 2, expectedDeclared: 3);
     }
@@ -102,7 +103,7 @@ public class DatagramSessionFragmentSetAbandonedTests
     [Fact]
     public void Pump_AFragmentSetThatCompletesAndIsDelivered_EmitsNoFragmentSetAbandoned()
     {
-        // Arrange — the same 3-piece set and narrow window, but every declared piece arrives this time,
+        // Arrange â€” the same 3-piece set and narrow window, but every declared piece arrives this time,
         // completing and delivering the set before anything ever reuses its ring slots.
         using DatagramSessionReactorHarness accepter = NewNarrowWindowAccepter();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -110,20 +111,20 @@ public class DatagramSessionFragmentSetAbandonedTests
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         _ = FindAccepterPeer(accepter);
 
-        // Act — every declared piece of the set arrives, in order.
+        // Act â€” every declared piece of the set arrives, in order.
         SendFragment(accepter, client, clientLink, sessionId, sequence: 0, fragmentIndex: 0, fragmentCount: 3, payload: [0xAA]);
         SendFragment(accepter, client, clientLink, sessionId, sequence: 1, fragmentIndex: 1, fragmentCount: 3, payload: [0xBB]);
         SendFragment(accepter, client, clientLink, sessionId, sequence: 2, fragmentIndex: 2, fragmentCount: 3, payload: [0xCC]);
         List<byte[]> delivered = accepter.DrainPayloads();
 
-        // Assert — the reassembled Message was actually delivered, so this is genuinely the completed
+        // Assert â€” the reassembled Message was actually delivered, so this is genuinely the completed
         // case rather than one that silently dropped the set.
         delivered.Should().ContainSingle().Which.Should().Equal([0xAA, 0xBB, 0xCC]);
 
-        // Act — a later arrival laps the ring back onto the same physical slots the completed set used.
+        // Act â€” a later arrival laps the ring back onto the same physical slots the completed set used.
         SendRecord(accepter, client, clientLink, sessionId, sequence: 4, payload: [0xDD]);
 
-        // Assert — completion clears the set's residue, so reusing its slots afterward never reports it
+        // Assert â€” completion clears the set's residue, so reusing its slots afterward never reports it
         // abandoned: a Diagnostic here marks a loss, and firing one on a success would teach a consumer
         // to ignore it.
         accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.FragmentSetAbandoned);
@@ -171,7 +172,7 @@ public class DatagramSessionFragmentSetAbandonedTests
     /// <summary>
     /// Asserts exactly one <see cref="DiagnosticId.FragmentSetAbandoned"/> record was received,
     /// subjecting <paramref name="expectedPeer"/> by both <see cref="DiagnosticSubjectKind"/> and
-    /// <see cref="PeerId"/> — not the id alone — and carrying <paramref name="expectedHeld"/> against
+    /// <see cref="PeerId"/> â€” not the id alone â€” and carrying <paramref name="expectedHeld"/> against
     /// <paramref name="expectedDeclared"/>.
     /// </summary>
     private static void AssertSingleAbandonment(
@@ -186,8 +187,8 @@ public class DatagramSessionFragmentSetAbandonedTests
     }
 
     /// <summary>
-    /// Completes an ordinary handshake by hand over <paramref name="client"/> — a bare
-    /// <see cref="RawReactor"/> — and returns the wire session id <paramref name="accepter"/> assigned
+    /// Completes an ordinary handshake by hand over <paramref name="client"/> â€” a bare
+    /// <see cref="RawReactor"/> â€” and returns the wire session id <paramref name="accepter"/> assigned
     /// this Peer.
     /// </summary>
     private static uint EstablishLiveSessionId(DatagramSessionReactorHarness accepter, RawReactor client, LinkId clientLink)
@@ -265,7 +266,7 @@ public class DatagramSessionFragmentSetAbandonedTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -278,6 +279,9 @@ public class DatagramSessionFragmentSetAbandonedTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
+        offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
         // The remaining ResumeSecretLength bytes are the dialler's resume secret; an all-zero one is
         // fine, since nothing in this ticket's path ever reads it.
         return BuildControlDatagram(HelloWithCookieType, body);
