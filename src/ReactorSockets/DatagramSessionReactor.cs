@@ -1703,13 +1703,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="EnforceSendIdleTimer"/> — the two timers are independent: this one reads only receive
     /// state, that one only send state, and neither call arms or disarms the other. No
     /// <see cref="DiagnosticGateway"/> record is logged for the transition, since it is already reported
-    /// as an Event (ADR 0013).
+    /// as an Event (ADR 0013). Skips a Peer already <see cref="PeerSlot.IsInterrupted"/> (issue #353), so
+    /// a deadline that stays exceeded after the transition never raises a second Event for it.
     /// </summary>
     private void EnforceReceiveIdleTimer()
     {
         for (int index = 0; index < _peers.Capacity; index++)
         {
             if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            {
+                continue;
+            }
+
+            if (slot.IsInterrupted)
             {
                 continue;
             }
@@ -3227,9 +3233,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// Whether this Peer's receive-idle deadline (issue #352, <see cref="HasExceededReceiveIdleDeadline"/>)
         /// has fired: the Peer stays open when it is set — <see cref="_peers"/> still holds its Slot and
         /// <see cref="CountersOf"/> keeps answering, and nothing here resets any queue or retention.
-        /// <see langword="false"/> for a fresh Slot. Not yet re-checked before a later Pump raises another
-        /// <see cref="SessionEventKind.PeerInterrupted"/> for a Peer already Interrupted — that guard is
-        /// #353's. Leaving Interrupted, and what Interrupted changes about Send or Linger, is #55's.
+        /// <see langword="false"/> for a fresh Slot. Re-checked before a later Pump would otherwise raise
+        /// another <see cref="SessionEventKind.PeerInterrupted"/> for a Peer already Interrupted (issue
+        /// #353). Leaving Interrupted, and what Interrupted changes about Send or Linger, is #55's.
         /// </summary>
         public bool IsInterrupted { get; set; }
 
