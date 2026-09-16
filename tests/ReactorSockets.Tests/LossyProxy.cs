@@ -227,6 +227,19 @@ internal sealed class LossyProxy : IDisposable
     }
 
     /// <summary>
+    /// Installs a payload drop rule that matches everything, in both directions at once (issue #352 and
+    /// the liveness tests that follow it): the shape every "the two Sessions can no longer hear each
+    /// other, but both Reactors are still Pumping" test needs, without either direction's Reactor
+    /// noticing a socket error or a proxy shutdown — from each Reactor's own view, its datagrams simply
+    /// stop arriving, exactly as a real path failure would look.
+    /// </summary>
+    public void StopRelayingBothDirections()
+    {
+        SetPayloadDropRule(RelayDirection.ClientToUpstream, _ => true);
+        SetPayloadDropRule(RelayDirection.UpstreamToClient, _ => true);
+    }
+
+    /// <summary>
     /// Advances this proxy's own Reactor by one Pump, relaying whatever arrived and releasing any
     /// delayed relay whose deadline this proxy's <see cref="TimeProvider"/> has now reached.
     /// </summary>

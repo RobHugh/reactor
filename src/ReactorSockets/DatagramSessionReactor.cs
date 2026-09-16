@@ -296,6 +296,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     internal TimeSpan ObservedPumpInterval => _pumpIntervalObserver.Interval;
 
+    /// <summary>
+    /// This Reactor's <see cref="DatagramSessionOptions.SendIdleInterval"/> as announced on
+    /// Hello-with-cookie and Accept, in whole milliseconds rounded up. Rounding up keeps a
+    /// sub-millisecond interval from going out as zero, which the peer rejects as malformed, and never
+    /// shortens the deadline the peer derives from it.
+    /// </summary>
+    private ulong AnnouncedSendIdleIntervalMilliseconds => (ulong)Math.Ceiling(_options.SendIdleInterval.TotalMilliseconds);
+
     /// <inheritdoc cref="ISessionEventSource.PendingEventCount"/>
     int ISessionEventSource.PendingEventCount => _pendingEvents.Count;
 
@@ -324,6 +332,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             _dispatcher.Pump();
             RetryPendingFragmentDeliveries();
             ReportExpiredRetransmissions();
+            EnforceReceiveIdleTimer();
             EnforceSendIdleTimer();
             FlushOutboundDatagrams();
             ReportDeclinedAdmissions();
@@ -956,6 +965,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             DiscardMalformedForSession(source, datagram.Length);
             return;
         }
+
+        // The well-formedness proof above is what earns this datagram the right to keep slot's
+        // receive-idle deadline alive (issue #351, PeerSlot.LastReceiveTimestamp): every record parsed
+        // and any Fragment sets they claim are internally consistent. A datagram refused below for
+        // declaring more Fragments than this Reactor's own receive window could ever hold does not
+        // matter either way — slot is closed by that refusal, so nothing reads this timestamp again.
+        slot.LastReceiveTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
 
         // A declared fragmentCount larger than this Reactor's own receive window is refused with a
         // close, not a discard (issue #282, reworked under #264) — the record is individually legal and
@@ -1650,6 +1666,79 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
 
             FlushPeer(slot);
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="slot"/> has gone silent past this end's receive-idle deadline (issue
+    /// #352): elapsed time since <see cref="PeerSlot.LastReceiveTimestamp"/> at or past
+    /// <see cref="PeerSlot.RemoteSendIdleInterval"/> times <see cref="DatagramSessionOptions.ResolvedMissedHeartbeats"/>.
+    /// Mirrors <see cref="StreamSessionReactor.HasExceededReceiveIdleDeadline"/>.
+    /// </summary>
+    /// <remarks>
+    /// This profile has an adaptive RTO already, unlike the stream profile, and the deadline is
+    /// deliberately not derived from it (issue #359, ADR 0012). The RTO answers "when do I resend the
+    /// probe", a fact about the current path that must keep adapting. The count answers "how many
+    /// missed intervals before I give up", the consumer's own tolerance, which must not adapt with it.
+    /// Deriving the deadline from the RTO would stretch that tolerance exactly when the path degrades,
+    /// since backing off the RTO is what the estimator does when the path is bad, so the consumer
+    /// would wait longest precisely when it most wanted to be told. It would also tie a consumer-facing
+    /// promise to an estimator that Karn's algorithm is already discarding samples from. The Ping
+    /// still inherits the adaptive RTO for its own retransmission (#343), so the path-adaptivity this
+    /// profile has stays there instead of leaking into liveness. Keeping the deadline a plain count
+    /// also means a consumer moving between the datagram and stream session profiles does not have to
+    /// relearn how liveness works.
+    ///
+    /// Validating this is structural rather than arithmetic: <see cref="DatagramSessionOptions"/>
+    /// rejects a <see cref="DatagramSessionOptions.MissedHeartbeats"/> count below 2 at construction,
+    /// and a count of at least 2 already guarantees room for one probe and one retransmission, because
+    /// the RTO floor is the observed Pump interval (<see cref="ObservedPumpInterval"/>) and the
+    /// send-idle interval necessarily exceeds one Pump. No round-trip term needs to appear in the
+    /// deadline itself. In consumer terms: a peer announcing a 10-second send-idle interval, at the
+    /// default count of 3, is declared lost after 30 seconds of silence from it.
+    ///
+    /// See the tolerance test that degrades the path and confirms the deadline does not stretch with
+    /// it, referred to in this codebase as <c>DatagramSessionLivenessToleranceTests</c>.
+    /// </remarks>
+    private bool HasExceededReceiveIdleDeadline(PeerSlot slot) =>
+        _options.Reactor.TimeProvider.GetElapsedTime(slot.LastReceiveTimestamp)
+            >= slot.RemoteSendIdleInterval * _options.ResolvedMissedHeartbeats;
+
+    /// <summary>
+    /// Moves every Established Peer that has exceeded <see cref="HasExceededReceiveIdleDeadline"/> to
+    /// <see cref="PeerSlot.IsInterrupted"/> and queues its <see cref="SessionEventKind.PeerInterrupted"/>
+    /// (issue #352), run once per <see cref="Pump"/> ahead of
+    /// <see cref="EnforceSendIdleTimer"/> — the two timers are independent: this one reads only receive
+    /// state, that one only send state, and neither call arms or disarms the other. No
+    /// <see cref="DiagnosticGateway"/> record is logged for the transition, since it is already reported
+    /// as an Event (ADR 0013). Skips a Peer already <see cref="PeerSlot.IsInterrupted"/> (issue #353), so
+    /// a deadline that stays exceeded after the transition never raises a second Event for it.
+    /// </summary>
+    private void EnforceReceiveIdleTimer()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            {
+                continue;
+            }
+
+            if (slot.IsInterrupted)
+            {
+                continue;
+            }
+
+            if (!HasExceededReceiveIdleDeadline(slot))
+            {
+                continue;
+            }
+
+            slot.IsInterrupted = true;
+            _pendingEvents.Add(new PendingEvent
+            {
+                Kind = SessionEventKind.PeerInterrupted,
+                Peer = ToPeerId(slot.Handle),
+            });
         }
     }
 
@@ -2552,6 +2641,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 cookie,
                 out uint remoteSessionId,
                 out uint remoteMaxMessageSize,
+                out ulong remoteSendIdleIntervalMilliseconds,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2583,7 +2673,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        if (_peers.TryAdd(NewAcceptedPeer(source, link, remoteSessionId, remoteMaxMessageSize, remoteResumeSecret, clientNonce))
+        TimeSpan remoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
+        if (_peers.TryAdd(NewAcceptedPeer(
+                source, link, remoteSessionId, remoteMaxMessageSize, remoteSendIdleInterval, remoteResumeSecret, clientNonce))
             is not SlotHandle handle)
         {
             _counters.RecordAdmissionDiscard();
@@ -2636,6 +2728,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             cookie,
             slot.LocalSessionId,
             (uint)_options.MaxMessageSize,
+            AnnouncedSendIdleIntervalMilliseconds,
             slot.LocalResumeSecret);
         SendControl(link, source);
     }
@@ -2654,6 +2747,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out ulong clientNonce,
                 out uint remoteSessionId,
                 out uint remoteMaxMessageSize,
+                out ulong remoteSendIdleIntervalMilliseconds,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2666,11 +2760,31 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
+        // ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize or send-idle
+        // interval at parse (issue #287, issue #348), so both values are already trusted by the time
+        // this Peer reaches Established — an internal invariant to assert rather than input to
+        // re-validate, mirroring NewAcceptedPeer's asserts on the accepting path.
+        Debug.Assert(
+            remoteMaxMessageSize != 0,
+            "ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize before this is called.");
+        Debug.Assert(
+            remoteSendIdleIntervalMilliseconds != 0,
+            "ControlDatagramCodec.TryReadAccept rejects a zero-announced send-idle interval before this is called.");
+
         slot.RemoteSessionId = remoteSessionId;
         slot.RemoteMaxMessageSize = remoteMaxMessageSize;
+        slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
         slot.State = HandshakeState.Established;
-        slot.LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+
+        // Both idle-timer timestamps start counting from the moment this Peer exists, not from
+        // default(long) — which would read as an interval already elapsed. The Accept that just
+        // arrived is itself received activity, so LastReceiveTimestamp is stamped here rather than
+        // left to wait for the first post-establishment data datagram (issue #351), mirroring
+        // StreamSessionReactor.OnHelloRecordReceived's same reasoning for the stream profile.
+        long now = _options.Reactor.TimeProvider.GetTimestamp();
+        slot.LastSendTimestamp = now;
+        slot.LastReceiveTimestamp = now;
 
         _dialsByNonce.Remove(clientNonce);
         _peersBySessionId[slot.LocalSessionId] = slot.Handle;
@@ -2728,17 +2842,23 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         UdpLink link,
         uint remoteSessionId,
         uint remoteMaxMessageSize,
+        TimeSpan remoteSendIdleInterval,
         ReadOnlySpan<byte> remoteResumeSecret,
         ulong clientNonce)
     {
-        // ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize at parse
-        // (issue #287), so by the time a Peer is built here, straight into Established, the value is
-        // already trusted — an internal invariant to assert rather than input to re-validate.
+        // ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize or
+        // send-idle interval at parse (issue #287, issue #347), so by the time a Peer is built here,
+        // straight into Established, both values are already trusted — an internal invariant to
+        // assert rather than input to re-validate.
         Debug.Assert(
             remoteMaxMessageSize != 0,
             "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize before this is called.");
+        Debug.Assert(
+            remoteSendIdleInterval > TimeSpan.Zero,
+            "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced send-idle interval before this is called.");
 
         RetransmissionTimer retransmitTimer = new();
+        long now = _options.Reactor.TimeProvider.GetTimestamp();
         return new()
         {
             Remote = source,
@@ -2748,13 +2868,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             LocalResumeSecret = NextResumeSecret(),
             RemoteSessionId = remoteSessionId,
             RemoteMaxMessageSize = remoteMaxMessageSize,
+            RemoteSendIdleInterval = remoteSendIdleInterval,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
             State = HandshakeState.Established,
             AckTracker = NewAckTracker(retransmitTimer),
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
-            LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp(),
+            LastSendTimestamp = now,
+            LastReceiveTimestamp = now,
         };
     }
 
@@ -2776,6 +2898,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             slot.ClientNonce,
             slot.LocalSessionId,
             (uint)_options.MaxMessageSize,
+            AnnouncedSendIdleIntervalMilliseconds,
             slot.LocalResumeSecret);
         SendControl(link, slot.Remote);
     }
@@ -3046,6 +3169,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         public uint RemoteMaxMessageSize { get; set; }
 
         /// <summary>
+        /// The send-idle interval the peer itself announced during the handshake (issue #349) — never
+        /// this end's own <see cref="DatagramSessionOptions.SendIdleInterval"/>. Set on both Established
+        /// paths, <see cref="DatagramSessionReactor.NewAcceptedPeer"/> (from the Hello-with-cookie field,
+        /// issue #347) and <see cref="DatagramSessionReactor.OnAccept"/> (from the Accept field, issue #348), from
+        /// the value <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> and
+        /// <see cref="ControlDatagramCodec.TryReadAccept"/> already reject as zero at parse, so it is
+        /// always positive once a Peer reaches Established. The stream profile's
+        /// <see cref="StreamSessionReactor.PeerSlot.RemoteSendIdleInterval"/> is the model this mirrors.
+        /// <see cref="DatagramSessionReactor.HasExceededReceiveIdleDeadline"/> multiplies it by the
+        /// missed-heartbeat count to get this Peer's receive-idle deadline.
+        /// </summary>
+        public TimeSpan RemoteSendIdleInterval { get; set; }
+
+        /// <summary>
         /// This Peer's own fragment size, resolved from <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
         /// once at admission and stored here rather than read afresh from options on every
         /// <see cref="DatagramSessionReactor.Send"/> (issue #248). Fragment size is unilateral and
@@ -3076,6 +3213,39 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// should not start its idle clock earlier than the moment it actually became a Session.
         /// </summary>
         public long LastSendTimestamp { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> reading of the most recent moment this Peer's
+        /// wire proved it was still there (issue #351) — set the instant this Peer reaches
+        /// <see cref="HandshakeState.Established"/>, on both the dialling path
+        /// (<see cref="DatagramSessionReactor.OnAccept"/>) and the accepting one
+        /// (<see cref="DatagramSessionReactor.NewAcceptedPeer"/>), exactly where
+        /// <see cref="LastSendTimestamp"/> is set, so the receive-idle deadline starts from the moment
+        /// the Session exists rather than from <see langword="default"/>(<see cref="long"/>), which
+        /// would read as an interval already elapsed.
+        /// </summary>
+        /// <remarks>
+        /// Updated only once <see cref="DatagramSessionReactor.ParseDataDatagram"/>'s well-formedness
+        /// pass has accepted the whole datagram — every record parses, and any Fragment sets it
+        /// declares are internally consistent — never merely because a datagram named this Peer's
+        /// session id. Anything carrying a session id could be forged or corrupted (session ids are
+        /// not secrets), so a datagram that fails that proof must not keep a dead Peer's receive-idle
+        /// deadline alive; a malformed or truncated datagram routed here by session id alone touches
+        /// neither this field nor anything else about the Peer. A well-formed datagram later refused
+        /// with a close (for example, an oversized fragment count) does not matter either way, because
+        /// the Peer is closed by the time anything would have read this field again.
+        /// </remarks>
+        public long LastReceiveTimestamp { get; set; }
+
+        /// <summary>
+        /// Whether this Peer's receive-idle deadline (issue #352, <see cref="HasExceededReceiveIdleDeadline"/>)
+        /// has fired: the Peer stays open when it is set — <see cref="_peers"/> still holds its Slot and
+        /// <see cref="CountersOf"/> keeps answering, and nothing here resets any queue or retention.
+        /// <see langword="false"/> for a fresh Slot. Re-checked before a later Pump would otherwise raise
+        /// another <see cref="SessionEventKind.PeerInterrupted"/> for a Peer already Interrupted (issue
+        /// #353). Leaving Interrupted, and what Interrupted changes about Send or Linger, is #55's.
+        /// </summary>
+        public bool IsInterrupted { get; set; }
 
         /// <summary>
         /// This Peer's own mutable counters (ADR 0013), incremented on the hot path and read only

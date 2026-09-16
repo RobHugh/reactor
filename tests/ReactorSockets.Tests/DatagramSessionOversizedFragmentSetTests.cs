@@ -38,6 +38,7 @@ public class DatagramSessionOversizedFragmentSetTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
 
     private const int DatagramHeaderSize = 20;
     private const int UnfragmentedRecordSize = 7;
@@ -447,7 +448,7 @@ public class DatagramSessionOversizedFragmentSetTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -460,6 +461,9 @@ public class DatagramSessionOversizedFragmentSetTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
+        offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
         // The remaining ResumeSecretLength bytes are the dialler's resume secret; an all-zero one is
         // fine, since nothing in this ticket's path ever reads it.
         return BuildControlDatagram(HelloWithCookieType, body);

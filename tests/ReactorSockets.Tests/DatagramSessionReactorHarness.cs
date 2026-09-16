@@ -449,6 +449,23 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
         }
     }
 
+    /// <summary>
+    /// Splits a large wait into "advance to one millisecond short, Pump once, advance the final
+    /// millisecond" so the Pump immediately following this call observes a one-millisecond cadence
+    /// rather than the whole wait (<see cref="DatagramSessionPingRetransmissionTests"/>'s own remarks
+    /// give the full reasoning: <see cref="RetransmissionTimer.EffectiveTimeout"/> floors the RTO at the
+    /// observed Pump interval, so a large advance immediately before an assertion Pump would corrupt
+    /// that floor for whatever timer that Pump is meant to exercise). Promoted here from that file
+    /// (issue #352) because every liveness test that advances the clock by a whole idle interval needs
+    /// the same technique, not only the Ping-retransmission ones.
+    /// </summary>
+    public static void SettleThenAdvance(DatagramSessionReactorHarness harness, TimeSpan interval)
+    {
+        harness.TimeProvider.Advance(interval - TimeSpan.FromMilliseconds(1));
+        harness.Reactor.Pump();
+        harness.TimeProvider.Advance(TimeSpan.FromMilliseconds(1));
+    }
+
     public void Dispose()
     {
         Reactor.Dispose();

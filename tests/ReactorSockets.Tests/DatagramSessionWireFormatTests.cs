@@ -31,6 +31,14 @@ public class DatagramSessionWireFormatTests
     private const int HelloWithCookieSessionIdForMeOffset = 5 + 4 + 8 + 8 + 32; // version, nonce, epoch, cookie
     private const int AcceptSessionIdForMeOffset = 5 + 8; // nonce
 
+    // The dialler's send-idle interval (issue #347), immediately after HelloWithCookie's maxMessageSize
+    // (itself immediately after sessionIdForMe).
+    private const int HelloWithCookieSendIdleIntervalOffset = HelloWithCookieSessionIdForMeOffset + 4 + 4;
+
+    // The accepter's send-idle interval (issue #348), immediately after Accept's maxMessageSize
+    // (itself immediately after sessionIdForMe).
+    private const int AcceptSendIdleIntervalOffset = AcceptSessionIdForMeOffset + 4 + 4;
+
     [Fact]
     public void Send_LiveSessionDatagram_FirstTwentyBytesAreTheHeaderSessionIdThenBothAckBlocks()
     {
@@ -201,6 +209,56 @@ public class DatagramSessionWireFormatTests
         offset.Should().Be(datagram.Length, "the walk consumes every byte after the header exactly once, with no gap and no leftover");
         payloadsWalked.Should().HaveCount(messages.Length, "every queued Send packed into this one coalesced Datagram");
         payloadsWalked.Should().Equal(messages, (walked, sent) => walked.SequenceEqual(sent), "each record's payload, walked in wire order, matches what was Sent in that order");
+    }
+
+    [Fact]
+    public void Connect_HelloWithCookie_CarriesTheDiallersConfiguredSendIdleIntervalInMilliseconds()
+    {
+        // Arrange — a dialler configured with a distinctive, easily-misread send-idle interval, so
+        // this proves the actual configured value made it to the wire rather than some other field's
+        // value that happens to look right.
+        TimeSpan configuredSendIdleInterval = TimeSpan.FromMilliseconds(12_345);
+        using DatagramSessionReactorHarness dialler = new(bindLoopback: false, sendIdleInterval: configuredSendIdleInterval);
+        using DatagramSessionReactorHarness accepter = new();
+        using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
+        dialler.Reactor.Connect(tap.PublicEndPoint);
+        DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
+
+        // Act — read the interval straight off the captured Hello-with-cookie's own bytes.
+        byte[] helloWithCookie = tap.Captures.Single(
+            c => c.Direction == TapDirection.DiallerToAccepter
+                && c.Payload.Length == ControlDatagramSize
+                && c.Payload[ControlTypeOffset] == ControlTypeHelloWithCookie).Payload;
+        ulong sendIdleIntervalMillisecondsOnWire = BinaryPrimitives.ReadUInt64BigEndian(
+            helloWithCookie.AsSpan(HelloWithCookieSendIdleIntervalOffset, 8));
+
+        // Assert
+        sendIdleIntervalMillisecondsOnWire.Should().Be((ulong)configuredSendIdleInterval.TotalMilliseconds);
+    }
+
+    [Fact]
+    public void Connect_Accept_CarriesTheAccepterConfiguredSendIdleIntervalInMilliseconds()
+    {
+        // Arrange — an accepter configured with a distinctive, easily-misread send-idle interval, so
+        // this proves the actual configured value made it to the wire rather than some other field's
+        // value that happens to look right.
+        TimeSpan configuredSendIdleInterval = TimeSpan.FromMilliseconds(54_321);
+        using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
+        using DatagramSessionReactorHarness accepter = new(sendIdleInterval: configuredSendIdleInterval);
+        using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
+        dialler.Reactor.Connect(tap.PublicEndPoint);
+        DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
+
+        // Act — read the interval straight off the captured Accept's own bytes.
+        byte[] accept = tap.Captures.Single(
+            c => c.Direction == TapDirection.AccepterToDialler
+                && c.Payload.Length == ControlDatagramSize
+                && c.Payload[ControlTypeOffset] == ControlTypeAccept).Payload;
+        ulong sendIdleIntervalMillisecondsOnWire = BinaryPrimitives.ReadUInt64BigEndian(
+            accept.AsSpan(AcceptSendIdleIntervalOffset, 8));
+
+        // Assert
+        sendIdleIntervalMillisecondsOnWire.Should().Be((ulong)configuredSendIdleInterval.TotalMilliseconds);
     }
 
     /// <summary>The first datagram captured travelling in <paramref name="direction"/> whose session id names a live Session rather than the reserved control session id — filters out the handshake's own control datagrams.</summary>

@@ -94,7 +94,9 @@ internal static class ControlDatagramCodec
 
     /// <summary>
     /// Writes a <see cref="DatagramControlType.HelloWithCookie"/>: the Hello repeated with the Cookie
-    /// echoed, carrying everything a Session needs to exist now that the round trip is paid.
+    /// echoed, carrying everything a Session needs to exist now that the round trip is paid, including
+    /// the dialler's own <paramref name="sendIdleIntervalMilliseconds"/> — the interval the accepting
+    /// end needs to compute its receive-idle deadline once it stores the value (issue #349).
     /// </summary>
     public static void WriteHelloWithCookie(
         Span<byte> destination,
@@ -104,6 +106,7 @@ internal static class ControlDatagramCodec
         ReadOnlySpan<byte> cookie,
         uint sessionIdForMe,
         uint maxMessageSize,
+        ulong sendIdleIntervalMilliseconds,
         ReadOnlySpan<byte> resumeSecret)
     {
         ValidateDestinationSize(destination);
@@ -124,18 +127,23 @@ internal static class ControlDatagramCodec
         offset += sizeof(uint);
         BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], maxMessageSize);
         offset += sizeof(uint);
+        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], sendIdleIntervalMilliseconds);
+        offset += sizeof(ulong);
         resumeSecret.CopyTo(destination.Slice(offset, DatagramSessionProtocol.ResumeSecretLength));
     }
 
     /// <summary>
     /// Writes a <see cref="DatagramControlType.Accept"/>: the accepting end's agreement, carrying the
-    /// session id it wants stamped on datagrams sent to it.
+    /// session id it wants stamped on datagrams sent to it, along with its own
+    /// <paramref name="sendIdleIntervalMilliseconds"/> — the interval the dialling end needs to
+    /// compute its receive-idle deadline once it stores the value (issue #349).
     /// </summary>
     public static void WriteAccept(
         Span<byte> destination,
         ulong clientNonce,
         uint sessionIdForMe,
         uint maxMessageSize,
+        ulong sendIdleIntervalMilliseconds,
         ReadOnlySpan<byte> resumeSecret)
     {
         ValidateDestinationSize(destination);
@@ -149,6 +157,8 @@ internal static class ControlDatagramCodec
         offset += sizeof(uint);
         BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], maxMessageSize);
         offset += sizeof(uint);
+        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], sendIdleIntervalMilliseconds);
+        offset += sizeof(ulong);
         resumeSecret.CopyTo(destination.Slice(offset, DatagramSessionProtocol.ResumeSecretLength));
     }
 
@@ -281,9 +291,10 @@ internal static class ControlDatagramCodec
     /// Reads a <see cref="DatagramControlType.HelloWithCookie"/>'s body. Fails when
     /// <paramref name="cookie"/> or <paramref name="resumeSecret"/> is not exactly its wire length,
     /// for the same reason <see cref="TryReadCookie"/> does, and when the announced
-    /// <paramref name="maxMessageSize"/> is zero — as meaningless off the wire as a local
-    /// <see cref="DatagramSessionOptions.MaxMessageSize"/> of zero is by
-    /// <see cref="DatagramSessionOptions.Validate"/> (issue #287).
+    /// <paramref name="maxMessageSize"/> or <paramref name="sendIdleIntervalMilliseconds"/> is zero —
+    /// as meaningless off the wire as a local <see cref="DatagramSessionOptions.MaxMessageSize"/> or
+    /// <see cref="DatagramSessionOptions.SendIdleInterval"/> of zero is by
+    /// <see cref="DatagramSessionOptions.Validate"/> (issue #287, issue #347).
     /// </summary>
     public static bool TryReadHelloWithCookie(
         ReadOnlySpan<byte> datagram,
@@ -293,6 +304,7 @@ internal static class ControlDatagramCodec
         Span<byte> cookie,
         out uint sessionIdForMe,
         out uint maxMessageSize,
+        out ulong sendIdleIntervalMilliseconds,
         Span<byte> resumeSecret)
     {
         if (cookie.Length != DatagramSessionProtocol.CookieLength
@@ -305,6 +317,7 @@ internal static class ControlDatagramCodec
             epoch = default;
             sessionIdForMe = default;
             maxMessageSize = default;
+            sendIdleIntervalMilliseconds = default;
             return false;
         }
 
@@ -321,14 +334,17 @@ internal static class ControlDatagramCodec
         offset += sizeof(uint);
         maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
         offset += sizeof(uint);
+        sendIdleIntervalMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
+        offset += sizeof(ulong);
 
-        if (maxMessageSize == 0)
+        if (maxMessageSize == 0 || sendIdleIntervalMilliseconds == 0)
         {
             version = default;
             clientNonce = default;
             epoch = default;
             sessionIdForMe = default;
             maxMessageSize = default;
+            sendIdleIntervalMilliseconds = default;
             return false;
         }
 
@@ -340,14 +356,15 @@ internal static class ControlDatagramCodec
     /// Reads a <see cref="DatagramControlType.Accept"/>'s body. Fails when
     /// <paramref name="resumeSecret"/> is not exactly its wire length, for the same reason
     /// <see cref="TryReadCookie"/> does for a cookie, and when the announced
-    /// <paramref name="maxMessageSize"/> is zero, for the same reason
-    /// <see cref="TryReadHelloWithCookie"/> does.
+    /// <paramref name="maxMessageSize"/> or <paramref name="sendIdleIntervalMilliseconds"/> is zero,
+    /// for the same reason <see cref="TryReadHelloWithCookie"/> does.
     /// </summary>
     public static bool TryReadAccept(
         ReadOnlySpan<byte> datagram,
         out ulong clientNonce,
         out uint sessionIdForMe,
         out uint maxMessageSize,
+        out ulong sendIdleIntervalMilliseconds,
         Span<byte> resumeSecret)
     {
         if (resumeSecret.Length != DatagramSessionProtocol.ResumeSecretLength
@@ -357,6 +374,7 @@ internal static class ControlDatagramCodec
             clientNonce = default;
             sessionIdForMe = default;
             maxMessageSize = default;
+            sendIdleIntervalMilliseconds = default;
             return false;
         }
 
@@ -367,12 +385,15 @@ internal static class ControlDatagramCodec
         offset += sizeof(uint);
         maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
         offset += sizeof(uint);
+        sendIdleIntervalMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
+        offset += sizeof(ulong);
 
-        if (maxMessageSize == 0)
+        if (maxMessageSize == 0 || sendIdleIntervalMilliseconds == 0)
         {
             clientNonce = default;
             sessionIdForMe = default;
             maxMessageSize = default;
+            sendIdleIntervalMilliseconds = default;
             return false;
         }
 
