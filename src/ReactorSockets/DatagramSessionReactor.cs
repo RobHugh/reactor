@@ -324,6 +324,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             _dispatcher.Pump();
             RetryPendingFragmentDeliveries();
             ReportExpiredRetransmissions();
+            EnforceReceiveIdleTimer();
             EnforceSendIdleTimer();
             FlushOutboundDatagrams();
             ReportDeclinedAdmissions();
@@ -1657,6 +1658,48 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
 
             FlushPeer(slot);
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="slot"/> has gone silent past this end's receive-idle deadline (issue
+    /// #352): elapsed time since <see cref="PeerSlot.LastReceiveTimestamp"/> at or past
+    /// <see cref="PeerSlot.RemoteSendIdleInterval"/> times <see cref="DatagramSessionOptions.ResolvedMissedHeartbeats"/>.
+    /// Mirrors <see cref="StreamSessionReactor.HasExceededReceiveIdleDeadline"/>.
+    /// </summary>
+    private bool HasExceededReceiveIdleDeadline(PeerSlot slot) =>
+        _options.Reactor.TimeProvider.GetElapsedTime(slot.LastReceiveTimestamp)
+            >= slot.RemoteSendIdleInterval * _options.ResolvedMissedHeartbeats;
+
+    /// <summary>
+    /// Moves every Established Peer that has exceeded <see cref="HasExceededReceiveIdleDeadline"/> to
+    /// <see cref="PeerSlot.IsInterrupted"/> and queues its <see cref="SessionEventKind.PeerInterrupted"/>
+    /// (issue #352, subtask 8.2.6), run once per <see cref="Pump"/> ahead of
+    /// <see cref="EnforceSendIdleTimer"/> — the two timers are independent: this one reads only receive
+    /// state, that one only send state, and neither call arms or disarms the other. No
+    /// <see cref="DiagnosticGateway"/> record is logged for the transition, since it is already reported
+    /// as an Event (ADR 0013).
+    /// </summary>
+    private void EnforceReceiveIdleTimer()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            {
+                continue;
+            }
+
+            if (!HasExceededReceiveIdleDeadline(slot))
+            {
+                continue;
+            }
+
+            slot.IsInterrupted = true;
+            _pendingEvents.Add(new PendingEvent
+            {
+                Kind = SessionEventKind.PeerInterrupted,
+                Peer = ToPeerId(slot.Handle),
+            });
         }
     }
 
@@ -3154,6 +3197,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// the Peer is closed by the time anything would have read this field again.
         /// </remarks>
         public long LastReceiveTimestamp { get; set; }
+
+        /// <summary>
+        /// Whether this Peer's receive-idle deadline (issue #352, <see cref="HasExceededReceiveIdleDeadline"/>)
+        /// has fired: the Peer stays open when it is set — <see cref="_peers"/> still holds its Slot and
+        /// <see cref="CountersOf"/> keeps answering, and nothing here resets any queue or retention.
+        /// <see langword="false"/> for a fresh Slot. Not yet re-checked before a later Pump raises another
+        /// <see cref="SessionEventKind.PeerInterrupted"/> for a Peer already Interrupted — that guard is
+        /// #353's. Leaving Interrupted, and what Interrupted changes about Send or Linger, is #55's.
+        /// </summary>
+        public bool IsInterrupted { get; set; }
 
         /// <summary>
         /// This Peer's own mutable counters (ADR 0013), incremented on the hot path and read only
