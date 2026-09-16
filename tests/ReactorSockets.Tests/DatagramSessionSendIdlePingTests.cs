@@ -169,13 +169,16 @@ public class DatagramSessionSendIdlePingTests
         // Arrange — one ReliableUnordered retention slot, so a single unacknowledged reliable Send
         // exhausts the Space the Ping also draws from. fragmentSize is 600 — RFC 791's 576-byte
         // guaranteed reassembly minimum is DatagramSessionOptions' own floor — rather than anything
-        // smaller. Linger is pushed far out so no RTO ever fires mid-run: this test is entirely about
-        // the ack releasing the slot the Ping needs.
+        // smaller. Linger is pushed far out on both ends so no RTO ever fires mid-run: this test is
+        // entirely about the ack releasing the slot the Ping needs. Both ends need the long Linger
+        // (issue #365): the RTO ceiling is the negotiated minimum of the two, so an accepter left at the
+        // harness's short default would drag the dialler's own effective ceiling back down with it.
         const int fragmentSize = 600;
         using DatagramSessionReactorHarness dialler = new(
             bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize,
             maxMessageSize: fragmentSize, linger: TimeSpan.FromHours(1), sendIdleInterval: TimeSpan.FromSeconds(1));
-        using DatagramSessionReactorHarness accepter = new(fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
+        using DatagramSessionReactorHarness accepter = new(
+            fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize, linger: TimeSpan.FromHours(1));
         using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
 
         PeerId diallerPeer = dialler.Reactor.Connect(tap.PublicEndPoint);
