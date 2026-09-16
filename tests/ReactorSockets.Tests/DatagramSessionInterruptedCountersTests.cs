@@ -51,6 +51,40 @@ public class DatagramSessionInterruptedCountersTests
 
         SeedEstimator(dialler, proxy, accepter, peer, accepterPeer);
 
+        // Act — produce a genuine retransmission while the path is still relaying, so AC1's
+        // PacketsRetransmitted check below is meaningful rather than an unmoved zero: drop one
+        // ReliableOrdered record with the proxy's one-shot loss rule, then let its retransmit timer
+        // (seeded at 60ms by SeedEstimator's round trip) expire with a comfortable margin.
+        proxy.DropNext(RelayDirection.ClientToUpstream);
+        dialler.Reactor.Send(peer, DeliveryMode.ReliableOrdered, [2]).Should().Be(SendOutcome.Sent);
+        dialler.Reactor.Pump();
+        proxy.Pump();
+        dialler.DrainToList();
+
+        dialler.TimeProvider.Advance(TimeSpan.FromMilliseconds(200));
+        dialler.Reactor.Pump();
+        dialler.DrainToList();
+
+        // Act — produce a genuine duplicate while the path is still relaying too. A sequence admitted
+        // exactly at the Unreliable Space's base immediately slides the base past it (as
+        // DatagramSessionUnreliableLossTests's own remarks describe), so a plain resend of the very
+        // next sequence would land below the new base and count as out-of-window, not a duplicate. Drop
+        // one sequence first to open a hole, so the sequence after it is admitted into the window
+        // without sitting at the base — still tracked, and so still classifiable as a duplicate rather
+        // than refused — then duplicate that one.
+        proxy.DropNext(RelayDirection.UpstreamToClient);
+        accepter.Reactor.Send(accepterPeer, DeliveryMode.Unreliable, [7]).Should().Be(SendOutcome.Sent);
+        accepter.Reactor.Pump();
+        proxy.Pump();
+        accepter.DrainPayloads();
+
+        proxy.DuplicateNext(RelayDirection.UpstreamToClient);
+        accepter.Reactor.Send(accepterPeer, DeliveryMode.Unreliable, [8]).Should().Be(SendOutcome.Sent);
+        accepter.Reactor.Pump();
+        proxy.Pump();
+        dialler.Reactor.Pump();
+        dialler.DrainPayloads();
+
         // Act — cut the path, then Send a ReliableOrdered Message that only ever reaches a proxy now
         // dropping every relay: it is retained, unacknowledged, and its retransmit timer is armed.
         proxy.StopRelayingBothDirections();
@@ -59,6 +93,28 @@ public class DatagramSessionInterruptedCountersTests
         dialler.DrainToList();
 
         PeerCounters beforeInterruption = dialler.Reactor.CountersOf(peer);
+
+        // Assert — every before-value below is itself > 0, so the not-reset check that follows is
+        // meaningful rather than an unmoved zero proving nothing. Three of the eleven PeerCounters
+        // fields cannot be made non-zero in this scenario without either an impossible precondition or
+        // a hand-crafted-datagram instrument this fixture does not use (DatagramSessionCounterExchangeTests'
+        // own remarks explain why a live two-Reactor exchange cannot drive them):
+        //   - Resumes: only rises on PeerResumed, which cannot precede this Peer's first-ever
+        //     Interruption — the one this test is about.
+        //   - OutOfWindowPackets: needs a reliable-Space sequence far enough ahead of the receive
+        //     window base (33+ sequences under the harness's default window) that nothing this
+        //     scenario's ordinary Sends produce; forcing it needs the hand-crafted-datagram sequence
+        //     control DatagramSessionCounterExchangeTests uses instead.
+        //   - HorizonDeferrals: needs a reliable-Space sequence beyond the 32-sequence ack horizon,
+        //     which needs the same out-of-band sequence control as OutOfWindowPackets above.
+        beforeInterruption.MessagesReceived.Should().BeGreaterThan(0, "SeedEstimator's ack and the duplicate phase's Unreliable Send each deliver a Message");
+        beforeInterruption.RetentionHighWaterBytes.Should().BeGreaterThan(0, "SeedEstimator's ReliableOrdered Send retained bytes, and this figure never falls back to zero");
+        beforeInterruption.PacketsRetransmitted.Should().BeGreaterThan(0, "the dropped ReliableOrdered record above was resent once its retransmit timer expired");
+        beforeInterruption.DuplicatePackets.Should().BeGreaterThan(0, "the proxy's one-shot duplicate rule forwarded one Unreliable record twice");
+        beforeInterruption.UnreliableLossPackets.Should().Be(0, "nothing in this scenario slides an unreliable Space's window past an un-admitted sequence");
+        beforeInterruption.BytesSent.Should().BeGreaterThan(0, "every flush this Peer has made, including the retransmit above, hands the transport bytes");
+        beforeInterruption.BytesReceived.Should().BeGreaterThan(0, "SeedEstimator's ack and the duplicated Unreliable record both arrived");
+        beforeInterruption.SocketWrites.Should().BeGreaterThan(0, "every flush above, including the retransmit, is one socket send call");
 
         // Act — cross the receive-idle deadline once, exactly as DatagramSessionReceiveIdleExpiryTests
         // does: the deadline is measured in two steps so the crossing Pump lands on the final millisecond.
@@ -70,12 +126,19 @@ public class DatagramSessionInterruptedCountersTests
         PeerCounters afterInterruption = dialler.Reactor.CountersOf(peer);
 
         // Assert — AC1: every counter read through CountersOf before the transition is at least what it
-        // was; PeerInterrupted resets none of them.
+        // was; PeerInterrupted resets none of them. Resumes stays at its structural zero (see the
+        // comment above) — read here too so a future reset of it would still be caught.
         afterInterruption.MessagesReceived.Should().BeGreaterThanOrEqualTo(beforeInterruption.MessagesReceived);
+        afterInterruption.RetentionHighWaterBytes.Should().BeGreaterThanOrEqualTo(beforeInterruption.RetentionHighWaterBytes);
         afterInterruption.PacketsRetransmitted.Should().BeGreaterThanOrEqualTo(beforeInterruption.PacketsRetransmitted);
+        afterInterruption.DuplicatePackets.Should().BeGreaterThanOrEqualTo(beforeInterruption.DuplicatePackets);
+        afterInterruption.OutOfWindowPackets.Should().BeGreaterThanOrEqualTo(beforeInterruption.OutOfWindowPackets);
+        afterInterruption.UnreliableLossPackets.Should().BeGreaterThanOrEqualTo(beforeInterruption.UnreliableLossPackets);
+        afterInterruption.HorizonDeferrals.Should().BeGreaterThanOrEqualTo(beforeInterruption.HorizonDeferrals);
         afterInterruption.BytesSent.Should().BeGreaterThanOrEqualTo(beforeInterruption.BytesSent);
         afterInterruption.BytesReceived.Should().BeGreaterThanOrEqualTo(beforeInterruption.BytesReceived);
         afterInterruption.SocketWrites.Should().BeGreaterThanOrEqualTo(beforeInterruption.SocketWrites);
+        afterInterruption.Resumes.Should().BeGreaterThanOrEqualTo(beforeInterruption.Resumes);
 
         // Act — keep Pumping across five further 10-second windows, entirely after PeerInterrupted: the
         // retained record's retransmit timer keeps expiring into a proxy that drops every relay, so both
