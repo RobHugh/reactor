@@ -43,8 +43,9 @@ internal static class ControlDatagramLegality
         // only once the round trip is paid.
         DatagramControlType.HelloWithCookie => new ControlDatagramShape(true, 84),
 
-        // clientNonce(8) + sessionIdForMe(4) + maxMessageSize(4) + resumeSecret(16).
-        DatagramControlType.Accept => new ControlDatagramShape(true, 32),
+        // clientNonce(8) + sessionIdForMe(4) + maxMessageSize(4) + sendIdleIntervalMilliseconds(8)
+        // + resumeSecret(16).
+        DatagramControlType.Accept => new ControlDatagramShape(true, 40),
 
         // clientNonce(8) + reason(1) + versionOffered(4) + versionRequired(4). The two version fields
         // are populated only for a version refusal and are zero otherwise, rather than the refusal

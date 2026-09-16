@@ -35,6 +35,10 @@ public class DatagramSessionWireFormatTests
     // (itself immediately after sessionIdForMe).
     private const int HelloWithCookieSendIdleIntervalOffset = HelloWithCookieSessionIdForMeOffset + 4 + 4;
 
+    // The accepter's send-idle interval (issue #348), immediately after Accept's maxMessageSize
+    // (itself immediately after sessionIdForMe).
+    private const int AcceptSendIdleIntervalOffset = AcceptSessionIdForMeOffset + 4 + 4;
+
     [Fact]
     public void Send_LiveSessionDatagram_FirstTwentyBytesAreTheHeaderSessionIdThenBothAckBlocks()
     {
@@ -227,6 +231,31 @@ public class DatagramSessionWireFormatTests
                 && c.Payload[ControlTypeOffset] == ControlTypeHelloWithCookie).Payload;
         ulong sendIdleIntervalMillisecondsOnWire = BinaryPrimitives.ReadUInt64BigEndian(
             helloWithCookie.AsSpan(HelloWithCookieSendIdleIntervalOffset, 8));
+
+        // Assert
+        sendIdleIntervalMillisecondsOnWire.Should().Be((ulong)configuredSendIdleInterval.TotalMilliseconds);
+    }
+
+    [Fact]
+    public void Connect_Accept_CarriesTheAccepterConfiguredSendIdleIntervalInMilliseconds()
+    {
+        // Arrange — an accepter configured with a distinctive, easily-misread send-idle interval, so
+        // this proves the actual configured value made it to the wire rather than some other field's
+        // value that happens to look right.
+        TimeSpan configuredSendIdleInterval = TimeSpan.FromMilliseconds(54_321);
+        using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
+        using DatagramSessionReactorHarness accepter = new(sendIdleInterval: configuredSendIdleInterval);
+        using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
+        dialler.Reactor.Connect(tap.PublicEndPoint);
+        DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
+
+        // Act — read the interval straight off the captured Accept's own bytes.
+        byte[] accept = tap.Captures.Single(
+            c => c.Direction == TapDirection.AccepterToDialler
+                && c.Payload.Length == ControlDatagramSize
+                && c.Payload[ControlTypeOffset] == ControlTypeAccept).Payload;
+        ulong sendIdleIntervalMillisecondsOnWire = BinaryPrimitives.ReadUInt64BigEndian(
+            accept.AsSpan(AcceptSendIdleIntervalOffset, 8));
 
         // Assert
         sendIdleIntervalMillisecondsOnWire.Should().Be((ulong)configuredSendIdleInterval.TotalMilliseconds);

@@ -2656,6 +2656,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out ulong clientNonce,
                 out uint remoteSessionId,
                 out uint remoteMaxMessageSize,
+                out _, // The accepter's send-idle interval: storing it is issue #349, out of scope here.
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2778,6 +2779,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             slot.ClientNonce,
             slot.LocalSessionId,
             (uint)_options.MaxMessageSize,
+            (ulong)_options.SendIdleInterval.TotalMilliseconds,
             slot.LocalResumeSecret);
         SendControl(link, slot.Remote);
     }
