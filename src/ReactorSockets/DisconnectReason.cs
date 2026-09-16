@@ -75,20 +75,31 @@ public enum DisconnectReason
     /// <summary>
     /// An <see cref="SessionEventKind.PeerInterrupted"/> Peer's effective Linger — the value
     /// <c>LingerNegotiated</c> already reported at handshake (ADR 0011), the minimum of the two ends'
-    /// announced Lingers — elapsed before the transport came back (issue #121). Linger, not the loss of
-    /// the transport, is what closes an Interrupted Peer: the loss itself only produced
-    /// <see cref="SessionEventKind.PeerInterrupted"/> (issue #119) and held the Peer's identity,
-    /// counters and undelivered Messages open for a Resume. This member fires once that wait has run
-    /// out, and is also what bounds a <see cref="StreamSessionReactor.Close"/> whose Goodbye can never
-    /// reach a wire that no longer exists — without it, that Peer's retention would sit pending forever
-    /// (issue #92). Distinct from <see cref="TransportFailed"/>, which means the byte stream never
-    /// survived long enough to say anything at all — this means it survived, said nothing further
-    /// within the time this end had promised to wait, and this end gave up on its own clock rather than
-    /// being told to. Distinct from <see cref="PeerGoodbye"/>, which is an ending the remote announced
-    /// on purpose while its transport still worked — this is an ending this end declares unilaterally,
-    /// after silence, with no announcement possible because the transport that would have carried one
-    /// is already gone.
+    /// announced Lingers — elapsed before the transport came back (issue #121, stream profile; issue
+    /// #367, datagram profile). Linger, not the loss of the transport, is what closes an Interrupted
+    /// Peer: the loss itself only produced <see cref="SessionEventKind.PeerInterrupted"/> (issue #119,
+    /// #352) and held the Peer's identity, counters and undelivered Messages open for a Resume. This
+    /// member fires once that wait has run out, and is also what bounds a
+    /// <see cref="StreamSessionReactor.Close"/> whose Goodbye can never reach a wire that no longer
+    /// exists — without it, that Peer's retention would sit pending forever (issue #92). Distinct from
+    /// <see cref="TransportFailed"/>, which means the byte stream never survived long enough to say
+    /// anything at all — this means it survived, said nothing further within the time this end had
+    /// promised to wait, and this end gave up on its own clock rather than being told to. Distinct from
+    /// <see cref="PeerGoodbye"/>, which is an ending the remote announced on purpose while its transport
+    /// still worked — this is an ending this end declares unilaterally, after silence, with no
+    /// announcement possible because the transport that would have carried one is already gone.
     /// </summary>
+    /// <remarks>
+    /// The datagram profile (<see cref="DatagramSessionReactor"/>, subtask 8.3, parent #55) has no
+    /// socket to lose and so no Goodbye exchange to bound either: an Interrupted datagram Peer's own
+    /// <c>HasLingerExpired</c> reads the same <c>PeerSlot.EffectiveLinger</c> against
+    /// <c>PeerSlot.InterruptedTimestamp</c> — the Pump that set
+    /// <c>PeerSlot.IsInterrupted</c>, never re-stamped while it continues (issue #366) — that the
+    /// stream profile's <c>HasExceededLinger</c> reads against its own equivalent timestamp, and this
+    /// member is what that per-Pump pass produces once the wait runs out. Everything else this member's
+    /// summary says about Linger governing the close, not the transport loss that produced the
+    /// interruption, holds identically for both profiles.
+    /// </remarks>
     LingerExpired = 6,
 
     /// <summary>

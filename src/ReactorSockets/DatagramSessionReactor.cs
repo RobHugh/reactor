@@ -342,6 +342,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RetryPendingFragmentDeliveries();
             ReportExpiredRetransmissions();
             EnforceReceiveIdleTimer();
+            EnforceLingerExpiry();
             EnforceSendIdleTimer();
             FlushOutboundDatagrams();
             ReportDeclinedAdmissions();
@@ -1751,6 +1752,60 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 Kind = SessionEventKind.PeerInterrupted,
                 Peer = ToPeerId(slot.Handle),
             });
+        }
+    }
+
+    /// <summary>
+    /// Whether an <see cref="PeerSlot.IsInterrupted"/> Peer's effective Linger
+    /// (<see cref="PeerSlot.EffectiveLinger"/>, negotiated at handshake and already reported via
+    /// <c>LingerNegotiated</c>) has run out since <see cref="PeerSlot.InterruptedTimestamp"/> (issue
+    /// #367, parent #55) — the datagram twin of <see cref="StreamSessionReactor.HasExceededLinger"/>.
+    /// Linger is what closes an Interrupted Peer, not the transport loss that produced it — the loss
+    /// already happened, potentially long before this check ever runs (<see cref="EnforceReceiveIdleTimer"/>
+    /// stamped <see cref="PeerSlot.InterruptedTimestamp"/> on whichever earlier Pump crossed the
+    /// receive-idle deadline, issue #366), so the deadline is measured from the moment this end stopped
+    /// waiting on that transport rather than from anything about the transport itself.
+    /// </summary>
+    private bool HasLingerExpired(PeerSlot slot) =>
+        _options.Reactor.TimeProvider.GetElapsedTime(slot.InterruptedTimestamp) >= slot.EffectiveLinger;
+
+    /// <summary>
+    /// Closes every Established, <see cref="PeerSlot.IsInterrupted"/> Peer whose <see cref="HasLingerExpired"/>
+    /// with <see cref="DisconnectReason.LingerExpired"/> (issue #367, parent #55), run once per
+    /// <see cref="Pump"/> right after <see cref="EnforceReceiveIdleTimer"/> — mirroring
+    /// <see cref="StreamSessionReactor.EnforceIdleTimers"/>'s own ordering, where the Linger check for an
+    /// already-Interrupted Peer runs in the same pass as, and right after, the receive-idle check that
+    /// can newly interrupt one. A Peer <see cref="EnforceReceiveIdleTimer"/> interrupted this very Pump
+    /// can in principle be seen by this pass in the same Pump — nothing here waits a Pump before
+    /// checking it — but <see cref="HasLingerExpired"/> can never be true for it yet:
+    /// <see cref="PeerSlot.InterruptedTimestamp"/> was just stamped to this Pump's own clock reading, so
+    /// the elapsed time this pass reads is zero, and <see cref="DatagramSessionOptions"/> rejects a zero
+    /// <see cref="PeerSlot.EffectiveLinger"/> at construction — <c>0 &gt;= EffectiveLinger</c> can only
+    /// hold for an <see cref="PeerSlot.EffectiveLinger"/> that validation already refuses to admit. Runs
+    /// ahead of <see cref="EnforceSendIdleTimer"/> so a Peer this pass closes is never offered a Ping
+    /// into a Slot it no longer occupies.
+    /// </summary>
+    /// <remarks>
+    /// Iterates by index over every occupied Slot exactly as <see cref="EnforceReceiveIdleTimer"/> and
+    /// <see cref="StreamSessionReactor.EnforceIdleTimers"/> do, and calls <see cref="ClosePeer"/> directly
+    /// from inside that loop — safe for the same reason it is safe there: <see cref="ClosePeer"/> only
+    /// ever removes the occupant at the handle's own index from <see cref="_peers"/>, never shifts or
+    /// touches any other index, so the loop's remaining iterations see every other Slot exactly as they
+    /// would have regardless of whether this iteration's Peer closed.
+    /// </remarks>
+    private void EnforceLingerExpiry()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot
+                || slot.State != HandshakeState.Established
+                || !slot.IsInterrupted
+                || !HasLingerExpired(slot))
+            {
+                continue;
+            }
+
+            ClosePeer(slot.Handle, DisconnectReason.LingerExpired);
         }
     }
 
@@ -3303,8 +3358,25 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <see cref="CountersOf"/> keeps answering, and nothing here resets any queue or retention.
         /// <see langword="false"/> for a fresh Slot. Re-checked before a later Pump would otherwise raise
         /// another <see cref="SessionEventKind.PeerInterrupted"/> for a Peer already Interrupted (issue
-        /// #353). Leaving Interrupted, and what Interrupted changes about Send or Linger, is #55's.
+        /// #353).
         /// </summary>
+        /// <remarks>
+        /// What Interrupted changes about this Peer, now that parent #55's sub-issues have landed:
+        /// <see cref="Send"/> keeps succeeding, queuing and retaining exactly as it does for an
+        /// established Peer, until the Space's retention fills, at which point it returns
+        /// <see cref="SendOutcome.RetentionExhausted"/> while the Peer stays Interrupted rather than
+        /// closing (issue #369) — the same rule, for the same reasons, as the stream profile. The
+        /// Interrupted end keeps sending Pings, at the send-idle interval or as the adaptive
+        /// retransmission of one still unacknowledged, since <see cref="EnforceSendIdleTimer"/>
+        /// deliberately does not read this flag (issue #371) — a datagram Session has no re-dial
+        /// schedule, so probing the path is the only way an Interrupted end can ever be heard from
+        /// again. And this Peer's <see cref="EffectiveLinger"/>, elapsed since
+        /// <see cref="InterruptedTimestamp"/>, is what ends it: <c>HasLingerExpired</c> closes it with
+        /// <see cref="DisconnectReason.LingerExpired"/> once that wait runs out (issue #367), mirroring
+        /// <see cref="StreamSessionReactor.HasExceededLinger"/>. Leaving Interrupted through an actual
+        /// Resume is not yet implemented — the datagram profile has no wire-level Resume yet (issue
+        /// #52) — so today the only way out of Interrupted is that close.
+        /// </remarks>
         public bool IsInterrupted { get; set; }
 
         /// <summary>
