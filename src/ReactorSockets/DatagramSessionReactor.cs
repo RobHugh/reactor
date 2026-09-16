@@ -2716,7 +2716,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _retention.ResetShareHolder(handle.Index);
         _peersBySessionId[slot.LocalSessionId] = handle;
         _acceptedHandshakes[(source, clientNonce)] = handle;
-        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(handle) });
+        PeerId peer = ToPeerId(handle);
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = peer });
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForLingerNegotiated(
+                peer, (long)_options.Linger.TotalMilliseconds, (long)slot.EffectiveLinger.TotalMilliseconds));
+        }
+
         SendAccept(link, slot);
     }
 
@@ -2818,7 +2826,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         _dialsByNonce.Remove(clientNonce);
         _peersBySessionId[slot.LocalSessionId] = slot.Handle;
-        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(slot.Handle) });
+        PeerId peer = ToPeerId(slot.Handle);
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = peer });
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForLingerNegotiated(
+                peer, (long)_options.Linger.TotalMilliseconds, (long)slot.EffectiveLinger.TotalMilliseconds));
+        }
     }
 
     /// <summary>

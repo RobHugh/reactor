@@ -398,11 +398,16 @@ public class DatagramSessionUnreliableLossTests
     /// <summary>
     /// The <see cref="PeerId"/> the accepter assigned the one Peer this test's handshake produced,
     /// read off the drain so a test can call <see cref="DatagramSessionReactor.CountersOf"/> on it.
+    /// Clears the Sink established by that handshake — establishment logs its own
+    /// <see cref="DiagnosticId.LingerNegotiated"/> (issue #364), and every test in this file wants a
+    /// clean Sink for the arrivals it is actually testing.
     /// </summary>
     private static PeerId FindAccepterPeer(DatagramSessionReactorHarness accepter)
     {
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
-        return drained.First(e => e.Kind == SessionEventKind.PeerConnected).Peer;
+        PeerId peer = drained.First(e => e.Kind == SessionEventKind.PeerConnected).Peer;
+        accepter.Sink.Received.Clear();
+        return peer;
     }
 
     private static byte[] ExchangeUntilReceived(RawReactor client, DatagramSessionReactorHarness accepter)
