@@ -1760,7 +1760,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// Reads <see cref="PeerSlot.LastSendTimestamp"/> against this Reactor's own
     /// <see cref="ReactorOptions.TimeProvider"/>, never the ambient clock, matching every other timer in
     /// this Reactor. A Peer still mid-handshake is skipped exactly as <see cref="FlushOutboundDatagrams"/>
-    /// skips one — there is no established Session yet for a Heartbeat to prove anything about.
+    /// skips one — there is no established Session yet for a Heartbeat to prove anything about. This loop
+    /// deliberately does not read <see cref="PeerSlot.IsInterrupted"/> (issue #371, parent #55): an
+    /// Interrupted datagram Peer's <see cref="PeerSlot.State"/> is still <see cref="HandshakeState.Established"/>,
+    /// so it keeps being offered a Ping here exactly like any other Established Peer. A datagram Session
+    /// has no re-dial schedule (#55) — there is nothing to re-dial, and the interrupted end can only
+    /// resume by being heard from again — so it keeps probing the path with Pings, at the send-idle
+    /// interval or as the adaptive retransmission of one still unacknowledged, for as long as Linger
+    /// keeps the Peer alive.
     /// </remarks>
     private void EnforceSendIdleTimer()
     {
