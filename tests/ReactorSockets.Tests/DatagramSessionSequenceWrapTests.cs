@@ -112,7 +112,7 @@ public class DatagramSessionSequenceWrapTests
         PeerCounters afterOlder = accepter.Reactor.CountersOf(accepterPeer);
         afterOlder.OutOfWindowPackets.Should().Be(afterWalk.OutOfWindowPackets + 1);
         afterOlder.DuplicatePackets.Should().Be(afterWalk.DuplicatePackets);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -164,7 +164,7 @@ public class DatagramSessionSequenceWrapTests
         PeerCounters after = accepter.Reactor.CountersOf(accepterPeer);
         after.DuplicatePackets.Should().Be(straddling.DuplicatePackets + 4);
         after.OutOfWindowPackets.Should().Be(straddling.OutOfWindowPackets + 1);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -238,7 +238,7 @@ public class DatagramSessionSequenceWrapTests
         (after.DuplicatePackets - beforeFuzz.DuplicatePackets).Should().Be(expectedDuplicates);
         (after.OutOfWindowPackets - beforeFuzz.OutOfWindowPackets).Should().Be(expectedOutOfWindow);
         (after.UnreliableLossPackets - beforeFuzz.UnreliableLossPackets).Should().Be(expectedLoss);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -353,12 +353,17 @@ public class DatagramSessionSequenceWrapTests
     private static PeerId FindAccepterPeer(DatagramSessionReactorHarness accepter)
     {
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
-        PeerId peer = drained.First(e => e.Kind == SessionEventKind.PeerConnected).Peer;
+        return drained.First(e => e.Kind == SessionEventKind.PeerConnected).Peer;
+    }
 
-        // Establishment itself logs DiagnosticId.LingerNegotiated (issue #364); every test in this
-        // file wants a clean Sink for the arrivals it is actually testing.
-        accepter.Sink.Received.Clear();
-        return peer;
+    /// <summary>
+    /// Every assertion in this file that wants an empty Sink still allows the one
+    /// <see cref="DiagnosticId.LingerNegotiated"/> establishment itself logs (issue #364) — everything
+    /// else remains unexpected.
+    /// </summary>
+    private static void AssertSinkHasNoUnexpectedDiagnostics(DatagramSessionReactorHarness accepter)
+    {
+        accepter.Sink.Received.Where(r => r.Id != DiagnosticId.LingerNegotiated).Should().BeEmpty();
     }
 
     /// <summary>

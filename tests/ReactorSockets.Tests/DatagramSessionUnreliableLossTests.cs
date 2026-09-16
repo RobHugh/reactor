@@ -70,7 +70,7 @@ public class DatagramSessionUnreliableLossTests
         // and exactly one loss registered: 3, never seen, retired by the slide that admitted 5.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(1);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -102,7 +102,7 @@ public class DatagramSessionUnreliableLossTests
         // never touches the loss figure.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(0);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -141,7 +141,7 @@ public class DatagramSessionUnreliableLossTests
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.DuplicatePackets.Should().Be(1);
         counters.UnreliableLossPackets.Should().Be(1);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -187,7 +187,7 @@ public class DatagramSessionUnreliableLossTests
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(1);
         counters.OutOfWindowPackets.Should().Be(2);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -218,7 +218,7 @@ public class DatagramSessionUnreliableLossTests
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(1);
         counters.OutOfWindowPackets.Should().Be(0);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -252,7 +252,7 @@ public class DatagramSessionUnreliableLossTests
         // Assert — two losses on the one figure: sequence 3, lost once in each unreliable Space.
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(2);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -291,7 +291,7 @@ public class DatagramSessionUnreliableLossTests
         // Assert — the figure accumulated rather than reset: 2 total losses (3, then 7).
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.UnreliableLossPackets.Should().Be(2);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -323,7 +323,7 @@ public class DatagramSessionUnreliableLossTests
         counters.UnreliableLossPackets.Should().Be(99);
         counters.OutOfWindowPackets.Should().Be(0);
         counters.DuplicatePackets.Should().Be(0);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -363,7 +363,7 @@ public class DatagramSessionUnreliableLossTests
         counters.OutOfWindowPackets.Should().Be(1);
         counters.UnreliableLossPackets.Should().Be(1);
         counters.DuplicatePackets.Should().Be(0);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -398,16 +398,21 @@ public class DatagramSessionUnreliableLossTests
     /// <summary>
     /// The <see cref="PeerId"/> the accepter assigned the one Peer this test's handshake produced,
     /// read off the drain so a test can call <see cref="DatagramSessionReactor.CountersOf"/> on it.
-    /// Clears the Sink established by that handshake — establishment logs its own
-    /// <see cref="DiagnosticId.LingerNegotiated"/> (issue #364), and every test in this file wants a
-    /// clean Sink for the arrivals it is actually testing.
     /// </summary>
     private static PeerId FindAccepterPeer(DatagramSessionReactorHarness accepter)
     {
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
-        PeerId peer = drained.First(e => e.Kind == SessionEventKind.PeerConnected).Peer;
-        accepter.Sink.Received.Clear();
-        return peer;
+        return drained.First(e => e.Kind == SessionEventKind.PeerConnected).Peer;
+    }
+
+    /// <summary>
+    /// Every assertion in this file that wants an empty Sink still allows the one
+    /// <see cref="DiagnosticId.LingerNegotiated"/> establishment itself logs (issue #364) — everything
+    /// else remains unexpected.
+    /// </summary>
+    private static void AssertSinkHasNoUnexpectedDiagnostics(DatagramSessionReactorHarness accepter)
+    {
+        accepter.Sink.Received.Where(r => r.Id != DiagnosticId.LingerNegotiated).Should().BeEmpty();
     }
 
     private static byte[] ExchangeUntilReceived(RawReactor client, DatagramSessionReactorHarness accepter)
