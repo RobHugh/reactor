@@ -187,8 +187,9 @@ public readonly record struct DiagnosticRecord
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.LingerNegotiated"/> record for the newly established
-    /// <paramref name="peer"/>. <c>Value0</c> is this end's own Linger in milliseconds; <c>Value1</c>
-    /// is the effective (minimum of the two ends') Linger in milliseconds.
+    /// <paramref name="peer"/>, on either profile — stream or datagram. <c>Value0</c> is this end's own
+    /// Linger in milliseconds; <c>Value1</c> is the effective (minimum of the two ends') Linger in
+    /// milliseconds.
     /// </summary>
     public static DiagnosticRecord ForLingerNegotiated(PeerId peer, long oursMilliseconds, long effectiveMilliseconds) =>
         new(DiagnosticId.LingerNegotiated, DiagnosticLevel.Info, DiagnosticSubjectKind.Peer, default, default, peer, oursMilliseconds, effectiveMilliseconds);

@@ -123,10 +123,14 @@ public class DatagramSessionAckReleasesRetentionTests
     {
         // Arrange — one ReliableUnordered slot, filled by an ordinary reliable Send rather than by
         // the Ping itself, so the Ping is what is refused for want of a slot — the scenario AC4 names.
+        // Linger is pushed far out on both ends so no RTO ever fires mid-run: the RTO ceiling is the
+        // negotiated minimum of the two (issue #365), so an accepter left at the harness's short default
+        // would drag the dialler's own effective ceiling back down with it.
         using DatagramSessionReactorHarness dialler = new(
             bindLoopback: false, fragmentSize: FragmentSize, retentionBytes: FragmentSize,
             linger: TimeSpan.FromHours(1), sendIdleInterval: TimeSpan.FromSeconds(1));
-        using DatagramSessionReactorHarness accepter = new(fragmentSize: FragmentSize, retentionBytes: FragmentSize);
+        using DatagramSessionReactorHarness accepter = new(
+            fragmentSize: FragmentSize, retentionBytes: FragmentSize, linger: TimeSpan.FromHours(1));
         using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
         PeerId diallerPeer = dialler.Reactor.Connect(tap.PublicEndPoint);
         PeerId accepterPeer = DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);

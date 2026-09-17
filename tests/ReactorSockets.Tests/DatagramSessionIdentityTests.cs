@@ -23,12 +23,13 @@ public class DatagramSessionIdentityTests
     private const byte AcceptType = 4;
 
     private const int HelloBodyLength = 12;
-    private const int HelloWithCookieBodyLength = 84;
+    private const int HelloWithCookieBodyLength = 92;
 
     private const int CookieLength = 32;
 
     private const uint ProtocolVersion = 1;
     private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
+    private const ulong DialerLingerMilliseconds = 30_000;
 
     // ---- wire helpers ----
 
@@ -66,6 +67,8 @@ public class DatagramSessionIdentityTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), 4096);
         offset += 4;
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 

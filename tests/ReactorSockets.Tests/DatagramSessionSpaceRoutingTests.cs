@@ -35,6 +35,7 @@ public class DatagramSessionSpaceRoutingTests
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
     private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
+    private const ulong DialerLingerMilliseconds = 30_000;
 
     private const int DatagramHeaderSize = 20;
 
@@ -81,7 +82,7 @@ public class DatagramSessionSpaceRoutingTests
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.DuplicatePackets.Should().Be(0);
         counters.OutOfWindowPackets.Should().Be(0);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         drained.Should().HaveCount(3).And.OnlyContain(e => e.Kind == SessionEventKind.MessageReceived);
 
         // Act again — the same four records, resent. If each mode kept its own window, all four are
@@ -100,7 +101,7 @@ public class DatagramSessionSpaceRoutingTests
         afterResend.OutOfWindowPackets.Should().Be(0);
         afterResend.MessagesReceived.Should().Be(
             3, "three of the four first arrivals delivered, the ReliableOrdered one is still held behind its hole, and no duplicate delivered");
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().BeEmpty("a duplicate delivers nothing");
     }
 
@@ -130,7 +131,7 @@ public class DatagramSessionSpaceRoutingTests
         afterDiscard.OutOfWindowPackets.Should().Be(1);
         afterDiscard.DuplicatePackets.Should().Be(0);
         afterDiscard.MessagesReceived.Should().Be(0);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().BeEmpty("an out-of-window record delivers nothing");
 
         // Act — sequence 3, the far edge still inside the untouched window. Left as a gap below it
@@ -157,7 +158,7 @@ public class DatagramSessionSpaceRoutingTests
         // Assert
         accepter.Reactor.CountersOf(accepterPeer).DuplicatePackets.Should().Be(1);
         accepter.Reactor.CountersOf(accepterPeer).OutOfWindowPackets.Should().Be(1);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -194,7 +195,7 @@ public class DatagramSessionSpaceRoutingTests
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.DuplicatePackets.Should().Be(2);
         counters.OutOfWindowPackets.Should().Be(0);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -240,7 +241,7 @@ public class DatagramSessionSpaceRoutingTests
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.OutOfWindowPackets.Should().Be(1);
         counters.DuplicatePackets.Should().Be(0);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -282,7 +283,7 @@ public class DatagramSessionSpaceRoutingTests
         PeerCounters afterAdmit = accepter.Reactor.CountersOf(accepterPeer);
         afterAdmit.OutOfWindowPackets.Should().Be(1);
         afterAdmit.DuplicatePackets.Should().Be(0);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -321,7 +322,7 @@ public class DatagramSessionSpaceRoutingTests
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.OutOfWindowPackets.Should().Be(3);
         counters.DuplicatePackets.Should().Be(0);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -355,7 +356,7 @@ public class DatagramSessionSpaceRoutingTests
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.OutOfWindowPackets.Should().Be(0);
         counters.DuplicatePackets.Should().Be(0);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -406,7 +407,7 @@ public class DatagramSessionSpaceRoutingTests
         PeerCounters counters = accepter.Reactor.CountersOf(accepterPeer);
         counters.OutOfWindowPackets.Should().Be(4);
         counters.DuplicatePackets.Should().Be(0);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -454,7 +455,7 @@ public class DatagramSessionSpaceRoutingTests
         PeerCounters secondPeerCounters = accepter.Reactor.CountersOf(secondPeer);
         secondPeerCounters.OutOfWindowPackets.Should().Be(0);
         secondPeerCounters.DuplicatePackets.Should().Be(0);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -495,6 +496,16 @@ public class DatagramSessionSpaceRoutingTests
     {
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
         return drained.First(e => e.Kind == SessionEventKind.PeerConnected).Peer;
+    }
+
+    /// <summary>
+    /// Every assertion in this file that wants an empty Sink still allows the one
+    /// <see cref="DiagnosticId.LingerNegotiated"/> establishment itself logs (issue #364) — everything
+    /// else remains unexpected.
+    /// </summary>
+    private static void AssertSinkHasNoUnexpectedDiagnostics(DatagramSessionReactorHarness accepter)
+    {
+        accepter.Sink.Received.Where(r => r.Id != DiagnosticId.LingerNegotiated).Should().BeEmpty();
     }
 
     private static byte[] ExchangeUntilReceived(RawReactor client, DatagramSessionReactorHarness accepter)
@@ -540,7 +551,7 @@ public class DatagramSessionSpaceRoutingTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -555,6 +566,8 @@ public class DatagramSessionSpaceRoutingTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
         offset += 4;
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
         offset += 8;
         return BuildControlDatagram(HelloWithCookieType, body);
     }

@@ -304,6 +304,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private ulong AnnouncedSendIdleIntervalMilliseconds => (ulong)Math.Ceiling(_options.SendIdleInterval.TotalMilliseconds);
 
+    /// <summary>
+    /// This Reactor's <see cref="DatagramSessionOptions.Linger"/> as announced on Hello-with-cookie and
+    /// Accept, in whole milliseconds rounded up, for the same reason
+    /// <see cref="AnnouncedSendIdleIntervalMilliseconds"/> rounds up: a sub-millisecond Linger going out
+    /// as zero would be rejected as malformed, and rounding up never shortens the value the far end
+    /// negotiates the effective (minimum) Linger from (issue #363). This is also this end's own operand
+    /// of the minimum in <see cref="PeerSlot.EffectiveLinger"/> — rounded here once, on both the dialling
+    /// (<see cref="OnAccept"/>) and accepting (<see cref="NewAcceptedPeer"/>) paths — so both ends
+    /// negotiate from identical whole-millisecond values and land on the same effective Linger, whatever
+    /// fractional-millisecond <see cref="DatagramSessionOptions.Linger"/> either end configured. The
+    /// stream profile mirrors this with its own equivalent (issue #55 follow-up).
+    /// </summary>
+    private ulong AnnouncedLingerMilliseconds => (ulong)Math.Ceiling(_options.Linger.TotalMilliseconds);
+
     /// <inheritdoc cref="ISessionEventSource.PendingEventCount"/>
     int ISessionEventSource.PendingEventCount => _pendingEvents.Count;
 
@@ -333,6 +347,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RetryPendingFragmentDeliveries();
             ReportExpiredRetransmissions();
             EnforceReceiveIdleTimer();
+            EnforceLingerExpiry();
             EnforceSendIdleTimer();
             FlushOutboundDatagrams();
             ReportDeclinedAdmissions();
@@ -1017,7 +1032,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // DiscardMalformedForSession's Reactor-scope figure instead, above, and never reaches here.
         slot.Counters.RecordBytesReceived((ulong)datagram.Length);
 
-        TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
+        TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits, effectiveRto);
         ReleaseRetentionForAck(slot, PacketRecordMode.ReliableOrdered);
         ApplyAckToStallSignature(slot);
@@ -1538,7 +1553,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
+            TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger);
             slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableOrdered, effectiveRto);
             slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableUnordered, effectiveRto);
 
@@ -1711,8 +1726,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="EnforceSendIdleTimer"/> — the two timers are independent: this one reads only receive
     /// state, that one only send state, and neither call arms or disarms the other. No
     /// <see cref="DiagnosticGateway"/> record is logged for the transition, since it is already reported
-    /// as an Event (ADR 0013). Skips a Peer already <see cref="PeerSlot.IsInterrupted"/> (issue #353), so
-    /// a deadline that stays exceeded after the transition never raises a second Event for it.
+    /// as an Event (ADR 0013). Also stamps <see cref="PeerSlot.InterruptedTimestamp"/> on the same Pump
+    /// (issue #366) — the moment this Peer's effective Linger begins counting down (#55). Skips a Peer
+    /// already <see cref="PeerSlot.IsInterrupted"/> (issue #353), so a deadline that stays exceeded after
+    /// the transition never raises a second Event, and never re-stamps the timestamp, for it.
     /// </summary>
     private void EnforceReceiveIdleTimer()
     {
@@ -1734,11 +1751,66 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
 
             slot.IsInterrupted = true;
+            slot.InterruptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
             _pendingEvents.Add(new PendingEvent
             {
                 Kind = SessionEventKind.PeerInterrupted,
                 Peer = ToPeerId(slot.Handle),
             });
+        }
+    }
+
+    /// <summary>
+    /// Whether an <see cref="PeerSlot.IsInterrupted"/> Peer's effective Linger
+    /// (<see cref="PeerSlot.EffectiveLinger"/>, negotiated at handshake and already reported via
+    /// <c>LingerNegotiated</c>) has run out since <see cref="PeerSlot.InterruptedTimestamp"/> (issue
+    /// #367, parent #55) — the datagram twin of <see cref="StreamSessionReactor.HasExceededLinger"/>.
+    /// Linger is what closes an Interrupted Peer, not the transport loss that produced it — the loss
+    /// already happened, potentially long before this check ever runs (<see cref="EnforceReceiveIdleTimer"/>
+    /// stamped <see cref="PeerSlot.InterruptedTimestamp"/> on whichever earlier Pump crossed the
+    /// receive-idle deadline, issue #366), so the deadline is measured from the moment this end stopped
+    /// waiting on that transport rather than from anything about the transport itself.
+    /// </summary>
+    private bool HasLingerExpired(PeerSlot slot) =>
+        _options.Reactor.TimeProvider.GetElapsedTime(slot.InterruptedTimestamp) >= slot.EffectiveLinger;
+
+    /// <summary>
+    /// Closes every Established, <see cref="PeerSlot.IsInterrupted"/> Peer whose <see cref="HasLingerExpired"/>
+    /// with <see cref="DisconnectReason.LingerExpired"/> (issue #367, parent #55), run once per
+    /// <see cref="Pump"/> right after <see cref="EnforceReceiveIdleTimer"/> — mirroring
+    /// <see cref="StreamSessionReactor.EnforceIdleTimers"/>'s own ordering, where the Linger check for an
+    /// already-Interrupted Peer runs in the same pass as, and right after, the receive-idle check that
+    /// can newly interrupt one. A Peer <see cref="EnforceReceiveIdleTimer"/> interrupted this very Pump
+    /// can in principle be seen by this pass in the same Pump — nothing here waits a Pump before
+    /// checking it — but <see cref="HasLingerExpired"/> can never be true for it yet:
+    /// <see cref="PeerSlot.InterruptedTimestamp"/> was just stamped to this Pump's own clock reading, so
+    /// the elapsed time this pass reads is zero, and <see cref="DatagramSessionOptions"/> rejects a zero
+    /// <see cref="PeerSlot.EffectiveLinger"/> at construction — <c>0 &gt;= EffectiveLinger</c> can only
+    /// hold for an <see cref="PeerSlot.EffectiveLinger"/> that validation already refuses to admit. Runs
+    /// ahead of <see cref="EnforceSendIdleTimer"/> so a Peer this pass closes is never offered a Ping
+    /// into a Slot it no longer occupies.
+    /// </summary>
+    /// <remarks>
+    /// Iterates by index over every occupied Slot exactly as <see cref="EnforceReceiveIdleTimer"/> and
+    /// <see cref="StreamSessionReactor.EnforceIdleTimers"/> do, and calls <see cref="ClosePeer"/> directly
+    /// from inside that loop — safe for the same reason it is safe there: <see cref="ClosePeer"/> only
+    /// ever removes the occupant at the handle's own index from <see cref="_peers"/>, never shifts or
+    /// touches any other index, so the loop's remaining iterations see every other Slot exactly as they
+    /// would have regardless of whether this iteration's Peer closed.
+    /// </remarks>
+    private void EnforceLingerExpiry()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot
+                || slot.State != HandshakeState.Established
+                || !slot.IsInterrupted
+                || !HasLingerExpired(slot))
+            {
+                continue;
+            }
+
+            ClosePeer(slot.Handle, DisconnectReason.LingerExpired);
         }
     }
 
@@ -1757,7 +1829,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// Reads <see cref="PeerSlot.LastSendTimestamp"/> against this Reactor's own
     /// <see cref="ReactorOptions.TimeProvider"/>, never the ambient clock, matching every other timer in
     /// this Reactor. A Peer still mid-handshake is skipped exactly as <see cref="FlushOutboundDatagrams"/>
-    /// skips one — there is no established Session yet for a Heartbeat to prove anything about.
+    /// skips one — there is no established Session yet for a Heartbeat to prove anything about. This loop
+    /// deliberately does not read <see cref="PeerSlot.IsInterrupted"/> (issue #371, parent #55): an
+    /// Interrupted datagram Peer's <see cref="PeerSlot.State"/> is still <see cref="HandshakeState.Established"/>,
+    /// so it keeps being offered a Ping here exactly like any other Established Peer. A datagram Session
+    /// has no re-dial schedule (#55) — there is nothing to re-dial, and the interrupted end can only
+    /// resume by being heard from again — so it keeps probing the path with Pings, at the send-idle
+    /// interval or as the adaptive retransmission of one still unacknowledged, for as long as Linger
+    /// keeps the Peer alive.
     /// </remarks>
     private void EnforceSendIdleTimer()
     {
@@ -1908,7 +1987,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 slot.AckTracker.RecordSent(
                     pending.Mode,
                     pending.Sequence,
-                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger),
+                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger),
                     isFragment);
             }
 
@@ -2642,6 +2721,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out uint remoteSessionId,
                 out uint remoteMaxMessageSize,
                 out ulong remoteSendIdleIntervalMilliseconds,
+                out ulong remoteLingerMilliseconds,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2674,8 +2754,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         TimeSpan remoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
+        TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
         if (_peers.TryAdd(NewAcceptedPeer(
-                source, link, remoteSessionId, remoteMaxMessageSize, remoteSendIdleInterval, remoteResumeSecret, clientNonce))
+                source, link, remoteSessionId, remoteMaxMessageSize, remoteSendIdleInterval, remoteLinger, announcedLinger, remoteResumeSecret, clientNonce))
             is not SlotHandle handle)
         {
             _counters.RecordAdmissionDiscard();
@@ -2695,7 +2777,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _retention.ResetShareHolder(handle.Index);
         _peersBySessionId[slot.LocalSessionId] = handle;
         _acceptedHandshakes[(source, clientNonce)] = handle;
-        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(handle) });
+        PeerId peer = ToPeerId(handle);
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = peer });
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForLingerNegotiated(
+                peer, (long)AnnouncedLingerMilliseconds, (long)slot.EffectiveLinger.TotalMilliseconds));
+        }
+
         SendAccept(link, slot);
     }
 
@@ -2729,6 +2819,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             slot.LocalSessionId,
             (uint)_options.MaxMessageSize,
             AnnouncedSendIdleIntervalMilliseconds,
+            AnnouncedLingerMilliseconds,
             slot.LocalResumeSecret);
         SendControl(link, source);
     }
@@ -2748,6 +2839,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out uint remoteSessionId,
                 out uint remoteMaxMessageSize,
                 out ulong remoteSendIdleIntervalMilliseconds,
+                out ulong remoteLingerMilliseconds,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2760,20 +2852,28 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        // ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize or send-idle
-        // interval at parse (issue #287, issue #348), so both values are already trusted by the time
-        // this Peer reaches Established — an internal invariant to assert rather than input to
-        // re-validate, mirroring NewAcceptedPeer's asserts on the accepting path.
+        // ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize, send-idle
+        // interval or Linger at parse (issue #287, issue #348, issue #362), so all three values are
+        // already trusted by the time this Peer reaches Established — an internal invariant to assert
+        // rather than input to re-validate, mirroring NewAcceptedPeer's asserts on the accepting path.
         Debug.Assert(
             remoteMaxMessageSize != 0,
             "ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize before this is called.");
         Debug.Assert(
             remoteSendIdleIntervalMilliseconds != 0,
             "ControlDatagramCodec.TryReadAccept rejects a zero-announced send-idle interval before this is called.");
+        Debug.Assert(
+            remoteLingerMilliseconds != 0,
+            "ControlDatagramCodec.TryReadAccept rejects a zero-announced Linger before this is called.");
+
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
+        TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
 
         slot.RemoteSessionId = remoteSessionId;
         slot.RemoteMaxMessageSize = remoteMaxMessageSize;
         slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
+        slot.RemoteLinger = remoteLinger;
+        slot.EffectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
         slot.State = HandshakeState.Established;
 
@@ -2788,7 +2888,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         _dialsByNonce.Remove(clientNonce);
         _peersBySessionId[slot.LocalSessionId] = slot.Handle;
-        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(slot.Handle) });
+        PeerId peer = ToPeerId(slot.Handle);
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = peer });
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForLingerNegotiated(
+                peer, (long)AnnouncedLingerMilliseconds, (long)slot.EffectiveLinger.TotalMilliseconds));
+        }
     }
 
     /// <summary>
@@ -2843,22 +2950,28 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         uint remoteSessionId,
         uint remoteMaxMessageSize,
         TimeSpan remoteSendIdleInterval,
+        TimeSpan remoteLinger,
+        TimeSpan announcedLinger,
         ReadOnlySpan<byte> remoteResumeSecret,
         ulong clientNonce)
     {
-        // ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize or
-        // send-idle interval at parse (issue #287, issue #347), so by the time a Peer is built here,
-        // straight into Established, both values are already trusted — an internal invariant to
-        // assert rather than input to re-validate.
+        // ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize,
+        // send-idle interval or Linger at parse (issue #287, issue #347, issue #361), so by the time a
+        // Peer is built here, straight into Established, all three values are already trusted — an
+        // internal invariant to assert rather than input to re-validate.
         Debug.Assert(
             remoteMaxMessageSize != 0,
             "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize before this is called.");
         Debug.Assert(
             remoteSendIdleInterval > TimeSpan.Zero,
             "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced send-idle interval before this is called.");
+        Debug.Assert(
+            remoteLinger > TimeSpan.Zero,
+            "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced Linger before this is called.");
 
         RetransmissionTimer retransmitTimer = new();
         long now = _options.Reactor.TimeProvider.GetTimestamp();
+        TimeSpan effectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
         return new()
         {
             Remote = source,
@@ -2869,6 +2982,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RemoteSessionId = remoteSessionId,
             RemoteMaxMessageSize = remoteMaxMessageSize,
             RemoteSendIdleInterval = remoteSendIdleInterval,
+            RemoteLinger = remoteLinger,
+            EffectiveLinger = effectiveLinger,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
             State = HandshakeState.Established,
             AckTracker = NewAckTracker(retransmitTimer),
@@ -2899,6 +3014,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             slot.LocalSessionId,
             (uint)_options.MaxMessageSize,
             AnnouncedSendIdleIntervalMilliseconds,
+            AnnouncedLingerMilliseconds,
             slot.LocalResumeSecret);
         SendControl(link, slot.Remote);
     }
@@ -3183,6 +3299,34 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         public TimeSpan RemoteSendIdleInterval { get; set; }
 
         /// <summary>
+        /// The Linger the peer itself announced during the handshake (issue #361, issue #362) — never
+        /// this end's own <see cref="DatagramSessionOptions.Linger"/>. Set on both Established paths,
+        /// <see cref="DatagramSessionReactor.NewAcceptedPeer"/> (from the Hello-with-cookie field) and
+        /// <see cref="DatagramSessionReactor.OnAccept"/> (from the Accept field), from the value
+        /// <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> and
+        /// <see cref="ControlDatagramCodec.TryReadAccept"/> already reject as zero at parse. The minimum
+        /// of this end's own <see cref="DatagramSessionReactor.AnnouncedLingerMilliseconds"/> (already whole milliseconds) and
+        /// this governs (<see cref="EffectiveLinger"/>, ADR 0012 adopting ADR 0011's shape). The stream
+        /// profile's <see cref="StreamSessionReactor.PeerSlot.RemoteLinger"/> is the model this mirrors.
+        /// </summary>
+        public TimeSpan RemoteLinger { get; set; }
+
+        /// <summary>
+        /// The negotiated Linger — the minimum of this end's own <see cref="DatagramSessionReactor.AnnouncedLingerMilliseconds"/>
+        /// (this end's <see cref="DatagramSessionOptions.Linger"/> rounded up to whole milliseconds once,
+        /// the same value announced on the wire) and <see cref="RemoteLinger"/> — set once the Session
+        /// establishes, on both Established paths, exactly where <see cref="RemoteLinger"/> is. Both
+        /// operands are already whole milliseconds, so the minimum is exact: no further rounding happens
+        /// here. Immutable for the Session's lifetime from that point on, exactly as every other
+        /// negotiated parameter is. This is the RTO's ceiling (subtask 6.4, issue #365): every
+        /// <see cref="RetransmissionTimer.EffectiveTimeout"/> call in <see cref="DatagramSessionReactor"/>
+        /// clamps against this value, never against this end's own
+        /// <see cref="DatagramSessionOptions.Linger"/>, so the ceiling and Linger expiry (issue #367)
+        /// read the same effective value. The Diagnostic is issue #364; expiry is issue #367.
+        /// </summary>
+        public TimeSpan EffectiveLinger { get; set; }
+
+        /// <summary>
         /// This Peer's own fragment size, resolved from <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
         /// once at admission and stored here rather than read afresh from options on every
         /// <see cref="DatagramSessionReactor.Send"/> (issue #248). Fragment size is unilateral and
@@ -3243,9 +3387,35 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <see cref="CountersOf"/> keeps answering, and nothing here resets any queue or retention.
         /// <see langword="false"/> for a fresh Slot. Re-checked before a later Pump would otherwise raise
         /// another <see cref="SessionEventKind.PeerInterrupted"/> for a Peer already Interrupted (issue
-        /// #353). Leaving Interrupted, and what Interrupted changes about Send or Linger, is #55's.
+        /// #353).
         /// </summary>
+        /// <remarks>
+        /// What Interrupted changes about this Peer, now that parent #55's sub-issues have landed:
+        /// <see cref="Send"/> keeps succeeding, queuing and retaining exactly as it does for an
+        /// established Peer, until the Space's retention fills, at which point it returns
+        /// <see cref="SendOutcome.RetentionExhausted"/> while the Peer stays Interrupted rather than
+        /// closing (issue #369) — the same rule, for the same reasons, as the stream profile. The
+        /// Interrupted end keeps sending Pings, at the send-idle interval or as the adaptive
+        /// retransmission of one still unacknowledged, since <see cref="EnforceSendIdleTimer"/>
+        /// deliberately does not read this flag (issue #371) — a datagram Session has no re-dial
+        /// schedule, so probing the path is the only way an Interrupted end can ever be heard from
+        /// again. And this Peer's <see cref="EffectiveLinger"/>, elapsed since
+        /// <see cref="InterruptedTimestamp"/>, is what ends it: <c>HasLingerExpired</c> closes it with
+        /// <see cref="DisconnectReason.LingerExpired"/> once that wait runs out (issue #367), mirroring
+        /// <see cref="StreamSessionReactor.HasExceededLinger"/>. Leaving Interrupted through an actual
+        /// Resume is not yet implemented — the datagram profile has no wire-level Resume yet (issue
+        /// #52) — so today the only way out of Interrupted is that close.
+        /// </remarks>
         public bool IsInterrupted { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> value at the instant <see cref="EnforceReceiveIdleTimer"/>
+        /// set <see cref="IsInterrupted"/> (issue #366) — the moment this Peer's effective Linger begins
+        /// counting down (#55). Stamped on the same Pump as <see cref="IsInterrupted"/> and only then:
+        /// the #353 guard that skips a Peer already Interrupted also skips this field, so it is never
+        /// re-stamped while the interruption continues.
+        /// </summary>
+        public long InterruptedTimestamp { get; set; }
 
         /// <summary>
         /// This Peer's own mutable counters (ADR 0013), incremented on the hot path and read only

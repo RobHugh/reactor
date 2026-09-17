@@ -44,6 +44,7 @@ public class DatagramSessionSequenceWrapTests
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
     private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
+    private const ulong DialerLingerMilliseconds = 30_000;
 
     private const int DatagramHeaderSize = 20;
     private const int UnfragmentedRecordSize = 7;
@@ -111,7 +112,7 @@ public class DatagramSessionSequenceWrapTests
         PeerCounters afterOlder = accepter.Reactor.CountersOf(accepterPeer);
         afterOlder.OutOfWindowPackets.Should().Be(afterWalk.OutOfWindowPackets + 1);
         afterOlder.DuplicatePackets.Should().Be(afterWalk.DuplicatePackets);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -163,7 +164,7 @@ public class DatagramSessionSequenceWrapTests
         PeerCounters after = accepter.Reactor.CountersOf(accepterPeer);
         after.DuplicatePackets.Should().Be(straddling.DuplicatePackets + 4);
         after.OutOfWindowPackets.Should().Be(straddling.OutOfWindowPackets + 1);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -237,7 +238,7 @@ public class DatagramSessionSequenceWrapTests
         (after.DuplicatePackets - beforeFuzz.DuplicatePackets).Should().Be(expectedDuplicates);
         (after.OutOfWindowPackets - beforeFuzz.OutOfWindowPackets).Should().Be(expectedOutOfWindow);
         (after.UnreliableLossPackets - beforeFuzz.UnreliableLossPackets).Should().Be(expectedLoss);
-        accepter.Sink.Received.Should().BeEmpty();
+        AssertSinkHasNoUnexpectedDiagnostics(accepter);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind != SessionEventKind.MessageReceived,
             "an admitted record now delivers a Message (#217, #219); no other event is justified here");
@@ -356,6 +357,16 @@ public class DatagramSessionSequenceWrapTests
     }
 
     /// <summary>
+    /// Every assertion in this file that wants an empty Sink still allows the one
+    /// <see cref="DiagnosticId.LingerNegotiated"/> establishment itself logs (issue #364) — everything
+    /// else remains unexpected.
+    /// </summary>
+    private static void AssertSinkHasNoUnexpectedDiagnostics(DatagramSessionReactorHarness accepter)
+    {
+        accepter.Sink.Received.Where(r => r.Id != DiagnosticId.LingerNegotiated).Should().BeEmpty();
+    }
+
+    /// <summary>
     /// Completes an ordinary handshake by hand over <paramref name="client"/> and returns the wire
     /// session id <paramref name="accepter"/> assigned this Peer, matching
     /// <see cref="DatagramSessionUnreliableLossTests"/>'s helper of the same name.
@@ -424,7 +435,7 @@ public class DatagramSessionSequenceWrapTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + ResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + 8 + ResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -439,6 +450,8 @@ public class DatagramSessionSequenceWrapTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
         offset += 4;
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
         offset += 8;
         return BuildControlDatagram(HelloWithCookieType, body);
     }

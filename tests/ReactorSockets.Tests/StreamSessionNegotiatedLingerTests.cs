@@ -98,6 +98,69 @@ public class StreamSessionNegotiatedLingerTests
     }
 
     // =========================================================================================
+    // Issue #55 follow-up (PR #372) — a fractional-millisecond own Linger must round up once,
+    // before negotiation, on both roles, so the negotiated minimum and its Diagnostic report the
+    // same whole-millisecond value regardless of which role this Reactor plays
+    // =========================================================================================
+
+    [Fact]
+    public void Pump_BothRolesInterrupted_WithFractionalMillisecondOwnLinger_RoundUpOnceAndCloseAtTheRoundedInstant()
+    {
+        // Arrange — this Reactor's own configured Linger is 5000.4 ms (never a whole millisecond) in
+        // both roles; the far end always announces the longer, whole-millisecond 8 s, so the negotiated
+        // minimum is this Reactor's own value in both roles — exactly the operand the fix rounds.
+        FakeTimeProvider clock = new();
+        TimeSpan fractionalLinger = TimeSpan.FromTicks(50_004_000); // 5000.4 ms
+        TimeSpan farLinger = TimeSpan.FromSeconds(8);
+        ulong farLingerMs = (ulong)farLinger.TotalMilliseconds;
+
+        using StreamSessionReactorHarness listening = new(capacity: 1, linger: fractionalLinger, timeProvider: clock);
+        using StreamSessionReactorHarness.RawStreamPeer listeningPeer = new(listening.Endpoint);
+        (PeerId listeningInterrupted, _) = EstablishAndInterruptListeningSide(listening, listeningPeer, farLingerMs);
+
+        using StreamSessionReactorHarness dialling = new(linger: fractionalLinger, timeProvider: clock);
+        using RawStreamListener listener = new();
+        (PeerId diallingInterrupted, RawStreamListener.Accepted far) = EstablishAndInterruptDiallingSide(
+            dialling, listener, farLingerMs);
+        far.Dispose(); // listener is already stopped inside the helper, ahead of any possible re-dial
+
+        // Assert — both roles rounded their own 5000.4 ms Linger up to 5001 ms once, before negotiating,
+        // so the LingerNegotiated Diagnostic reports 5001 on both Value0 (this end's own announced
+        // Linger) and Value1 (the negotiated minimum against the far end's 8 s) — before this fix,
+        // negotiation read the unrounded 5000.4 ms directly, and the truncating cast on Value0/Value1
+        // reported 5000 on both, while the Peer's actual effective Linger stayed the unrounded 5000.4 ms.
+        listening.Sink.Received.Where(r => r.Id == DiagnosticId.LingerNegotiated).Should().ContainSingle()
+            .Which.Should().Match<DiagnosticRecord>(r => r.Value0 == 5001 && r.Value1 == 5001);
+        dialling.Sink.Received.Where(r => r.Id == DiagnosticId.LingerNegotiated).Should().ContainSingle()
+            .Which.Should().Match<DiagnosticRecord>(r => r.Value0 == 5001 && r.Value1 == 5001);
+
+        // Act — one tick short of the rounded 5001 ms boundary, on the one clock both Reactors read.
+        TimeSpan roundedLinger = TimeSpan.FromMilliseconds(5001);
+        clock.Advance(roundedLinger - TimeSpan.FromTicks(1));
+        listening.Reactor.Pump();
+        dialling.Reactor.Pump();
+
+        // Assert — both sides still hold the Peer Interrupted: before this fix the listening Reactor
+        // would already have closed around 5000.4 ms, well short of this point.
+        listening.DrainToList().Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+        dialling.DrainToList().Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+
+        // Act — the final tick crosses the rounded 5001 ms boundary, still on the one shared clock.
+        clock.Advance(TimeSpan.FromTicks(1));
+        listening.Reactor.Pump();
+        dialling.Reactor.Pump();
+
+        // Assert — both close at this same instant, naming LingerExpired, at the rounded 5001 ms rather
+        // than the unrounded 5000.4 ms either Reactor was configured with.
+        listening.DrainToList().Should().ContainSingle(
+            e => e.Kind == SessionEventKind.PeerClosed && e.Peer == listeningInterrupted)
+            .Which.Reason.Should().Be(DisconnectReason.LingerExpired);
+        dialling.DrainToList().Should().ContainSingle(
+            e => e.Kind == SessionEventKind.PeerClosed && e.Peer == diallingInterrupted)
+            .Which.Reason.Should().Be(DisconnectReason.LingerExpired);
+    }
+
+    // =========================================================================================
     // AC4 — the listening side's slot reservation (#122) ends at the same negotiated instant: a
     // fresh dial is refused for capacity just before it and admitted just after, whichever side
     // the shorter value belongs to
