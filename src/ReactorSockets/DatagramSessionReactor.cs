@@ -1026,6 +1026,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             remainder = remainder[oversizedBytesConsumed..];
         }
 
+        // Fully parsed and not refused above: this is what "well-formed" means for leaving Interrupted
+        // (issue #383). It sits after the oversized-set close so a datagram that closes the Peer never
+        // resumes it first.
+        ResumeInterruptedDialledPeerOnData(slot);
+
         // The proof above is what attributes this Datagram to slot's Peer: it names an established
         // session id (ProcessDataDatagram's own lookup) and every record in it parses. Only from this
         // point on is the whole Datagram's length, header included, counted against that Peer (issue
@@ -1893,6 +1898,40 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         SendControl(slot.Link, slot.Remote);
         slot.LastResumeTimestamp = now;
         slot.ResumesSentSinceInterrupted++;
+    }
+
+    /// <summary>
+    /// Takes an <see cref="PeerSlot.IsInterrupted"/> dialled Peer out of Interrupted on hearing its
+    /// session again (issue #383, parent #56): clears the flag, queues
+    /// <see cref="SessionEventKind.PeerResumed"/> with the same <see cref="PeerId"/> (generation
+    /// included), calls <see cref="Core.PeerCounterSet.RecordResume"/> once and logs
+    /// <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c> 0 (a datagram Session rewinds nothing).
+    /// Does nothing for an accepting-end Peer, a Peer that is not Interrupted, or a dialled Peer that has
+    /// not sent a Resume since it was interrupted
+    /// (<see cref="PeerSlot.ResumesSentSinceInterrupted"/> is 0).
+    /// </summary>
+    /// <remarks>
+    /// Called once <see cref="ParseDataDatagram"/> has fully parsed a data datagram, the same well-formedness
+    /// proof that stamps <see cref="PeerSlot.LastReceiveTimestamp"/>. An observer who can see the session id
+    /// can forge such a datagram, so it can fake this exit on the dialling end. That is accepted: the exit
+    /// grants no takeover (the accepting end still demands the resume secret, ADR 0009) and on-path
+    /// attackers are out of scope. Counters are never reset by a Resume (ADR 0013).
+    /// </remarks>
+    private void ResumeInterruptedDialledPeerOnData(PeerSlot slot)
+    {
+        if (!slot.IsDialled || !slot.IsInterrupted || slot.ResumesSentSinceInterrupted == 0)
+        {
+            return;
+        }
+
+        slot.IsInterrupted = false;
+        slot.Counters.RecordResume();
+        PeerId peer = ToPeerId(slot.Handle);
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = peer });
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForResumeMatched(peer, bytesRewound: 0));
+        }
     }
 
     /// <summary>

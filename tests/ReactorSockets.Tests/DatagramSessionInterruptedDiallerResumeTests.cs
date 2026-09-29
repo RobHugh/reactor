@@ -133,6 +133,76 @@ public class DatagramSessionInterruptedDiallerResumeTests
         fixture.DiallerResumes().Should().BeEmpty("a dialled Peer that is not Interrupted sends no Resume");
     }
 
+    [Fact]
+    public void Pump_InterruptedDiallerAfterResumeHearsSession_RaisesOnePeerResumedAndCountsOneResume()
+    {
+        // Arrange
+        using Fixture fixture = new();
+        PeerId peer = fixture.Connect();
+        fixture.Proxy.StopRelayingBothDirections();
+        fixture.StepUntilDiallerInterrupted(peer);
+        fixture.DiallerResumes().Should().NotBeEmpty("the precondition is a dialler that has sent a Resume");
+
+        // Act
+        fixture.Proxy.ResumeRelayingBothDirections();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = [];
+        for (int i = 0; i < 4; i++)
+        {
+            fixture.Step(_sendIdleInterval, pumpAccepter: true, relayRounds: 3);
+            events.AddRange(fixture.DiallerEvents);
+        }
+
+        // Assert
+        events.Where(e => e.Kind == SessionEventKind.PeerResumed).Should().ContainSingle()
+            .Which.Peer.Should().Be(peer, "the Peer resumes under the same PeerId, generation included");
+        events.Should().NotContain(e => e.Kind == SessionEventKind.PeerInterrupted, "the heard-from Peer left Interrupted and the path stayed live");
+        fixture.DiallerCounters(peer).Resumes.Should().Be(1);
+    }
+
+    [Fact]
+    public void Pump_InterruptedDiallerAfterResumeHearsSession_LogsResumeMatchedWithZeroRewind()
+    {
+        // Arrange
+        using Fixture fixture = new();
+        PeerId peer = fixture.Connect();
+        fixture.Proxy.StopRelayingBothDirections();
+        fixture.StepUntilDiallerInterrupted(peer);
+        fixture.Proxy.ResumeRelayingBothDirections();
+
+        // Act
+        for (int i = 0; i < 3; i++)
+        {
+            fixture.Step(_sendIdleInterval, pumpAccepter: true, relayRounds: 3);
+        }
+
+        // Assert
+        DiagnosticRecord matched = fixture.DiallerRecords.Should().ContainSingle(r => r.Id == DiagnosticId.ResumeMatched).Subject;
+        matched.SubjectKind.Should().Be(DiagnosticSubjectKind.Peer);
+        matched.Peer.Should().Be(peer);
+        matched.Level.Should().Be(DiagnosticLevel.Info);
+        matched.Value0.Should().Be(0);
+    }
+
+    [Fact]
+    public void Pump_DialledPeerNotInterruptedHearsSession_RaisesNoPeerResumed()
+    {
+        // Arrange
+        using Fixture fixture = new();
+        PeerId peer = fixture.Connect();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = [];
+
+        // Act
+        for (int i = 0; i < MissedHeartbeats + 2; i++)
+        {
+            fixture.Step(_sendIdleInterval, pumpAccepter: true, relayRounds: 3);
+            events.AddRange(fixture.DiallerEvents);
+        }
+
+        // Assert
+        events.Should().NotContain(e => e.Kind == SessionEventKind.PeerResumed, "only an Interrupted Peer resumes");
+        fixture.DiallerCounters(peer).Resumes.Should().Be(0);
+    }
+
     private static bool IsControl(byte[] payload) =>
         payload.Length > ControlTypeOffset && BinaryPrimitives.ReadUInt32BigEndian(payload) == 0;
 
@@ -155,6 +225,12 @@ public class DatagramSessionInterruptedDiallerResumeTests
 
         /// <summary>The dialler's events drained by the latest <see cref="Step"/>.</summary>
         public List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> DiallerEvents { get; private set; } = [];
+
+        /// <summary>Every diagnostic record the dialler's Sink received.</summary>
+        public List<DiagnosticRecord> DiallerRecords => _dialler.Sink.Received;
+
+        /// <summary>The dialler's counter snapshot for <paramref name="peer"/>.</summary>
+        public PeerCounters DiallerCounters(PeerId peer) => _dialler.Reactor.CountersOf(peer);
 
         public PeerId Connect()
         {
