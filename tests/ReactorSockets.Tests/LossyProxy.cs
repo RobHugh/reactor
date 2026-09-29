@@ -22,7 +22,10 @@ internal enum RelayDirection
 /// </summary>
 /// <param name="Direction">Which way the datagram was travelling when this proxy observed it.</param>
 /// <param name="Payload">A defensive copy of the exact bytes observed — safe to keep past this proxy's next Pump.</param>
-internal readonly record struct RelayCapture(RelayDirection Direction, byte[] Payload);
+/// <param name="ReceivedOn">The proxy-local address of the socket the datagram arrived on: the client-facing address for
+/// <see cref="RelayDirection.ClientToUpstream"/>, the upstream-facing address current at that moment for
+/// <see cref="RelayDirection.UpstreamToClient"/>. It shows where a sender aimed after <see cref="LossyProxy.MoveUpstreamFacingSocket"/>.</param>
+internal readonly record struct RelayCapture(RelayDirection Direction, byte[] Payload, IPEndPoint? ReceivedOn = null);
 
 /// <summary>
 /// A <see cref="RawReactor"/> relaying UDP datagrams between a client-facing address and a fixed
@@ -299,13 +302,13 @@ internal sealed class LossyProxy : IDisposable
             {
                 _lastClient = evt.Source;
                 byte[] payload = evt.Payload.ToArray();
-                _captures.Add(new RelayCapture(RelayDirection.ClientToUpstream, payload));
+                _captures.Add(new RelayCapture(RelayDirection.ClientToUpstream, payload, _reactor.LocalOf(_clientFacing)));
                 Relay(RelayDirection.ClientToUpstream, _upstreamFacing, Source.FromIPEndPoint(_upstream), payload);
             }
             else if (evt.Link == _upstreamFacing && _lastClient is Source client)
             {
                 byte[] payload = evt.Payload.ToArray();
-                _captures.Add(new RelayCapture(RelayDirection.UpstreamToClient, payload));
+                _captures.Add(new RelayCapture(RelayDirection.UpstreamToClient, payload, _reactor.LocalOf(_upstreamFacing)));
                 Relay(RelayDirection.UpstreamToClient, _clientFacing, client, payload);
             }
         }

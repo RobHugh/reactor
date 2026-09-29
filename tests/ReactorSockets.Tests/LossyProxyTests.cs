@@ -516,6 +516,30 @@ public class LossyProxyTests
     }
 
     [Fact]
+    public void Captures_RecordTheSocketEachDatagramArrivedOn_AcrossAMove()
+    {
+        // Arrange
+        using Socket client = CreateLoopbackUdpSocket();
+        using Socket upstream = CreateLoopbackUdpSocket();
+        using LossyProxy proxy = new((IPEndPoint)upstream.LocalEndPoint!, new FakeTimeProvider());
+        client.SendTo([1], proxy.PublicEndPoint);
+        proxy.Pump();
+        (byte[] _, IPEndPoint oldAddress) = ReceiveFrom(upstream);
+        upstream.SendTo([2], oldAddress);
+        proxy.Pump();
+        Receive(client);
+        IPEndPoint newAddress = proxy.MoveUpstreamFacingSocket();
+
+        // Act
+        upstream.SendTo([3], newAddress);
+        proxy.Pump();
+        Receive(client);
+
+        // Assert
+        proxy.Captures.Select(c => c.ReceivedOn).Should().Equal(proxy.PublicEndPoint, oldAddress, newAddress);
+    }
+
+    [Fact]
     public void MoveUpstreamFacingSocket_WhileStopped_StaysStoppedUntilResumed()
     {
         // Arrange
