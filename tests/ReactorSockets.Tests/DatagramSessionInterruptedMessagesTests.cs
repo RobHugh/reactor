@@ -12,6 +12,7 @@ namespace ReactorSockets.Tests;
 public class DatagramSessionInterruptedMessagesTests
 {
     private const int MessagesPerEnd = 6;
+    private const int DuplicatedRelays = 40;
     private const int RetentionBytes = 64 * 1024;
 
     [Fact]
@@ -24,6 +25,7 @@ public class DatagramSessionInterruptedMessagesTests
         // Act
         List<byte[]> fromDialler = SendAll(scenario.Dialler, scenario.DiallerPeer, DeliveryMode.ReliableOrdered, 0xD0);
         List<byte[]> fromAccepter = SendAll(scenario.Accepter, scenario.AccepterPeer, DeliveryMode.ReliableOrdered, 0xA0);
+        DuplicateRelays(scenario);
         scenario.Step(Scenario.StepInterval);
         scenario.ResumeThroughNewPort();
         StepUntilDelivered(scenario, fromDialler.Count, fromAccepter.Count);
@@ -31,6 +33,7 @@ public class DatagramSessionInterruptedMessagesTests
         // Assert
         AssertDeliveredExactlyInOrder(scenario.AccepterReceived, fromDialler);
         AssertDeliveredExactlyInOrder(scenario.DiallerReceived, fromAccepter);
+        AssertDuplicatesWereInjected(scenario);
     }
 
     [Fact]
@@ -43,6 +46,7 @@ public class DatagramSessionInterruptedMessagesTests
         // Act
         List<byte[]> fromDialler = SendAll(scenario.Dialler, scenario.DiallerPeer, DeliveryMode.ReliableUnordered, 0xD1);
         List<byte[]> fromAccepter = SendAll(scenario.Accepter, scenario.AccepterPeer, DeliveryMode.ReliableUnordered, 0xA1);
+        DuplicateRelays(scenario);
         scenario.Step(Scenario.StepInterval);
         scenario.ResumeThroughNewPort();
         StepUntilDelivered(scenario, fromDialler.Count, fromAccepter.Count);
@@ -50,6 +54,26 @@ public class DatagramSessionInterruptedMessagesTests
         // Assert
         AssertDeliveredExactlyOnce(scenario.AccepterReceived, fromDialler);
         AssertDeliveredExactlyOnce(scenario.DiallerReceived, fromAccepter);
+        AssertDuplicatesWereInjected(scenario);
+    }
+
+    /// <summary>Queues duplicates of the next relayed datagrams in both directions, so the Resume and the retransmissions each arrive twice.</summary>
+    private static void DuplicateRelays(Scenario scenario)
+    {
+        for (int i = 0; i < DuplicatedRelays; i++)
+        {
+            scenario.Proxy.DuplicateNext(RelayDirection.ClientToUpstream);
+            scenario.Proxy.DuplicateNext(RelayDirection.UpstreamToClient);
+        }
+    }
+
+    /// <summary>Guards against a vacuous pass: both ends really received repeated records, counted as Duplicate inside the receive window and as OutOfWindow once it has slid past.</summary>
+    private static void AssertDuplicatesWereInjected(Scenario scenario)
+    {
+        PeerCounters accepter = scenario.Accepter.Reactor.CountersOf(scenario.AccepterPeer);
+        PeerCounters dialler = scenario.Dialler.Reactor.CountersOf(scenario.DiallerPeer);
+        (accepter.DuplicatePackets + accepter.OutOfWindowPackets).Should().BeGreaterThan(0);
+        (dialler.DuplicatePackets + dialler.OutOfWindowPackets).Should().BeGreaterThan(0);
     }
 
     /// <summary>Sends <see cref="MessagesPerEnd"/> Messages with distinct content, asserting each Send was accepted.</summary>
