@@ -122,6 +122,109 @@ public class DatagramSessionMatchedResumeTests
             .Should().BeGreaterThan(toTheProxyBefore, "the Peer's datagrams still go to the address it was established from");
     }
 
+    [Fact]
+    public void Pump_MatchingResumeJustBeforeTheLingerExpiry_DoesNotCloseThePeerAtTheOldExpiryInstant()
+    {
+        // Arrange — Linger is 1s. The Resume lands 1ms before the expiry, and the clock then reaches it.
+        TimeSpan linger = TimeSpan.FromSeconds(1);
+        using Scenario scenario = Scenario.Establish(linger);
+        scenario.InterruptAccepter();
+        using UdpClient resumer = Scenario.NewResumer();
+        scenario.Clock.Advance(linger - TimeSpan.FromMilliseconds(1));
+
+        // Act
+        SendMatchingResume(scenario, resumer);
+        scenario.PumpAccepterUntil(() => scenario.AccepterEvents.Any(e => e.Kind == SessionEventKind.PeerResumed));
+        scenario.Clock.Advance(TimeSpan.FromMilliseconds(1));
+        scenario.PumpAccepter();
+        scenario.Clock.Advance(TimeSpan.FromMilliseconds(500));
+        scenario.PumpAccepter();
+
+        // Assert
+        scenario.AccepterEvents.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+    }
+
+    [Fact]
+    public void Pump_MatchingResumeAgainstAnInterruptedPeer_DoesNotReInterruptItOnTheSamePumpOrTheNext()
+    {
+        // Arrange
+        using Scenario scenario = Scenario.Establish(linger: TimeSpan.FromSeconds(30));
+        scenario.InterruptAccepter();
+        using UdpClient resumer = Scenario.NewResumer();
+        int interruptionsBefore = CountOf(scenario, SessionEventKind.PeerInterrupted);
+
+        // Act — the Resume is read by a Pump whose timers run after its reads, then two more Pumps.
+        SendMatchingResume(scenario, resumer);
+        scenario.PumpAccepterUntil(() => scenario.AccepterEvents.Any(e => e.Kind == SessionEventKind.PeerResumed));
+        scenario.PumpAccepter();
+        scenario.PumpAccepter();
+
+        // Assert
+        CountOf(scenario, SessionEventKind.PeerResumed).Should().Be(1);
+        CountOf(scenario, SessionEventKind.PeerInterrupted).Should().Be(interruptionsBefore);
+    }
+
+    [Fact]
+    public void Pump_ResumedPeerWithNothingFurtherArriving_IsReInterruptedOnlyAFullDeadlineAfterTheResume()
+    {
+        // Arrange — the Resume lands 2s after the interruption, so a deadline still counted from before it would fire at once.
+        using Scenario scenario = Scenario.Establish(linger: TimeSpan.FromSeconds(30));
+        scenario.InterruptAccepter();
+        using UdpClient resumer = Scenario.NewResumer();
+        scenario.Clock.Advance(TimeSpan.FromSeconds(2));
+        SendMatchingResume(scenario, resumer);
+        scenario.PumpAccepterUntil(() => scenario.AccepterEvents.Any(e => e.Kind == SessionEventKind.PeerResumed));
+        int interruptionsBefore = CountOf(scenario, SessionEventKind.PeerInterrupted);
+
+        // Act
+        scenario.Clock.Advance(Scenario.ReceiveIdleDeadline - TimeSpan.FromMilliseconds(1));
+        scenario.PumpAccepter();
+        int interruptionsJustShortOfTheDeadline = CountOf(scenario, SessionEventKind.PeerInterrupted);
+
+        scenario.Clock.Advance(TimeSpan.FromMilliseconds(1));
+        scenario.PumpAccepter();
+
+        // Assert
+        interruptionsJustShortOfTheDeadline.Should().Be(interruptionsBefore);
+        CountOf(scenario, SessionEventKind.PeerInterrupted).Should().Be(interruptionsBefore + 1);
+    }
+
+    [Fact]
+    public void Pump_PeerInterruptedASecondTimeAfterAResume_ClosesOnLingerMeasuredFromTheSecondInterruption()
+    {
+        // Arrange — Linger is 1s, far shorter than the receive-idle deadline. A timestamp left from the
+        // first interruption would close the Peer the instant it is interrupted again.
+        TimeSpan linger = TimeSpan.FromSeconds(1);
+        using Scenario scenario = Scenario.Establish(linger);
+        scenario.InterruptAccepter();
+        using UdpClient resumer = Scenario.NewResumer();
+        scenario.Clock.Advance(TimeSpan.FromMilliseconds(400));
+        SendMatchingResume(scenario, resumer);
+        scenario.PumpAccepterUntil(() => scenario.AccepterEvents.Any(e => e.Kind == SessionEventKind.PeerResumed));
+
+        // Act — a full deadline of silence interrupts it again, then Linger runs from that moment.
+        scenario.Clock.Advance(Scenario.ReceiveIdleDeadline);
+        scenario.PumpAccepter();
+        int interruptions = CountOf(scenario, SessionEventKind.PeerInterrupted);
+        bool closedOnInterruption = CountOf(scenario, SessionEventKind.PeerClosed) > 0;
+
+        scenario.Clock.Advance(linger - TimeSpan.FromMilliseconds(1));
+        scenario.PumpAccepter();
+        bool closedJustShortOfTheLinger = CountOf(scenario, SessionEventKind.PeerClosed) > 0;
+
+        scenario.Clock.Advance(TimeSpan.FromMilliseconds(1));
+        scenario.PumpAccepter();
+
+        // Assert
+        interruptions.Should().Be(2);
+        closedOnInterruption.Should().BeFalse();
+        closedJustShortOfTheLinger.Should().BeFalse();
+        scenario.AccepterEvents.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.LingerExpired);
+    }
+
+    private static int CountOf(Scenario scenario, SessionEventKind kind) => scenario.AccepterEvents.Count(e => e.Kind == kind);
+
     private static bool WaitForDatagram(UdpClient client, TimeSpan? budget = null)
     {
         PumpDeadline deadline = PumpDeadline.Start(budget);

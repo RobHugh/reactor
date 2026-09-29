@@ -3070,7 +3070,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// 0, since nothing is rewound on this profile: retransmission already re-sends anything
     /// unacknowledged. Sequence state, ack state, receive windows and held Fragments are not touched. A
     /// Peer that is not Interrupted has nothing to resume, so the Resume is ignored. Also points the
-    /// Peer's sends at the Resume's source (<see cref="MoveSendAddress"/>).
+    /// Peer's sends at the Resume's source (<see cref="MoveSendAddress"/>) and stamps
+    /// <see cref="PeerSlot.LastReceiveTimestamp"/>, so the receive-idle deadline restarts from the
+    /// Resume and the Peer is not interrupted again until a full deadline of silence has passed. Linger
+    /// stops counting because the Peer is no longer Interrupted, and a later interruption stamps
+    /// <see cref="PeerSlot.InterruptedTimestamp"/> afresh.
     /// </summary>
     private void ResumeInterruptedPeer(PeerSlot slot, UdpLink link, Source source)
     {
@@ -3080,6 +3084,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         MoveSendAddress(slot, link, source);
+
+        // The Resume is hearing from the Peer. Pump reads datagrams before it runs the timers, so a
+        // stale timestamp here would have EnforceReceiveIdleTimer interrupt the Peer again on this very Pump.
+        slot.LastReceiveTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
         slot.IsInterrupted = false;
         slot.Counters.RecordResume();
         PeerId peer = ToPeerId(slot.Handle);
