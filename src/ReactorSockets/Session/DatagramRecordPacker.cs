@@ -165,4 +165,30 @@ internal ref struct DatagramRecordPacker
         RecordsPacked++;
         return true;
     }
+
+    /// <summary>
+    /// Appends one Goodbye record — seven bytes: <c>ReliableOrdered</c> mode bits plus
+    /// <see cref="DatagramSessionProtocol.ControlBit"/>, a <c>u32</c> sequence, and a <c>u16</c> length
+    /// of zero — immediately after the bytes already packed, through
+    /// <see cref="PacketRecordCodec.TryWriteGoodbyeRecord"/>. Added by issue #396, the same way
+    /// <see cref="TryPackControlRecord"/> packs a Ping.
+    /// </summary>
+    /// <param name="sequence">The record's <c>u32</c> sequence number, from the <c>ReliableOrdered</c> space.</param>
+    /// <returns>
+    /// <see langword="true"/> if the record fit in the destination buffer's remaining space and was
+    /// written, advancing <see cref="BytesWritten"/> and <see cref="RecordsPacked"/>.
+    /// <see langword="false"/> if it did not fit — nothing is written in that case and the record is
+    /// left entirely for the caller to pack into a later datagram.
+    /// </returns>
+    public bool TryPackGoodbyeRecord(uint sequence)
+    {
+        if (!PacketRecordCodec.TryWriteGoodbyeRecord(_destination[BytesWritten..], sequence, out int bytesWritten))
+        {
+            return false;
+        }
+
+        BytesWritten += bytesWritten;
+        RecordsPacked++;
+        return true;
+    }
 }
