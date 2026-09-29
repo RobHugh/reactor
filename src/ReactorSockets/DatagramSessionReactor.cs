@@ -107,6 +107,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private readonly Dictionary<(Source Remote, ulong Nonce), SlotHandle> _acceptedHandshakes = [];
 
+    /// <summary>
+    /// Closed-session records (ADR 0017, second amendment 2026-09-29): one ring entry per capacity Slot,
+    /// written by <see cref="RememberClosedSession"/> when a Peer closes while the remote may still be
+    /// waiting for the ack of its Goodbye. Holds no capacity Slot. When the ring is full the oldest entry
+    /// is overwritten, so a burst of closes larger than Capacity within one Linger can lose the oldest
+    /// re-ack, which degrades that sender to <see cref="DisconnectReason.LingerExpired"/> as before.
+    /// </summary>
+    private readonly ClosedSession[] _closedSessions;
+
+    /// <summary>Ring index in <see cref="_closedSessions"/> by the closed session's local id. Sized once, never grows.</summary>
+    private readonly Dictionary<uint, int> _closedSessionIndex;
+
+    /// <summary>The ring position the next <see cref="RememberClosedSession"/> writes to.</summary>
+    private int _closedSessionNext;
+
     private readonly byte[] _scratchBuffer = new byte[MaxUdpDatagramSize];
     private readonly byte[] _sendBuffer = new byte[DatagramSessionProtocol.ControlDatagramSize];
 
@@ -229,6 +244,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
         _maxLegalFragmentCount = options.ResolvedReceiveWindowFragments;
         _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
+
+        _closedSessions = new ClosedSession[options.Reactor.Capacity];
+        _closedSessionIndex = new Dictionary<uint, int>(options.Reactor.Capacity);
 
         _receiveWindows = new ReceiveWindowSpaces[options.Reactor.Capacity];
         for (int i = 0; i < _receiveWindows.Length; i++)
@@ -751,6 +769,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _lifecycle.IsDisposed = true;
         _peers.DrainAll();
         _peersBySessionId.Clear();
+        _closedSessionIndex.Clear();
         _dialsByNonce.Clear();
         _acceptedHandshakes.Clear();
         _pendingEvents.Clear();
@@ -880,7 +899,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         if (session != DatagramSessionProtocol.ControlSession)
         {
-            ProcessDataDatagram(source, session, datagram);
+            ProcessDataDatagram(link, source, session, datagram);
             return;
         }
 
@@ -930,13 +949,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// counted rather than treated as an introduction — a Session is created by the handshake and by
     /// nothing else. The source address is deliberately not checked against the one the Session was
     /// established from: a Peer behind a NAT that rebinds, or a device that changes network, keeps its
-    /// Session, which is the whole reason the identity is a token rather than an address.
+    /// Session, which is the whole reason the identity is a token rather than an address. A session id
+    /// naming a recently closed Session goes to <see cref="TryReAckClosedSession"/> first (ADR 0017,
+    /// second amendment) and is discarded only if that declines.
     /// </summary>
-    private void ProcessDataDatagram(Source source, uint session, ReadOnlySpan<byte> datagram)
+    private void ProcessDataDatagram(UdpLink link, Source source, uint session, ReadOnlySpan<byte> datagram)
     {
         if (!_peersBySessionId.TryGetValue(session, out SlotHandle handle) || _peers.TryResolve(handle) is not PeerSlot slot)
         {
-            DiscardMalformed(source, datagram.Length);
+            if (!TryReAckClosedSession(link, source, session, datagram))
+            {
+                DiscardMalformed(source, datagram.Length);
+            }
+
             return;
         }
 
@@ -3635,6 +3660,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         _peersBySessionId.Remove(slot.LocalSessionId);
+        RememberClosedSession(slot, reason);
         _dialsByNonce.Remove(slot.ClientNonce);
         if (slot.HandshakeSource is Source handshakeSource)
         {
@@ -3646,6 +3672,125 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             Peer = ToPeerId(handle),
             Reason = reason,
         });
+    }
+
+    /// <summary>
+    /// Remembers a Peer that just closed with <see cref="DisconnectReason.PeerGoodbye"/> for one effective
+    /// Linger, so a resend of the remote's Goodbye can still be acknowledged (ADR 0017, second amendment).
+    /// Writes one <see cref="ClosedSession"/> into the ring, overwriting the oldest entry when it is full,
+    /// and holds no capacity Slot.
+    /// </summary>
+    private void RememberClosedSession(PeerSlot slot, DisconnectReason reason)
+    {
+        if (slot.State != HandshakeState.Established || reason != DisconnectReason.PeerGoodbye)
+        {
+            return;
+        }
+
+        int ring = _closedSessionNext;
+        _closedSessionNext = (ring + 1) % _closedSessions.Length;
+
+        uint overwritten = _closedSessions[ring].LocalSessionId;
+        if (overwritten != 0 && _closedSessionIndex.TryGetValue(overwritten, out int overwrittenRing) && overwrittenRing == ring)
+        {
+            _closedSessionIndex.Remove(overwritten);
+        }
+
+        ((uint Base, uint Bits) reliableOrdered, (uint Base, uint Bits) reliableUnordered) =
+            _receiveWindows[slot.Handle.Index].GenerateAckBlocks();
+
+        _closedSessions[ring] = new ClosedSession
+        {
+            LocalSessionId = slot.LocalSessionId,
+            Remote = slot.Remote,
+            RemoteSessionId = slot.RemoteSessionId,
+            ReliableOrderedBase = reliableOrdered.Base,
+            ReliableOrderedBits = reliableOrdered.Bits,
+            ReliableUnorderedBase = reliableUnordered.Base,
+            ReliableUnorderedBits = reliableUnordered.Bits,
+            ClosedTimestamp = _options.Reactor.TimeProvider.GetTimestamp(),
+            Linger = slot.EffectiveLinger,
+        };
+        _closedSessionIndex[slot.LocalSessionId] = ring;
+    }
+
+    /// <summary>
+    /// Answers a data datagram naming a recently closed Session with one header-only datagram carrying the
+    /// stored ack blocks, and reports whether it did (ADR 0017, second amendment). Declines, so the caller
+    /// discards as for any unknown session, unless the id has a live record inside its Linger, the source is
+    /// the stored remote endpoint, the datagram is well-formed, and it carries at least one reliable
+    /// record. The last condition stops two closed ends answering each other's replies. The reply is the
+    /// 20-byte header alone, never larger than the datagram that triggered it, and raises no event, takes no
+    /// Slot and touches no per-Peer counter. Every reliable record in the datagram is first admitted into
+    /// the stored blocks, so a Goodbye the closed end never received is acknowledged too.
+    /// </summary>
+    private bool TryReAckClosedSession(UdpLink link, Source source, uint session, ReadOnlySpan<byte> datagram)
+    {
+        if (!_closedSessionIndex.TryGetValue(session, out int ring))
+        {
+            return false;
+        }
+
+        ref ClosedSession closed = ref _closedSessions[ring];
+        if (_options.Reactor.TimeProvider.GetElapsedTime(closed.ClosedTimestamp) >= closed.Linger)
+        {
+            _closedSessionIndex.Remove(session);
+            closed = default;
+            return false;
+        }
+
+        if (closed.Remote != source || !DatagramHeaderCodec.TryReadHeader(datagram, out _, out _, out _, out _, out _))
+        {
+            return false;
+        }
+
+        ReadOnlySpan<byte> body = datagram[DatagramSessionProtocol.DatagramHeaderSize..];
+        bool carriesReliableRecord = false;
+        ReadOnlySpan<byte> remainder = body;
+        while (remainder.Length > 0)
+        {
+            if (!PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
+            {
+                return false;
+            }
+
+            carriesReliableRecord |= IsReliable(mode);
+            remainder = remainder[bytesConsumed..];
+        }
+
+        if (!carriesReliableRecord)
+        {
+            return false;
+        }
+
+        remainder = body;
+        while (remainder.Length > 0)
+        {
+            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out _, out _, out _, out _, out _, out int bytesConsumed);
+            closed.Admit(mode, sequence);
+            remainder = remainder[bytesConsumed..];
+        }
+
+        SendClosedSessionAck(link, in closed);
+        return true;
+    }
+
+    /// <summary>Writes and sends the header-only ack datagram for <paramref name="closed"/> to its remote endpoint.</summary>
+    private void SendClosedSessionAck(UdpLink link, in ClosedSession closed)
+    {
+        DatagramHeaderCodec.WriteHeader(
+            _outboundDatagramBuffer,
+            closed.RemoteSessionId,
+            closed.ReliableOrderedBase,
+            closed.ReliableOrderedBits,
+            closed.ReliableUnorderedBase,
+            closed.ReliableUnorderedBits);
+
+        UdpLinkSendResult result = link.SendTo(closed.Remote, _outboundDatagramBuffer.AsSpan(0, DatagramSessionProtocol.DatagramHeaderSize));
+        if (result.IsSuccess)
+        {
+            _counters.RecordDatagramSent();
+        }
     }
 
     /// <summary>
@@ -3663,7 +3808,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             _entropy.GetBytes(bytes);
             uint candidate = BitConverter.ToUInt32(bytes);
-            if (candidate != DatagramSessionProtocol.ControlSession && !_peersBySessionId.ContainsKey(candidate))
+            if (candidate != DatagramSessionProtocol.ControlSession
+                && !_peersBySessionId.ContainsKey(candidate)
+                && !_closedSessionIndex.ContainsKey(candidate))
             {
                 return candidate;
             }
@@ -3815,6 +3962,79 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// Peer after this Pump's flush, so the flush can carry the ack of the Goodbye.
         /// </summary>
         CloseDue,
+    }
+
+    /// <summary>
+    /// What a Peer that closed on a Goodbye leaves behind for one effective Linger (ADR 0017, second
+    /// amendment), so a resent Goodbye can still be acknowledged. A fixed-size value in
+    /// <see cref="_closedSessions"/>, one entry per capacity Slot, never allocated per datagram. Both ack
+    /// blocks are the final <see cref="ReceiveWindowSpaces.GenerateAckBlocks"/> values, extended by
+    /// <see cref="Admit"/> as later reliable records arrive.
+    /// </summary>
+    private struct ClosedSession
+    {
+        /// <summary>The session id this Reactor assigned, which the remote stamps on its datagrams. Zero marks an unused entry.</summary>
+        public uint LocalSessionId;
+
+        /// <summary>The only endpoint a reply is sent to.</summary>
+        public Source Remote;
+
+        /// <summary>The session id to stamp on the reply.</summary>
+        public uint RemoteSessionId;
+
+        public uint ReliableOrderedBase;
+
+        public uint ReliableOrderedBits;
+
+        public uint ReliableUnorderedBase;
+
+        public uint ReliableUnorderedBits;
+
+        /// <summary>When the Peer closed; the entry expires <see cref="Linger"/> later.</summary>
+        public long ClosedTimestamp;
+
+        /// <summary>The Peer's effective Linger.</summary>
+        public TimeSpan Linger;
+
+        /// <summary>
+        /// Records <paramref name="sequence"/> as received on <paramref name="mode"/>'s reliable Space, using
+        /// the same base-plus-32-bits shape as <see cref="ReceiveWindow.DescribeAsAckBlock"/>: the base is the
+        /// first sequence not yet received, bit <c>n</c> says <c>base + n + 1</c> was. A sequence already
+        /// below the base, or more than 32 above it, changes nothing. Unreliable modes are ignored.
+        /// </summary>
+        public void Admit(PacketRecordMode mode, uint sequence)
+        {
+            switch (mode)
+            {
+                case PacketRecordMode.ReliableOrdered:
+                    Admit(ref ReliableOrderedBase, ref ReliableOrderedBits, sequence);
+                    break;
+
+                case PacketRecordMode.ReliableUnordered:
+                    Admit(ref ReliableUnorderedBase, ref ReliableUnorderedBits, sequence);
+                    break;
+            }
+        }
+
+        private static void Admit(ref uint blockBase, ref uint bits, uint sequence)
+        {
+            uint offset = unchecked(sequence - blockBase);
+            if (offset == 0)
+            {
+                bool nextAlreadyReceived;
+                do
+                {
+                    blockBase = unchecked(blockBase + 1);
+                    nextAlreadyReceived = (bits & 1) != 0;
+                    bits >>= 1;
+                }
+                while (nextAlreadyReceived);
+            }
+            else if (offset <= 32)
+            {
+                bits |= 1u << (int)(offset - 1);
+            }
+        }
     }
 
     /// <summary>
