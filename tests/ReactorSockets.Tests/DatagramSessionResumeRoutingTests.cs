@@ -221,6 +221,91 @@ public class DatagramSessionResumeRoutingTests
         resumer.Available.Should().Be(0, "the wrong-secret Resume's source never becomes the Peer's send address");
     }
 
+    [Fact]
+    public void Pump_MatchingResumeAgainstAnInterruptedPeer_RaisesExactlyOnePeerResumedWithTheSamePeerId()
+    {
+        // Arrange — the Resume is built here, byte by byte, from the id and secret read off the Accept.
+        using Scenario scenario = Scenario.Establish();
+        scenario.InterruptAccepter();
+        PeerId interrupted = scenario.AccepterEvents.Single(e => e.Kind == SessionEventKind.PeerInterrupted).Peer;
+        using UdpClient resumer = NewResumer();
+
+        // Act
+        resumer.Send(BuildResume(scenario.AccepterSessionId, scenario.ResumeSecret), scenario.Accepter.Endpoint);
+        scenario.PumpAccepterUntil(() => scenario.AccepterEvents.Any(e => e.Kind == SessionEventKind.PeerResumed));
+        scenario.PumpAccepter();
+
+        // Assert
+        scenario.AccepterEvents.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerResumed)
+            .Which.Peer.Should().Be(interrupted).And.Be(scenario.AccepterPeer);
+    }
+
+    [Fact]
+    public void Pump_MatchingResumeAgainstAnInterruptedPeer_LogsResumeMatchedWithValue0Zero()
+    {
+        // Arrange
+        using Scenario scenario = Scenario.Establish();
+        scenario.InterruptAccepter();
+        using UdpClient resumer = NewResumer();
+
+        // Act
+        resumer.Send(BuildResume(scenario.AccepterSessionId, scenario.ResumeSecret), scenario.Accepter.Endpoint);
+        scenario.PumpAccepterUntil(() => scenario.Accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
+
+        // Assert
+        DiagnosticRecord record = scenario.Accepter.Sink.Received.Should()
+            .ContainSingle(r => r.Id == DiagnosticId.ResumeMatched).Which;
+        record.SubjectKind.Should().Be(DiagnosticSubjectKind.Peer);
+        record.Peer.Should().Be(scenario.AccepterPeer);
+        record.Level.Should().Be(DiagnosticLevel.Info);
+        record.Value0.Should().Be(0);
+        scenario.Accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ResumeUnmatched);
+    }
+
+    [Fact]
+    public void Pump_MatchingResumeAgainstAnInterruptedPeer_TakesItOutOfInterruptedSoTheOriginalLingerExpiryDoesNotCloseIt()
+    {
+        // Arrange — Linger is 1s and the Resume lands 400ms after the interruption. Were the Peer still
+        // Interrupted from the original timestamp it would close at 1000ms.
+        TimeSpan linger = TimeSpan.FromSeconds(1);
+        TimeSpan resumeArrivesAfter = TimeSpan.FromMilliseconds(400);
+        using Scenario scenario = Scenario.Establish(linger);
+        scenario.InterruptAccepter();
+        using UdpClient resumer = NewResumer();
+
+        scenario.Clock.Advance(resumeArrivesAfter);
+
+        // Act
+        resumer.Send(BuildResume(scenario.AccepterSessionId, scenario.ResumeSecret), scenario.Accepter.Endpoint);
+        scenario.PumpAccepterUntil(() => scenario.AccepterEvents.Any(e => e.Kind == SessionEventKind.PeerResumed));
+
+        scenario.AdvanceAccepter(linger - resumeArrivesAfter);
+        scenario.PumpAccepter();
+
+        // Assert
+        scenario.AccepterEvents.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+    }
+
+    [Fact]
+    public void Pump_MatchingResumeAgainstAPeerThatIsNotInterrupted_ChangesNothing()
+    {
+        // Arrange — the right secret, but nothing was interrupted, so there is nothing to resume.
+        using Scenario scenario = Scenario.Establish();
+        using UdpClient resumer = NewResumer();
+
+        // Act
+        resumer.Send(BuildResume(scenario.AccepterSessionId, scenario.ResumeSecret), scenario.Accepter.Endpoint);
+        for (int i = 0; i < 20; i++)
+        {
+            scenario.PumpAccepter();
+            Thread.Sleep(1);
+        }
+
+        // Assert
+        scenario.AccepterEvents.Should().BeEmpty();
+        scenario.Accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ResumeMatched || r.Id == DiagnosticId.ResumeUnmatched);
+    }
+
     /// <summary>A UDP socket on its own loopback port: the party sending a Resume, from an address that is not the Peer's.</summary>
     private static UdpClient NewResumer() => new(new IPEndPoint(IPAddress.Loopback, 0));
 
