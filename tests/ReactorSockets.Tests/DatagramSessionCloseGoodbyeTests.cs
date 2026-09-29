@@ -115,6 +115,80 @@ public class DatagramSessionCloseGoodbyeTests
     }
 
     [Fact]
+    public void Pump_ClosingPeerWhoseGoodbyeIsAcked_RaisesExactlyOneLocalCloseOnlyAfterTheAck()
+    {
+        // Arrange
+        (DatagramSessionReactorHarness dialler, DatagramSessionReactorHarness accepter, WireTap tap, PeerId peer) = Connect();
+        using (dialler)
+        using (accepter)
+        using (tap)
+        {
+            dialler.Reactor.Close(peer);
+            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerEvents = [];
+
+            // Act: the Goodbye leaves the dialler and reaches the accepter's socket, but nothing acks it yet
+            dialler.Reactor.Pump();
+            diallerEvents.AddRange(dialler.DrainToList());
+            tap.Pump();
+            dialler.Reactor.Pump();
+            diallerEvents.AddRange(dialler.DrainToList());
+            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> beforeAck = [.. diallerEvents];
+
+            accepter.Reactor.Pump();
+            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> accepterEvents = accepter.DrainToList();
+            tap.Pump();
+            dialler.Reactor.Pump();
+            diallerEvents.AddRange(dialler.DrainToList());
+            for (int i = 0; i < 3; i++)
+            {
+                dialler.Reactor.Pump();
+                diallerEvents.AddRange(dialler.DrainToList());
+            }
+
+            // Assert
+            beforeAck.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed, "the Goodbye is not acked yet");
+            accepterEvents.Where(e => e.Kind == SessionEventKind.PeerClosed).Should().ContainSingle()
+                .Which.Reason.Should().Be(DisconnectReason.PeerGoodbye);
+            diallerEvents.Where(e => e.Kind == SessionEventKind.PeerClosed).Should().ContainSingle()
+                .Which.Should().Be((SessionEventKind.PeerClosed, peer, DisconnectReason.LocalClose));
+            Action counters = () => dialler.Reactor.CountersOf(peer);
+            counters.Should().Throw<Exception>("the PeerId is dead");
+            dialler.Reactor.Send(peer, DeliveryMode.ReliableOrdered, [1]).Should().Be(SendOutcome.Closed);
+        }
+    }
+
+    [Fact]
+    public void Pump_ReceiverThatWentThroughPeerClosing_AcksTheGoodbyeSoTheSenderClosesWithLocalClose()
+    {
+        // Arrange
+        (DatagramSessionReactorHarness dialler, DatagramSessionReactorHarness accepter, WireTap tap, PeerId peer) = Connect();
+        using (dialler)
+        using (accepter)
+        using (tap)
+        {
+            dialler.Reactor.Send(peer, DeliveryMode.ReliableOrdered, [1, 2, 3]).Should().Be(SendOutcome.Sent);
+            dialler.Reactor.Close(peer);
+            dialler.Reactor.Pump();
+            tap.Pump();
+
+            // Act
+            accepter.Reactor.Pump();
+            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> firstAccepterPump = accepter.DrainToList();
+            accepter.Reactor.Pump();
+            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> secondAccepterPump = accepter.DrainToList();
+            tap.Pump();
+            dialler.Reactor.Pump();
+            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerEvents = dialler.DrainToList();
+
+            // Assert
+            firstAccepterPump.Select(e => e.Kind).Should().Contain(SessionEventKind.PeerClosing)
+                .And.NotContain(SessionEventKind.PeerClosed);
+            secondAccepterPump.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed && e.Reason == DisconnectReason.PeerGoodbye);
+            diallerEvents.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed && e.Reason == DisconnectReason.LocalClose);
+        }
+    }
+
+    [Fact]
     public void Close_CalledTwice_QueuesOnlyOneGoodbye()
     {
         // Arrange
