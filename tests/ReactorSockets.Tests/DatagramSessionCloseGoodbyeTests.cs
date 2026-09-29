@@ -219,8 +219,9 @@ public class DatagramSessionCloseGoodbyeTests
     /// The Goodbye writer refuses a destination shorter than its seven-byte record (issue #395), and the
     /// flush carries the Goodbye in the next datagram. The Message is sized so its datagram leaves only
     /// <paramref name="leftover"/> bytes, fewer than a Goodbye needs. The Message's near-maximum datagram
-    /// is proven by the dialler's own byte and write counts, because a <see cref="WireTap"/> does not
-    /// relay a datagram that close to the UDP maximum. The Goodbye's datagram is captured and decoded.
+    /// is proven by the dialler's own byte and write counts, because whether a <see cref="WireTap"/>
+    /// relays a datagram that close to the UDP maximum depends on the platform's loopback. The Goodbye's
+    /// datagram is picked from the captures by its size and decoded.
     /// </summary>
     [Theory]
     [InlineData(1)]
@@ -250,7 +251,7 @@ public class DatagramSessionCloseGoodbyeTests
             dialler.Reactor.Pump();
             PumpDeadline deadline = PumpDeadline.Start();
             tap.Pump();
-            while (tap.CountInDirection(TapDirection.DiallerToAccepter) == capturesBefore && !deadline.Expired)
+            while (!CapturesOfSize(tap, capturesBefore, goodbyeDatagramBytes).Any() && !deadline.Expired)
             {
                 PumpDeadline.Yield();
                 tap.Pump();
@@ -263,8 +264,7 @@ public class DatagramSessionCloseGoodbyeTests
                 (ulong)(messageDatagramBytes + goodbyeDatagramBytes),
                 "the first datagram holds only the Message and the second only the Goodbye");
 
-            byte[] goodbyeDatagram = tap.PayloadsInDirection(TapDirection.DiallerToAccepter).Skip(capturesBefore).Last();
-            goodbyeDatagram.Should().HaveCount(goodbyeDatagramBytes);
+            byte[] goodbyeDatagram = CapturesOfSize(tap, capturesBefore, goodbyeDatagramBytes).Should().ContainSingle().Subject;
             DatagramDecodeResult decoded = DatagramDecoder.TryDecode(goodbyeDatagram);
             decoded.IsSuccess.Should().BeTrue();
             DecodedPacketRecord goodbye = decoded.Datagram!.Records.Should().ContainSingle().Subject;
@@ -274,4 +274,8 @@ public class DatagramSessionCloseGoodbyeTests
             goodbye.Sequence.Should().Be(1, "the Message took ReliableOrdered sequence 0 and the Goodbye the next");
         }
     }
+
+    /// <summary>The dialler-to-accepter datagrams captured after the first <paramref name="skip"/> that are <paramref name="size"/> bytes long.</summary>
+    private static IEnumerable<byte[]> CapturesOfSize(WireTap tap, int skip, int size) =>
+        tap.PayloadsInDirection(TapDirection.DiallerToAccepter).Skip(skip).Where(payload => payload.Length == size);
 }
