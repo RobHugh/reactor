@@ -42,7 +42,7 @@ public class DatagramSessionRetentionSlotRecycleTests
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, [1, 2, 3]).Should().Be(SendOutcome.Sent);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, [1, 2, 3]).Should().Be(
             SendOutcome.RetentionExhausted, "the first Peer genuinely filled its Space's one slot");
-        harness.Reactor.Close(first);
+        harness.CloseImmediately(first);
         harness.Reactor.Pump();
         harness.DrainToList();
 
@@ -75,7 +75,7 @@ public class DatagramSessionRetentionSlotRecycleTests
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, [1, 2, 3]).Should().Be(SendOutcome.Sent);
         harness.Reactor.CountersOf(first).RetentionHighWaterBytes.Should().Be(
             3UL, "the first Peer's high-water is the three bytes it retained");
-        harness.Reactor.Close(first);
+        harness.CloseImmediately(first);
         harness.Reactor.Pump();
         harness.DrainToList();
 
@@ -105,7 +105,7 @@ public class DatagramSessionRetentionSlotRecycleTests
         accepter.Reactor.Send(firstAccepted, DeliveryMode.ReliableOrdered, [1, 2, 3]).Should().Be(
             SendOutcome.RetentionExhausted, "the first accepted Peer genuinely filled its Space's one slot");
 
-        accepter.Reactor.Close(firstAccepted);
+        accepter.CloseImmediately(firstAccepted);
         accepter.Reactor.Pump();
         accepter.DrainToList();
         firstDialler.Reactor.Pump();

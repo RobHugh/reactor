@@ -434,7 +434,7 @@ public class DatagramSessionSpaceRoutingTests
         accepter.Reactor.CountersOf(firstPeer).DuplicatePackets.Should().Be(0);
 
         // Act — the first Peer closes, freeing the one Slot, and a second Peer's handshake takes it.
-        accepter.Reactor.Close(firstPeer);
+        accepter.CloseImmediately(firstPeer);
         accepter.Reactor.Pump();
         accepter.DrainToList();
 
