@@ -732,12 +732,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // MessageReceived is the one kind here the shared half cannot build, because it alone needs
         // the arena the payload was committed to (subtask 6.6.6, issue #219). The span is handed out
         // aliasing the arena directly, so it is valid for this Frame only — the same contract the
-        // stream profile's own MessageReceived carries. PeerResumed carries only the Peer.
+        // stream profile's own MessageReceived carries.
         return pending.Kind switch
         {
             SessionEventKind.MessageReceived => SessionEvent.ForMessageReceived(
                 pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
-            SessionEventKind.PeerResumed => SessionEvent.ForPeerResumed(pending.Peer),
             _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind."),
         };
     }
