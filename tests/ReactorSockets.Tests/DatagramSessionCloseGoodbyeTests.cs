@@ -209,4 +209,69 @@ public class DatagramSessionCloseGoodbyeTests
             RecordsSince(tap, capturesBefore).Where(r => (r.Flags & ControlBit) != 0).Should().ContainSingle();
         }
     }
+
+    /// <summary>The datagram header (wire format, ADR 0009) and one unfragmented record header, in bytes.</summary>
+    private const int DatagramHeaderBytes = 20;
+
+    private const int RecordHeaderBytes = 7;
+
+    /// <summary>
+    /// The Goodbye writer refuses a destination shorter than its seven-byte record (issue #395), and the
+    /// flush carries the Goodbye in the next datagram. The Message is sized so its datagram leaves only
+    /// <paramref name="leftover"/> bytes, fewer than a Goodbye needs. The Message's near-maximum datagram
+    /// is proven by the dialler's own byte and write counts, because a <see cref="WireTap"/> does not
+    /// relay a datagram that close to the UDP maximum. The Goodbye's datagram is captured and decoded.
+    /// </summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(6)]
+    public void Close_WhenTheGoodbyeDoesNotFitTheMessagesDatagram_CarriesTheGoodbyeAloneInTheNextOne(int leftover)
+    {
+        // Arrange: a Message that leaves fewer bytes than a Goodbye record needs in its datagram
+        int payloadSize = RawReactor.MaxUdpDatagramSize - DatagramHeaderBytes - RecordHeaderBytes - leftover;
+        int messageDatagramBytes = RawReactor.MaxUdpDatagramSize - leftover;
+        const int goodbyeDatagramBytes = DatagramHeaderBytes + RecordHeaderBytes;
+        DatagramSessionReactorHarness dialler = new(bindLoopback: false, maxMessageSize: payloadSize, fragmentSize: payloadSize, retentionBytes: payloadSize * 2, arenaSize: payloadSize * 4);
+        DatagramSessionReactorHarness accepter = new(maxMessageSize: payloadSize, fragmentSize: payloadSize, retentionBytes: payloadSize * 2, arenaSize: payloadSize * 4);
+        WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
+        using (dialler)
+        using (accepter)
+        using (tap)
+        {
+            PeerId peer = dialler.Reactor.Connect(tap.PublicEndPoint);
+            DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
+            int capturesBefore = tap.CountInDirection(TapDirection.DiallerToAccepter);
+            dialler.Reactor.Send(peer, DeliveryMode.ReliableOrdered, new byte[payloadSize]).Should().Be(SendOutcome.Sent);
+            PeerCounters before = dialler.Reactor.CountersOf(peer);
+
+            // Act
+            dialler.Reactor.Close(peer);
+            dialler.Reactor.Pump();
+            dialler.Reactor.Pump();
+            PumpDeadline deadline = PumpDeadline.Start();
+            tap.Pump();
+            while (tap.CountInDirection(TapDirection.DiallerToAccepter) == capturesBefore && !deadline.Expired)
+            {
+                PumpDeadline.Yield();
+                tap.Pump();
+            }
+
+            // Assert
+            PeerCounters after = dialler.Reactor.CountersOf(peer);
+            (after.SocketWrites - before.SocketWrites).Should().Be(2UL, "the Goodbye does not fit the Message's datagram, so it goes in the next one");
+            (after.BytesSent - before.BytesSent).Should().Be(
+                (ulong)(messageDatagramBytes + goodbyeDatagramBytes),
+                "the first datagram holds only the Message and the second only the Goodbye");
+
+            byte[] goodbyeDatagram = tap.PayloadsInDirection(TapDirection.DiallerToAccepter).Skip(capturesBefore).Last();
+            goodbyeDatagram.Should().HaveCount(goodbyeDatagramBytes);
+            DatagramDecodeResult decoded = DatagramDecoder.TryDecode(goodbyeDatagram);
+            decoded.IsSuccess.Should().BeTrue();
+            DecodedPacketRecord goodbye = decoded.Datagram!.Records.Should().ContainSingle().Subject;
+            goodbye.Mode.Should().Be(DeliveryMode.ReliableOrdered);
+            (goodbye.Flags & ControlBit).Should().Be(ControlBit);
+            goodbye.Length.Should().Be(0);
+            goodbye.Sequence.Should().Be(1, "the Message took ReliableOrdered sequence 0 and the Goodbye the next");
+        }
+    }
 }
