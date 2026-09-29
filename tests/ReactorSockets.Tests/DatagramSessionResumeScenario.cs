@@ -105,10 +105,13 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
             timeProvider: clock);
         LossyProxy proxy = new(accepter.Endpoint, clock);
 
-        dialler.Reactor.Connect(proxy.PublicEndPoint);
+        PeerId diallerPeer = dialler.Reactor.Connect(proxy.PublicEndPoint);
         PeerId accepterPeer = DatagramSessionReactorHarness.PumpThroughProxyUntilConnected(dialler, proxy, accepter);
-        return new DatagramSessionResumeScenario(dialler, accepter, proxy, clock, accepterPeer);
+        return new DatagramSessionResumeScenario(dialler, accepter, proxy, clock, accepterPeer) { DiallerPeer = diallerPeer };
     }
+
+    /// <summary>The dialler's <see cref="PeerId"/> for the accepter.</summary>
+    public PeerId DiallerPeer { get; private init; }
 
     /// <summary>A UDP socket on its own loopback port: the party sending a Resume, from an address that is not the Peer's.</summary>
     public static UdpClient NewResumer() => new(new IPEndPoint(IPAddress.Loopback, 0));

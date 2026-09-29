@@ -270,9 +270,9 @@ public class DatagramSessionResumeRoutingTests
     }
 
     [Fact]
-    public void Pump_MatchingResumeAgainstAPeerThatIsNotInterrupted_ChangesNothing()
+    public void Pump_MatchingResumeAgainstAPeerThatIsNotInterrupted_RaisesNoEventAndLogsResumeMatched()
     {
-        // Arrange — the right secret, but nothing was interrupted, so there is nothing to resume.
+        // Arrange — the right secret, but nothing was interrupted, so there is no Session event to raise.
         using Scenario scenario = Scenario.Establish();
         using UdpClient resumer = Scenario.NewResumer();
 
@@ -286,9 +286,9 @@ public class DatagramSessionResumeRoutingTests
 
         // Assert
         scenario.AccepterEvents.Should().BeEmpty();
-        scenario.Accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ResumeMatched || r.Id == DiagnosticId.ResumeUnmatched);
+        scenario.Accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.ResumeMatched);
+        scenario.Accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ResumeUnmatched);
     }
-
 
     private static void AssertOneMalformedDiscard(DatagramSessionReactorHarness accepter, int expectedBytesReceived)
     {

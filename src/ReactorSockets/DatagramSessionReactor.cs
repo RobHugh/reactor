@@ -875,7 +875,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 break;
 
             case DatagramControlType.Resume:
-                OnResume(source, datagram);
+                OnResume(link, source, datagram);
                 break;
 
             // The discard arm refuses. TryReadControlType has already rejected every type this
@@ -2834,7 +2834,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         if (_acceptedHandshakes.TryGetValue((source, clientNonce), out SlotHandle existing)
             && _peers.TryResolve(existing) is PeerSlot established)
         {
-            SendAccept(link, established);
+            SendAccept(link, established, source);
             return;
         }
 
@@ -2871,7 +2871,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 peer, (long)AnnouncedLingerMilliseconds, (long)slot.EffectiveLinger.TotalMilliseconds));
         }
 
-        SendAccept(link, slot);
+        SendAccept(link, slot, source);
     }
 
     /// <summary>
@@ -3021,7 +3021,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// constant time, and a mismatch logs <see cref="DiagnosticId.ResumeUnmatched"/> with <c>Value0</c> 1
     /// and leaves the Peer exactly as it was.
     /// </summary>
-    private void OnResume(Source source, ReadOnlySpan<byte> datagram)
+    private void OnResume(UdpLink link, Source source, ReadOnlySpan<byte> datagram)
     {
         Span<byte> presentedSecret = stackalloc byte[DatagramSessionProtocol.ResumeSecretLength];
         if (!ControlDatagramCodec.TryReadResume(datagram, out uint targetSessionId, presentedSecret))
@@ -3044,27 +3044,59 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        ResumeInterruptedPeer(slot);
+        ResumeInterruptedPeer(slot, link, source);
     }
 
     /// <summary>
-    /// The matched-Resume branch: takes an <see cref="PeerSlot.IsInterrupted"/> Peer out of Interrupted,
-    /// queues <see cref="SessionEventKind.PeerResumed"/> for the same <see cref="PeerId"/> it had
-    /// before, generation included, and logs <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c>
-    /// 0, since nothing is rewound on this profile: retransmission already re-sends anything
-    /// unacknowledged. Sequence state, ack state, receive windows and held Fragments are not touched. A
-    /// Peer that is not Interrupted has nothing to resume, so the Resume is ignored.
+    /// Points every later datagram to <paramref name="slot"/> at <paramref name="source"/>, the address
+    /// a matched Resume arrived from, and sends them from <paramref name="link"/>, the bound socket it
+    /// arrived on: that socket demonstrably reaches the new source, which the Peer's earlier socket may
+    /// not (a different address family, or a different bound endpoint). Only a matched Resume calls
+    /// this. The accepted-handshake map is keyed by <see cref="PeerSlot.HandshakeSource"/>, which does
+    /// not move, so a replayed handshake from the original address still finds this Peer and
+    /// <see cref="ClosePeer"/> still removes the entry it inserted.
     /// </summary>
-    private void ResumeInterruptedPeer(PeerSlot slot)
+    private static void MoveSendAddress(PeerSlot slot, UdpLink link, Source source)
     {
-        if (!slot.IsInterrupted)
+        slot.Remote = source;
+        slot.Link = link;
+    }
+
+    /// <summary>
+    /// The matched-Resume branch. For an Established Peer of any liveness it points sends at the
+    /// Resume's source (<see cref="MoveSendAddress"/>), stamps <see cref="PeerSlot.LastReceiveTimestamp"/>
+    /// so the receive-idle deadline restarts from the Resume, and logs
+    /// <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c> 0, since nothing is rewound on this
+    /// profile: retransmission already re-sends anything unacknowledged. Sequence state, ack state,
+    /// receive windows and held Fragments are not touched. If the Peer is
+    /// <see cref="PeerSlot.IsInterrupted"/> it also leaves Interrupted, queues
+    /// <see cref="SessionEventKind.PeerResumed"/> for the same <see cref="PeerId"/> it had before,
+    /// generation included, and counts it once in <see cref="PeerCounters.Resumes"/> (no other counter
+    /// changes, ADR 0013). Linger stops counting because the Peer is no longer Interrupted, and a later
+    /// interruption stamps <see cref="PeerSlot.InterruptedTimestamp"/> afresh. A Peer this end does not
+    /// consider Interrupted (the dialling end can notice an interruption first) raises no event and
+    /// leaves <see cref="PeerCounters.Resumes"/> unchanged.
+    /// </summary>
+    private void ResumeInterruptedPeer(PeerSlot slot, UdpLink link, Source source)
+    {
+        if (slot.State != HandshakeState.Established)
         {
             return;
         }
 
-        slot.IsInterrupted = false;
+        MoveSendAddress(slot, link, source);
+
+        // The Resume is hearing from the Peer. Pump reads datagrams before it runs the timers, so a
+        // stale timestamp here would have EnforceReceiveIdleTimer interrupt the Peer again on this very Pump.
+        slot.LastReceiveTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+
         PeerId peer = ToPeerId(slot.Handle);
-        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = peer });
+        if (slot.IsInterrupted)
+        {
+            slot.IsInterrupted = false;
+            slot.Counters.RecordResume();
+            _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = peer });
+        }
 
         if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
         {
@@ -3133,6 +3165,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         return new()
         {
             Remote = source,
+            HandshakeSource = source,
             Link = link,
             ClientNonce = clientNonce,
             LocalSessionId = NextSessionId(),
@@ -3164,7 +3197,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private OutstandingReliableSequences NewAckTracker(RetransmissionTimer retransmitTimer) =>
         new(_options.Reactor.TimeProvider, retransmitTimer);
 
-    private void SendAccept(UdpLink link, PeerSlot slot)
+    /// <summary>
+    /// Answers a Hello-with-cookie with the Peer's Accept, to <paramref name="destination"/>, the
+    /// address that Hello came from. Not <see cref="PeerSlot.Remote"/>, which a matched Resume may
+    /// have moved since: a replay from the original address is answered there.
+    /// </summary>
+    private void SendAccept(UdpLink link, PeerSlot slot, Source destination)
     {
         ControlDatagramCodec.WriteAccept(
             _sendBuffer,
@@ -3174,7 +3212,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             AnnouncedSendIdleIntervalMilliseconds,
             AnnouncedLingerMilliseconds,
             slot.LocalResumeSecret);
-        SendControl(link, slot.Remote);
+        SendControl(link, destination);
     }
 
     /// <summary>
@@ -3261,7 +3299,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         _peersBySessionId.Remove(slot.LocalSessionId);
         _dialsByNonce.Remove(slot.ClientNonce);
-        _acceptedHandshakes.Remove((slot.Remote, slot.ClientNonce));
+        if (slot.HandshakeSource is Source handshakeSource)
+        {
+            _acceptedHandshakes.Remove((handshakeSource, slot.ClientNonce));
+        }
         _pendingEvents.Add(new PendingEvent
         {
             Kind = SessionEventKind.PeerClosed,
@@ -3407,10 +3448,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private sealed class PeerSlot
     {
         /// <summary>The address this Peer was last known at — a claim, never an authenticator.</summary>
-        public required Source Remote { get; init; }
+        public required Source Remote { get; set; }
 
-        /// <summary>The bound socket this Peer's datagrams are sent from.</summary>
-        public required UdpLink Link { get; init; }
+        /// <summary>
+        /// The address and nonce an accepted Peer's handshake arrived from, which key
+        /// <see cref="_acceptedHandshakes"/>. Unlike <see cref="Remote"/> it never moves, so the entry
+        /// can always be found and removed when the Peer closes. <see langword="null"/> for a dialled Peer.
+        /// </summary>
+        public Source? HandshakeSource { get; init; }
+
+        /// <summary>The bound socket this Peer's datagrams are sent from. Moves with <see cref="Remote"/> on a matched Resume.</summary>
+        public required UdpLink Link { get; set; }
 
         /// <summary>The nonce that ties every datagram of this handshake to this Peer and no other.</summary>
         public required ulong ClientNonce { get; init; }
