@@ -22,7 +22,11 @@ namespace ReactorSockets;
 /// </remarks>
 public enum DisconnectReason
 {
-    /// <summary>The consumer called <c>Close</c> on this Peer.</summary>
+    /// <summary>
+    /// The consumer called <c>Close</c> on this Peer. In the datagram profile this also ends a Peer whose
+    /// own Close was in progress when the remote's Goodbye arrived: when both ends close at once, each
+    /// reports this and neither reports <see cref="PeerGoodbye"/>.
+    /// </summary>
     LocalClose = 0,
 
     /// <summary>
@@ -69,7 +73,9 @@ public enum DisconnectReason
     /// #23). Produced once whatever this end still held for it has finished flushing — immediately, if
     /// nothing was outstanding when the Goodbye arrived, or after the <c>Closing</c> Session it entered
     /// (<see cref="SessionEventKind.PeerClosing"/>) has drained. The datagram profile raises it the
-    /// same way, once the Goodbye reaches its turn in <c>ReliableOrdered</c> send order.
+    /// same way, once the Goodbye reaches its turn in <c>ReliableOrdered</c> send order, except that a Peer
+    /// whose own <c>Close</c> is already in progress acknowledges the Goodbye and ends with
+    /// <see cref="LocalClose"/> instead.
     /// </summary>
     PeerGoodbye = 5,
 

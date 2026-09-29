@@ -456,6 +456,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// A Closing Peer ends with <see cref="DisconnectReason.LocalClose"/> once the Goodbye and every
     /// <c>ReliableOrdered</c> record before it are acknowledged, or <see cref="DisconnectReason.LingerExpired"/> once its effective Linger has elapsed since this
     /// call with the Goodbye still unacknowledged. It is never Interrupted and never sends a Resume.
+    /// When both ends Close at once, each ends with <see cref="DisconnectReason.LocalClose"/>: a Closing Peer
+    /// that receives the remote's Goodbye acknowledges it and raises neither
+    /// <see cref="SessionEventKind.PeerClosing"/> nor <see cref="DisconnectReason.PeerGoodbye"/>.
     /// Accepted gap: the Goodbye is ordered only within <c>ReliableOrdered</c>, so a
     /// <c>ReliableUnordered</c> Message sent before this call can still arrive after the Goodbye, and
     /// the remote, already closed or Closing, does not deliver it.
@@ -1781,12 +1784,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
             // A Peer whose Goodbye close is due is flushed even with nothing queued: its Slot is freed
             // right after, so this datagram is the last that could carry the ack of the Goodbye.
-            if (slot.PendingSends.Count == 0 && slot.RemoteClose != RemoteCloseState.CloseDue)
+            // The same holds for a Closing Peer that just acknowledged the remote's Goodbye (AckDue): that
+            // datagram is what tells the remote its Goodbye arrived.
+            bool finalAckDue = slot.RemoteClose is RemoteCloseState.CloseDue or RemoteCloseState.AckDue;
+            if (slot.PendingSends.Count == 0 && !finalAckDue)
             {
                 continue;
             }
 
             FlushPeer(slot);
+
+            if (slot.RemoteClose == RemoteCloseState.AckDue)
+            {
+                slot.RemoteClose = RemoteCloseState.Acked;
+            }
         }
     }
 
@@ -2247,7 +2258,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         // Nothing packed sends nothing, except for a Peer whose Goodbye close is due: it sends the header
         // and ack blocks alone, the one datagram that can still tell the remote its Goodbye arrived.
-        if (packer.RecordsPacked == 0 && slot.RemoteClose != RemoteCloseState.CloseDue)
+        if (packer.RecordsPacked == 0 && slot.RemoteClose is not (RemoteCloseState.CloseDue or RemoteCloseState.AckDue))
         {
             return;
         }
@@ -2945,6 +2956,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private void OnGoodbyeDelivered(PeerSlot slot)
     {
         slot.RemoteGoodbyeSequence = null;
+
+        // Both ends closing at once: this end's own Close is already in progress, so the remote's Goodbye is
+        // acknowledged and nothing more. The reason stays LocalClose (or LingerExpired), whichever end's
+        // Goodbye reached the wire first.
+        if (slot.IsClosing)
+        {
+            slot.RemoteClose = RemoteCloseState.AckDue;
+            return;
+        }
 
         if (!HasUndeliveredMessages(slot))
         {
@@ -3675,14 +3695,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Remembers a Peer that just closed with <see cref="DisconnectReason.PeerGoodbye"/> for one effective
-    /// Linger, so a resend of the remote's Goodbye can still be acknowledged (ADR 0017, second amendment).
-    /// Writes one <see cref="ClosedSession"/> into the ring, overwriting the oldest entry when it is full,
-    /// and holds no capacity Slot.
+    /// Remembers a Peer that just closed on a Goodbye for one effective Linger, so a resend of the remote's
+    /// Goodbye can still be acknowledged (ADR 0017, second amendment). Applies when the remote may still be
+    /// waiting for the ack of its Goodbye: a close with <see cref="DisconnectReason.PeerGoodbye"/>, or a
+    /// <see cref="DisconnectReason.LocalClose"/> of a Closing Peer, whose remote Goodbye may not have been
+    /// delivered yet. Writes one <see cref="ClosedSession"/> into the ring, overwriting the oldest entry when
+    /// it is full, and holds no capacity Slot. A Closing Peer whose remote Goodbye was delivered but not yet
+    /// acknowledged on the wire (<see cref="RemoteCloseState.AckDue"/>) has that ack sent here, since the
+    /// Pump's flush no longer reaches its Slot.
     /// </summary>
     private void RememberClosedSession(PeerSlot slot, DisconnectReason reason)
     {
-        if (slot.State != HandshakeState.Established || reason != DisconnectReason.PeerGoodbye)
+        bool goodbyeClose = reason == DisconnectReason.PeerGoodbye
+            || (reason == DisconnectReason.LocalClose && slot.IsClosing);
+        if (slot.State != HandshakeState.Established || !goodbyeClose)
         {
             return;
         }
@@ -3712,6 +3738,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             Linger = slot.EffectiveLinger,
         };
         _closedSessionIndex[slot.LocalSessionId] = ring;
+
+        if (slot.RemoteClose == RemoteCloseState.AckDue)
+        {
+            SendClosedSessionAck(slot.Link, in _closedSessions[ring]);
+        }
     }
 
     /// <summary>
@@ -3962,6 +3993,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// Peer after this Pump's flush, so the flush can carry the ack of the Goodbye.
         /// </summary>
         CloseDue,
+
+        /// <summary>
+        /// The Goodbye was delivered while this end's own <see cref="Close"/> was in progress. No
+        /// <see cref="SessionEventKind.PeerClosing"/> or <see cref="DisconnectReason.PeerGoodbye"/> follows: the Peer
+        /// keeps waiting for its own Goodbye's ack or its Linger. <see cref="FlushOutboundDatagrams"/> sends the
+        /// ack of the remote Goodbye this Pump even with no records, then moves the Peer to <see cref="Acked"/>.
+        /// </summary>
+        AckDue,
+
+        /// <summary>The ack of a remote Goodbye delivered during this end's own Close has been flushed.</summary>
+        Acked,
     }
 
     /// <summary>
