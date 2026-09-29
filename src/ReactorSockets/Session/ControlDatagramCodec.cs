@@ -448,8 +448,9 @@ internal static class ControlDatagramCodec
     /// neither is used for the other's job (ADR 0009). Fails when <paramref name="resumeSecret"/> is
     /// not exactly <see cref="DatagramSessionProtocol.ResumeSecretLength"/> bytes, and, through
     /// <see cref="TryReadControlType"/>, on any datagram whose length is not the control size or whose
-    /// bytes past the 20-byte body are not zero, so a body one byte short, one byte long or empty is
-    /// never read.
+    /// bytes past the 20-byte body are not zero, so a body one byte long is never read. A body one byte
+    /// short, or empty, cannot be told apart: zero padding makes it the same bytes as a full body whose
+    /// trailing bytes are zero, and it reads as one.
     /// </summary>
     public static bool TryReadResume(ReadOnlySpan<byte> datagram, out uint targetSessionId, Span<byte> resumeSecret)
     {
