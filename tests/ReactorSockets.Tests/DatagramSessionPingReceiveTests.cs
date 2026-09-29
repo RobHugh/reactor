@@ -8,7 +8,7 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #339: the receive half of the idle-triggered reliable Ping (#53). A Ping is a zero-length,
 /// unfragmented, <c>ReliableUnordered</c> control record — the wire shape <see
-/// cref="PacketRecordCodec.TryWriteControlRecord"/> (#338) already writes and nothing yet sends. These
+/// cref="PacketRecordCodec.TryWritePingRecord"/> (#338) already writes and nothing yet sends. These
 /// tests hand-build one and inject it into an Established Session exactly as
 /// <see cref="DatagramSessionDataDatagramParseTests"/> injects any other record, then prove the four
 /// things #339's acceptance criteria ask for: it is admitted into the <c>ReliableUnordered</c> receive
@@ -296,7 +296,7 @@ public class DatagramSessionPingReceiveTests
 
     /// <summary>
     /// Builds one in-Session control record by hand — the same seven bytes
-    /// <see cref="PacketRecordCodec.TryWriteControlRecord"/> writes (#338): <c>ReliableUnordered</c>
+    /// <see cref="PacketRecordCodec.TryWritePingRecord"/> writes (#338): <c>ReliableUnordered</c>
     /// mode bits plus the control bit, a <c>u32</c> sequence, and a <c>u16</c> length of zero. Built
     /// independently of the production writer rather than by calling it, since <see
     /// cref="PacketRecordCodec"/> is internal and out of reach from this test assembly (ADR 0015).

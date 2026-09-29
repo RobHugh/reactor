@@ -314,14 +314,14 @@ internal static class PacketRecordCodec
     /// <see langword="true"/> if the record fit in <paramref name="destination"/> and was written.
     /// <see langword="false"/> if it did not fit — nothing is written in that case.
     /// </returns>
-    public static bool TryWriteControlRecord(Span<byte> destination, uint sequence, out int bytesWritten) =>
+    public static bool TryWritePingRecord(Span<byte> destination, uint sequence, out int bytesWritten) =>
         TryWriteZeroLengthControlRecord(destination, PacketRecordMode.ReliableUnordered, sequence, out bytesWritten);
 
     /// <summary>
     /// Writes one Goodbye record (issue #395) — flags byte with <see
     /// cref="DatagramSessionProtocol.ControlBit"/> set alongside the <c>ReliableOrdered</c> mode bits,
     /// <c>u32</c> sequence, then a <c>u16</c> length of zero — to the start of <paramref
-    /// name="destination"/>. The same seven-byte shape <see cref="TryWriteControlRecord"/> writes for a
+    /// name="destination"/>. The same seven-byte shape <see cref="TryWritePingRecord"/> writes for a
     /// Ping, in the other reliable Space: the Space alone tells the two apart, and
     /// <see cref="TryRead"/> accepts exactly this shape back (issue #394).
     /// </summary>

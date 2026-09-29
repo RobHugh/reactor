@@ -67,3 +67,16 @@ and that promise is true today for any exchange with traffic in both directions.
 ticket to match the one-way case would record this limitation as though it were the guarantee, which
 it is not. The test gives the ack reverse traffic to travel on, which is what a real Session has;
 what remains is a note for slice 8 rather than a change to what the mode promises.
+
+## Amendment 2026-09-29: a Peer closing on a received Goodbye sends one final ack-only datagram
+
+The decision above stands: an ack rides a data Datagram, and a Peer with nothing queued sends none.
+Slice 8.5 (issue #57) adds one exception. A Peer that closes on a received Goodbye sends one final
+datagram even with nothing else to say, carrying the header and both ack blocks and no records. Its Slot
+is freed right after that flush, so no later datagram could carry the ack of the Goodbye, and the sender
+would otherwise retransmit the Goodbye until its Linger ran out.
+
+The datagram is the Peer's ordinary flush, not a second one. `FlushPeer` sends it in the same Pump
+the Goodbye is delivered, alongside any record queued for that Peer, so ADR 0009's once-per-Peer-per-Pump
+rule holds. The Peer is closed after that flush, in the same Pump. The exception covers only a Goodbye
+close. A Peer receiving ordinary traffic still sends nothing until it has records of its own.
