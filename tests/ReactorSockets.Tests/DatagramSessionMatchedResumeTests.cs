@@ -223,6 +223,81 @@ public class DatagramSessionMatchedResumeTests
             .Which.Reason.Should().Be(DisconnectReason.LingerExpired);
     }
 
+    [Fact]
+    public void Pump_MatchingResumeAgainstAPeerThatIsNotInterrupted_RaisesNoEventLogsResumeMatchedAndLeavesResumesUnchanged()
+    {
+        // Arrange
+        using Scenario scenario = Scenario.Establish();
+        using UdpClient resumer = Scenario.NewResumer();
+        ulong resumesBefore = scenario.Accepter.Reactor.CountersOf(scenario.AccepterPeer).Resumes;
+
+        // Act
+        SendMatchingResume(scenario, resumer);
+        scenario.PumpAccepterUntil(() => scenario.Accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
+        scenario.PumpAccepter();
+
+        // Assert
+        scenario.AccepterEvents.Should().BeEmpty();
+        DiagnosticRecord record = scenario.Accepter.Sink.Received.Should()
+            .ContainSingle(r => r.Id == DiagnosticId.ResumeMatched).Which;
+        record.SubjectKind.Should().Be(DiagnosticSubjectKind.Peer);
+        record.Peer.Should().Be(scenario.AccepterPeer);
+        record.Value0.Should().Be(0);
+        scenario.Accepter.Reactor.CountersOf(scenario.AccepterPeer).Resumes.Should().Be(resumesBefore).And.Be(0);
+    }
+
+    [Fact]
+    public void Pump_MatchingResumeAgainstAPeerThatIsNotInterrupted_SendsTheNextDatagramToTheResumesSource()
+    {
+        // Arrange
+        using Scenario scenario = Scenario.Establish(linger: TimeSpan.FromSeconds(30));
+        using UdpClient resumer = Scenario.NewResumer();
+
+        // Act
+        SendMatchingResume(scenario, resumer);
+        scenario.PumpAccepterUntil(() => scenario.Accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
+        scenario.Proxy.Pump();
+        int toTheProxyBefore = scenario.Proxy.Captures.Count(c => c.Direction == RelayDirection.UpstreamToClient);
+
+        bool reachedTheResumer = false;
+        for (int i = 0; i < 2 && !reachedTheResumer; i++)
+        {
+            scenario.AdvanceAccepter(Scenario.SendIdleInterval);
+            scenario.PumpAccepter();
+            scenario.Proxy.Pump();
+            reachedTheResumer = WaitForDatagram(resumer);
+        }
+
+        // Assert
+        reachedTheResumer.Should().BeTrue();
+        scenario.Proxy.Captures.Count(c => c.Direction == RelayDirection.UpstreamToClient).Should().Be(toTheProxyBefore);
+        scenario.AccepterEvents.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Pump_MatchingResumeAgainstAPeerThatIsNotInterrupted_RestartsTheReceiveIdleDeadline()
+    {
+        // Arrange — 2s of a 3s deadline have passed when the Resume arrives, so a deadline not restarted fires 1s later.
+        using Scenario scenario = Scenario.Establish(linger: TimeSpan.FromSeconds(30));
+        using UdpClient resumer = Scenario.NewResumer();
+        scenario.Clock.Advance(TimeSpan.FromSeconds(2));
+        scenario.PumpAccepter();
+        SendMatchingResume(scenario, resumer);
+        scenario.PumpAccepterUntil(() => scenario.Accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeMatched));
+
+        // Act
+        scenario.Clock.Advance(Scenario.ReceiveIdleDeadline - TimeSpan.FromMilliseconds(1));
+        scenario.PumpAccepter();
+        int interruptionsJustShortOfTheDeadline = CountOf(scenario, SessionEventKind.PeerInterrupted);
+
+        scenario.Clock.Advance(TimeSpan.FromMilliseconds(1));
+        scenario.PumpAccepter();
+
+        // Assert
+        interruptionsJustShortOfTheDeadline.Should().Be(0);
+        CountOf(scenario, SessionEventKind.PeerInterrupted).Should().Be(1);
+    }
+
     private static int CountOf(Scenario scenario, SessionEventKind kind) => scenario.AccepterEvents.Count(e => e.Kind == kind);
 
     private static bool WaitForDatagram(UdpClient client, TimeSpan? budget = null)

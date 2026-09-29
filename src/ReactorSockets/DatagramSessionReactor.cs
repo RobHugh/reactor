@@ -3063,22 +3063,23 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// The matched-Resume branch: takes an <see cref="PeerSlot.IsInterrupted"/> Peer out of Interrupted,
-    /// queues <see cref="SessionEventKind.PeerResumed"/> for the same <see cref="PeerId"/> it had
-    /// before, generation included, counts it once in <see cref="PeerCounters.Resumes"/> (no other
-    /// counter changes, ADR 0013), and logs <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c>
-    /// 0, since nothing is rewound on this profile: retransmission already re-sends anything
-    /// unacknowledged. Sequence state, ack state, receive windows and held Fragments are not touched. A
-    /// Peer that is not Interrupted has nothing to resume, so the Resume is ignored. Also points the
-    /// Peer's sends at the Resume's source (<see cref="MoveSendAddress"/>) and stamps
-    /// <see cref="PeerSlot.LastReceiveTimestamp"/>, so the receive-idle deadline restarts from the
-    /// Resume and the Peer is not interrupted again until a full deadline of silence has passed. Linger
-    /// stops counting because the Peer is no longer Interrupted, and a later interruption stamps
-    /// <see cref="PeerSlot.InterruptedTimestamp"/> afresh.
+    /// The matched-Resume branch. For an Established Peer of any liveness it points sends at the
+    /// Resume's source (<see cref="MoveSendAddress"/>), stamps <see cref="PeerSlot.LastReceiveTimestamp"/>
+    /// so the receive-idle deadline restarts from the Resume, and logs
+    /// <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c> 0, since nothing is rewound on this
+    /// profile: retransmission already re-sends anything unacknowledged. Sequence state, ack state,
+    /// receive windows and held Fragments are not touched. If the Peer is
+    /// <see cref="PeerSlot.IsInterrupted"/> it also leaves Interrupted, queues
+    /// <see cref="SessionEventKind.PeerResumed"/> for the same <see cref="PeerId"/> it had before,
+    /// generation included, and counts it once in <see cref="PeerCounters.Resumes"/> (no other counter
+    /// changes, ADR 0013). Linger stops counting because the Peer is no longer Interrupted, and a later
+    /// interruption stamps <see cref="PeerSlot.InterruptedTimestamp"/> afresh. A Peer this end does not
+    /// consider Interrupted (the dialling end can notice an interruption first) raises no event and
+    /// leaves <see cref="PeerCounters.Resumes"/> unchanged.
     /// </summary>
     private void ResumeInterruptedPeer(PeerSlot slot, UdpLink link, Source source)
     {
-        if (!slot.IsInterrupted)
+        if (slot.State != HandshakeState.Established)
         {
             return;
         }
@@ -3088,10 +3089,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // The Resume is hearing from the Peer. Pump reads datagrams before it runs the timers, so a
         // stale timestamp here would have EnforceReceiveIdleTimer interrupt the Peer again on this very Pump.
         slot.LastReceiveTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
-        slot.IsInterrupted = false;
-        slot.Counters.RecordResume();
+
         PeerId peer = ToPeerId(slot.Handle);
-        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = peer });
+        if (slot.IsInterrupted)
+        {
+            slot.IsInterrupted = false;
+            slot.Counters.RecordResume();
+            _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = peer });
+        }
 
         if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
         {
