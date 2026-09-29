@@ -2935,8 +2935,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// discarded like any other malformed control datagram. A target that names no Peer this Reactor
     /// holds logs <see cref="DiagnosticId.ResumeUnmatched"/> against the Source with <c>Value0</c> 0
     /// (no reservation was checked) and <c>Value1</c> 6 (the Resume record type), and changes nothing:
-    /// no event is raised and no Peer is touched. The session id only routes here (ADR 0009), so a
-    /// target that does name a Peer is not yet acted on.
+    /// no event is raised and no Peer is touched. The session id only routes (ADR 0009): a target that
+    /// names a Peer must also present that Peer's <see cref="PeerSlot.LocalResumeSecret"/>, compared in
+    /// constant time, and a mismatch logs <see cref="DiagnosticId.ResumeUnmatched"/> with <c>Value0</c> 1
+    /// and leaves the Peer exactly as it was.
     /// </summary>
     private void OnResume(Source source, ReadOnlySpan<byte> datagram)
     {
@@ -2947,9 +2949,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        if (!_peersBySessionId.TryGetValue(targetSessionId, out SlotHandle handle) || _peers.TryResolve(handle) is null)
+        if (!_peersBySessionId.TryGetValue(targetSessionId, out SlotHandle handle) || _peers.TryResolve(handle) is not PeerSlot slot)
         {
             LogResumeUnmatched(source, candidatesChecked: 0);
+            return;
+        }
+
+        // Constant time, so how long the comparison takes does not say how many leading bytes of a
+        // guess were right.
+        if (!CryptographicOperations.FixedTimeEquals(presentedSecret, slot.LocalResumeSecret))
+        {
+            LogResumeUnmatched(source, candidatesChecked: 1);
         }
     }
 

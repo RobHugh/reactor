@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Net;
+using System.Net.Sockets;
 using FluentAssertions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
@@ -118,6 +119,119 @@ public class DatagramSessionResumeRoutingTests
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: ControlDatagramSize);
     }
 
+    [Fact]
+    public void Pump_WrongSecretResumeAgainstAnInterruptedPeer_LogsResumeUnmatchedWithValue0One()
+    {
+        // Arrange — the target session id is the real one, so only the secret is wrong.
+        using Scenario scenario = Scenario.Establish();
+        scenario.InterruptAccepter();
+        using UdpClient resumer = NewResumer();
+
+        // Act
+        resumer.Send(BuildResume(scenario.AccepterSessionId, WrongSecret(scenario)), scenario.Accepter.Endpoint);
+        scenario.PumpAccepterUntil(() => scenario.Accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
+
+        // Assert
+        DiagnosticRecord record = scenario.Accepter.Sink.Received.Should()
+            .ContainSingle(r => r.Id == DiagnosticId.ResumeUnmatched).Which;
+        record.SubjectKind.Should().Be(DiagnosticSubjectKind.Source);
+        record.Source.ToIPEndPoint().Should().Be((IPEndPoint)resumer.Client.LocalEndPoint!);
+        record.Level.Should().Be(DiagnosticLevel.Warn);
+        record.Value0.Should().Be(1);
+        record.Value1.Should().Be(6);
+    }
+
+    [Fact]
+    public void Pump_WrongSecretResumeAgainstAnInterruptedPeer_LeavesItInterruptedWithItsOriginalLingerExpiry()
+    {
+        // Arrange — Linger is 1s. The Resume lands 400ms after the interruption, so a timestamp that
+        // moved to the Resume would push the close out to 1400ms.
+        TimeSpan linger = TimeSpan.FromSeconds(1);
+        TimeSpan resumeArrivesAfter = TimeSpan.FromMilliseconds(400);
+        using Scenario scenario = Scenario.Establish(linger);
+        scenario.InterruptAccepter();
+        using UdpClient resumer = NewResumer();
+
+        scenario.Clock.Advance(resumeArrivesAfter);
+
+        // Act
+        resumer.Send(BuildResume(scenario.AccepterSessionId, WrongSecret(scenario)), scenario.Accepter.Endpoint);
+        scenario.PumpAccepterUntil(() => scenario.Accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
+
+        scenario.AdvanceAccepter(linger - resumeArrivesAfter - TimeSpan.FromMilliseconds(1));
+        scenario.PumpAccepter();
+        bool closedBeforeTheOriginalExpiry = scenario.AccepterEvents.Any(e => e.Kind == SessionEventKind.PeerClosed);
+
+        scenario.Clock.Advance(TimeSpan.FromMilliseconds(1));
+        scenario.PumpAccepter();
+
+        // Assert — the Resume was refused, the Peer still held one millisecond short of the original expiry, and closed on it.
+        scenario.Accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.ResumeUnmatched);
+        closedBeforeTheOriginalExpiry.Should().BeFalse();
+        scenario.AccepterEvents.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.LingerExpired);
+    }
+
+    [Fact]
+    public void Pump_WrongSecretResumeAgainstAnInterruptedPeer_RaisesNoPeerResumedAndLeavesResumesUnchanged()
+    {
+        // Arrange
+        using Scenario scenario = Scenario.Establish();
+        scenario.InterruptAccepter();
+        using UdpClient resumer = NewResumer();
+        ulong resumesBefore = scenario.Accepter.Reactor.CountersOf(scenario.AccepterPeer).Resumes;
+
+        // Act
+        resumer.Send(BuildResume(scenario.AccepterSessionId, WrongSecret(scenario)), scenario.Accepter.Endpoint);
+        scenario.PumpAccepterUntil(() => scenario.Accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
+        scenario.PumpAccepter();
+
+        // Assert
+        scenario.Accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.ResumeUnmatched);
+        scenario.AccepterEvents.Should().NotContain(e => e.Kind == SessionEventKind.PeerResumed);
+        scenario.Accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ResumeMatched);
+        scenario.Accepter.Reactor.CountersOf(scenario.AccepterPeer).Resumes.Should().Be(resumesBefore).And.Be(0);
+    }
+
+    [Fact]
+    public void Pump_WrongSecretResumeAgainstAnInterruptedPeer_LeavesItsSendAddressUnchanged()
+    {
+        // Arrange — a long Linger so the Peer stays open across the send-idle intervals below.
+        using Scenario scenario = Scenario.Establish(linger: TimeSpan.FromSeconds(30));
+        scenario.InterruptAccepter();
+        using UdpClient resumer = NewResumer();
+
+        // Act — the wrong-secret Resume, then further send-idle intervals: the Interrupted Peer keeps
+        // pinging, and where those Pings go is its send address.
+        resumer.Send(BuildResume(scenario.AccepterSessionId, WrongSecret(scenario)), scenario.Accepter.Endpoint);
+        scenario.PumpAccepterUntil(() => scenario.Accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
+
+        int pingsToTheProxyBefore = scenario.Proxy.Captures.Count(c => c.Direction == RelayDirection.UpstreamToClient);
+        for (int i = 0; i < 3; i++)
+        {
+            scenario.AdvanceAccepter(_sendIdleInterval);
+            scenario.PumpAccepter();
+            scenario.Proxy.Pump();
+        }
+
+        // Assert
+        scenario.Accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.ResumeUnmatched);
+        scenario.Proxy.Captures.Count(c => c.Direction == RelayDirection.UpstreamToClient)
+            .Should().BeGreaterThan(pingsToTheProxyBefore, "the Peer's Pings still reach the address it was established from");
+        resumer.Available.Should().Be(0, "the wrong-secret Resume's source never becomes the Peer's send address");
+    }
+
+    /// <summary>A UDP socket on its own loopback port: the party sending a Resume, from an address that is not the Peer's.</summary>
+    private static UdpClient NewResumer() => new(new IPEndPoint(IPAddress.Loopback, 0));
+
+    /// <summary>The Peer's real secret with its last byte flipped: as close as a wrong secret gets.</summary>
+    private static byte[] WrongSecret(Scenario scenario)
+    {
+        byte[] secret = [.. scenario.ResumeSecret];
+        secret[^1] ^= 0xFF;
+        return secret;
+    }
+
     /// <summary>Builds a 256-byte, zero-padded Resume by hand: header, target session id, then the secret.</summary>
     private static byte[] BuildResume(uint targetSessionId, ReadOnlySpan<byte> secret)
     {
@@ -185,16 +299,21 @@ public class DatagramSessionResumeRoutingTests
         /// <summary>The secret the accepter issued, which authorises a Resume against its Peer.</summary>
         public byte[] ResumeSecret { get; }
 
-        public static Scenario Establish()
+        /// <summary>Every event the accepter has drained so far, in order. Filled by this scenario's own pumping helpers, which drain after every Pump.</summary>
+        public List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> AccepterEvents { get; } = [];
+
+        public static Scenario Establish(TimeSpan? linger = null)
         {
             FakeTimeProvider clock = new();
             DatagramSessionReactorHarness dialler = new(
                 bindLoopback: false,
                 sendIdleInterval: _sendIdleInterval,
+                linger: linger,
                 missedHeartbeats: MissedHeartbeats,
                 timeProvider: clock);
             DatagramSessionReactorHarness accepter = new(
                 sendIdleInterval: _sendIdleInterval,
+                linger: linger,
                 missedHeartbeats: MissedHeartbeats,
                 timeProvider: clock);
             LossyProxy proxy = new(accepter.Endpoint, clock);
@@ -205,16 +324,50 @@ public class DatagramSessionResumeRoutingTests
         }
 
         /// <summary>
+        /// Advances the clock by <paramref name="interval"/> in the settle-then-advance shape
+        /// (<see cref="DatagramSessionReactorHarness.SettleThenAdvance"/>) but drains the settle Pump into
+        /// <see cref="AccepterEvents"/>, so an event raised on it is not cleared by the next Pump.
+        /// </summary>
+        public void AdvanceAccepter(TimeSpan interval)
+        {
+            Clock.Advance(interval - TimeSpan.FromMilliseconds(1));
+            PumpAccepter();
+            Clock.Advance(TimeSpan.FromMilliseconds(1));
+        }
+
+        /// <summary>Pumps the accepter once and drains that Pump into <see cref="AccepterEvents"/>.</summary>
+        public void PumpAccepter()
+        {
+            Accepter.Reactor.Pump();
+            AccepterEvents.AddRange(Accepter.DrainToList());
+        }
+
+        /// <summary>Pumps the accepter, draining after every Pump, until <paramref name="condition"/> holds or the real-time budget is spent.</summary>
+        public void PumpAccepterUntil(Func<bool> condition)
+        {
+            PumpDeadline deadline = PumpDeadline.Start();
+            while (true)
+            {
+                PumpAccepter();
+                if (condition() || deadline.Expired)
+                {
+                    return;
+                }
+
+                PumpDeadline.Yield();
+            }
+        }
+
+        /// <summary>
         /// Cuts the path and pumps the accepter past its receive-idle deadline until it has raised
         /// exactly one <see cref="SessionEventKind.PeerInterrupted"/>, draining after every Pump.
         /// </summary>
         public void InterruptAccepter()
         {
             Proxy.StopRelayingBothDirections();
-            DatagramSessionReactorHarness.SettleThenAdvance(Accepter, _receiveIdleDeadline);
-            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = Accepter.DrainToList();
-            events.AddRange(Accepter.PumpAndDrainAll(1));
-            events.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted);
+            AdvanceAccepter(_receiveIdleDeadline);
+            PumpAccepter();
+            AccepterEvents.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted);
         }
 
         public void Dispose()
