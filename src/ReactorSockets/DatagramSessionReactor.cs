@@ -870,6 +870,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 OnRefusal(source, datagram);
                 break;
 
+            case DatagramControlType.Resume:
+                OnResume(source, datagram);
+                break;
+
             // The discard arm refuses. TryReadControlType has already rejected every type this
             // profile does not process, so reaching here means a type was added to the roster without
             // a decision made here — which is discarded rather than guessed at.
@@ -2924,6 +2928,41 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         ClosePeer(slot.Handle, disconnectReason);
+    }
+
+    /// <summary>
+    /// Routes a Resume by the session id in its body. A datagram that does not read as a Resume is
+    /// discarded like any other malformed control datagram. A target that names no Peer this Reactor
+    /// holds logs <see cref="DiagnosticId.ResumeUnmatched"/> against the Source with <c>Value0</c> 0
+    /// (no reservation was checked) and <c>Value1</c> 6 (the Resume record type), and changes nothing:
+    /// no event is raised and no Peer is touched. The session id only routes here (ADR 0009), so a
+    /// target that does name a Peer is not yet acted on.
+    /// </summary>
+    private void OnResume(Source source, ReadOnlySpan<byte> datagram)
+    {
+        Span<byte> presentedSecret = stackalloc byte[DatagramSessionProtocol.ResumeSecretLength];
+        if (!ControlDatagramCodec.TryReadResume(datagram, out uint targetSessionId, presentedSecret))
+        {
+            DiscardMalformed(source, datagram.Length);
+            return;
+        }
+
+        if (!_peersBySessionId.TryGetValue(targetSessionId, out SlotHandle handle) || _peers.TryResolve(handle) is null)
+        {
+            LogResumeUnmatched(source, candidatesChecked: 0);
+        }
+    }
+
+    /// <summary>
+    /// Logs <see cref="DiagnosticId.ResumeUnmatched"/> for a Resume that was not matched onto a Peer,
+    /// with <c>Value1</c> the Resume record type (<see cref="DatagramControlType.Resume"/>).
+    /// </summary>
+    private void LogResumeUnmatched(Source source, long candidatesChecked)
+    {
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForResumeUnmatched(source, candidatesChecked, (long)DatagramControlType.Resume));
+        }
     }
 
     /// <summary>
