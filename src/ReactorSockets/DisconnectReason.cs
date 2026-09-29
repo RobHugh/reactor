@@ -68,7 +68,8 @@ public enum DisconnectReason
     /// The remote Peer sent a Goodbye: it is ending the Session on purpose rather than failing (issue
     /// #23). Produced once whatever this end still held for it has finished flushing — immediately, if
     /// nothing was outstanding when the Goodbye arrived, or after the <c>Closing</c> Session it entered
-    /// (<see cref="SessionEventKind.PeerClosing"/>) has drained.
+    /// (<see cref="SessionEventKind.PeerClosing"/>) has drained. The datagram profile raises it the
+    /// same way, once the Goodbye reaches its turn in <c>ReliableOrdered</c> send order.
     /// </summary>
     PeerGoodbye = 5,
 
@@ -91,14 +92,16 @@ public enum DisconnectReason
     /// </summary>
     /// <remarks>
     /// The datagram profile (<see cref="DatagramSessionReactor"/>, subtask 8.3, parent #55) has no
-    /// socket to lose and so no Goodbye exchange to bound either: an Interrupted datagram Peer's own
+    /// socket to lose, so an Interrupted datagram Peer's own
     /// <c>HasLingerExpired</c> reads the same <c>PeerSlot.EffectiveLinger</c> against
     /// <c>PeerSlot.InterruptedTimestamp</c> — the Pump that set
     /// <c>PeerSlot.IsInterrupted</c>, never re-stamped while it continues (issue #366) — that the
     /// stream profile's <c>HasExceededLinger</c> reads against its own equivalent timestamp, and this
     /// member is what that per-Pump pass produces once the wait runs out. Everything else this member's
     /// summary says about Linger governing the close, not the transport loss that produced the
-    /// interruption, holds identically for both profiles.
+    /// interruption, holds identically for both profiles. A datagram Peer in Closing (<see cref="DatagramSessionReactor.Close"/>)
+    /// also ends with this reason when its Goodbye is still unacknowledged once its effective Linger has
+    /// elapsed since <c>Close</c>.
     /// </remarks>
     LingerExpired = 6,
 

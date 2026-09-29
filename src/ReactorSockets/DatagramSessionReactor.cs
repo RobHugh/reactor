@@ -434,6 +434,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// is an ordinary race rather than a programmer error, and a second call on a Closing Peer queues no
     /// second Goodbye.
     /// </summary>
+    /// <remarks>
+    /// A Closing Peer ends with <see cref="DisconnectReason.LocalClose"/> once the Goodbye is acknowledged,
+    /// or <see cref="DisconnectReason.LingerExpired"/> once its effective Linger has elapsed since this
+    /// call with the Goodbye still unacknowledged. It is never Interrupted and never sends a Resume.
+    /// Accepted gap: the Goodbye is ordered only within <c>ReliableOrdered</c>, so a
+    /// <c>ReliableUnordered</c> Message sent before this call can still arrive after the Goodbye, and
+    /// the remote, already closed or Closing, does not deliver it.
+    /// </remarks>
     public void Close(PeerId peer)
     {
         EnsureUsable();
