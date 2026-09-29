@@ -117,7 +117,7 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
     {
         Clock.Advance(interval);
         Dialler.Reactor.Pump();
-        DiallerEvents.AddRange(Dialler.DrainToList());
+        DrainCapturing(Dialler, DiallerEvents, DiallerReceived);
         Proxy.Pump();
         PumpAccepter();
         Proxy.Pump();
@@ -187,18 +187,20 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
     }
 
     /// <summary>Connects a dialler to an accepter through a fresh proxy, both with <paramref name="linger"/> when given.</summary>
-    public static DatagramSessionResumeScenario Establish(TimeSpan? linger = null)
+    public static DatagramSessionResumeScenario Establish(TimeSpan? linger = null, int retentionBytes = 4096)
     {
         FakeTimeProvider clock = new();
         DatagramSessionReactorHarness dialler = new(
             bindLoopback: false,
             sendIdleInterval: SendIdleInterval,
             linger: linger,
+            retentionBytes: retentionBytes,
             missedHeartbeats: MissedHeartbeats,
             timeProvider: clock);
         DatagramSessionReactorHarness accepter = new(
             sendIdleInterval: SendIdleInterval,
             linger: linger,
+            retentionBytes: retentionBytes,
             missedHeartbeats: MissedHeartbeats,
             timeProvider: clock);
         LossyProxy proxy = new(accepter.Endpoint, clock);
@@ -249,7 +251,7 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
     public void PumpAccepter()
     {
         Accepter.Reactor.Pump();
-        AccepterEvents.AddRange(Accepter.DrainToList());
+        DrainCapturing(Accepter, AccepterEvents, AccepterReceived);
     }
 
     /// <summary>Pumps the accepter, draining after every Pump, until <paramref name="condition"/> holds or the real-time budget is spent.</summary>
@@ -286,5 +288,27 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
         Dialler.Dispose();
         Accepter.Dispose();
         Proxy.Dispose();
+    }
+
+    /// <summary>Every Message the dialler has received through <see cref="Step"/>, in delivery order, each with the number of <see cref="SessionEventKind.PeerResumed"/> events the dialler had raised before it.</summary>
+    public List<(byte[] Payload, int ResumedBefore)> DiallerReceived { get; } = [];
+
+    /// <summary>Every Message the accepter has received through this scenario's pumping helpers, in delivery order, each with the number of <see cref="SessionEventKind.PeerResumed"/> events the accepter had raised before it.</summary>
+    public List<(byte[] Payload, int ResumedBefore)> AccepterReceived { get; } = [];
+
+    private static void DrainCapturing(
+        DatagramSessionReactorHarness harness,
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events,
+        List<(byte[] Payload, int ResumedBefore)> received)
+    {
+        foreach (SessionEvent evt in harness.Reactor.Drain())
+        {
+            if (evt.Kind == SessionEventKind.MessageReceived)
+            {
+                received.Add((evt.Payload.ToArray(), events.Count(e => e.Kind == SessionEventKind.PeerResumed)));
+            }
+
+            events.Add((evt.Kind, evt.Peer, evt.Reason));
+        }
     }
 }
