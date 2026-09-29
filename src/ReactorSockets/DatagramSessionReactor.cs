@@ -403,6 +403,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
+            IsDialled = true,
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
@@ -1752,6 +1753,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
             slot.IsInterrupted = true;
             slot.InterruptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+            slot.ResumesSentSinceInterrupted = 0;
             _pendingEvents.Add(new PendingEvent
             {
                 Kind = SessionEventKind.PeerInterrupted,
@@ -1847,6 +1849,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
+            SendResumeIfDue(slot);
+
             if (_options.Reactor.TimeProvider.GetElapsedTime(slot.LastSendTimestamp) < _options.SendIdleInterval)
             {
                 continue;
@@ -1854,6 +1858,41 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
             QueuePing(slot);
         }
+    }
+
+    /// <summary>
+    /// Sends one <see cref="DatagramControlType.Resume"/> control datagram to <paramref name="slot"/>'s
+    /// address when the Peer is a dialled, <see cref="PeerSlot.IsInterrupted"/> one and no Resume has
+    /// left for it within the last <see cref="DatagramSessionOptions.SendIdleInterval"/> (issue #382,
+    /// parent #56): the first goes out on the Pump that finds the Peer Interrupted, every later one a
+    /// send-idle interval after the previous. Only the dialling end sends Resume, because the accepting
+    /// end cannot know the dialler's new address. The datagram is routed by the accepting end's own
+    /// session id (<see cref="PeerSlot.RemoteSessionId"/>) and authorised by the secret it issued
+    /// (<see cref="PeerSlot.RemoteResumeSecret"/>), ADR 0009.
+    /// </summary>
+    /// <remarks>
+    /// A Resume is deliberately not a data datagram, so it does not stamp
+    /// <see cref="PeerSlot.LastSendTimestamp"/>: Pings keep exactly their own send-idle cadence, and the
+    /// Resume cadence reads <see cref="PeerSlot.LastResumeTimestamp"/> instead.
+    /// </remarks>
+    private void SendResumeIfDue(PeerSlot slot)
+    {
+        if (!slot.IsDialled || !slot.IsInterrupted)
+        {
+            return;
+        }
+
+        long now = _options.Reactor.TimeProvider.GetTimestamp();
+        if (slot.ResumesSentSinceInterrupted > 0
+            && _options.Reactor.TimeProvider.GetElapsedTime(slot.LastResumeTimestamp, now) < _options.SendIdleInterval)
+        {
+            return;
+        }
+
+        ControlDatagramCodec.WriteResume(_sendBuffer, slot.RemoteSessionId, slot.RemoteResumeSecret);
+        SendControl(slot.Link, slot.Remote);
+        slot.LastResumeTimestamp = now;
+        slot.ResumesSentSinceInterrupted++;
     }
 
     /// <summary>
@@ -3416,6 +3455,23 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// re-stamped while the interruption continues.
         /// </summary>
         public long InterruptedTimestamp { get; set; }
+
+        /// <summary>
+        /// Whether this end dialled this Peer (<see cref="Connect"/>) rather than accepted it. Only a
+        /// dialled Peer sends Resume (issue #382): the accepting end cannot know the dialler's new address.
+        /// </summary>
+        public bool IsDialled { get; init; }
+
+        /// <summary>
+        /// How many Resume datagrams this dialled Peer has sent since it was last interrupted, reset to
+        /// zero each time <see cref="EnforceReceiveIdleTimer"/> sets <see cref="IsInterrupted"/> (issue
+        /// #382). Nonzero means at least one Resume has left, which the Resume-unanswered handling
+        /// (#383) builds on.
+        /// </summary>
+        public int ResumesSentSinceInterrupted { get; set; }
+
+        /// <summary>The <see cref="TimeProvider.GetTimestamp"/> value of this Peer's latest Resume datagram (issue #382), meaningful only while <see cref="ResumesSentSinceInterrupted"/> is nonzero.</summary>
+        public long LastResumeTimestamp { get; set; }
 
         /// <summary>
         /// This Peer's own mutable counters (ADR 0013), incremented on the hot path and read only
