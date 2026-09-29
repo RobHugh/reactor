@@ -3232,7 +3232,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// no event is raised and no Peer is touched. The session id only routes (ADR 0009): a target that
     /// names a Peer must also present that Peer's <see cref="PeerSlot.LocalResumeSecret"/>, compared in
     /// constant time, and a mismatch logs <see cref="DiagnosticId.ResumeUnmatched"/> with <c>Value0</c> 1
-    /// and leaves the Peer exactly as it was.
+    /// and leaves the Peer exactly as it was. A matching secret aimed at a Peer in Closing, either side
+    /// (<see cref="PeerSlot.IsClosing"/> or <see cref="PeerSlot.RemoteGoodbyeDelivered"/>), is refused
+    /// the same way with <c>Value0</c> 1.
     /// </summary>
     private void OnResume(UdpLink link, Source source, ReadOnlySpan<byte> datagram)
     {
@@ -3257,6 +3259,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // Constant time, so how long the comparison takes does not say how many leading bytes of a
         // guess were right.
         if (!CryptographicOperations.FixedTimeEquals(presentedSecret, slot.LocalResumeSecret))
+        {
+            LogResumeUnmatched(source, candidatesChecked: 1);
+            return;
+        }
+
+        // A Goodbye, sent (IsClosing) or received (RemoteGoodbyeDelivered), forbids a Resume: the Peer is
+        // winding down, so moving its address or resuming it would be a silent success. The secret matched,
+        // so this counts as one candidate checked, and nothing about the Peer changes.
+        if (slot.IsClosing || slot.RemoteGoodbyeDelivered)
         {
             LogResumeUnmatched(source, candidatesChecked: 1);
             return;
