@@ -447,9 +447,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// now reflect what the four per-Space receive windows have refused (issue #172);
     /// <see cref="PeerCounters.UnreliableLossPackets"/> reflects gaps either unreliable Space's window
     /// has slid past (issues #173, #176).
-    /// <see cref="PeerCounters.MessagesReceived"/> and <see cref="PeerCounters.Resumes"/> still read
-    /// zero for every Peer, since this profile has no delivery or resume machinery yet to increment
-    /// them. <see cref="PeerCounters.RetentionHighWaterBytes"/> reads the true per-Peer figure — summed
+    /// <see cref="PeerCounters.MessagesReceived"/> still reads zero for every Peer, since this profile
+    /// has no delivery machinery yet to increment it. <see cref="PeerCounters.Resumes"/> counts the
+    /// Peer's resumes: once per <see cref="SessionEventKind.PeerResumed"/> raised for it, on the
+    /// accepting end when a matching Resume moves it out of Interrupted and on the dialling end when it
+    /// hears its session again after sending a Resume, and never reset by one (ADR 0013).
+    /// <see cref="PeerCounters.RetentionHighWaterBytes"/> reads the true per-Peer figure — summed
     /// across both reliable Spaces — from <see cref="_retention"/> (subtask 6.5.6, issue #205).
     /// </summary>
     public PeerCounters CountersOf(PeerId peer)
@@ -3482,11 +3485,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// and <see cref="OnAccept"/>, therefore reject a zero announcement off the wire before a Peer
         /// ever reaches Established, and each asserts or re-asserts the resulting non-zero invariant
         /// rather than defaulting a missing value to something permissive or something that refuses. The
-        /// Datagram profile has no wire-level Resume yet (issue #52): what looks like "surviving an
-        /// interruption" here is a Session identified by its wire token rather than by address, so an
-        /// outage never tears down the <see cref="PeerSlot"/> and this field is never re-read or
-        /// re-established — it simply was never lost. A real Resume, when #52 lands, would have to
-        /// re-establish this value the same way the initial handshake does.
+        /// Datagram profile's wire-level Resume (issues #52, #56) carries no parameters: what looks like
+        /// "surviving an interruption" here is a Session identified by its wire token rather than by
+        /// address, so an outage, and the Resume that ends it, never tear down the
+        /// <see cref="PeerSlot"/>. This field is never re-read or re-established — it simply was never
+        /// lost, and a Resume only moves the send address.
         /// </summary>
         public uint RemoteMaxMessageSize { get; set; }
 
@@ -3543,7 +3546,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// </summary>
         public required int FragmentSize { get; init; }
 
-        /// <summary>The secret the remote will require before it resumes this Session. Stored, unused until Resume lands.</summary>
+        /// <summary>The secret the remote issued for resuming this Session. The dialling end sends it in each Resume (<see cref="DatagramSessionReactor.SendResumeIfDue"/>). The accepting end stores it but never reads it: it authorises a Resume against <see cref="PeerSlot.LocalResumeSecret"/>, the secret it issued.</summary>
         public byte[] RemoteResumeSecret { get; set; } = [];
 
         /// <summary>The Slot this Peer occupies, filled in once the table has admitted it.</summary>
@@ -3605,12 +3608,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// retransmission of one still unacknowledged, since <see cref="EnforceSendIdleTimer"/>
         /// deliberately does not read this flag (issue #371) — a datagram Session has no re-dial
         /// schedule, so probing the path is the only way an Interrupted end can ever be heard from
-        /// again. And this Peer's <see cref="EffectiveLinger"/>, elapsed since
+        /// again. The dialling end also sends a Resume each send-idle interval
+        /// (<see cref="SendResumeIfDue"/>, issue #382). And this Peer's <see cref="EffectiveLinger"/>, elapsed since
         /// <see cref="InterruptedTimestamp"/>, is what ends it: <c>HasLingerExpired</c> closes it with
         /// <see cref="DisconnectReason.LingerExpired"/> once that wait runs out (issue #367), mirroring
         /// <see cref="StreamSessionReactor.HasExceededLinger"/>. Leaving Interrupted through an actual
-        /// Resume is not yet implemented — the datagram profile has no wire-level Resume yet (issue
-        /// #52) — so today the only way out of Interrupted is that close.
+        /// Resume is the other way out. On the accepting end a Resume matched by session id and secret
+        /// clears the flag (<see cref="ResumeInterruptedPeer"/>). On the dialling end, hearing
+        /// its session again after it has sent a Resume clears it
+        /// (<see cref="ResumeInterruptedDialledPeerOnData"/>, issue #383). Either end then raises
+        /// <see cref="SessionEventKind.PeerResumed"/>, and a later interruption stamps
+        /// <see cref="InterruptedTimestamp"/> afresh.
         /// </remarks>
         public bool IsInterrupted { get; set; }
 

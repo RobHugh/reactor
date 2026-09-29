@@ -53,8 +53,8 @@ internal static class ControlDatagramLegality
         DatagramControlType.Refusal => new ControlDatagramShape(true, 17),
 
         // targetSessionId(4) + resumeSecret(16). The codec reads and writes it (issue #373). The
-        // Reactor does not act on it yet, so its dispatch still discards a Resume until the slice that
-        // routes it, rather than half-answering.
+        // dialling end sends it while Interrupted and the accepting end routes it by targetSessionId
+        // and authorises it by resumeSecret.
         DatagramControlType.Resume => new ControlDatagramShape(true, 20),
 
         // The discard arm refuses. An unknown control type is a protocol violation, not an extension

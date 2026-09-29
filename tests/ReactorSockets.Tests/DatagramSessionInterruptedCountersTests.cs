@@ -100,7 +100,7 @@ public class DatagramSessionInterruptedCountersTests
         // a hand-crafted-datagram instrument this fixture does not use (DatagramSessionCounterExchangeTests'
         // own remarks explain why a live two-Reactor exchange cannot drive them):
         //   - Resumes: only rises on PeerResumed, which cannot precede this Peer's first-ever
-        //     Interruption — the one this test is about.
+        //     Interruption — the one this test is about — and no Resume completes in this scenario.
         //   - OutOfWindowPackets: needs a reliable-Space sequence far enough ahead of the receive
         //     window base (33+ sequences under the harness's default window) that nothing this
         //     scenario's ordinary Sends produce; forcing it needs the hand-crafted-datagram sequence
@@ -126,8 +126,8 @@ public class DatagramSessionInterruptedCountersTests
         PeerCounters afterInterruption = dialler.Reactor.CountersOf(peer);
 
         // Assert — AC1: every counter read through CountersOf before the transition is at least what it
-        // was; PeerInterrupted resets none of them. Resumes stays at its structural zero (see the
-        // comment above) — read here too so a future reset of it would still be caught.
+        // was; PeerInterrupted resets none of them. Resumes stays at zero because no Resume happens
+        // in this scenario (see the comment above) — read here too so a reset of it would still be caught.
         afterInterruption.MessagesReceived.Should().BeGreaterThanOrEqualTo(beforeInterruption.MessagesReceived);
         afterInterruption.RetentionHighWaterBytes.Should().BeGreaterThanOrEqualTo(beforeInterruption.RetentionHighWaterBytes);
         afterInterruption.PacketsRetransmitted.Should().BeGreaterThanOrEqualTo(beforeInterruption.PacketsRetransmitted);
