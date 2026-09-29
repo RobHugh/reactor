@@ -4017,7 +4017,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// amendment), so a resent Goodbye can still be acknowledged. A fixed-size value in
     /// <see cref="_closedSessions"/>, one entry per capacity Slot, never allocated per datagram. Both ack
     /// blocks are the final <see cref="ReceiveWindowSpaces.GenerateAckBlocks"/> values, extended by
-    /// <see cref="Admit"/> as later reliable records arrive.
+    /// <see cref="AcknowledgeGoodbye"/> only when the remote's Goodbye arrives next in order.
     /// </summary>
     private struct ClosedSession
     {
