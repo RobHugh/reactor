@@ -3206,6 +3206,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         slot.State = HandshakeState.AwaitingAccept;
+        slot.HelloWithCookieSentTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
         ControlDatagramCodec.WriteHelloWithCookie(
             _sendBuffer,
             DatagramSessionProtocol.Version,
@@ -3226,6 +3227,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// which is which. The fragment size is not announced: it is each sender's own path property, and
     /// a receiver that reassembles by offset and length never needs to know it.
     /// </summary>
+    /// <remarks>
+    /// Also seeds the Peer's round-trip estimate with the time since its Hello-with-cookie was sent
+    /// (<see cref="PeerSlot.HelloWithCookieSentTimestamp"/>), so the first reliable record has a real
+    /// retransmission timeout rather than one equal to the Linger (ADR 0018). A zero-length measurement is
+    /// not sampled.
+    /// </remarks>
     private void OnAccept(Source source, ReadOnlySpan<byte> datagram)
     {
         Span<byte> remoteResumeSecret = stackalloc byte[DatagramSessionProtocol.ResumeSecretLength];
@@ -3281,6 +3288,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         long now = _options.Reactor.TimeProvider.GetTimestamp();
         slot.LastSendTimestamp = now;
         slot.LastReceiveTimestamp = now;
+
+        // Seed the round-trip estimate from Hello-with-cookie -> Accept. Unseeded, the RTO equals the
+        // Linger, so the Peer's first reliable record (a Goodbye included) could be resent only once
+        // per Linger and never inside it. The handshake resends nothing, so this leg is never ambiguous.
+        // A leg that measures zero ticks is below the clock's resolution (a frozen clock, never a real
+        // network) and says nothing about the round trip, so it leaves the estimator unseeded.
+        TimeSpan handshakeRoundTrip = _options.Reactor.TimeProvider.GetElapsedTime(slot.HelloWithCookieSentTimestamp, now);
+        if (handshakeRoundTrip > TimeSpan.Zero)
+        {
+            slot.RetransmitTimer.Estimator.Sample(handshakeRoundTrip);
+        }
 
         _dialsByNonce.Remove(clientNonce);
         _peersBySessionId[slot.LocalSessionId] = slot.Handle;
@@ -3802,6 +3820,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>The nonce that ties every datagram of this handshake to this Peer and no other.</summary>
         public required ulong ClientNonce { get; init; }
+
+        /// <summary>
+        /// <see cref="TimeProvider.GetTimestamp"/> at the moment a dialled Peer sent its
+        /// Hello-with-cookie. <see cref="OnAccept"/> measures the Accept's arrival against it to seed
+        /// <see cref="RetransmitTimer"/>'s estimator. The handshake never resends, so the request is
+        /// sent exactly once and the sample is never ambiguous under Karn's rule. Unused on an accepted Peer.
+        /// </summary>
+        public long HelloWithCookieSentTimestamp { get; set; }
 
         /// <summary>The id this Reactor assigned, which the remote stamps on datagrams sent here.</summary>
         public required uint LocalSessionId { get; init; }
