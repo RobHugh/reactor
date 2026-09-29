@@ -3050,7 +3050,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// The matched-Resume branch: takes an <see cref="PeerSlot.IsInterrupted"/> Peer out of Interrupted,
     /// queues <see cref="SessionEventKind.PeerResumed"/> for the same <see cref="PeerId"/> it had
-    /// before, generation included, and logs <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c>
+    /// before, generation included, counts it once in <see cref="PeerCounters.Resumes"/> (no other
+    /// counter changes, ADR 0013), and logs <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c>
     /// 0, since nothing is rewound on this profile: retransmission already re-sends anything
     /// unacknowledged. Sequence state, ack state, receive windows and held Fragments are not touched. A
     /// Peer that is not Interrupted has nothing to resume, so the Resume is ignored.
@@ -3063,6 +3064,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         slot.IsInterrupted = false;
+        slot.Counters.RecordResume();
         PeerId peer = ToPeerId(slot.Handle);
         _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = peer });
 
