@@ -445,6 +445,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             if (!slot.IsClosing)
             {
                 slot.IsClosing = true;
+                slot.ClosingTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
                 QueueGoodbye(slot);
             }
 
@@ -1853,7 +1854,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="PeerSlot.EffectiveLinger"/> at construction — <c>0 &gt;= EffectiveLinger</c> can only
     /// hold for an <see cref="PeerSlot.EffectiveLinger"/> that validation already refuses to admit. Runs
     /// ahead of <see cref="EnforceSendIdleTimer"/> so a Peer this pass closes is never offered a Ping
-    /// into a Slot it no longer occupies.
+    /// into a Slot it no longer occupies. Also closes a Closing Peer (<see cref="PeerSlot.IsClosing"/>)
+    /// whose Goodbye is still unacknowledged once its effective Linger has elapsed since
+    /// <see cref="PeerSlot.ClosingTimestamp"/> (issue #399).
     /// </summary>
     /// <remarks>
     /// Iterates by index over every occupied Slot exactly as <see cref="EnforceReceiveIdleTimer"/> and
@@ -1867,10 +1870,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     {
         for (int index = 0; index < _peers.Capacity; index++)
         {
-            if (_peers.OccupantAt(index) is not PeerSlot slot
-                || slot.State != HandshakeState.Established
-                || !slot.IsInterrupted
-                || !HasLingerExpired(slot))
+            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            {
+                continue;
+            }
+
+            // A Closing Peer's Linger runs from Close, not from any interruption (issue #399).
+            bool expired = slot.IsClosing
+                ? _options.Reactor.TimeProvider.GetElapsedTime(slot.ClosingTimestamp) >= slot.EffectiveLinger
+                : slot.IsInterrupted && HasLingerExpired(slot);
+            if (!expired)
             {
                 continue;
             }
@@ -3931,6 +3940,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// Linger runs out.
         /// </summary>
         public bool IsClosing { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> value when <see cref="Close"/> put this Peer in
+        /// Closing (issue #399): the instant its effective Linger begins counting down.
+        /// </summary>
+        public long ClosingTimestamp { get; set; }
 
         /// <summary>
         /// Whether this end's Goodbye has been queued in the <c>ReliableOrdered</c> Space and retained
