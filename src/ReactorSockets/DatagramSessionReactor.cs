@@ -1944,10 +1944,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        slot.IsInterrupted = false;
-        slot.Counters.RecordResume();
         PeerId peer = ToPeerId(slot.Handle);
-        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = peer });
+        LeaveInterrupted(slot, peer);
         if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
         {
             _diagnostics.Log(DiagnosticRecord.ForResumeMatched(peer, bytesRewound: 0));
@@ -3113,15 +3111,26 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         PeerId peer = ToPeerId(slot.Handle);
         if (slot.IsInterrupted)
         {
-            slot.IsInterrupted = false;
-            slot.Counters.RecordResume();
-            _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = peer });
+            LeaveInterrupted(slot, peer);
         }
 
         if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
         {
             _diagnostics.Log(DiagnosticRecord.ForResumeMatched(peer, bytesRewound: 0));
         }
+    }
+
+    /// <summary>
+    /// Takes an <see cref="PeerSlot.IsInterrupted"/> Peer out of Interrupted, the steps both ends share
+    /// (issues #380 and #383): clears the flag, counts one <see cref="PeerCounters.Resumes"/> and queues
+    /// <see cref="SessionEventKind.PeerResumed"/> for <paramref name="peer"/>, the same
+    /// <see cref="PeerId"/> it had before, generation included.
+    /// </summary>
+    private void LeaveInterrupted(PeerSlot slot, PeerId peer)
+    {
+        slot.IsInterrupted = false;
+        slot.Counters.RecordResume();
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = peer });
     }
 
     /// <summary>

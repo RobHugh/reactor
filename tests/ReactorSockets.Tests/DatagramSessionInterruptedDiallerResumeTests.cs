@@ -47,11 +47,12 @@ public class DatagramSessionInterruptedDiallerResumeTests
         fixture.StepUntilDiallerInterrupted(peer);
         int resumesAtInterruption = fixture.DiallerResumes().Count;
 
-        // Act
+        // Act — several Pumps per interval, so a dialler that sent a Resume on every Pump would send more.
         const int intervals = 5;
-        for (int i = 0; i < intervals; i++)
+        const int pumpsPerInterval = 4;
+        for (int i = 0; i < intervals * pumpsPerInterval; i++)
         {
-            fixture.Step(_sendIdleInterval, pumpAccepter: false);
+            fixture.Step(_sendIdleInterval / pumpsPerInterval, pumpAccepter: false);
         }
 
         // Assert
