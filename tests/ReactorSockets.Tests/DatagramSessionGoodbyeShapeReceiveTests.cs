@@ -40,15 +40,16 @@ public class DatagramSessionGoodbyeShapeReceiveTests
     [Fact]
     public void Pump_ReliableOrderedControlRecordOfZeroLengthArrives_IsNotMalformedAndItsSequenceIsAcked()
     {
-        // Arrange — a lone Goodbye-shaped record at sequence 0, the first sequence the ReliableOrdered
-        // window ever sees, so admitting it moves that window's cumulative base from 0 to 1.
+        // Arrange — a lone Goodbye-shaped record at sequence 1, ahead of a gap at sequence 0. It is
+        // admitted into the ReliableOrdered window and acked, but waits in send order behind the gap,
+        // so it neither closes the Peer (issue #400) nor moves the window's cumulative base.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        byte[] datagram = [.. BuildHeader(sessionId), .. BuildGoodbyeRecord(sequence: 0)];
+        byte[] datagram = [.. BuildHeader(sessionId), .. BuildGoodbyeRecord(sequence: 1)];
 
         // Act — the record arrives, then the accepter Sends a Message of its own so its next outbound
         // datagram's ack block can be read back.
@@ -69,7 +70,7 @@ public class DatagramSessionGoodbyeShapeReceiveTests
 
         DatagramDecodeResult decoded = DatagramDecoder.TryDecode(reply);
         decoded.IsSuccess.Should().BeTrue();
-        decoded.Datagram!.ReliableOrderedAck.Should().Be(new AckBlock(Base: 1, Bits: 0));
+        decoded.Datagram!.ReliableOrderedAck.Should().Be(new AckBlock(Base: 0, Bits: 1));
     }
 
     /// <summary>

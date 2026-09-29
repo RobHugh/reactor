@@ -343,6 +343,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             _admissionsThisFrame = 0;
             _capDiscardsThisFrame = 0;
             _capacityDiscardsThisFrame = 0;
+            CloseGoodbyePeersWithNothingDeferred();
             _dispatcher.Pump();
             RetryPendingFragmentDeliveries();
             ReportExpiredRetransmissions();
@@ -579,6 +580,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return SendOutcome.Closed;
         }
 
+        if (slot.RemoteGoodbyeDelivered)
+        {
+            return SendOutcome.Closed;
+        }
+
         if (slot.State != HandshakeState.Established)
         {
             return SendOutcome.NotEstablished;
@@ -757,6 +763,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             SessionEventKind.MessageReceived => SessionEvent.ForMessageReceived(
                 pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
+            SessionEventKind.PeerClosing => SessionEvent.ForPeerClosing(pending.Peer),
             _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind."),
         };
     }
@@ -2299,6 +2306,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         PeerSlot slot, PacketRecordMode mode, uint sequence, bool isFragment, bool isControl,
         ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload)
     {
+        // A Goodbye earlier in this same Datagram may have closed the Peer directly (issue #400); its
+        // Slot can already belong to no one, and nothing after the Goodbye is admitted.
+        if (_peers.TryResolve(slot.Handle) is null)
+        {
+            return;
+        }
+
         ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
         ReceiveWindowOutcome outcome = windows.Classify(mode, sequence, out int ringSlot);
 
@@ -2325,7 +2339,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 break;
         }
 
-        if (mode == PacketRecordMode.Unreliable)
+        if (slot.RemoteGoodbyeDelivered)
+        {
+            // Receiver-side Closing (issue #401): the record was still admitted above, so it is acked,
+            // but the Peer accepts no further Messages from the remote.
+        }
+        else if (mode == PacketRecordMode.Unreliable)
         {
             DeliverUnreliableRecord(slot, sequence, payload, alreadyCountedAsRefused: outcome != ReceiveWindowOutcome.Admitted);
         }
@@ -2333,10 +2352,22 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             if (isControl)
             {
-                // A Ping (#339): admitted into its Space's receive window exactly like any other
-                // record above, so the ordinary ack block covers it and a duplicate counts like any
-                // other duplicate, but it carries no payload for a consumer to receive — no delivery
-                // path is reached, so MessagesReceived does not rise.
+                // Admitted into its Space's receive window exactly like any other record above, so the
+                // ordinary ack block covers it and a duplicate counts like any other duplicate, but it
+                // carries no payload for a consumer to receive, so MessagesReceived does not rise.
+                // A ReliableUnordered one is a Ping (#339) and nothing more happens. A ReliableOrdered
+                // one is a Goodbye (#400): it takes its turn in send order like a Message would, and
+                // acts only when delivered. The lowest sequence is kept so a second, misbehaving
+                // Goodbye can never displace an earlier one.
+                if (mode == PacketRecordMode.ReliableOrdered)
+                {
+                    if (slot.RemoteGoodbyeSequence is not uint pending || SequenceNumber.IsNewerThan(pending, sequence))
+                    {
+                        slot.RemoteGoodbyeSequence = sequence;
+                    }
+
+                    DeliverAdmittedRecord(slot, mode, sequence, payload);
+                }
             }
             else if (isFragment && mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
             {
@@ -2622,9 +2653,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     {
         while (true)
         {
+            // Nothing behind a delivered Goodbye is ever delivered (issue #400).
+            if (slot.RemoteGoodbyeDelivered)
+            {
+                return;
+            }
+
+            uint releasedSequence = slot.OrderedDelivery.NextSequence;
             while (slot.OrderedDelivery.TryReleaseNext(out ReadOnlyMemory<byte> released))
             {
-                DeliverToConsumer(slot, released.Span);
+                if (DeliverOrderedRecord(slot, releasedSequence, released.Span))
+                {
+                    return;
+                }
+
+                releasedSequence = slot.OrderedDelivery.NextSequence;
             }
 
             if (!TryFlushPendingOrderedFragmentGroup(slot))
@@ -2763,8 +2806,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 return;
             }
 
-            DeliverToConsumer(slot, payload);
-            DrainOrderedDelivery(slot);
+            if (!DeliverOrderedRecord(slot, sequence, payload))
+            {
+                DrainOrderedDelivery(slot);
+            }
 
             return;
         }
@@ -2785,6 +2830,100 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         DeliverToConsumer(slot, payload);
+    }
+
+    /// <summary>
+    /// Releases one <c>ReliableOrdered</c> record that has reached its turn in send order: a Message goes
+    /// to <see cref="DeliverToConsumer"/>, and the Goodbye recorded in
+    /// <see cref="PeerSlot.RemoteGoodbyeSequence"/> goes to <see cref="OnGoodbyeDelivered"/> instead.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when the record was the Goodbye, in which case the caller must not
+    /// deliver anything further to this Peer.
+    /// </returns>
+    private bool DeliverOrderedRecord(PeerSlot slot, uint sequence, ReadOnlySpan<byte> payload)
+    {
+        if (slot.RemoteGoodbyeSequence == sequence)
+        {
+            OnGoodbyeDelivered(slot);
+            return true;
+        }
+
+        DeliverToConsumer(slot, payload);
+        return false;
+    }
+
+    /// <summary>
+    /// The remote's Goodbye has reached its turn in send order (issues #400, #401), so every Message
+    /// sent before it has been delivered. If none of them is still undelivered — see
+    /// <see cref="HasUndeliveredMessages"/> — the Peer closes at once with
+    /// <see cref="DisconnectReason.PeerGoodbye"/> and no <see cref="SessionEventKind.PeerClosing"/> is
+    /// raised. Otherwise the Peer enters receiver-side Closing: <see cref="SessionEventKind.PeerClosing"/>
+    /// is queued after those Messages, and <see cref="CloseGoodbyePeersWithNothingDeferred"/> raises
+    /// <see cref="SessionEventKind.PeerClosed"/> on a later Pump. This mirrors the stream profile's
+    /// Goodbye handling.
+    /// </summary>
+    private void OnGoodbyeDelivered(PeerSlot slot)
+    {
+        slot.RemoteGoodbyeSequence = null;
+        slot.RemoteGoodbyeDelivered = true;
+
+        if (!HasUndeliveredMessages(slot))
+        {
+            ClosePeer(slot.Handle, DisconnectReason.PeerGoodbye);
+            return;
+        }
+
+        _pendingEvents.Add(new PendingEvent
+        {
+            Kind = SessionEventKind.PeerClosing,
+            Peer = ToPeerId(slot.Handle),
+        });
+    }
+
+    /// <summary>
+    /// Whether <paramref name="slot"/>'s Peer still has Messages the consumer has not been handed:
+    /// a <see cref="SessionEventKind.MessageReceived"/> queued for it this Frame (the consumer has not
+    /// drained this Frame yet, since <see cref="Pump"/> clears undrained events at its start), or a
+    /// completed <c>ReliableUnordered</c> Fragment group deferred for lack of arena room. Deferred
+    /// <c>ReliableOrdered</c> groups are not counted: a Goodbye reaching its turn means none is ahead of it.
+    /// </summary>
+    private bool HasUndeliveredMessages(PeerSlot slot)
+    {
+        if (PendingGroupsOf(slot, PacketRecordMode.ReliableUnordered).Count > 0)
+        {
+            return true;
+        }
+
+        PeerId peer = ToPeerId(slot.Handle);
+        for (int i = 0; i < _pendingEvents.Count; i++)
+        {
+            if (_pendingEvents[i].Kind == SessionEventKind.MessageReceived && _pendingEvents[i].Peer == peer)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Closes every Peer in receiver-side Closing (<see cref="PeerSlot.RemoteGoodbyeDelivered"/>) that
+    /// has nothing deferred left, with <see cref="DisconnectReason.PeerGoodbye"/>. Run at the start of
+    /// each Pump, after the previous Frame's events are cleared, so a Peer that entered Closing this
+    /// Frame stays Closing until the consumer has been able to drain its Messages and
+    /// <see cref="SessionEventKind.PeerClosing"/>.
+    /// </summary>
+    private void CloseGoodbyePeersWithNothingDeferred()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is PeerSlot { RemoteGoodbyeDelivered: true } slot
+                && PendingGroupsOf(slot, PacketRecordMode.ReliableUnordered).Count == 0)
+            {
+                ClosePeer(slot.Handle, DisconnectReason.PeerGoodbye);
+            }
+        }
     }
 
     /// <summary>
@@ -3856,5 +3995,23 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// </summary>
         public OrderedDeliveryQueue OrderedDelivery { get; } = new();
 
+        /// <summary>
+        /// The lowest <c>ReliableOrdered</c> sequence a received Goodbye record (issue #400) has arrived
+        /// at and not yet been delivered, or <see langword="null"/> when none is waiting. The record sits
+        /// in <see cref="OrderedDelivery"/> like any other, so it acts only once every record before it
+        /// has been delivered; the ordered release path compares each released sequence against this to
+        /// tell a Goodbye from a zero-length Message, which the queue itself cannot.
+        /// </summary>
+        public uint? RemoteGoodbyeSequence { get; set; }
+
+        /// <summary>
+        /// Set once the remote's Goodbye has been delivered in order and this end has entered receiver-side
+        /// Closing (issues #400, #401): the Peer accepts no further Messages and
+        /// <see cref="DatagramSessionReactor.Send"/> answers <see cref="SendOutcome.Closed"/>. Separate from
+        /// any local-Close flag: this one records that the remote said Goodbye. Lasts at least until the
+        /// next <see cref="DatagramSessionReactor.Pump"/>, which closes the Peer with
+        /// <see cref="DisconnectReason.PeerGoodbye"/> once no deferred Message remains.
+        /// </summary>
+        public bool RemoteGoodbyeDelivered { get; set; }
     }
 }
