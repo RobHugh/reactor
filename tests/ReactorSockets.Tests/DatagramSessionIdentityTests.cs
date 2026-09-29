@@ -341,8 +341,8 @@ public class DatagramSessionIdentityTests
         using RawPeer peer = new();
         (uint assigned, PeerId established, _) = CompleteHandshake(accepter, peer, clientNonce: 19);
         accepter.Reactor.Pump(); // Ends the Frame the PeerConnected belongs to, so the drain below sees only the close.
-        accepter.Reactor.Close(established);
-        accepter.DrainToList().Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerClosed);
+        accepter.CloseImmediately(established);
+        accepter.DrainToList().Where(e => e.Kind == SessionEventKind.PeerClosed).Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerClosed);
         ulong discardsBefore = accepter.Reactor.Counters.UnknownSourceDiscards;
 
         // Act
@@ -357,19 +357,20 @@ public class DatagramSessionIdentityTests
     // ---- closing ----
 
     [Fact]
-    public void Close_AnEstablishedPeer_DrainsPeerClosedForThatPeerIdWithLocalClose()
+    public void Close_AnInterruptedPeer_DrainsPeerClosedForThatPeerIdWithLocalClose()
     {
-        // Arrange
+        // Arrange — an Established Peer's Close now starts a Goodbye (issue #397), so the immediate
+        // close this test meant is exercised on an Interrupted Peer, which keeps it.
         using DatagramSessionReactorHarness accepter = new();
         using RawPeer peer = new();
         (_, PeerId established, _) = CompleteHandshake(accepter, peer, clientNonce: 23);
         accepter.Reactor.Pump(); // Ends the Frame the PeerConnected belongs to, so the drain below sees only the close.
 
         // Act
-        accepter.Reactor.Close(established);
+        accepter.CloseImmediately(established);
 
         // Assert
-        accepter.DrainToList().Should().ContainSingle()
+        accepter.DrainToList().Where(e => e.Kind == SessionEventKind.PeerClosed).Should().ContainSingle()
             .Which.Should().BeEquivalentTo((SessionEventKind.PeerClosed, established, DisconnectReason.LocalClose));
     }
 
@@ -396,8 +397,8 @@ public class DatagramSessionIdentityTests
         using RawPeer peer = new();
         (_, PeerId established, _) = CompleteHandshake(accepter, peer, clientNonce: 29);
         accepter.Reactor.Pump(); // Ends the Frame the PeerConnected belongs to, so the drain below sees only the close.
-        accepter.Reactor.Close(established);
-        accepter.DrainToList().Should().ContainSingle();
+        accepter.CloseImmediately(established);
+        accepter.DrainToList().Where(e => e.Kind == SessionEventKind.PeerClosed).Should().ContainSingle();
 
         // Act
         Action closeAgain = () => accepter.Reactor.Close(established);
@@ -405,7 +406,7 @@ public class DatagramSessionIdentityTests
         // Assert — the Frame still holds exactly the one close: a drain is repeatable within a Frame,
         // so a second PeerClosed would show up here as a second item rather than as a fresh drain.
         closeAgain.Should().NotThrow();
-        accepter.DrainToList().Should().ContainSingle();
+        accepter.DrainToList().Where(e => e.Kind == SessionEventKind.PeerClosed).Should().ContainSingle();
     }
 
     /// <summary>

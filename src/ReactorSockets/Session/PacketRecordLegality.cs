@@ -84,8 +84,9 @@ internal static class PacketRecordLegality
 
     /// <summary>
     /// Whether a record already read as far as its mode, fragment shape, and length may legally carry
-    /// <see cref="DatagramSessionProtocol.ControlBit"/> (issue #341, following #339's Ping). Exactly one
-    /// combination qualifies — <c>ReliableUnordered</c>, unfragmented, zero length, a Ping — stated once
+    /// <see cref="DatagramSessionProtocol.ControlBit"/> (issue #341, following #339's Ping). Exactly two
+    /// combinations qualify — unfragmented, zero length, and either <c>ReliableUnordered</c> (a Ping) or
+    /// <c>ReliableOrdered</c> (a Goodbye, issue #394) — so the Space alone tells the two apart. Stated once
     /// here so <see cref="PacketRecordCodec.TryRead"/> consults this table for the control bit's
     /// legality the same way it already consults <see cref="ShapeOf"/> for a record's shape, rather than
     /// restating the three-way condition inline.
@@ -94,5 +95,5 @@ internal static class PacketRecordLegality
     /// <param name="isFragment">Whether the record carries the fragment shape.</param>
     /// <param name="length">The record's declared payload length.</param>
     public static bool IsLegalControlRecord(PacketRecordMode mode, bool isFragment, ushort length) =>
-        mode == PacketRecordMode.ReliableUnordered && !isFragment && length == 0;
+        mode is PacketRecordMode.ReliableUnordered or PacketRecordMode.ReliableOrdered && !isFragment && length == 0;
 }

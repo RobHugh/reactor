@@ -51,8 +51,10 @@ public class DatagramSessionMalformedControlRecordTests
     private const byte FragmentBit = 0b0000_0100;
     private const byte ControlBit = 0b0000_1000;
 
-    [Fact]
-    public void Pump_ControlBitSetAlongsideTheFragmentBit_DiscardsTheWholeDatagram()
+    [Theory]
+    [InlineData(ModeReliableUnordered)]
+    [InlineData(ModeReliableOrdered)]
+    public void Pump_ControlBitSetAlongsideTheFragmentBit_DiscardsTheWholeDatagram(byte modeBits)
     {
         // Arrange — the control bit is legal only on the unfragmented shape; setting it alongside the
         // fragment bit names a combination #341 refuses outright.
@@ -62,7 +64,7 @@ public class DatagramSessionMalformedControlRecordTests
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
 
         byte[] illegalRecord = BuildFragmentRecord(
-            ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [], extraFlags: ControlBit);
+            modeBits, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [], extraFlags: ControlBit);
 
         byte[] datagram = [.. BuildHeader(sessionId), .. illegalRecord];
 
@@ -74,8 +76,10 @@ public class DatagramSessionMalformedControlRecordTests
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
     }
 
-    [Fact]
-    public void Pump_ControlRecordWithANonzeroLength_DiscardsTheWholeDatagram()
+    [Theory]
+    [InlineData(ModeReliableUnordered)]
+    [InlineData(ModeReliableOrdered)]
+    public void Pump_ControlRecordWithANonzeroLength_DiscardsTheWholeDatagram(byte modeBits)
     {
         // Arrange — a Ping is always zero length; a control bit on a record carrying a payload is
         // refused rather than treated as a Ping with a payload no Ping ever has.
@@ -84,7 +88,7 @@ public class DatagramSessionMalformedControlRecordTests
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
 
-        byte[] illegalRecord = BuildRecord(ModeReliableUnordered, sequence: 0, payload: [0xAA], extraFlags: ControlBit);
+        byte[] illegalRecord = BuildRecord(modeBits, sequence: 0, payload: [0xAA], extraFlags: ControlBit);
 
         byte[] datagram = [.. BuildHeader(sessionId), .. illegalRecord];
 
@@ -99,12 +103,11 @@ public class DatagramSessionMalformedControlRecordTests
     [Theory]
     [InlineData(ModeUnreliable)]
     [InlineData(ModeUnreliableSequenced)]
-    [InlineData(ModeReliableOrdered)]
-    public void Pump_ControlBitSetInAModeOtherThanReliableUnordered_DiscardsTheWholeDatagram(byte modeBits)
+    public void Pump_ControlBitSetInAnUnreliableMode_DiscardsTheWholeDatagram(byte modeBits)
     {
-        // Arrange — a Ping is always ReliableUnordered (#53's parent restriction); the control bit
-        // under any other mode's two bits is refused, ReliableOrdered included even though it is
-        // otherwise reliable.
+        // Arrange — the control bit is legal only in the two reliable Spaces (a Ping in
+        // ReliableUnordered, a Goodbye in ReliableOrdered, #394); under either unreliable mode's two
+        // bits it is refused.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -126,7 +129,7 @@ public class DatagramSessionMalformedControlRecordTests
     public void Pump_ALegalRecordPrecedesAnIllegalControlRecord_NeitherIsDeliveredOrAcked()
     {
         // Arrange — a legal ReliableUnordered data record ahead of an illegal control record (control
-        // bit under ReliableOrdered's mode bits) in the same datagram. The whole datagram is discarded,
+        // bit under Unreliable's mode bits) in the same datagram. The whole datagram is discarded,
         // so the legal record takes no effect either: not delivered, and its sequence never advances the
         // ReliableUnordered receive window's ack base.
         using DatagramSessionReactorHarness accepter = new();
@@ -136,7 +139,7 @@ public class DatagramSessionMalformedControlRecordTests
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
         byte[] legalRecord = BuildRecord(ModeReliableUnordered, sequence: 0, payload: [0xA0]);
-        byte[] illegalRecord = BuildRecord(ModeReliableOrdered, sequence: 1, payload: [], extraFlags: ControlBit);
+        byte[] illegalRecord = BuildRecord(ModeUnreliable, sequence: 1, payload: [], extraFlags: ControlBit);
 
         byte[] datagram = [.. BuildHeader(sessionId), .. legalRecord, .. illegalRecord];
 

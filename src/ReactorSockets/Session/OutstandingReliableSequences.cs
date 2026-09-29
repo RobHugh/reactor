@@ -174,6 +174,18 @@ internal sealed class OutstandingReliableSequences
     public bool IsOutstanding(PacketRecordMode mode, uint sequence) => SpaceOf(mode).IsOutstanding(sequence);
 
     /// <summary>
+    /// Whether any sequence at or below <paramref name="sequence"/> on <paramref name="mode"/>'s reliable
+    /// Space is still outstanding, that is, sent and not yet released by an acknowledging ack block. False
+    /// once the cumulative ack has passed <paramref name="sequence"/>, or once every sequence up to it has
+    /// been released selectively.
+    /// </summary>
+    /// <param name="mode">Which reliable Space to query.</param>
+    /// <param name="sequence">The <c>u32</c> sequence number to query up to, inclusive.</param>
+    /// <returns><see langword="true"/> if any sequence at or below <paramref name="sequence"/> is still outstanding.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
+    public bool HasOutstandingAtOrBelow(PacketRecordMode mode, uint sequence) => SpaceOf(mode).HasOutstandingAtOrBelow(sequence);
+
+    /// <summary>
     /// Attempts to read <paramref name="sequence"/>'s current retransmit deadline, as a monotonic
     /// <see cref="TimeProvider.GetTimestamp"/> value, on <paramref name="mode"/>'s reliable Space. Fails
     /// when <paramref name="sequence"/> is not outstanding at all, and also fails while it is
@@ -522,6 +534,29 @@ internal sealed class OutstandingReliableSequences
         /// released by <see cref="ApplyAck"/>.
         /// </summary>
         public bool IsOutstanding(uint sequence) => TryGetSlot(sequence, out int slot) && !_released[slot];
+
+        /// <summary>
+        /// Whether any tracked sequence at or below <paramref name="sequence"/> is still outstanding, that is,
+        /// sent and not yet released. A sequence below <see cref="_oldest"/> is already released.
+        /// </summary>
+        public bool HasOutstandingAtOrBelow(uint sequence)
+        {
+            for (int offset = 0; offset < _count; offset++)
+            {
+                uint tracked = unchecked(_oldest + (uint)offset);
+                if (tracked != sequence && SequenceNumber.IsNewerThan(tracked, sequence))
+                {
+                    return false;
+                }
+
+                if (!_released[SlotFor((uint)offset)])
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         /// <summary>
         /// Attempts to read <paramref name="sequence"/>'s deadline timestamp: fails when it is not

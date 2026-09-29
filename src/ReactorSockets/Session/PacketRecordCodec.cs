@@ -64,8 +64,9 @@ internal static class PacketRecordCodec
     /// carried the fragment shape — treating it as a degenerate but legal set would let the fragment bit
     /// mean two different things for the same content. This method also judges <see
     /// cref="DatagramSessionProtocol.ControlBit"/> (issue #339): the bit is legal only on a record that
-    /// is otherwise <c>ReliableUnordered</c>, unfragmented, and zero length — a Ping — and
-    /// <paramref name="isControl"/> reports it only for that one combination. Every other combination
+    /// is otherwise unfragmented, zero length, and either <c>ReliableUnordered</c> (a Ping) or
+    /// <c>ReliableOrdered</c> (a Goodbye, issue #394) — and
+    /// <paramref name="isControl"/> reports it only for those two combinations. Every other combination
     /// carrying the bit (another mode, the fragment bit, or a nonzero length) fails the read exactly as
     /// a spare bit would, judged by <see cref="PacketRecordLegality.IsLegalControlRecord"/> (issue #341). Fails
     /// without reading past <paramref name="record"/> when: any spare bit (<see
@@ -74,7 +75,7 @@ internal static class PacketRecordCodec
     /// <see cref="PacketRecordLegality.ShapeOf"/> therefore refuses (issue #273); fewer bytes remain
     /// than the record's shape needs; <paramref name="length"/> would exceed the bytes left in the
     /// datagram after the record header; a Fragment's index and count form one of the impossible
-    /// combinations above; or the control bit is set on a record that is not a legal Ping. A malformed
+    /// combinations above; or the control bit is set on a record that is not a legal Ping or Goodbye. A malformed
     /// Fragment or a malformed control record fails exactly as a record too short for its shape does —
     /// the caller has no new failure case to handle. A caller that wants to tell the
     /// unreliable-Fragment refusal apart from the rest, to report which rule broke, asks
@@ -107,11 +108,11 @@ internal static class PacketRecordCodec
     /// record claiming either fails the read rather than being treated as a degenerate one-piece set.
     /// </param>
     /// <param name="isControl">
-    /// Whether this record is an in-Session control record — the wire shape a Ping uses (#339) — valid
-    /// only when this method returns <see langword="true"/>. <see langword="false"/> for an ordinary
-    /// Message record. Always accompanied by <c>mode == PacketRecordMode.ReliableUnordered</c>,
-    /// <c>isFragment == false</c> and <c>length == 0</c> when <see langword="true"/>: those are the only
-    /// terms <see cref="DatagramSessionProtocol.ControlBit"/> is legal under, so a record carrying the
+    /// Whether this record is an in-Session control record — the wire shape a Ping (#339) or a Goodbye
+    /// (#394) uses — valid only when this method returns <see langword="true"/>. <see langword="false"/>
+    /// for an ordinary Message record. Always accompanied by <c>mode</c> of <c>ReliableUnordered</c> or
+    /// <c>ReliableOrdered</c>, <c>isFragment == false</c> and <c>length == 0</c> when
+    /// <see langword="true"/>: those are the only terms <see cref="DatagramSessionProtocol.ControlBit"/> is legal under, so a record carrying the
     /// bit under any other terms fails the read instead of reaching here with it set.
     /// </param>
     /// <param name="bytesConsumed">
@@ -201,8 +202,8 @@ internal static class PacketRecordCodec
             fragmentCount = candidateFragmentCount;
         }
 
-        // The control bit (#339) is legal on exactly one combination — ReliableUnordered, unfragmented,
-        // zero length, a Ping — stated once in PacketRecordLegality.IsLegalControlRecord (#341) rather
+        // The control bit (#339) is legal on exactly two combinations — unfragmented, zero length, in
+        // ReliableUnordered (a Ping) or ReliableOrdered (a Goodbye, #394) — stated once in PacketRecordLegality.IsLegalControlRecord (#341) rather
         // than restated here. Every other combination carrying the bit is refused rather than treated as
         // a spare bit, since SpareBitsMask no longer covers it: another mode, the fragment bit, or a
         // nonzero length would let the bit mean something unproven, so this method fails the read
@@ -313,7 +314,40 @@ internal static class PacketRecordCodec
     /// <see langword="true"/> if the record fit in <paramref name="destination"/> and was written.
     /// <see langword="false"/> if it did not fit — nothing is written in that case.
     /// </returns>
-    public static bool TryWriteControlRecord(Span<byte> destination, uint sequence, out int bytesWritten)
+    public static bool TryWritePingRecord(Span<byte> destination, uint sequence, out int bytesWritten) =>
+        TryWriteZeroLengthControlRecord(destination, PacketRecordMode.ReliableUnordered, sequence, out bytesWritten);
+
+    /// <summary>
+    /// Writes one Goodbye record (issue #395) — flags byte with <see
+    /// cref="DatagramSessionProtocol.ControlBit"/> set alongside the <c>ReliableOrdered</c> mode bits,
+    /// <c>u32</c> sequence, then a <c>u16</c> length of zero — to the start of <paramref
+    /// name="destination"/>. The same seven-byte shape <see cref="TryWritePingRecord"/> writes for a
+    /// Ping, in the other reliable Space: the Space alone tells the two apart, and
+    /// <see cref="TryRead"/> accepts exactly this shape back (issue #394).
+    /// </summary>
+    /// <param name="destination">
+    /// The bytes to write into, positioned at the record's first byte. Never partially written: a
+    /// <paramref name="destination"/> shorter than <see cref="DatagramSessionProtocol.UnfragmentedRecordSize"/>
+    /// fails without writing anything.
+    /// </param>
+    /// <param name="sequence">The record's <c>u32</c> sequence number, drawn from the <c>ReliableOrdered</c> space.</param>
+    /// <param name="bytesWritten">
+    /// The total bytes written — always <see cref="DatagramSessionProtocol.UnfragmentedRecordSize"/>.
+    /// Valid only when this method returns <see langword="true"/>.
+    /// </param>
+    /// <returns>
+    /// <see langword="true"/> if the record fit in <paramref name="destination"/> and was written.
+    /// <see langword="false"/> if it did not fit — nothing is written in that case.
+    /// </returns>
+    public static bool TryWriteGoodbyeRecord(Span<byte> destination, uint sequence, out int bytesWritten) =>
+        TryWriteZeroLengthControlRecord(destination, PacketRecordMode.ReliableOrdered, sequence, out bytesWritten);
+
+    /// <summary>
+    /// Writes the seven-byte zero-length control shape shared by a Ping and a Goodbye, differing only in
+    /// the <paramref name="mode"/> bits beside <see cref="DatagramSessionProtocol.ControlBit"/>. Writes
+    /// nothing and returns <see langword="false"/> when <paramref name="destination"/> is too short.
+    /// </summary>
+    private static bool TryWriteZeroLengthControlRecord(Span<byte> destination, PacketRecordMode mode, uint sequence, out int bytesWritten)
     {
         bytesWritten = default;
 
@@ -322,7 +356,7 @@ internal static class PacketRecordCodec
             return false;
         }
 
-        destination[0] = (byte)((byte)PacketRecordMode.ReliableUnordered | DatagramSessionProtocol.ControlBit);
+        destination[0] = (byte)((byte)mode | DatagramSessionProtocol.ControlBit);
         BinaryPrimitives.WriteUInt32BigEndian(destination[DatagramSessionProtocol.RecordSequenceOffset..], sequence);
         BinaryPrimitives.WriteUInt16BigEndian(destination[DatagramSessionProtocol.RecordLengthOffset..], 0);
 

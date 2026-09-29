@@ -144,6 +144,21 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
     }
 
     /// <summary>
+    /// Ends <paramref name="peer"/>'s Session at once with <see cref="DisconnectReason.LocalClose"/>; the
+    /// Frame then holds the <see cref="SessionEventKind.PeerInterrupted"/> the wait caused as well as the
+    /// <see cref="SessionEventKind.PeerClosed"/>. <c>Close</c> on an
+    /// Established Peer now starts a Goodbye instead of closing (issue #397), so a test that only needs the
+    /// Peer gone (a freed Slot, a stale <see cref="PeerId"/>) lets the receive-idle deadline pass first: an
+    /// Interrupted Peer keeps the immediate <c>Close</c>.
+    /// </summary>
+    public void CloseImmediately(PeerId peer)
+    {
+        TimeProvider.Advance(Options.SendIdleInterval * Options.ResolvedMissedHeartbeats);
+        Reactor.Pump();
+        Reactor.Close(peer);
+    }
+
+    /// <summary>
     /// Pumps exactly <paramref name="pumps"/> times, accumulating everything drained. For asserting
     /// that something does <em>not</em> happen: a fixed count of Pumps bounds syscalls, not time, so
     /// it is not a way to wait for something to arrive — see <see cref="PumpDeadline"/> and use

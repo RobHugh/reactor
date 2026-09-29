@@ -136,7 +136,7 @@ public class DatagramSessionRetentionHighWaterTests
         PeerId first = harness.Reactor.Connect(remote.Endpoint);
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, new byte[40]);
-        harness.Reactor.Close(first);
+        harness.CloseImmediately(first);
         harness.PumpAndDrainAll(1);
 
         // Act
@@ -159,7 +159,7 @@ public class DatagramSessionRetentionHighWaterTests
         PeerId first = harness.Reactor.Connect(remote.Endpoint);
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, new byte[400]);
-        harness.Reactor.Close(first);
+        harness.CloseImmediately(first);
         harness.PumpAndDrainAll(1);
 
         // Act
@@ -181,7 +181,7 @@ public class DatagramSessionRetentionHighWaterTests
         PeerId first = harness.Reactor.Connect(remote.Endpoint);
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);
         harness.Reactor.Send(first, DeliveryMode.ReliableOrdered, new byte[400]);
-        harness.Reactor.Close(first);
+        harness.CloseImmediately(first);
         harness.PumpAndDrainAll(1);
 
         // Act

@@ -172,10 +172,11 @@ internal static class DatagramSessionProtocol
     /// The bit marking a packet record as in-Session control rather than a Message (ADR 0009):
     /// "in-Session control is an ordinary record with a control bit". Its first consumer is the
     /// idle-triggered reliable Ping (#53), a seven-byte <c>ReliableUnordered</c> record with this bit
-    /// set and zero payload. The lowest of the five spare bits, chosen only because the other four
-    /// remain free for whatever comes after Ping. The packer writes it (issue #338), and
-    /// <see cref="PacketRecordCodec.TryRead"/> now accepts it on read (issue #339) for exactly one
-    /// combination — <c>ReliableUnordered</c>, unfragmented, zero length — refusing every other
+    /// set and zero payload, and the Goodbye, the same shape in <c>ReliableOrdered</c>. The lowest of
+    /// the five spare bits, chosen only because the other four remain free for whatever comes after. The packer writes it (issue #338), and
+    /// <see cref="PacketRecordCodec.TryRead"/> accepts it on read (issues #339, #394) for exactly two
+    /// combinations, both unfragmented and zero length: <c>ReliableUnordered</c> (a Ping) and
+    /// <c>ReliableOrdered</c> (a Goodbye). It refuses every other
     /// combination (another mode, the fragment bit, or a nonzero length) as malformed, the same as any
     /// other protocol violation (issue #341). No longer part of <see cref="SpareBitsMask"/>, since it
     /// is no longer merely spare.

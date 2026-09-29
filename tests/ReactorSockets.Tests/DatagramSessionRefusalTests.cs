@@ -490,7 +490,7 @@ public class DatagramSessionRefusalTests
         ParseRefusal(refusalReply).Reason.Should().Be(RefusalReasonCapacity);
 
         // Act — close the first Session, freeing its Slot, then retry the same peer.
-        accepter.Reactor.Close(peerAId);
+        accepter.CloseImmediately(peerAId);
         accepter.Reactor.Pump();
         accepter.DrainToList();
 

@@ -67,3 +67,26 @@ and that promise is true today for any exchange with traffic in both directions.
 ticket to match the one-way case would record this limitation as though it were the guarantee, which
 it is not. The test gives the ack reverse traffic to travel on, which is what a real Session has;
 what remains is a note for slice 8 rather than a change to what the mode promises.
+
+## Amendment 2026-09-29: a Peer closing on a received Goodbye sends one final ack-only datagram
+
+The decision above stands: an ack rides a data Datagram, and a Peer with nothing queued sends none.
+Slice 8.5 (issue #57) adds one exception. A Peer that closes on a received Goodbye sends one final
+datagram even with nothing else to say, carrying the header and both ack blocks and no records. Its Slot
+is freed right after that flush, so no later datagram could carry the ack of the Goodbye, and the sender
+would otherwise retransmit the Goodbye until its Linger ran out.
+
+The datagram is the Peer's ordinary flush, not a second one. `FlushPeer` sends it in the same Pump
+the Goodbye is delivered, alongside any record queued for that Peer, so ADR 0009's once-per-Peer-per-Pump
+rule holds. The Peer is closed after that flush, in the same Pump. The exception covers only a Goodbye
+close. A Peer receiving ordinary traffic still sends nothing until it has records of its own.
+
+## Amendment 2026-09-29 (second): a closed Session re-acks a resent Goodbye
+
+The final ack-only datagram above can itself be lost. The sender then resends its Goodbye to a Session id the receiver has freed, which is discarded as unknown, and the sender ends `LingerExpired` although the remote closed cleanly. To cover this, a Peer that closes with `PeerGoodbye` leaves a closed-Session record for one effective Linger. It holds the local session id, the remote endpoint, the remote's session id, both reliable ack blocks and a close timestamp. It holds no capacity Slot.
+
+A well-formed data datagram naming that id, from that same remote endpoint, inside the Linger, and carrying at least one `ReliableOrdered` record, is answered with one header-only datagram (20 bytes, never larger than the datagram that triggered it) carrying the stored ack blocks. The stored blocks acknowledge exactly one thing beyond what the Peer had received: the remote's Goodbye, when it is the next `ReliableOrdered` sequence. A Message is never acknowledged, because nothing is delivered after the close, so its sender ends `LingerExpired` honestly. No event is raised, no Slot is taken, no Resume is honoured (a Resume still gets `ResumeUnmatched`) and no per-Peer counter moves. The `ReliableOrdered` condition stops two closed ends answering each other's replies.
+
+Records live in a ring of Capacity entries and are purged lazily on lookup. When the ring is full the oldest record is overwritten, so more than Capacity Goodbye closes inside one Linger can lose the oldest re-ack. That sender falls back to `LingerExpired`, as before this amendment. Nothing is allocated per datagram.
+
+The same record covers a Peer that closes with `LocalClose` after its own Close, because the remote's Goodbye may not have reached it yet or its ack may have been lost (both ends closing at once). Such a Peer that has delivered the remote's Goodbye during its own Close sends the ack of it as a header-only final flush, like the `CloseDue` case, and sends it at once when it closes in the same Pump. The Peer does not raise `PeerClosing` or `PeerGoodbye`: an end whose own Close is in progress reports `LocalClose` or `LingerExpired`.
