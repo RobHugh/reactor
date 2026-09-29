@@ -52,6 +52,85 @@ public class DatagramSessionGoodbyeReceiveTests
         events[0].Reason.Should().Be(DisconnectReason.PeerGoodbye);
     }
 
+    [Fact]
+    public void Pump_MessageThenGoodbye_CountsOnlyTheMessageAsReceived()
+    {
+        // Arrange
+        using Scenario scenario = new();
+
+        // Act
+        scenario.Inject(BuildMessageRecord(0, [0xA0]), BuildGoodbyeRecord(1));
+
+        // Assert — the Peer is still open (Closing), so its counters are readable.
+        scenario.Accepter.Reactor.CountersOf(scenario.Peer).MessagesReceived.Should().Be(1);
+    }
+
+    [Fact]
+    public void Pump_MessagesThenGoodbyeInOneDatagram_RaisesMessagesThenPeerClosingThenPeerClosedOnALaterPump()
+    {
+        // Arrange
+        using Scenario scenario = new();
+
+        // Act
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> first = scenario.Inject(
+            BuildMessageRecord(0, [0xA0]), BuildMessageRecord(1, [0xA1]), BuildGoodbyeRecord(2));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> second = scenario.Accepter.PumpAndDrainAll(1);
+
+        // Assert
+        first.Select(e => e.Kind).Should().Equal(
+            SessionEventKind.MessageReceived, SessionEventKind.MessageReceived, SessionEventKind.PeerClosing);
+        second.Select(e => e.Kind).Should().Equal(SessionEventKind.PeerClosed);
+        second[0].Reason.Should().Be(DisconnectReason.PeerGoodbye);
+    }
+
+    [Fact]
+    public void Send_PeerInReceiverSideClosing_ReturnsClosed()
+    {
+        // Arrange
+        using Scenario scenario = new();
+        scenario.Inject(BuildMessageRecord(0, [0xA0]), BuildGoodbyeRecord(1));
+
+        // Act
+        SendOutcome outcome = scenario.Accepter.Reactor.Send(scenario.Peer, DeliveryMode.ReliableOrdered, [0x01]);
+
+        // Assert
+        outcome.Should().Be(SendOutcome.Closed);
+    }
+
+    [Fact]
+    public void Pump_MessageAfterGoodbyeInTheSameDatagram_IsNotDelivered()
+    {
+        // Arrange
+        using Scenario scenario = new();
+
+        // Act
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = scenario.Inject(
+            BuildMessageRecord(0, [0xA0]), BuildGoodbyeRecord(1), BuildMessageRecord(2, [0xA2]));
+
+        // Assert
+        events.Select(e => e.Kind).Should().Equal(SessionEventKind.MessageReceived, SessionEventKind.PeerClosing);
+        scenario.Accepter.Reactor.CountersOf(scenario.Peer).MessagesReceived.Should().Be(1);
+    }
+
+    [Fact]
+    public void Pump_GoodbyeArrivesBeforeAnEarlierMessage_ActsOnlyAfterThatMessageIsDelivered()
+    {
+        // Arrange
+        using Scenario scenario = new();
+
+        // Act — the Goodbye (sequence 1) first, then the Message (sequence 0) it must wait behind.
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> early = scenario.Inject(BuildGoodbyeRecord(1));
+        SendOutcome whileWaiting = scenario.Accepter.Reactor.Send(scenario.Peer, DeliveryMode.ReliableOrdered, [0x01]);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> late = scenario.Inject(BuildMessageRecord(0, [0xA0]));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> final = scenario.Accepter.PumpAndDrainAll(1);
+
+        // Assert
+        early.Should().BeEmpty();
+        whileWaiting.Should().Be(SendOutcome.Sent);
+        late.Select(e => e.Kind).Should().Equal(SessionEventKind.MessageReceived, SessionEventKind.PeerClosing);
+        final.Select(e => e.Kind).Should().Equal(SessionEventKind.PeerClosed);
+    }
+
     /// <summary>An accepter with one established Peer, and a bare client to inject hand-built datagrams from.</summary>
     private sealed class Scenario : IDisposable
     {
@@ -209,6 +288,17 @@ public class DatagramSessionGoodbyeReceiveTests
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
         offset += 8;
         return BuildControlDatagram(HelloWithCookieType, body);
+    }
+
+    /// <summary>Builds one unfragmented <c>ReliableOrdered</c> Message record by hand.</summary>
+    private static byte[] BuildMessageRecord(uint sequence, byte[] payload)
+    {
+        byte[] record = new byte[UnfragmentedRecordSize + payload.Length];
+        record[0] = ModeReliableOrdered;
+        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(1, 4), sequence);
+        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(5, 2), (ushort)payload.Length);
+        payload.CopyTo(record.AsSpan(UnfragmentedRecordSize));
+        return record;
     }
 
     /// <summary>Builds a 20-byte live-Session datagram header naming <paramref name="session"/> with both ack blocks zeroed.</summary>
