@@ -3749,11 +3749,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// Answers a data datagram naming a recently closed Session with one header-only datagram carrying the
     /// stored ack blocks, and reports whether it did (ADR 0017, second amendment). Declines, so the caller
     /// discards as for any unknown session, unless the id has a live record inside its Linger, the source is
-    /// the stored remote endpoint, the datagram is well-formed, and it carries at least one reliable
+    /// the stored remote endpoint, the datagram is well-formed, and it carries at least one ReliableOrdered
     /// record. The last condition stops two closed ends answering each other's replies. The reply is the
     /// 20-byte header alone, never larger than the datagram that triggered it, and raises no event, takes no
-    /// Slot and touches no per-Peer counter. Every reliable record in the datagram is first admitted into
-    /// the stored blocks, so a Goodbye the closed end never received is acknowledged too.
+    /// Slot and touches no per-Peer counter. The stored blocks acknowledge exactly one thing beyond what the
+    /// Peer had received: the remote's Goodbye, when it is the next <c>ReliableOrdered</c> sequence
+    /// (<see cref="ClosedSession.AcknowledgeGoodbye"/>). A Message is never acknowledged, since nothing is
+    /// delivered after the close, so its sender ends <see cref="DisconnectReason.LingerExpired"/> honestly.
     /// </summary>
     private bool TryReAckClosedSession(UdpLink link, Source source, uint session, ReadOnlySpan<byte> datagram)
     {
@@ -3785,7 +3787,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 return false;
             }
 
-            carriesReliableRecord |= IsReliable(mode);
+            carriesReliableRecord |= mode == PacketRecordMode.ReliableOrdered;
             remainder = remainder[bytesConsumed..];
         }
 
@@ -3797,8 +3799,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         remainder = body;
         while (remainder.Length > 0)
         {
-            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out _, out _, out _, out _, out _, out int bytesConsumed);
-            closed.Admit(mode, sequence);
+            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out _, out _, out _, out _, out bool isControl, out int bytesConsumed);
+            if (mode == PacketRecordMode.ReliableOrdered && isControl)
+            {
+                closed.AcknowledgeGoodbye(sequence);
+            }
+
             remainder = remainder[bytesConsumed..];
         }
 
@@ -4039,43 +4045,28 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         public TimeSpan Linger;
 
         /// <summary>
-        /// Records <paramref name="sequence"/> as received on <paramref name="mode"/>'s reliable Space, using
-        /// the same base-plus-32-bits shape as <see cref="ReceiveWindow.DescribeAsAckBlock"/>: the base is the
-        /// first sequence not yet received, bit <c>n</c> says <c>base + n + 1</c> was. A sequence already
-        /// below the base, or more than 32 above it, changes nothing. Unreliable modes are ignored.
+        /// Acknowledges the remote's Goodbye at <paramref name="sequence"/>, the only thing this record may
+        /// acknowledge beyond its stored state: nothing is delivered once the Session is closed, so a Message
+        /// must never be acked. It counts only when it is exactly the next <c>ReliableOrdered</c> sequence
+        /// (<see cref="ReliableOrderedBase"/>), meaning every ordered record before it was delivered and the
+        /// ack truthfully says its Goodbye reached its turn. A Goodbye behind a hole, or one already below the
+        /// base, changes nothing. Uses the base-plus-32-bits shape of <see cref="ReceiveWindow.DescribeAsAckBlock"/>.
         /// </summary>
-        public void Admit(PacketRecordMode mode, uint sequence)
+        public void AcknowledgeGoodbye(uint sequence)
         {
-            switch (mode)
+            if (sequence != ReliableOrderedBase)
             {
-                case PacketRecordMode.ReliableOrdered:
-                    Admit(ref ReliableOrderedBase, ref ReliableOrderedBits, sequence);
-                    break;
+                return;
+            }
 
-                case PacketRecordMode.ReliableUnordered:
-                    Admit(ref ReliableUnorderedBase, ref ReliableUnorderedBits, sequence);
-                    break;
-            }
-        }
-
-        private static void Admit(ref uint blockBase, ref uint bits, uint sequence)
-        {
-            uint offset = unchecked(sequence - blockBase);
-            if (offset == 0)
+            bool nextAlreadyReceived;
+            do
             {
-                bool nextAlreadyReceived;
-                do
-                {
-                    blockBase = unchecked(blockBase + 1);
-                    nextAlreadyReceived = (bits & 1) != 0;
-                    bits >>= 1;
-                }
-                while (nextAlreadyReceived);
+                ReliableOrderedBase = unchecked(ReliableOrderedBase + 1);
+                nextAlreadyReceived = (ReliableOrderedBits & 1) != 0;
+                ReliableOrderedBits >>= 1;
             }
-            else if (offset <= 32)
-            {
-                bits |= 1u << (int)(offset - 1);
-            }
+            while (nextAlreadyReceived);
         }
     }
 

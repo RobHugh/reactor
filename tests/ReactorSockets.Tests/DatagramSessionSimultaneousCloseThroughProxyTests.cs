@@ -160,6 +160,52 @@ public class DatagramSessionSimultaneousCloseThroughProxyTests
     }
 
     [Fact]
+    public void Pump_ClosedBReceivesResentMessageBehindWhichAsGoodbyeSits_NeverAcksTheMessageAndAEndsLingerExpired()
+    {
+        // Arrange — A's Message is dropped, then A's Goodbye is held while B closes on its own Goodbye's ack.
+        using Rig rig = new();
+        rig.A.Reactor.Send(rig.PeerA, DeliveryMode.ReliableOrdered, [7]).Should().Be(SendOutcome.Sent);
+        rig.Proxy.DropNext(RelayDirection.ClientToUpstream);
+        rig.PumpA();
+        rig.Proxy.Pump();
+        rig.A.Reactor.Close(rig.PeerA);
+        rig.Proxy.DelayNext(RelayDirection.ClientToUpstream, TimeSpan.FromMilliseconds(50));
+        rig.PumpA();
+        rig.Proxy.Pump();
+        rig.B.Reactor.Close(rig.PeerB);
+        rig.PumpB();
+        rig.Proxy.Pump();
+        rig.PumpA();
+        rig.Proxy.Pump();
+        rig.PumpB();
+        rig.EventsB.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.LocalClose);
+        ulong retransmittedAtStart = rig.A.Reactor.CountersOf(rig.PeerA).PacketsRetransmitted;
+
+        // Act — A resends the Message and the Goodbye to B's closed Session until its own Linger runs out.
+        TimeSpan elapsed = TimeSpan.Zero;
+        ulong retransmittedLast = retransmittedAtStart;
+        rig.A.TimeProvider.Advance(TimeSpan.FromMilliseconds(60));
+        while (elapsed < _linger * 2 && !rig.EventsA.Any(e => e.Kind == SessionEventKind.PeerClosed))
+        {
+            rig.A.TimeProvider.Advance(_step);
+            elapsed += _step;
+            rig.Round();
+            if (!rig.EventsA.Any(e => e.Kind == SessionEventKind.PeerClosed))
+            {
+                retransmittedLast = rig.A.Reactor.CountersOf(rig.PeerA).PacketsRetransmitted;
+            }
+        }
+
+        // Assert
+        retransmittedLast.Should().BeGreaterThan(retransmittedAtStart, "the Message was never acknowledged, so A kept resending it");
+        rig.EventsA.Should().ContainSingle().Which.Should().Match<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)>(
+            e => e.Kind == SessionEventKind.PeerClosed && e.Reason == DisconnectReason.LingerExpired,
+            "the Message was never delivered, so A must not report a clean close");
+        rig.EventsB.Should().ContainSingle().Which.Reason.Should().Be(DisconnectReason.LocalClose);
+    }
+
+    [Fact]
     public void Pump_BClosedOnItsOwnAckAndTheReAckOfAsGoodbyeIsDropped_BothEndsStillReportLocalCloseInsideLinger()
     {
         // Arrange
