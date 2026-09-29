@@ -31,7 +31,15 @@ public class DatagramSessionGoodbyeOrderingThroughProxyTests
     private const int WideReceiveWindow = 16;
     private const byte ControlBit = 0b0000_1000;
 
-    private static readonly TimeSpan _pastTheRetransmitDeadline = TimeSpan.FromSeconds(3);
+    /// <summary>
+    /// Moves Close off the first Message's send time, so the sender's Linger expiry (Close plus Linger)
+    /// falls after the first Message's retransmit deadline (send plus RTO). While no round trip has been
+    /// sampled the RTO is the Linger itself, which is the harness default of one second.
+    /// </summary>
+    private static readonly TimeSpan _closeAfterFirstSend = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>Past the retransmit deadline (one second after the first send) and short of the Linger expiry (one second after Close).</summary>
+    private static readonly TimeSpan _pastTheRetransmitDeadline = TimeSpan.FromMilliseconds(950);
 
     /// <summary>One receiver-side Event in the order it was drained.</summary>
     private readonly record struct Observed(SessionEventKind Kind, DisconnectReason Reason, byte[] Payload);
@@ -84,6 +92,7 @@ public class DatagramSessionGoodbyeOrderingThroughProxyTests
             PumpAndCollect(sender, proxy, receiver, observed);
         }
 
+        sender.TimeProvider.Advance(_closeAfterFirstSend);
         sender.Reactor.Close(peer);
         PumpDeadline deadline = PumpDeadline.Start();
         while (!deadline.Expired && !proxy.Forwarded.Any(f => f.Direction == RelayDirection.ClientToUpstream && CarriesAGoodbye(f.Payload)))
