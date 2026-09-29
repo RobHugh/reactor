@@ -19,7 +19,7 @@ public class DatagramSessionInterruptedMessagesTests
     public void Pump_ReliableOrderedSentByBothEndsWhileInterrupted_ArriveOnceInSendOrderAfterTheResume()
     {
         // Arrange
-        using Scenario scenario = Scenario.Establish(Scenario.ResumableLinger, RetentionBytes);
+        using Scenario scenario = Scenario.Establish(Scenario.ResumableLinger, retentionBytes: RetentionBytes);
         scenario.InterruptBothEnds();
 
         // Act
@@ -40,7 +40,7 @@ public class DatagramSessionInterruptedMessagesTests
     public void Pump_ReliableUnorderedSentByBothEndsWhileInterrupted_ArriveOnceEachAfterTheResume()
     {
         // Arrange
-        using Scenario scenario = Scenario.Establish(Scenario.ResumableLinger, RetentionBytes);
+        using Scenario scenario = Scenario.Establish(Scenario.ResumableLinger, retentionBytes: RetentionBytes);
         scenario.InterruptBothEnds();
 
         // Act

@@ -90,6 +90,9 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
     /// <summary>Every event the accepter has drained so far, in order. Filled by this scenario's own pumping helpers, which drain after every Pump.</summary>
     public List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> AccepterEvents { get; } = [];
 
+    /// <summary>A copy of every <see cref="SessionEventKind.MessageReceived"/> payload the accepter has drained so far, in order: the payloads of <see cref="AccepterReceived"/>.</summary>
+    public IReadOnlyList<byte[]> AccepterPayloads => [.. AccepterReceived.Select(r => r.Payload)];
+
     /// <summary>Every event the dialler has drained through <see cref="Step"/> so far, in order. The Connect-time events are not in it.</summary>
     public List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> DiallerEvents { get; } = [];
 
@@ -186,21 +189,37 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
         throw new InvalidOperationException($"Both ends did not raise {kind} within {MaxSteps} steps.");
     }
 
-    /// <summary>Connects a dialler to an accepter through a fresh proxy, both with <paramref name="linger"/> when given.</summary>
-    public static DatagramSessionResumeScenario Establish(TimeSpan? linger = null, int retentionBytes = 4096)
+    /// <summary>
+    /// Connects a dialler to an accepter through a fresh proxy, both with <paramref name="linger"/> when given.
+    /// The size options apply to both ends and default to the harness defaults, except <paramref name="arenaSize"/>
+    /// and <paramref name="receiveWindowFragments"/>, which size the accepter's receive side only.
+    /// </summary>
+    public static DatagramSessionResumeScenario Establish(
+        TimeSpan? linger = null,
+        int maxMessageSize = 4096,
+        int retentionBytes = 4096,
+        int? fragmentSize = null,
+        int? arenaSize = null,
+        int? receiveWindowFragments = null)
     {
         FakeTimeProvider clock = new();
         DatagramSessionReactorHarness dialler = new(
+            maxMessageSize: maxMessageSize,
+            retentionBytes: retentionBytes,
+            fragmentSize: fragmentSize,
             bindLoopback: false,
             sendIdleInterval: SendIdleInterval,
             linger: linger,
-            retentionBytes: retentionBytes,
             missedHeartbeats: MissedHeartbeats,
             timeProvider: clock);
         DatagramSessionReactorHarness accepter = new(
+            maxMessageSize: maxMessageSize,
+            retentionBytes: retentionBytes,
+            fragmentSize: fragmentSize,
+            arenaSize: arenaSize,
+            receiveWindowFragments: receiveWindowFragments,
             sendIdleInterval: SendIdleInterval,
             linger: linger,
-            retentionBytes: retentionBytes,
             missedHeartbeats: MissedHeartbeats,
             timeProvider: clock);
         LossyProxy proxy = new(accepter.Endpoint, clock);
