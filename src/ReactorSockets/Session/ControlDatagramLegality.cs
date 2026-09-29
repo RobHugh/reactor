@@ -52,9 +52,10 @@ internal static class ControlDatagramLegality
         // splitting into two datagram types over four bytes.
         DatagramControlType.Refusal => new ControlDatagramShape(true, 17),
 
-        // On the roster because the wire format defines it; not implemented until the slice that
-        // implements Resume, and therefore discarded here rather than half-answered.
-        DatagramControlType.Resume => new ControlDatagramShape(false, 0),
+        // targetSessionId(4) + resumeSecret(16). The codec reads and writes it (issue #373). The
+        // Reactor does not act on it yet, so its dispatch still discards a Resume until the slice that
+        // routes it, rather than half-answering.
+        DatagramControlType.Resume => new ControlDatagramShape(true, 20),
 
         // The discard arm refuses. An unknown control type is a protocol violation, not an extension
         // point: this profile has no forward-compatibility rule that would let it skip a body of
