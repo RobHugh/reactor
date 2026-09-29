@@ -1916,9 +1916,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="SessionEventKind.PeerResumed"/> with the same <see cref="PeerId"/> (generation
     /// included), calls <see cref="Core.PeerCounterSet.RecordResume"/> once and logs
     /// <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c> 0 (a datagram Session rewinds nothing).
-    /// Does nothing for an accepting-end Peer, a Peer that is not Interrupted, or a dialled Peer that has
-    /// not sent a Resume since it was interrupted
-    /// (<see cref="PeerSlot.ResumesSentSinceInterrupted"/> is 0).
+    /// Does nothing for an accepting-end Peer or a Peer that is not Interrupted.
     /// </summary>
     /// <remarks>
     /// Called once <see cref="ParseDataDatagram"/> has fully parsed a data datagram, the same well-formedness
@@ -1926,10 +1924,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// can forge such a datagram, so it can fake this exit on the dialling end. That is accepted: the exit
     /// grants no takeover (the accepting end still demands the resume secret, ADR 0009) and on-path
     /// attackers are out of scope. Counters are never reset by a Resume (ADR 0013).
+    /// <para>
+    /// No "has sent a Resume yet" check is needed (ADR 0015): the Pump that marks a dialled Peer
+    /// Interrupted also sends its first Resume (<c>SendResumeIfDue</c> runs after the receive-idle
+    /// check), and datagrams are read before either, so every datagram that reaches an Interrupted
+    /// dialled Peer arrives after at least one Resume went out.
+    /// </para>
     /// </remarks>
     private void ResumeInterruptedDialledPeerOnData(PeerSlot slot)
     {
-        if (!slot.IsDialled || !slot.IsInterrupted || slot.ResumesSentSinceInterrupted == 0)
+        if (!slot.IsDialled || !slot.IsInterrupted)
         {
             return;
         }
@@ -3640,8 +3644,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <summary>
         /// How many Resume datagrams this dialled Peer has sent since it was last interrupted, reset to
         /// zero each time <see cref="EnforceReceiveIdleTimer"/> sets <see cref="IsInterrupted"/> (issue
-        /// #382). Nonzero means at least one Resume has left, which the Resume-unanswered handling
-        /// (#383) builds on.
+        /// #382). Nonzero means at least one Resume has left, so <see cref="LastResumeTimestamp"/> is
+        /// meaningful and <c>SendResumeIfDue</c> paces the next one from it.
         /// </summary>
         public int ResumesSentSinceInterrupted { get; set; }
 
