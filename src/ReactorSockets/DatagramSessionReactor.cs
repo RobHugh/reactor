@@ -435,8 +435,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// second Goodbye.
     /// </summary>
     /// <remarks>
-    /// A Closing Peer ends with <see cref="DisconnectReason.LocalClose"/> once the Goodbye is acknowledged,
-    /// or <see cref="DisconnectReason.LingerExpired"/> once its effective Linger has elapsed since this
+    /// A Closing Peer ends with <see cref="DisconnectReason.LocalClose"/> once the Goodbye and every
+    /// <c>ReliableOrdered</c> record before it are acknowledged, or <see cref="DisconnectReason.LingerExpired"/> once its effective Linger has elapsed since this
     /// call with the Goodbye still unacknowledged. It is never Interrupted and never sends a Resume.
     /// Accepted gap: the Goodbye is ordered only within <c>ReliableOrdered</c>, so a
     /// <c>ReliableUnordered</c> Message sent before this call can still arrive after the Goodbye, and
@@ -1680,7 +1680,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Closes every Closing Peer whose Goodbye has been acknowledged (<see cref="PeerSlot.GoodbyeAcked"/>,
-    /// issue #398) with <see cref="DisconnectReason.LocalClose"/>. Run right after the read pass, so an ack
+    /// issue #398) with <see cref="DisconnectReason.LocalClose"/>, once every <c>ReliableOrdered</c> record
+    /// up to the Goodbye is acknowledged too: a selective ack of the Goodbye behind an unacknowledged earlier
+    /// Message would otherwise free the Slot and stop that Message's retransmission, leaving the remote's
+    /// Goodbye waiting behind a hole that never fills. Run right after the read pass, so an ack
     /// that arrived this Pump closes the Peer this Pump, and before <see cref="EnforceLingerExpiry"/>, so an
     /// ack arriving in the Pump Linger would also have run out wins and no second close follows.
     /// </summary>
@@ -1688,7 +1691,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     {
         for (int index = 0; index < _peers.Capacity; index++)
         {
-            if (_peers.OccupantAt(index) is PeerSlot { IsClosing: true, GoodbyeAcked: true } slot)
+            if (_peers.OccupantAt(index) is PeerSlot { IsClosing: true, GoodbyeAcked: true } slot
+                && !slot.AckTracker.HasOutstandingAtOrBelow(PacketRecordMode.ReliableOrdered, slot.GoodbyeSequence))
             {
                 ClosePeer(slot.Handle, DisconnectReason.LocalClose);
             }
@@ -3985,7 +3989,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <summary>
         /// Set when an ack released <see cref="GoodbyeSequence"/> from retention (issue #398).
         /// <see cref="CloseAckedGoodbyePeers"/> then closes the Closing Peer with
-        /// <see cref="DisconnectReason.LocalClose"/>.
+        /// <see cref="DisconnectReason.LocalClose"/>, once no earlier <c>ReliableOrdered</c> record is
+        /// still outstanding.
         /// </summary>
         public bool GoodbyeAcked { get; set; }
 
