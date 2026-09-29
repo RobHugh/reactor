@@ -1888,7 +1888,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <remarks>
     /// A Resume is deliberately not a data datagram, so it does not stamp
     /// <see cref="PeerSlot.LastSendTimestamp"/>: Pings keep exactly their own send-idle cadence, and the
-    /// Resume cadence reads <see cref="PeerSlot.LastResumeTimestamp"/> instead.
+    /// Resume cadence reads <see cref="PeerSlot.LastResumeTimestamp"/> instead. It is still charged to
+    /// the Peer's <see cref="PeerCounters.SocketWrites"/> and <see cref="PeerCounters.BytesSent"/>, send
+    /// success or not, as a data datagram is (ADR 0013).
     /// </remarks>
     private void SendResumeIfDue(PeerSlot slot)
     {
@@ -1906,6 +1908,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         ControlDatagramCodec.WriteResume(_sendBuffer, slot.RemoteSessionId, slot.RemoteResumeSecret);
         SendControl(slot.Link, slot.Remote);
+
+        // Unlike a handshake control datagram, a Resume has a Peer to charge (ADR 0013).
+        slot.Counters.RecordSocketWrite();
+        slot.Counters.RecordBytesSent(DatagramSessionProtocol.ControlDatagramSize);
         slot.LastResumeTimestamp = now;
         slot.ResumesSentSinceInterrupted++;
     }
@@ -3021,7 +3027,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Routes a Resume by the session id in its body. A datagram that does not read as a Resume is
     /// discarded like any other malformed control datagram. A target that names no Peer this Reactor
-    /// holds logs <see cref="DiagnosticId.ResumeUnmatched"/> against the Source with <c>Value0</c> 0
+    /// holds, or names a dialled Peer (<see cref="PeerSlot.IsDialled"/>, never a Resume target), logs
+    /// <see cref="DiagnosticId.ResumeUnmatched"/> against the Source with <c>Value0</c> 0
     /// (no reservation was checked) and <c>Value1</c> 6 (the Resume record type), and changes nothing:
     /// no event is raised and no Peer is touched. The session id only routes (ADR 0009): a target that
     /// names a Peer must also present that Peer's <see cref="PeerSlot.LocalResumeSecret"/>, compared in
@@ -3037,7 +3044,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        if (!_peersBySessionId.TryGetValue(targetSessionId, out SlotHandle handle) || _peers.TryResolve(handle) is not PeerSlot slot)
+        // A dialled Peer is never a Resume target: only the dialling end sends Resume, since only it can
+        // know its own new address. Its session id and secret both travel in its HelloWithCookie, so
+        // matching them here would let an observer of the handshake move where the dialler sends.
+        if (!_peersBySessionId.TryGetValue(targetSessionId, out SlotHandle handle)
+            || _peers.TryResolve(handle) is not PeerSlot slot
+            || slot.IsDialled)
         {
             LogResumeUnmatched(source, candidatesChecked: 0);
             return;
@@ -3071,15 +3083,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// The matched-Resume branch. For an Established Peer of any liveness it points sends at the
-    /// Resume's source (<see cref="MoveSendAddress"/>), stamps <see cref="PeerSlot.LastReceiveTimestamp"/>
+    /// Resume's source (<see cref="MoveSendAddress"/>), charges the Resume to
+    /// <see cref="PeerCounters.BytesReceived"/> (ADR 0013), stamps <see cref="PeerSlot.LastReceiveTimestamp"/>
     /// so the receive-idle deadline restarts from the Resume, and logs
     /// <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c> 0, since nothing is rewound on this
     /// profile: retransmission already re-sends anything unacknowledged. Sequence state, ack state,
     /// receive windows and held Fragments are not touched. If the Peer is
     /// <see cref="PeerSlot.IsInterrupted"/> it also leaves Interrupted, queues
     /// <see cref="SessionEventKind.PeerResumed"/> for the same <see cref="PeerId"/> it had before,
-    /// generation included, and counts it once in <see cref="PeerCounters.Resumes"/> (no other counter
-    /// changes, ADR 0013). Linger stops counting because the Peer is no longer Interrupted, and a later
+    /// generation included, and counts it once in <see cref="PeerCounters.Resumes"/>. Linger stops counting because the Peer is no longer Interrupted, and a later
     /// interruption stamps <see cref="PeerSlot.InterruptedTimestamp"/> afresh. A Peer this end does not
     /// consider Interrupted (the dialling end can notice an interruption first) raises no event and
     /// leaves <see cref="PeerCounters.Resumes"/> unchanged.
@@ -3092,6 +3104,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         MoveSendAddress(slot, link, source);
+        slot.Counters.RecordBytesReceived(DatagramSessionProtocol.ControlDatagramSize);
 
         // The Resume is hearing from the Peer. Pump reads datagrams before it runs the timers, so a
         // stale timestamp here would have EnforceReceiveIdleTimer interrupt the Peer again on this very Pump.

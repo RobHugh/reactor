@@ -253,6 +253,13 @@ permanent member and one add per send call. On the stream profile the figure inc
 Resume records, because those are writes on the Peer's connection. On the datagram profile it excludes
 handshake control datagrams, for the same reason bytes sent does: no Peer exists yet to charge.
 
+**Amended (issue #56, slice 8.4).** A datagram-profile Resume control datagram does have a Peer to
+charge, so it is counted, consistent with the stream profile counting Resume records. The dialling end
+charges each Resume it sends to that Peer's socket writes and bytes sent, at the fixed 256-byte control
+size and regardless of send success, as it does a data Datagram. The accepting end charges a matched
+Resume to the Peer's bytes received. A Resume that names no Peer, names a dialled Peer, or presents the
+wrong secret charges no Peer. Handshake control datagrams are still excluded.
+
 Sixteen members as first drafted. What the rules **removed** is the more useful half of the exercise:
 
 - **`DatagramDuplicate` and `PacketOutOfWindow`** are per-packet volume driven by loss and reordering.

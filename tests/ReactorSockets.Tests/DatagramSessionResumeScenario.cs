@@ -193,6 +193,8 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
     /// Connects a dialler to an accepter through a fresh proxy, both with <paramref name="linger"/> when given.
     /// The size options apply to both ends and default to the harness defaults, except <paramref name="arenaSize"/>
     /// and <paramref name="receiveWindowFragments"/>, which size the accepter's receive side only.
+    /// <paramref name="bindDialler"/> binds the dialler to a loopback port, so a test has an address to
+    /// send it datagrams at directly (<c>Dialler.Endpoint</c>).
     /// </summary>
     public static DatagramSessionResumeScenario Establish(
         TimeSpan? linger = null,
@@ -200,14 +202,15 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
         int retentionBytes = 4096,
         int? fragmentSize = null,
         int? arenaSize = null,
-        int? receiveWindowFragments = null)
+        int? receiveWindowFragments = null,
+        bool bindDialler = false)
     {
         FakeTimeProvider clock = new();
         DatagramSessionReactorHarness dialler = new(
             maxMessageSize: maxMessageSize,
             retentionBytes: retentionBytes,
             fragmentSize: fragmentSize,
-            bindLoopback: false,
+            bindLoopback: bindDialler,
             sendIdleInterval: SendIdleInterval,
             linger: linger,
             missedHeartbeats: MissedHeartbeats,
@@ -231,6 +234,22 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
 
     /// <summary>The dialler's <see cref="PeerId"/> for the accepter.</summary>
     public PeerId DiallerPeer { get; private init; }
+
+    /// <summary>The session id the dialler asked to have stamped on datagrams sent to it, read off its captured HelloWithCookie.</summary>
+    public uint DiallerSessionId => BinaryPrimitives.ReadUInt32BigEndian(CapturedHelloWithCookie().AsSpan(HelloWithCookieSessionIdOffset));
+
+    /// <summary>The resume secret the dialler issued in its HelloWithCookie: the value a Resume against the dialler would have to present.</summary>
+    public byte[] DiallerResumeSecret => CapturedHelloWithCookie().AsSpan(HelloWithCookieSecretOffset, ResumeSecretLength).ToArray();
+
+    // HelloWithCookie body: version(4), nonce(8), epoch(8), cookie(32), sessionIdForMe(4),
+    // maxMessageSize(4), sendIdleInterval(8), linger(8), resumeSecret(16).
+    private const byte HelloWithCookieType = 3;
+    private const int HelloWithCookieSessionIdOffset = ControlBodyOffset + 4 + 8 + 8 + 32;
+    private const int HelloWithCookieSecretOffset = HelloWithCookieSessionIdOffset + 4 + 4 + 8 + 8;
+
+    private byte[] CapturedHelloWithCookie() => Proxy.Captures
+        .Single(c => c.Direction == RelayDirection.ClientToUpstream && c.Payload[4] == HelloWithCookieType)
+        .Payload;
 
     /// <summary>A UDP socket on its own loopback port: the party sending a Resume, from an address that is not the Peer's.</summary>
     public static UdpClient NewResumer() => new(new IPEndPoint(IPAddress.Loopback, 0));
