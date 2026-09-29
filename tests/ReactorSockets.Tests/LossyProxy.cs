@@ -51,7 +51,7 @@ internal sealed class LossyProxy : IDisposable
     private readonly RawReactor _reactor;
     private readonly TimeProvider _timeProvider;
     private readonly LinkId _clientFacing;
-    private readonly LinkId _upstreamFacing;
+    private LinkId _upstreamFacing;
     private readonly IPEndPoint _upstream;
     private readonly Queue<Fault> _clientToUpstreamFaults = new();
     private readonly Queue<Fault> _upstreamToClientFaults = new();
@@ -237,6 +237,48 @@ internal sealed class LossyProxy : IDisposable
     {
         SetPayloadDropRule(RelayDirection.ClientToUpstream, _ => true);
         SetPayloadDropRule(RelayDirection.UpstreamToClient, _ => true);
+    }
+
+    /// <summary>
+    /// Undoes <see cref="StopRelayingBothDirections"/>: clears the payload drop rule on both directions,
+    /// so relaying resumes. It clears only those two rules, so any size threshold, every-Nth loss rule
+    /// or queued one-shot fault a test set separately keeps standing, and datagrams the stop dropped
+    /// stay dropped.
+    /// </summary>
+    public void ResumeRelayingBothDirections()
+    {
+        SetPayloadDropRule(RelayDirection.ClientToUpstream, null);
+        SetPayloadDropRule(RelayDirection.UpstreamToClient, null);
+    }
+
+    /// <summary>
+    /// Replaces the upstream-facing socket with a freshly bound one, modelling a NAT rebinding: every
+    /// relay after this call reaches upstream from a new source port, upstream's replies to the new
+    /// address still reach the client, and the old socket is closed so replies sent to the old address
+    /// are never relayed. Composes with <see cref="StopRelayingBothDirections"/> and
+    /// <see cref="ResumeRelayingBothDirections"/> in either order, and leaves every standing rule,
+    /// queued fault and held reorder datagram untouched. Delayed relays already scheduled are re-pointed
+    /// at the new socket so they release from the new port instead of the closed one.
+    /// </summary>
+    /// <returns>The new upstream-facing address, the source upstream will now see.</returns>
+    public IPEndPoint MoveUpstreamFacingSocket()
+    {
+        LinkId old = _upstreamFacing;
+
+        // The Reactor's capacity is exactly two Links, so the old one must close before the new one binds.
+        // Its Closed event is skipped by Pump, and datagrams still queued on it are discarded with it.
+        _reactor.Close(old);
+        _upstreamFacing = _reactor.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+
+        for (int i = 0; i < _delayed.Count; i++)
+        {
+            if (_delayed[i].From == old)
+            {
+                _delayed[i] = _delayed[i] with { From = _upstreamFacing };
+            }
+        }
+
+        return _reactor.LocalOf(_upstreamFacing);
     }
 
     /// <summary>
