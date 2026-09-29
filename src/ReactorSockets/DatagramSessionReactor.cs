@@ -1805,7 +1805,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            if (slot.IsInterrupted)
+            // A Closing Peer never goes Interrupted (issue #406): this end has already said Goodbye, so a
+            // silent remote is not a path to win back with a Resume. Only the Goodbye's ack or Linger
+            // measured from Close (EnforceLingerExpiry) ends it, and no PeerInterrupted is raised.
+            if (slot.IsInterrupted || slot.IsClosing)
             {
                 continue;
             }
