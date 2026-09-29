@@ -403,6 +403,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
+            IsDialled = true,
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
@@ -446,9 +447,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// now reflect what the four per-Space receive windows have refused (issue #172);
     /// <see cref="PeerCounters.UnreliableLossPackets"/> reflects gaps either unreliable Space's window
     /// has slid past (issues #173, #176).
-    /// <see cref="PeerCounters.MessagesReceived"/> and <see cref="PeerCounters.Resumes"/> still read
-    /// zero for every Peer, since this profile has no delivery or resume machinery yet to increment
-    /// them. <see cref="PeerCounters.RetentionHighWaterBytes"/> reads the true per-Peer figure — summed
+    /// <see cref="PeerCounters.MessagesReceived"/> still reads zero for every Peer, since this profile
+    /// has no delivery machinery yet to increment it. <see cref="PeerCounters.Resumes"/> counts the
+    /// Peer's resumes: once per <see cref="SessionEventKind.PeerResumed"/> raised for it, on the
+    /// accepting end when a matching Resume moves it out of Interrupted and on the dialling end when it
+    /// hears its session again after sending a Resume, and never reset by one (ADR 0013).
+    /// <see cref="PeerCounters.RetentionHighWaterBytes"/> reads the true per-Peer figure — summed
     /// across both reliable Spaces — from <see cref="_retention"/> (subtask 6.5.6, issue #205).
     /// </summary>
     public PeerCounters CountersOf(PeerId peer)
@@ -728,13 +732,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return sessionEvent;
         }
 
-        // The one kind this profile queues that the shared half cannot build, because it alone needs
+        // MessageReceived is the one kind here the shared half cannot build, because it alone needs
         // the arena the payload was committed to (subtask 6.6.6, issue #219). The span is handed out
         // aliasing the arena directly, so it is valid for this Frame only — the same contract the
         // stream profile's own MessageReceived carries.
-        return pending.Kind == SessionEventKind.MessageReceived
-            ? SessionEvent.ForMessageReceived(pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength))
-            : throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind.");
+        return pending.Kind switch
+        {
+            SessionEventKind.MessageReceived => SessionEvent.ForMessageReceived(
+                pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
+            _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind."),
+        };
     }
 
     /// <summary>
@@ -868,6 +875,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
             case DatagramControlType.Refusal:
                 OnRefusal(source, datagram);
+                break;
+
+            case DatagramControlType.Resume:
+                OnResume(link, source, datagram);
                 break;
 
             // The discard arm refuses. TryReadControlType has already rejected every type this
@@ -1024,6 +1035,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
             remainder = remainder[oversizedBytesConsumed..];
         }
+
+        // Fully parsed and not refused above: this is what "well-formed" means for leaving Interrupted
+        // (issue #383). It sits after the oversized-set close so a datagram that closes the Peer never
+        // resumes it first.
+        ResumeInterruptedDialledPeerOnData(slot);
 
         // The proof above is what attributes this Datagram to slot's Peer: it names an established
         // session id (ProcessDataDatagram's own lookup) and every record in it parses. Only from this
@@ -1752,6 +1768,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
             slot.IsInterrupted = true;
             slot.InterruptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+            slot.ResumesSentSinceInterrupted = 0;
             _pendingEvents.Add(new PendingEvent
             {
                 Kind = SessionEventKind.PeerInterrupted,
@@ -1847,12 +1864,91 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
+            SendResumeIfDue(slot);
+
             if (_options.Reactor.TimeProvider.GetElapsedTime(slot.LastSendTimestamp) < _options.SendIdleInterval)
             {
                 continue;
             }
 
             QueuePing(slot);
+        }
+    }
+
+    /// <summary>
+    /// Sends one <see cref="DatagramControlType.Resume"/> control datagram to <paramref name="slot"/>'s
+    /// address when the Peer is a dialled, <see cref="PeerSlot.IsInterrupted"/> one and no Resume has
+    /// left for it within the last <see cref="DatagramSessionOptions.SendIdleInterval"/> (issue #382,
+    /// parent #56): the first goes out on the Pump that finds the Peer Interrupted, every later one a
+    /// send-idle interval after the previous. Only the dialling end sends Resume, because the accepting
+    /// end cannot know the dialler's new address. The datagram is routed by the accepting end's own
+    /// session id (<see cref="PeerSlot.RemoteSessionId"/>) and authorised by the secret it issued
+    /// (<see cref="PeerSlot.RemoteResumeSecret"/>), ADR 0009.
+    /// </summary>
+    /// <remarks>
+    /// A Resume is deliberately not a data datagram, so it does not stamp
+    /// <see cref="PeerSlot.LastSendTimestamp"/>: Pings keep exactly their own send-idle cadence, and the
+    /// Resume cadence reads <see cref="PeerSlot.LastResumeTimestamp"/> instead. It is still charged to
+    /// the Peer's <see cref="PeerCounters.SocketWrites"/> and <see cref="PeerCounters.BytesSent"/>, send
+    /// success or not, as a data datagram is (ADR 0013).
+    /// </remarks>
+    private void SendResumeIfDue(PeerSlot slot)
+    {
+        if (!slot.IsDialled || !slot.IsInterrupted)
+        {
+            return;
+        }
+
+        long now = _options.Reactor.TimeProvider.GetTimestamp();
+        if (slot.ResumesSentSinceInterrupted > 0
+            && _options.Reactor.TimeProvider.GetElapsedTime(slot.LastResumeTimestamp, now) < _options.SendIdleInterval)
+        {
+            return;
+        }
+
+        ControlDatagramCodec.WriteResume(_sendBuffer, slot.RemoteSessionId, slot.RemoteResumeSecret);
+        SendControl(slot.Link, slot.Remote);
+
+        // Unlike a handshake control datagram, a Resume has a Peer to charge (ADR 0013).
+        slot.Counters.RecordSocketWrite();
+        slot.Counters.RecordBytesSent(DatagramSessionProtocol.ControlDatagramSize);
+        slot.LastResumeTimestamp = now;
+        slot.ResumesSentSinceInterrupted++;
+    }
+
+    /// <summary>
+    /// Takes an <see cref="PeerSlot.IsInterrupted"/> dialled Peer out of Interrupted on hearing its
+    /// session again (issue #383, parent #56): clears the flag, queues
+    /// <see cref="SessionEventKind.PeerResumed"/> with the same <see cref="PeerId"/> (generation
+    /// included), calls <see cref="Core.PeerCounterSet.RecordResume"/> once and logs
+    /// <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c> 0 (a datagram Session rewinds nothing).
+    /// Does nothing for an accepting-end Peer or a Peer that is not Interrupted.
+    /// </summary>
+    /// <remarks>
+    /// Called once <see cref="ParseDataDatagram"/> has fully parsed a data datagram, the same well-formedness
+    /// proof that stamps <see cref="PeerSlot.LastReceiveTimestamp"/>. An observer who can see the session id
+    /// can forge such a datagram, so it can fake this exit on the dialling end. That is accepted: the exit
+    /// grants no takeover (the accepting end still demands the resume secret, ADR 0009) and on-path
+    /// attackers are out of scope. Counters are never reset by a Resume (ADR 0013).
+    /// <para>
+    /// No "has sent a Resume yet" check is needed (ADR 0015): the Pump that marks a dialled Peer
+    /// Interrupted also sends its first Resume (<c>SendResumeIfDue</c> runs after the receive-idle
+    /// check), and datagrams are read before either, so every datagram that reaches an Interrupted
+    /// dialled Peer arrives after at least one Resume went out.
+    /// </para>
+    /// </remarks>
+    private void ResumeInterruptedDialledPeerOnData(PeerSlot slot)
+    {
+        if (!slot.IsDialled || !slot.IsInterrupted)
+        {
+            return;
+        }
+
+        PeerId peer = ToPeerId(slot.Handle);
+        LeaveInterrupted(slot, peer);
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForResumeMatched(peer, bytesRewound: 0));
         }
     }
 
@@ -2749,7 +2845,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         if (_acceptedHandshakes.TryGetValue((source, clientNonce), out SlotHandle existing)
             && _peers.TryResolve(existing) is PeerSlot established)
         {
-            SendAccept(link, established);
+            SendAccept(link, established, source);
             return;
         }
 
@@ -2786,7 +2882,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 peer, (long)AnnouncedLingerMilliseconds, (long)slot.EffectiveLinger.TotalMilliseconds));
         }
 
-        SendAccept(link, slot);
+        SendAccept(link, slot, source);
     }
 
     /// <summary>
@@ -2927,6 +3023,129 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// Routes a Resume by the session id in its body. A datagram that does not read as a Resume is
+    /// discarded like any other malformed control datagram. A target that names no Peer this Reactor
+    /// holds, or names a dialled Peer (<see cref="PeerSlot.IsDialled"/>, never a Resume target), logs
+    /// <see cref="DiagnosticId.ResumeUnmatched"/> against the Source with <c>Value0</c> 0
+    /// (no reservation was checked) and <c>Value1</c> 6 (the Resume record type), and changes nothing:
+    /// no event is raised and no Peer is touched. The session id only routes (ADR 0009): a target that
+    /// names a Peer must also present that Peer's <see cref="PeerSlot.LocalResumeSecret"/>, compared in
+    /// constant time, and a mismatch logs <see cref="DiagnosticId.ResumeUnmatched"/> with <c>Value0</c> 1
+    /// and leaves the Peer exactly as it was.
+    /// </summary>
+    private void OnResume(UdpLink link, Source source, ReadOnlySpan<byte> datagram)
+    {
+        Span<byte> presentedSecret = stackalloc byte[DatagramSessionProtocol.ResumeSecretLength];
+        if (!ControlDatagramCodec.TryReadResume(datagram, out uint targetSessionId, presentedSecret))
+        {
+            DiscardMalformed(source, datagram.Length);
+            return;
+        }
+
+        // A dialled Peer is never a Resume target: only the dialling end sends Resume, since only it can
+        // know its own new address. Its session id and secret both travel in its HelloWithCookie, so
+        // matching them here would let an observer of the handshake move where the dialler sends.
+        if (!_peersBySessionId.TryGetValue(targetSessionId, out SlotHandle handle)
+            || _peers.TryResolve(handle) is not PeerSlot slot
+            || slot.IsDialled)
+        {
+            LogResumeUnmatched(source, candidatesChecked: 0);
+            return;
+        }
+
+        // Constant time, so how long the comparison takes does not say how many leading bytes of a
+        // guess were right.
+        if (!CryptographicOperations.FixedTimeEquals(presentedSecret, slot.LocalResumeSecret))
+        {
+            LogResumeUnmatched(source, candidatesChecked: 1);
+            return;
+        }
+
+        ResumeInterruptedPeer(slot, link, source);
+    }
+
+    /// <summary>
+    /// Points every later datagram to <paramref name="slot"/> at <paramref name="source"/>, the address
+    /// a matched Resume arrived from, and sends them from <paramref name="link"/>, the bound socket it
+    /// arrived on: that socket demonstrably reaches the new source, which the Peer's earlier socket may
+    /// not (a different address family, or a different bound endpoint). Only a matched Resume calls
+    /// this. The accepted-handshake map is keyed by <see cref="PeerSlot.HandshakeSource"/>, which does
+    /// not move, so a replayed handshake from the original address still finds this Peer and
+    /// <see cref="ClosePeer"/> still removes the entry it inserted.
+    /// </summary>
+    private static void MoveSendAddress(PeerSlot slot, UdpLink link, Source source)
+    {
+        slot.Remote = source;
+        slot.Link = link;
+    }
+
+    /// <summary>
+    /// The matched-Resume branch. For an Established Peer of any liveness it points sends at the
+    /// Resume's source (<see cref="MoveSendAddress"/>), charges the Resume to
+    /// <see cref="PeerCounters.BytesReceived"/> (ADR 0013), stamps <see cref="PeerSlot.LastReceiveTimestamp"/>
+    /// so the receive-idle deadline restarts from the Resume, and logs
+    /// <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c> 0, since nothing is rewound on this
+    /// profile: retransmission already re-sends anything unacknowledged. Sequence state, ack state,
+    /// receive windows and held Fragments are not touched. If the Peer is
+    /// <see cref="PeerSlot.IsInterrupted"/> it also leaves Interrupted, queues
+    /// <see cref="SessionEventKind.PeerResumed"/> for the same <see cref="PeerId"/> it had before,
+    /// generation included, and counts it once in <see cref="PeerCounters.Resumes"/>. Linger stops counting because the Peer is no longer Interrupted, and a later
+    /// interruption stamps <see cref="PeerSlot.InterruptedTimestamp"/> afresh. A Peer this end does not
+    /// consider Interrupted (the dialling end can notice an interruption first) raises no event and
+    /// leaves <see cref="PeerCounters.Resumes"/> unchanged.
+    /// </summary>
+    private void ResumeInterruptedPeer(PeerSlot slot, UdpLink link, Source source)
+    {
+        if (slot.State != HandshakeState.Established)
+        {
+            return;
+        }
+
+        MoveSendAddress(slot, link, source);
+        slot.Counters.RecordBytesReceived(DatagramSessionProtocol.ControlDatagramSize);
+
+        // The Resume is hearing from the Peer. Pump reads datagrams before it runs the timers, so a
+        // stale timestamp here would have EnforceReceiveIdleTimer interrupt the Peer again on this very Pump.
+        slot.LastReceiveTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+
+        PeerId peer = ToPeerId(slot.Handle);
+        if (slot.IsInterrupted)
+        {
+            LeaveInterrupted(slot, peer);
+        }
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForResumeMatched(peer, bytesRewound: 0));
+        }
+    }
+
+    /// <summary>
+    /// Takes an <see cref="PeerSlot.IsInterrupted"/> Peer out of Interrupted, the steps both ends share
+    /// (issues #380 and #383): clears the flag, counts one <see cref="PeerCounters.Resumes"/> and queues
+    /// <see cref="SessionEventKind.PeerResumed"/> for <paramref name="peer"/>, the same
+    /// <see cref="PeerId"/> it had before, generation included.
+    /// </summary>
+    private void LeaveInterrupted(PeerSlot slot, PeerId peer)
+    {
+        slot.IsInterrupted = false;
+        slot.Counters.RecordResume();
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = peer });
+    }
+
+    /// <summary>
+    /// Logs <see cref="DiagnosticId.ResumeUnmatched"/> for a Resume that was not matched onto a Peer,
+    /// with <c>Value1</c> the Resume record type (<see cref="DatagramControlType.Resume"/>).
+    /// </summary>
+    private void LogResumeUnmatched(Source source, long candidatesChecked)
+    {
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForResumeUnmatched(source, candidatesChecked, (long)DatagramControlType.Resume));
+        }
+    }
+
+    /// <summary>
     /// The dial a control datagram claims to answer, or <see langword="null"/> when it answers none —
     /// checking the nonce, the state the dial is actually in, and that the reply came from the address
     /// dialled. All three must hold: a nonce alone would let a reply from anywhere redirect a dial.
@@ -2975,6 +3194,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         return new()
         {
             Remote = source,
+            HandshakeSource = source,
             Link = link,
             ClientNonce = clientNonce,
             LocalSessionId = NextSessionId(),
@@ -3006,7 +3226,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private OutstandingReliableSequences NewAckTracker(RetransmissionTimer retransmitTimer) =>
         new(_options.Reactor.TimeProvider, retransmitTimer);
 
-    private void SendAccept(UdpLink link, PeerSlot slot)
+    /// <summary>
+    /// Answers a Hello-with-cookie with the Peer's Accept, to <paramref name="destination"/>, the
+    /// address that Hello came from. Not <see cref="PeerSlot.Remote"/>, which a matched Resume may
+    /// have moved since: a replay from the original address is answered there.
+    /// </summary>
+    private void SendAccept(UdpLink link, PeerSlot slot, Source destination)
     {
         ControlDatagramCodec.WriteAccept(
             _sendBuffer,
@@ -3016,7 +3241,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             AnnouncedSendIdleIntervalMilliseconds,
             AnnouncedLingerMilliseconds,
             slot.LocalResumeSecret);
-        SendControl(link, slot.Remote);
+        SendControl(link, destination);
     }
 
     /// <summary>
@@ -3103,7 +3328,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         _peersBySessionId.Remove(slot.LocalSessionId);
         _dialsByNonce.Remove(slot.ClientNonce);
-        _acceptedHandshakes.Remove((slot.Remote, slot.ClientNonce));
+        if (slot.HandshakeSource is Source handshakeSource)
+        {
+            _acceptedHandshakes.Remove((handshakeSource, slot.ClientNonce));
+        }
         _pendingEvents.Add(new PendingEvent
         {
             Kind = SessionEventKind.PeerClosed,
@@ -3249,10 +3477,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private sealed class PeerSlot
     {
         /// <summary>The address this Peer was last known at — a claim, never an authenticator.</summary>
-        public required Source Remote { get; init; }
+        public required Source Remote { get; set; }
 
-        /// <summary>The bound socket this Peer's datagrams are sent from.</summary>
-        public required UdpLink Link { get; init; }
+        /// <summary>
+        /// The address and nonce an accepted Peer's handshake arrived from, which key
+        /// <see cref="_acceptedHandshakes"/>. Unlike <see cref="Remote"/> it never moves, so the entry
+        /// can always be found and removed when the Peer closes. <see langword="null"/> for a dialled Peer.
+        /// </summary>
+        public Source? HandshakeSource { get; init; }
+
+        /// <summary>The bound socket this Peer's datagrams are sent from. Moves with <see cref="Remote"/> on a matched Resume.</summary>
+        public required UdpLink Link { get; set; }
 
         /// <summary>The nonce that ties every datagram of this handshake to this Peer and no other.</summary>
         public required ulong ClientNonce { get; init; }
@@ -3276,11 +3511,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// and <see cref="OnAccept"/>, therefore reject a zero announcement off the wire before a Peer
         /// ever reaches Established, and each asserts or re-asserts the resulting non-zero invariant
         /// rather than defaulting a missing value to something permissive or something that refuses. The
-        /// Datagram profile has no wire-level Resume yet (issue #52): what looks like "surviving an
-        /// interruption" here is a Session identified by its wire token rather than by address, so an
-        /// outage never tears down the <see cref="PeerSlot"/> and this field is never re-read or
-        /// re-established — it simply was never lost. A real Resume, when #52 lands, would have to
-        /// re-establish this value the same way the initial handshake does.
+        /// Datagram profile's wire-level Resume (issues #52, #56) carries no parameters: what looks like
+        /// "surviving an interruption" here is a Session identified by its wire token rather than by
+        /// address, so an outage, and the Resume that ends it, never tear down the
+        /// <see cref="PeerSlot"/>. This field is never re-read or re-established — it simply was never
+        /// lost, and a Resume only moves the send address.
         /// </summary>
         public uint RemoteMaxMessageSize { get; set; }
 
@@ -3337,7 +3572,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// </summary>
         public required int FragmentSize { get; init; }
 
-        /// <summary>The secret the remote will require before it resumes this Session. Stored, unused until Resume lands.</summary>
+        /// <summary>The secret the remote issued for resuming this Session. The dialling end sends it in each Resume (<see cref="DatagramSessionReactor.SendResumeIfDue"/>). The accepting end stores it but never reads it: it authorises a Resume against <see cref="PeerSlot.LocalResumeSecret"/>, the secret it issued.</summary>
         public byte[] RemoteResumeSecret { get; set; } = [];
 
         /// <summary>The Slot this Peer occupies, filled in once the table has admitted it.</summary>
@@ -3399,12 +3634,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// retransmission of one still unacknowledged, since <see cref="EnforceSendIdleTimer"/>
         /// deliberately does not read this flag (issue #371) — a datagram Session has no re-dial
         /// schedule, so probing the path is the only way an Interrupted end can ever be heard from
-        /// again. And this Peer's <see cref="EffectiveLinger"/>, elapsed since
+        /// again. The dialling end also sends a Resume each send-idle interval
+        /// (<see cref="SendResumeIfDue"/>, issue #382). And this Peer's <see cref="EffectiveLinger"/>, elapsed since
         /// <see cref="InterruptedTimestamp"/>, is what ends it: <c>HasLingerExpired</c> closes it with
         /// <see cref="DisconnectReason.LingerExpired"/> once that wait runs out (issue #367), mirroring
         /// <see cref="StreamSessionReactor.HasExceededLinger"/>. Leaving Interrupted through an actual
-        /// Resume is not yet implemented — the datagram profile has no wire-level Resume yet (issue
-        /// #52) — so today the only way out of Interrupted is that close.
+        /// Resume is the other way out. On the accepting end a Resume matched by session id and secret
+        /// clears the flag (<see cref="ResumeInterruptedPeer"/>). On the dialling end, hearing
+        /// its session again after it has sent a Resume clears it
+        /// (<see cref="ResumeInterruptedDialledPeerOnData"/>, issue #383). Either end then raises
+        /// <see cref="SessionEventKind.PeerResumed"/>, and a later interruption stamps
+        /// <see cref="InterruptedTimestamp"/> afresh.
         /// </remarks>
         public bool IsInterrupted { get; set; }
 
@@ -3416,6 +3656,23 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// re-stamped while the interruption continues.
         /// </summary>
         public long InterruptedTimestamp { get; set; }
+
+        /// <summary>
+        /// Whether this end dialled this Peer (<see cref="Connect"/>) rather than accepted it. Only a
+        /// dialled Peer sends Resume (issue #382): the accepting end cannot know the dialler's new address.
+        /// </summary>
+        public bool IsDialled { get; init; }
+
+        /// <summary>
+        /// How many Resume datagrams this dialled Peer has sent since it was last interrupted, reset to
+        /// zero each time <see cref="EnforceReceiveIdleTimer"/> sets <see cref="IsInterrupted"/> (issue
+        /// #382). Nonzero means at least one Resume has left, so <see cref="LastResumeTimestamp"/> is
+        /// meaningful and <c>SendResumeIfDue</c> paces the next one from it.
+        /// </summary>
+        public int ResumesSentSinceInterrupted { get; set; }
+
+        /// <summary>The <see cref="TimeProvider.GetTimestamp"/> value of this Peer's latest Resume datagram (issue #382), meaningful only while <see cref="ResumesSentSinceInterrupted"/> is nonzero.</summary>
+        public long LastResumeTimestamp { get; set; }
 
         /// <summary>
         /// This Peer's own mutable counters (ADR 0013), incremented on the hot path and read only

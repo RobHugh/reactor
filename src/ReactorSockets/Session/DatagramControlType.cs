@@ -30,8 +30,9 @@ internal enum DatagramControlType : byte
 
     /// <summary>
     /// A request to re-establish a previous Session from a new address, proving entitlement with the
-    /// secret that Session established. Defined here because the roster is the wire format's, not this
-    /// slice's; handled in the slice that implements Resume.
+    /// secret that Session established. Sent by the dialling end at the send-idle cadence while its Peer
+    /// is Interrupted. The accepting end routes it by the target session id, authorises it by the
+    /// secret, and sends to the Resume's source from then on.
     /// </summary>
     Resume = 6,
 }

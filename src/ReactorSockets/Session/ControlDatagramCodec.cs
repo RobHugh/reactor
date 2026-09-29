@@ -173,6 +173,25 @@ internal static class ControlDatagramCodec
     }
 
     /// <summary>
+    /// Writes a <see cref="DatagramControlType.Resume"/>: a dialler's request to take over the Session
+    /// the receiver knows as <paramref name="targetSessionId"/>. That id is the receiver's own local
+    /// session id and is the only field that routes the datagram to a Session. The
+    /// <paramref name="resumeSecret"/> is the only field that authorises the takeover and is never used
+    /// to route. The session id is not an authenticator (ADR 0009), so neither field stands in for the other.
+    /// </summary>
+    public static void WriteResume(Span<byte> destination, uint targetSessionId, ReadOnlySpan<byte> resumeSecret)
+    {
+        ValidateDestinationSize(destination);
+        ValidateFixedLength(resumeSecret, DatagramSessionProtocol.ResumeSecretLength, nameof(resumeSecret));
+        WriteHeader(destination, DatagramControlType.Resume);
+
+        int offset = DatagramSessionProtocol.ControlBodyOffset;
+        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], targetSessionId);
+        offset += sizeof(uint);
+        resumeSecret.CopyTo(destination.Slice(offset, DatagramSessionProtocol.ResumeSecretLength));
+    }
+
+    /// <summary>
     /// Writes a <see cref="DatagramControlType.Refusal"/>: the reply to a cookie-validated
     /// <see cref="DatagramControlType.HelloWithCookie"/> this Reactor will not answer with a Session.
     /// The version fields are meaningful only for a <see cref="RefusalReason.Version"/> refusal — the
@@ -419,6 +438,33 @@ internal static class ControlDatagramCodec
             return false;
         }
 
+        datagram.Slice(offset, DatagramSessionProtocol.ResumeSecretLength).CopyTo(resumeSecret);
+        return true;
+    }
+
+    /// <summary>
+    /// Reads a <see cref="DatagramControlType.Resume"/>'s body. <paramref name="targetSessionId"/> routes
+    /// the datagram to a Session and <paramref name="resumeSecret"/> authorises the takeover, and
+    /// neither is used for the other's job (ADR 0009). Fails when <paramref name="resumeSecret"/> is
+    /// not exactly <see cref="DatagramSessionProtocol.ResumeSecretLength"/> bytes, and, through
+    /// <see cref="TryReadControlType"/>, on any datagram whose length is not the control size or whose
+    /// bytes past the 20-byte body are not zero, so a body one byte long is never read. A body one byte
+    /// short, or empty, cannot be told apart: zero padding makes it the same bytes as a full body whose
+    /// trailing bytes are zero, and it reads as one.
+    /// </summary>
+    public static bool TryReadResume(ReadOnlySpan<byte> datagram, out uint targetSessionId, Span<byte> resumeSecret)
+    {
+        if (resumeSecret.Length != DatagramSessionProtocol.ResumeSecretLength
+            || !TryReadControlType(datagram, out DatagramControlType type)
+            || type != DatagramControlType.Resume)
+        {
+            targetSessionId = default;
+            return false;
+        }
+
+        int offset = DatagramSessionProtocol.ControlBodyOffset;
+        targetSessionId = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
+        offset += sizeof(uint);
         datagram.Slice(offset, DatagramSessionProtocol.ResumeSecretLength).CopyTo(resumeSecret);
         return true;
     }
