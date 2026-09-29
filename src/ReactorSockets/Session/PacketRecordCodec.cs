@@ -314,7 +314,40 @@ internal static class PacketRecordCodec
     /// <see langword="true"/> if the record fit in <paramref name="destination"/> and was written.
     /// <see langword="false"/> if it did not fit — nothing is written in that case.
     /// </returns>
-    public static bool TryWriteControlRecord(Span<byte> destination, uint sequence, out int bytesWritten)
+    public static bool TryWriteControlRecord(Span<byte> destination, uint sequence, out int bytesWritten) =>
+        TryWriteZeroLengthControlRecord(destination, PacketRecordMode.ReliableUnordered, sequence, out bytesWritten);
+
+    /// <summary>
+    /// Writes one Goodbye record (issue #395) — flags byte with <see
+    /// cref="DatagramSessionProtocol.ControlBit"/> set alongside the <c>ReliableOrdered</c> mode bits,
+    /// <c>u32</c> sequence, then a <c>u16</c> length of zero — to the start of <paramref
+    /// name="destination"/>. The same seven-byte shape <see cref="TryWriteControlRecord"/> writes for a
+    /// Ping, in the other reliable Space: the Space alone tells the two apart, and
+    /// <see cref="TryRead"/> accepts exactly this shape back (issue #394).
+    /// </summary>
+    /// <param name="destination">
+    /// The bytes to write into, positioned at the record's first byte. Never partially written: a
+    /// <paramref name="destination"/> shorter than <see cref="DatagramSessionProtocol.UnfragmentedRecordSize"/>
+    /// fails without writing anything.
+    /// </param>
+    /// <param name="sequence">The record's <c>u32</c> sequence number, drawn from the <c>ReliableOrdered</c> space.</param>
+    /// <param name="bytesWritten">
+    /// The total bytes written — always <see cref="DatagramSessionProtocol.UnfragmentedRecordSize"/>.
+    /// Valid only when this method returns <see langword="true"/>.
+    /// </param>
+    /// <returns>
+    /// <see langword="true"/> if the record fit in <paramref name="destination"/> and was written.
+    /// <see langword="false"/> if it did not fit — nothing is written in that case.
+    /// </returns>
+    public static bool TryWriteGoodbyeRecord(Span<byte> destination, uint sequence, out int bytesWritten) =>
+        TryWriteZeroLengthControlRecord(destination, PacketRecordMode.ReliableOrdered, sequence, out bytesWritten);
+
+    /// <summary>
+    /// Writes the seven-byte zero-length control shape shared by a Ping and a Goodbye, differing only in
+    /// the <paramref name="mode"/> bits beside <see cref="DatagramSessionProtocol.ControlBit"/>. Writes
+    /// nothing and returns <see langword="false"/> when <paramref name="destination"/> is too short.
+    /// </summary>
+    private static bool TryWriteZeroLengthControlRecord(Span<byte> destination, PacketRecordMode mode, uint sequence, out int bytesWritten)
     {
         bytesWritten = default;
 
@@ -323,7 +356,7 @@ internal static class PacketRecordCodec
             return false;
         }
 
-        destination[0] = (byte)((byte)PacketRecordMode.ReliableUnordered | DatagramSessionProtocol.ControlBit);
+        destination[0] = (byte)((byte)mode | DatagramSessionProtocol.ControlBit);
         BinaryPrimitives.WriteUInt32BigEndian(destination[DatagramSessionProtocol.RecordSequenceOffset..], sequence);
         BinaryPrimitives.WriteUInt16BigEndian(destination[DatagramSessionProtocol.RecordLengthOffset..], 0);
 
