@@ -226,7 +226,9 @@ public enum DiagnosticId
     /// the same <see cref="PeerId"/>, generation included, the Session had before the interruption,
     /// since nothing about a Peer's identity is renewed by a Resume. <c>Value0</c> is the number of
     /// retained outbound bytes the match rewound to the counter the Resume reported; <c>Value1</c> is
-    /// unused.
+    /// unused. On the datagram profile a Resume control datagram matched the Peer: nothing is rewound,
+    /// because retransmission already re-sends anything unacknowledged, so <c>Value0</c> is 0 and
+    /// <c>Value1</c> is unused.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -271,6 +273,12 @@ public enum DiagnosticId
     /// <c>Value0</c> is reported to this end's own Sink and never to the wire: a refused party is
     /// closed on without being told anything, so it learns neither the count nor which of the three
     /// refusals it met.
+    /// </para>
+    /// <para>
+    /// The datagram profile reports a Resume control datagram the same way, with <c>Value1</c> 6 (the
+    /// Resume control type, <c>DatagramControlType.Resume</c>). <c>Value0</c> is 0 when the target
+    /// session id names no Peer the Reactor holds, and 1 when it names a Peer but the presented secret
+    /// does not equal the one that Peer issued.
     /// </para>
     /// </remarks>
     ResumeUnmatched = 305,

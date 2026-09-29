@@ -729,13 +729,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return sessionEvent;
         }
 
-        // The one kind this profile queues that the shared half cannot build, because it alone needs
+        // MessageReceived is the one kind here the shared half cannot build, because it alone needs
         // the arena the payload was committed to (subtask 6.6.6, issue #219). The span is handed out
         // aliasing the arena directly, so it is valid for this Frame only — the same contract the
-        // stream profile's own MessageReceived carries.
-        return pending.Kind == SessionEventKind.MessageReceived
-            ? SessionEvent.ForMessageReceived(pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength))
-            : throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind.");
+        // stream profile's own MessageReceived carries. PeerResumed carries only the Peer.
+        return pending.Kind switch
+        {
+            SessionEventKind.MessageReceived => SessionEvent.ForMessageReceived(
+                pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
+            SessionEventKind.PeerResumed => SessionEvent.ForPeerResumed(pending.Peer),
+            _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind."),
+        };
     }
 
     /// <summary>
@@ -869,6 +873,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
             case DatagramControlType.Refusal:
                 OnRefusal(source, datagram);
+                break;
+
+            case DatagramControlType.Resume:
+                OnResume(source, datagram);
                 break;
 
             // The discard arm refuses. TryReadControlType has already rejected every type this
@@ -3002,6 +3010,79 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         ClosePeer(slot.Handle, disconnectReason);
+    }
+
+    /// <summary>
+    /// Routes a Resume by the session id in its body. A datagram that does not read as a Resume is
+    /// discarded like any other malformed control datagram. A target that names no Peer this Reactor
+    /// holds logs <see cref="DiagnosticId.ResumeUnmatched"/> against the Source with <c>Value0</c> 0
+    /// (no reservation was checked) and <c>Value1</c> 6 (the Resume record type), and changes nothing:
+    /// no event is raised and no Peer is touched. The session id only routes (ADR 0009): a target that
+    /// names a Peer must also present that Peer's <see cref="PeerSlot.LocalResumeSecret"/>, compared in
+    /// constant time, and a mismatch logs <see cref="DiagnosticId.ResumeUnmatched"/> with <c>Value0</c> 1
+    /// and leaves the Peer exactly as it was.
+    /// </summary>
+    private void OnResume(Source source, ReadOnlySpan<byte> datagram)
+    {
+        Span<byte> presentedSecret = stackalloc byte[DatagramSessionProtocol.ResumeSecretLength];
+        if (!ControlDatagramCodec.TryReadResume(datagram, out uint targetSessionId, presentedSecret))
+        {
+            DiscardMalformed(source, datagram.Length);
+            return;
+        }
+
+        if (!_peersBySessionId.TryGetValue(targetSessionId, out SlotHandle handle) || _peers.TryResolve(handle) is not PeerSlot slot)
+        {
+            LogResumeUnmatched(source, candidatesChecked: 0);
+            return;
+        }
+
+        // Constant time, so how long the comparison takes does not say how many leading bytes of a
+        // guess were right.
+        if (!CryptographicOperations.FixedTimeEquals(presentedSecret, slot.LocalResumeSecret))
+        {
+            LogResumeUnmatched(source, candidatesChecked: 1);
+            return;
+        }
+
+        ResumeInterruptedPeer(slot);
+    }
+
+    /// <summary>
+    /// The matched-Resume branch: takes an <see cref="PeerSlot.IsInterrupted"/> Peer out of Interrupted,
+    /// queues <see cref="SessionEventKind.PeerResumed"/> for the same <see cref="PeerId"/> it had
+    /// before, generation included, and logs <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c>
+    /// 0, since nothing is rewound on this profile: retransmission already re-sends anything
+    /// unacknowledged. Sequence state, ack state, receive windows and held Fragments are not touched. A
+    /// Peer that is not Interrupted has nothing to resume, so the Resume is ignored.
+    /// </summary>
+    private void ResumeInterruptedPeer(PeerSlot slot)
+    {
+        if (!slot.IsInterrupted)
+        {
+            return;
+        }
+
+        slot.IsInterrupted = false;
+        PeerId peer = ToPeerId(slot.Handle);
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = peer });
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForResumeMatched(peer, bytesRewound: 0));
+        }
+    }
+
+    /// <summary>
+    /// Logs <see cref="DiagnosticId.ResumeUnmatched"/> for a Resume that was not matched onto a Peer,
+    /// with <c>Value1</c> the Resume record type (<see cref="DatagramControlType.Resume"/>).
+    /// </summary>
+    private void LogResumeUnmatched(Source source, long candidatesChecked)
+    {
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForResumeUnmatched(source, candidatesChecked, (long)DatagramControlType.Resume));
+        }
     }
 
     /// <summary>
