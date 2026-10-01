@@ -18,30 +18,30 @@ public class DiagnosticIdTests
     /// without a row here fails <see cref="Roster_PinnedTable_CoversEveryMemberAndNoOther"/>, so the
     /// table cannot fall behind the code.
     /// </summary>
-    private static readonly Dictionary<DiagnosticId, (int Value, DiagnosticLevel Level)> Roster = new()
+    private static readonly Dictionary<DiagnosticId, RosterRow> _roster = new()
     {
-        [DiagnosticId.AdmissionCapReached] = (1, DiagnosticLevel.Warn),
-        [DiagnosticId.ArenaExhausted] = (2, DiagnosticLevel.Warn),
-        [DiagnosticId.CapacityExhausted] = (3, DiagnosticLevel.Warn),
-        [DiagnosticId.LinkFailed] = (100, DiagnosticLevel.Warn),
-        [DiagnosticId.DestinationUnreachable] = (101, DiagnosticLevel.Warn),
-        [DiagnosticId.DatagramTruncated] = (102, DiagnosticLevel.Warn),
-        [DiagnosticId.DatagramMalformed] = (200, DiagnosticLevel.Warn),
-        [DiagnosticId.CookieRejected] = (201, DiagnosticLevel.Warn),
-        [DiagnosticId.VersionRefused] = (202, DiagnosticLevel.Warn),
-        [DiagnosticId.FragmentSetAbandoned] = (203, DiagnosticLevel.Warn),
-        [DiagnosticId.RetransmissionTimerBackedOff] = (204, DiagnosticLevel.Trace),
-        [DiagnosticId.OversizedFragmentSet] = (205, DiagnosticLevel.Warn),
-        [DiagnosticId.UnreliableFragment] = (206, DiagnosticLevel.Warn),
-        [DiagnosticId.PeerRefused] = (300, DiagnosticLevel.Info),
-        [DiagnosticId.LingerNegotiated] = (301, DiagnosticLevel.Info),
-        [DiagnosticId.MalformedFraming] = (302, DiagnosticLevel.Warn),
-        [DiagnosticId.DataAfterGoodbye] = (303, DiagnosticLevel.Warn),
-        [DiagnosticId.ResumeMatched] = (304, DiagnosticLevel.Info),
-        [DiagnosticId.ResumeUnmatched] = (305, DiagnosticLevel.Warn),
-        [DiagnosticId.RedialAttempted] = (306, DiagnosticLevel.Info),
-        [DiagnosticId.RedialFailed] = (307, DiagnosticLevel.Info),
-        [DiagnosticId.DeliveryCounterRefused] = (308, DiagnosticLevel.Warn),
+        [DiagnosticId.AdmissionCapReached] = new(1, DiagnosticLevel.Warn),
+        [DiagnosticId.ArenaExhausted] = new(2, DiagnosticLevel.Warn),
+        [DiagnosticId.CapacityExhausted] = new(3, DiagnosticLevel.Warn),
+        [DiagnosticId.LinkFailed] = new(100, DiagnosticLevel.Warn),
+        [DiagnosticId.DestinationUnreachable] = new(101, DiagnosticLevel.Warn),
+        [DiagnosticId.DatagramTruncated] = new(102, DiagnosticLevel.Warn),
+        [DiagnosticId.DatagramMalformed] = new(200, DiagnosticLevel.Warn),
+        [DiagnosticId.CookieRejected] = new(201, DiagnosticLevel.Warn),
+        [DiagnosticId.VersionRefused] = new(202, DiagnosticLevel.Warn),
+        [DiagnosticId.FragmentSetAbandoned] = new(203, DiagnosticLevel.Warn),
+        [DiagnosticId.RetransmissionTimerBackedOff] = new(204, DiagnosticLevel.Trace),
+        [DiagnosticId.OversizedFragmentSet] = new(205, DiagnosticLevel.Warn),
+        [DiagnosticId.UnreliableFragment] = new(206, DiagnosticLevel.Warn),
+        [DiagnosticId.PeerRefused] = new(300, DiagnosticLevel.Info),
+        [DiagnosticId.LingerNegotiated] = new(301, DiagnosticLevel.Info),
+        [DiagnosticId.MalformedFraming] = new(302, DiagnosticLevel.Warn),
+        [DiagnosticId.DataAfterGoodbye] = new(303, DiagnosticLevel.Warn),
+        [DiagnosticId.ResumeMatched] = new(304, DiagnosticLevel.Info),
+        [DiagnosticId.ResumeUnmatched] = new(305, DiagnosticLevel.Warn),
+        [DiagnosticId.RedialAttempted] = new(306, DiagnosticLevel.Info),
+        [DiagnosticId.RedialFailed] = new(307, DiagnosticLevel.Info),
+        [DiagnosticId.DeliveryCounterRefused] = new(308, DiagnosticLevel.Warn),
     };
 
     /// <summary>
@@ -50,39 +50,39 @@ public class DiagnosticIdTests
     /// exists, and the named test's own assertion proves the member is produced. A member shared by two
     /// profiles (ADR 0020) names one producer per profile.
     /// </summary>
-    private static readonly (DiagnosticId Id, Type TestClass, string TestMethod)[] Producers =
+    private static readonly ProducerRow[] _producers =
     [
-        (DiagnosticId.AdmissionCapReached, typeof(RawReactorListenTests), nameof(RawReactorListenTests.Pump_MoreConnectionsPendingThanTheAdmissionCap_LogsAdmissionCapReachedExactlyOnce)),
-        (DiagnosticId.AdmissionCapReached, typeof(DatagramSessionRefusalTests), nameof(DatagramSessionRefusalTests.Pump_AFrameThatTurnsWorkAway_EmitsExactlyOneAdmissionCapReachedRecordCarryingTheCapAndCount)),
-        (DiagnosticId.ArenaExhausted, typeof(RawReactorFrameTests), nameof(RawReactorFrameTests.Pump_ArenaWithNoRoomForASecondLinksDatagram_ReportsArenaExhaustedWithTheArithmetic)),
-        (DiagnosticId.ArenaExhausted, typeof(DatagramSessionMessageDeliveryTests), nameof(DatagramSessionMessageDeliveryTests.Pump_ARecordTheArenaHasNoRoomFor_IsNotCountedAsReceivedAndReportsArenaExhausted)),
-        (DiagnosticId.CapacityExhausted, typeof(RawReactorListenTests), nameof(RawReactorListenTests.Pump_MorePendingThanFreeSlots_LogsCapacityExhaustedRatherThanAdmissionCapReached)),
-        (DiagnosticId.CapacityExhausted, typeof(DatagramSessionRefusalTests), nameof(DatagramSessionRefusalTests.OnHelloWithCookie_EveryCapacitySlotOccupied_RaisesAdmissionDiscardsAndLogsCapacityExhausted)),
-        (DiagnosticId.LinkFailed, typeof(RawReactorDialTests), nameof(RawReactorDialTests.Connect_ClosedPort_LogsLinkFailedCarryingThePlatformSocketError)),
-        (DiagnosticId.DestinationUnreachable, typeof(RawReactorTests), nameof(RawReactorTests.Pump_AfterSendToAClosedPort_RecordsDestinationUnreachable)),
-        (DiagnosticId.DatagramTruncated, typeof(RawReactorDiagnosticsTests), nameof(RawReactorDiagnosticsTests.Log_RecordReachingTheSink_CarriesItsIdLevelAndTaggedSubject)),
-        (DiagnosticId.DatagramMalformed, typeof(DatagramSessionCookieTests), nameof(DatagramSessionCookieTests.OnHelloWithCookie_AnnouncingAZeroSendIdleInterval_IsDiscardedAsMalformedAndNoPeerConnected)),
-        (DiagnosticId.CookieRejected, typeof(DatagramSessionCookieTests), nameof(DatagramSessionCookieTests.OnHelloWithCookie_ForgedCookie_IsRejectedWithWarnDiagnosticAndNoPeerConnected)),
-        (DiagnosticId.VersionRefused, typeof(DatagramSessionRefusalTests), nameof(DatagramSessionRefusalTests.OnHelloWithCookie_OfferingAVersionTheReactorDoesNotSpeak_LogsVersionRefusedAtWarnNotError)),
-        (DiagnosticId.FragmentSetAbandoned, typeof(DatagramSessionFragmentSetAbandonedTests), nameof(DatagramSessionFragmentSetAbandonedTests.Pump_RingLapClobbersAnIncompleteFragmentSetsSlot_EmitsFragmentSetAbandonedOnceWithHeldAndDeclaredCounts)),
-        (DiagnosticId.RetransmissionTimerBackedOff, typeof(DatagramSessionAdaptiveRtoTests), nameof(DatagramSessionAdaptiveRtoTests.Pump_ConsecutiveLossesWithNothingAcknowledged_EmitOneRecordEachWithARisingCountAndADoublingRtoThatSaturatesAtLinger)),
-        (DiagnosticId.OversizedFragmentSet, typeof(DatagramSessionOversizedFragmentSetTests), nameof(DatagramSessionOversizedFragmentSetTests.Pump_FragmentDeclaringOneMoreThanReceiveWindowFloor_ClosesThePeerWithProtocolViolation)),
-        (DiagnosticId.UnreliableFragment, typeof(DatagramSessionHostileFragmentDiscardTests), nameof(DatagramSessionHostileFragmentDiscardTests.Pump_HostileFragmentInAnUnreliableMode_DiscardsWholeDatagramAndReportsTheRefusal)),
-        (DiagnosticId.PeerRefused, typeof(StreamSessionHandshakeGuardTests), nameof(StreamSessionHandshakeGuardTests.Connect_OfferingAVersionTheReactorDoesNotSpeak_LogsPeerRefusedAtInfoWithTheSourceSubject)),
-        (DiagnosticId.LingerNegotiated, typeof(StreamSessionNegotiatedLingerTests), nameof(StreamSessionNegotiatedLingerTests.Pump_BothRolesInterrupted_WithFractionalMillisecondOwnLinger_RoundUpOnceAndCloseAtTheRoundedInstant)),
-        (DiagnosticId.LingerNegotiated, typeof(DatagramSessionLingerNegotiatedDiagnosticTests), nameof(DatagramSessionLingerNegotiatedDiagnosticTests.Connect_TwoReactorsWithDifferentLingers_BothEndsRecordTheirOwnLingerAndTheMinimumAsEffective)),
-        (DiagnosticId.MalformedFraming, typeof(StreamSessionMalformedFramingTests), nameof(StreamSessionMalformedFramingTests.DeliverCompleteMessages_PrefixAnnouncing4GB_LogsMalformedFramingAtWarnWithThePeerSubject)),
-        (DiagnosticId.DataAfterGoodbye, typeof(StreamSessionGoodbyeTests), nameof(StreamSessionGoodbyeTests.DataAfterGoodbye_MessageArrivesBehindGoodbyeInTheSameWrite_LogsDataAfterGoodbyeAtWarnWithThePeerSubject)),
-        (DiagnosticId.ResumeMatched, typeof(StreamSessionResumeDiagnosticsTests), nameof(StreamSessionResumeDiagnosticsTests.Handshake_AResumePresentingAHeldPeersSecret_LogsExactlyOneResumeMatchedNamingThatPeer)),
-        (DiagnosticId.ResumeMatched, typeof(DatagramSessionMatchedResumeTests), nameof(DatagramSessionMatchedResumeTests.Pump_MatchingResumeAgainstAPeerThatIsNotInterrupted_RaisesNoEventLogsResumeMatchedAndLeavesResumesUnchanged)),
-        (DiagnosticId.ResumeUnmatched, typeof(StreamSessionResumeDiagnosticsTests), nameof(StreamSessionResumeDiagnosticsTests.Handshake_AResumePresentingASecretMatchingNoHeldPeer_LogsResumeUnmatchedAgainstAClaimedSource)),
-        (DiagnosticId.ResumeUnmatched, typeof(DatagramSessionDiallerRejectsResumeTests), nameof(DatagramSessionDiallerRejectsResumeTests.Pump_ResumeNamingADialledPeerWithItsOwnSecret_LogsResumeUnmatchedAndRaisesNoEvent)),
-        (DiagnosticId.RedialAttempted, typeof(StreamSessionRedialTests), nameof(StreamSessionRedialTests.Pump_AReDialAttempt_LogsRedialAttemptedAtInfoNamingThePeerItBelongsTo)),
-        (DiagnosticId.RedialFailed, typeof(StreamSessionRedialTests), nameof(StreamSessionRedialTests.Pump_ReDialAttemptThatFails_LeavesThePeerInterruptedRatherThanClosingIt)),
-        (DiagnosticId.DeliveryCounterRefused, typeof(StreamSessionDeliveryCounterFramingTests), nameof(StreamSessionDeliveryCounterFramingTests.DeliverCompleteMessages_ACountAboveWhatThisEndEverSent_LogsDeliveryCounterRefusedRatherThanMalformedFraming)),
+        new(DiagnosticId.AdmissionCapReached, typeof(RawReactorListenTests), nameof(RawReactorListenTests.Pump_MoreConnectionsPendingThanTheAdmissionCap_LogsAdmissionCapReachedExactlyOnce)),
+        new(DiagnosticId.AdmissionCapReached, typeof(DatagramSessionRefusalTests), nameof(DatagramSessionRefusalTests.Pump_AFrameThatTurnsWorkAway_EmitsExactlyOneAdmissionCapReachedRecordCarryingTheCapAndCount)),
+        new(DiagnosticId.ArenaExhausted, typeof(RawReactorFrameTests), nameof(RawReactorFrameTests.Pump_ArenaWithNoRoomForASecondLinksDatagram_ReportsArenaExhaustedWithTheArithmetic)),
+        new(DiagnosticId.ArenaExhausted, typeof(DatagramSessionMessageDeliveryTests), nameof(DatagramSessionMessageDeliveryTests.Pump_ARecordTheArenaHasNoRoomFor_IsNotCountedAsReceivedAndReportsArenaExhausted)),
+        new(DiagnosticId.CapacityExhausted, typeof(RawReactorListenTests), nameof(RawReactorListenTests.Pump_MorePendingThanFreeSlots_LogsCapacityExhaustedRatherThanAdmissionCapReached)),
+        new(DiagnosticId.CapacityExhausted, typeof(DatagramSessionRefusalTests), nameof(DatagramSessionRefusalTests.OnHelloWithCookie_EveryCapacitySlotOccupied_RaisesAdmissionDiscardsAndLogsCapacityExhausted)),
+        new(DiagnosticId.LinkFailed, typeof(RawReactorDialTests), nameof(RawReactorDialTests.Connect_ClosedPort_LogsLinkFailedCarryingThePlatformSocketError)),
+        new(DiagnosticId.DestinationUnreachable, typeof(RawReactorTests), nameof(RawReactorTests.Pump_AfterSendToAClosedPort_RecordsDestinationUnreachable)),
+        new(DiagnosticId.DatagramTruncated, typeof(RawReactorDiagnosticsTests), nameof(RawReactorDiagnosticsTests.Log_RecordReachingTheSink_CarriesItsIdLevelAndTaggedSubject)),
+        new(DiagnosticId.DatagramMalformed, typeof(DatagramSessionCookieTests), nameof(DatagramSessionCookieTests.OnHelloWithCookie_AnnouncingAZeroSendIdleInterval_IsDiscardedAsMalformedAndNoPeerConnected)),
+        new(DiagnosticId.CookieRejected, typeof(DatagramSessionCookieTests), nameof(DatagramSessionCookieTests.OnHelloWithCookie_ForgedCookie_IsRejectedWithWarnDiagnosticAndNoPeerConnected)),
+        new(DiagnosticId.VersionRefused, typeof(DatagramSessionRefusalTests), nameof(DatagramSessionRefusalTests.OnHelloWithCookie_OfferingAVersionTheReactorDoesNotSpeak_LogsVersionRefusedAtWarnNotError)),
+        new(DiagnosticId.FragmentSetAbandoned, typeof(DatagramSessionFragmentSetAbandonedTests), nameof(DatagramSessionFragmentSetAbandonedTests.Pump_RingLapClobbersAnIncompleteFragmentSetsSlot_EmitsFragmentSetAbandonedOnceWithHeldAndDeclaredCounts)),
+        new(DiagnosticId.RetransmissionTimerBackedOff, typeof(DatagramSessionAdaptiveRtoTests), nameof(DatagramSessionAdaptiveRtoTests.Pump_ConsecutiveLossesWithNothingAcknowledged_EmitOneRecordEachWithARisingCountAndADoublingRtoThatSaturatesAtLinger)),
+        new(DiagnosticId.OversizedFragmentSet, typeof(DatagramSessionOversizedFragmentSetTests), nameof(DatagramSessionOversizedFragmentSetTests.Pump_FragmentDeclaringOneMoreThanReceiveWindowFloor_ClosesThePeerWithProtocolViolation)),
+        new(DiagnosticId.UnreliableFragment, typeof(DatagramSessionHostileFragmentDiscardTests), nameof(DatagramSessionHostileFragmentDiscardTests.Pump_HostileFragmentInAnUnreliableMode_DiscardsWholeDatagramAndReportsTheRefusal)),
+        new(DiagnosticId.PeerRefused, typeof(StreamSessionHandshakeGuardTests), nameof(StreamSessionHandshakeGuardTests.Connect_OfferingAVersionTheReactorDoesNotSpeak_LogsPeerRefusedAtInfoWithTheSourceSubject)),
+        new(DiagnosticId.LingerNegotiated, typeof(StreamSessionNegotiatedLingerTests), nameof(StreamSessionNegotiatedLingerTests.Pump_BothRolesInterrupted_WithFractionalMillisecondOwnLinger_RoundUpOnceAndCloseAtTheRoundedInstant)),
+        new(DiagnosticId.LingerNegotiated, typeof(DatagramSessionLingerNegotiatedDiagnosticTests), nameof(DatagramSessionLingerNegotiatedDiagnosticTests.Connect_TwoReactorsWithDifferentLingers_BothEndsRecordTheirOwnLingerAndTheMinimumAsEffective)),
+        new(DiagnosticId.MalformedFraming, typeof(StreamSessionMalformedFramingTests), nameof(StreamSessionMalformedFramingTests.DeliverCompleteMessages_PrefixAnnouncing4GB_LogsMalformedFramingAtWarnWithThePeerSubject)),
+        new(DiagnosticId.DataAfterGoodbye, typeof(StreamSessionGoodbyeTests), nameof(StreamSessionGoodbyeTests.DataAfterGoodbye_MessageArrivesBehindGoodbyeInTheSameWrite_LogsDataAfterGoodbyeAtWarnWithThePeerSubject)),
+        new(DiagnosticId.ResumeMatched, typeof(StreamSessionResumeDiagnosticsTests), nameof(StreamSessionResumeDiagnosticsTests.Handshake_AResumePresentingAHeldPeersSecret_LogsExactlyOneResumeMatchedNamingThatPeer)),
+        new(DiagnosticId.ResumeMatched, typeof(DatagramSessionMatchedResumeTests), nameof(DatagramSessionMatchedResumeTests.Pump_MatchingResumeAgainstAPeerThatIsNotInterrupted_RaisesNoEventLogsResumeMatchedAndLeavesResumesUnchanged)),
+        new(DiagnosticId.ResumeUnmatched, typeof(StreamSessionResumeDiagnosticsTests), nameof(StreamSessionResumeDiagnosticsTests.Handshake_AResumePresentingASecretMatchingNoHeldPeer_LogsResumeUnmatchedAgainstAClaimedSource)),
+        new(DiagnosticId.ResumeUnmatched, typeof(DatagramSessionDiallerRejectsResumeTests), nameof(DatagramSessionDiallerRejectsResumeTests.Pump_ResumeNamingADialledPeerWithItsOwnSecret_LogsResumeUnmatchedAndRaisesNoEvent)),
+        new(DiagnosticId.RedialAttempted, typeof(StreamSessionRedialTests), nameof(StreamSessionRedialTests.Pump_AReDialAttempt_LogsRedialAttemptedAtInfoNamingThePeerItBelongsTo)),
+        new(DiagnosticId.RedialFailed, typeof(StreamSessionRedialTests), nameof(StreamSessionRedialTests.Pump_ReDialAttemptThatFails_LeavesThePeerInterruptedRatherThanClosingIt)),
+        new(DiagnosticId.DeliveryCounterRefused, typeof(StreamSessionDeliveryCounterFramingTests), nameof(StreamSessionDeliveryCounterFramingTests.DeliverCompleteMessages_ACountAboveWhatThisEndEverSent_LogsDeliveryCounterRefusedRatherThanMalformedFraming)),
     ];
 
-    /// <summary>Every member the enum declares, read from the enum rather than from <see cref="Roster"/>.</summary>
+    /// <summary>Every member the enum declares, read from the enum rather than from <see cref="_roster"/>.</summary>
     public static TheoryData<DiagnosticId> Members => [.. Enum.GetValues<DiagnosticId>()];
 
     [Fact]
@@ -92,7 +92,7 @@ public class DiagnosticIdTests
         DiagnosticId[] members = Enum.GetValues<DiagnosticId>();
 
         // Act
-        IEnumerable<DiagnosticId> pinned = Roster.Keys;
+        IEnumerable<DiagnosticId> pinned = _roster.Keys;
 
         // Assert
         pinned.Should().BeEquivalentTo(members);
@@ -103,7 +103,7 @@ public class DiagnosticIdTests
     public void Values_EveryMember_MatchesItsPinnedNumber(DiagnosticId id)
     {
         // Arrange
-        int expected = Roster[id].Value;
+        int expected = _roster[id].Value;
 
         // Act
         int actual = (int)id;
@@ -179,7 +179,7 @@ public class DiagnosticIdTests
         IEnumerable<(DiagnosticId, DiagnosticLevel)> pairs = built.Select(record => (record.Id, record.Level)).Distinct();
 
         // Assert
-        pairs.Should().BeEquivalentTo(Roster.Select(row => (row.Key, row.Value.Level)));
+        pairs.Should().BeEquivalentTo(_roster.Select(row => (row.Key, row.Value.Level)));
     }
 
     [Fact]
@@ -218,7 +218,7 @@ public class DiagnosticIdTests
     public void Reachability_EveryMember_IsProducedByANamedTest(DiagnosticId id)
     {
         // Arrange
-        IEnumerable<(DiagnosticId Id, Type TestClass, string TestMethod)> producers = Producers.Where(row => row.Id == id);
+        IEnumerable<ProducerRow> producers = _producers.Where(row => row.Id == id);
 
         // Act
         int count = producers.Count();
@@ -231,7 +231,7 @@ public class DiagnosticIdTests
     public void Reachability_EveryNamedProducer_IsARunnableTest()
     {
         // Arrange
-        (DiagnosticId Id, Type TestClass, string TestMethod)[] rows = Producers;
+        ProducerRow[] rows = _producers;
 
         // Act
         IEnumerable<string> notRunnable = rows
@@ -262,4 +262,10 @@ public class DiagnosticIdTests
         string assemblyPath = typeof(DiagnosticId).Assembly.Location;
         return XDocument.Load(Path.ChangeExtension(assemblyPath, ".xml"));
     }
+
+    /// <summary>One member's pinned number and level in <see cref="_roster"/>.</summary>
+    private readonly record struct RosterRow(int Value, DiagnosticLevel Level);
+
+    /// <summary>One member and a test that produces it, in <see cref="_producers"/>.</summary>
+    private readonly record struct ProducerRow(DiagnosticId Id, Type TestClass, string TestMethod);
 }
