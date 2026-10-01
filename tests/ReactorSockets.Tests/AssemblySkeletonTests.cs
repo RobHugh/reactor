@@ -49,6 +49,7 @@ public class AssemblySkeletonTests
             nameof(DiagnosticLevel),
             nameof(DiagnosticId),
             nameof(DiagnosticSubjectKind),
+            nameof(DiagnosticFormatter),
             nameof(ReactorCounters),
             nameof(LinkCounters),
             nameof(DatagramSessionReactor),
