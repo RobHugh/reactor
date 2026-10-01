@@ -39,7 +39,12 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
     /// <summary>How long a quiet Peer goes before this scenario's accepter interrupts it.</summary>
     public static readonly TimeSpan ReceiveIdleDeadline = SendIdleInterval * MissedHeartbeats;
 
-    private const byte ResumeType = 6;
+    /// <summary>The offset of a control datagram's type byte, after the zero session field.</summary>
+    public const int ControlTypeOffset = 4;
+
+    /// <summary>The control type byte of a Resume.</summary>
+    public const byte ResumeType = 6;
+
     private const byte AcceptType = 4;
     private const int AcceptSessionIdOffset = 13;
     private const int AcceptSecretOffset = 37;
@@ -93,7 +98,7 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
     /// <summary>A copy of every <see cref="SessionEventKind.MessageReceived"/> payload the accepter has drained so far, in order: the payloads of <see cref="AccepterReceived"/>.</summary>
     public IReadOnlyList<byte[]> AccepterPayloads => [.. AccepterReceived.Select(r => r.Payload)];
 
-    /// <summary>Every event the dialler has drained through <see cref="Step"/> so far, in order. The Connect-time events are not in it.</summary>
+    /// <summary>Every event the dialler has drained through <see cref="Step"/> or <see cref="PumpDiallerUntil"/> so far, in order. The Connect-time events are not in it.</summary>
     public List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> DiallerEvents { get; } = [];
 
     /// <summary>The proxy's upstream-facing address the accepter currently sees as the dialler's source. Updated by <see cref="ResumeThroughNewPort"/>.</summary>
@@ -114,18 +119,65 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
     /// One round of the whole path: advances the shared clock by <paramref name="interval"/>, Pumps the dialler,
     /// the proxy, the accepter and the proxy again, and drains each end into <see cref="DiallerEvents"/> and
     /// <see cref="AccepterEvents"/> straight after its own Pump, so no Pump clears an undrained event.
-    /// Then yields briefly so real loopback delivery can catch up with the fake clock.
+    /// Each proxy Pump repeats until the proxy has captured what the end before it sent this round
+    /// (<see cref="PumpEndThenProxy"/>), rather than sleeping a fixed time.
     /// </summary>
     public void Step(TimeSpan interval)
     {
         Clock.Advance(interval);
-        Dialler.Reactor.Pump();
-        DrainCapturing(Dialler, DiallerEvents, DiallerReceived);
-        Proxy.Pump();
-        PumpAccepter();
-        Proxy.Pump();
-        PumpDeadline.Yield();
+        PumpEndThenProxy(Proxy, RelayDirection.ClientToUpstream, Dialler, () =>
+        {
+            Dialler.Reactor.Pump();
+            DrainCapturing(Dialler, DiallerEvents, DiallerReceived);
+        });
+        PumpEndThenProxy(Proxy, RelayDirection.UpstreamToClient, Accepter, PumpAccepter);
     }
+
+    /// <summary>
+    /// Runs <paramref name="pumpEnd"/>, which Pumps and drains <paramref name="end"/>, then Pumps
+    /// <paramref name="proxy"/> until it has captured in <paramref name="direction"/> every datagram that
+    /// Pump sent (<see cref="PumpProxyUntilCaptured"/>).
+    /// </summary>
+    public static void PumpEndThenProxy(LossyProxy proxy, RelayDirection direction, DatagramSessionReactorHarness end, Action pumpEnd)
+    {
+        int capturedBefore = CapturedCount(proxy, direction);
+        ulong sentBefore = end.Reactor.Counters.DatagramsSent;
+        pumpEnd();
+        PumpProxyUntilCaptured(proxy, direction, capturedBefore, end.Reactor.Counters.DatagramsSent - sentBefore);
+    }
+
+    /// <summary>
+    /// How long <see cref="PumpProxyUntilCaptured"/> waits. Loopback delivery normally lands before the
+    /// first proxy Pump. An end can also send somewhere the proxy never hears, such as the accepter's
+    /// sends to the proxy's closed old port before a Resume, so the wait is short rather than
+    /// <see cref="PumpDeadline.Default"/>.
+    /// </summary>
+    private static readonly TimeSpan _captureBudget = TimeSpan.FromMilliseconds(20);
+
+    /// <summary>
+    /// Pumps <paramref name="proxy"/> at least once, then again until it has captured <paramref name="sent"/>
+    /// datagrams in <paramref name="direction"/> since it held <paramref name="capturedBefore"/>, or a short
+    /// real-time budget is spent. Spins between Pumps rather than sleeping, because a one-millisecond sleep
+    /// costs about fifteen on Windows (issue #393).
+    /// </summary>
+    public static void PumpProxyUntilCaptured(LossyProxy proxy, RelayDirection direction, int capturedBefore, ulong sent)
+    {
+        PumpDeadline deadline = PumpDeadline.Start(_captureBudget);
+        while (true)
+        {
+            proxy.Pump();
+            if ((ulong)(CapturedCount(proxy, direction) - capturedBefore) >= sent || deadline.Expired)
+            {
+                return;
+            }
+
+            Thread.Yield();
+        }
+    }
+
+    /// <summary>How many datagrams <paramref name="proxy"/> has captured in <paramref name="direction"/>.</summary>
+    public static int CapturedCount(LossyProxy proxy, RelayDirection direction) =>
+        proxy.Captures.Count(c => c.Direction == direction);
 
     /// <summary>
     /// Cuts the path in both directions and steps the whole path until each end has raised one more
@@ -158,10 +210,11 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
     /// until each end has raised one more <see cref="SessionEventKind.PeerResumed"/> than it had when this
     /// was called. Messages a test sent while Interrupted are relayed here too.
     /// </summary>
+    /// <param name="address">The loopback address the new socket binds, so the source address changes too; <see cref="IPAddress.Loopback"/> when <see langword="null"/>.</param>
     /// <returns>The new upstream-facing address, which <see cref="UpstreamFacingEndPoint"/> now holds.</returns>
-    public IPEndPoint ResumeThroughNewPort()
+    public IPEndPoint ResumeThroughNewPort(IPAddress? address = null)
     {
-        UpstreamFacingEndPoint = Proxy.MoveUpstreamFacingSocket();
+        UpstreamFacingEndPoint = Proxy.MoveUpstreamFacingSocket(address);
         Proxy.ResumeRelayingBothDirections();
         StepUntilBothRaise(SessionEventKind.PeerResumed);
         return UpstreamFacingEndPoint;
@@ -264,6 +317,85 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
         secret.CopyTo(datagram.AsSpan(ControlBodyOffset + sizeof(uint)));
         return datagram;
     }
+
+    /// <summary>Whether <paramref name="payload"/> is a control datagram: zero in its session field and exactly <see cref="ControlDatagramSize"/> bytes.</summary>
+    public static bool IsControl(byte[] payload) =>
+        payload.Length == ControlDatagramSize && !payload.AsSpan(0, sizeof(uint)).ContainsAnyExcept((byte)0);
+
+    /// <summary>Whether <paramref name="payload"/> is a Resume control datagram.</summary>
+    public static bool IsResume(byte[] payload) => IsControl(payload) && payload[ControlTypeOffset] == ResumeType;
+
+    /// <summary>Every Resume <paramref name="proxy"/> captured from the dialling side, in arrival order.</summary>
+    public static List<byte[]> DiallerResumes(LossyProxy proxy) =>
+        [.. proxy.Captures
+            .Where(c => c.Direction == RelayDirection.ClientToUpstream && IsResume(c.Payload))
+            .Select(c => c.Payload)];
+
+    /// <summary>Every datagram the proxy captured in <paramref name="direction"/>, in arrival order.</summary>
+    public List<RelayCapture> Captured(RelayDirection direction) =>
+        [.. Proxy.Captures.Where(c => c.Direction == direction)];
+
+    /// <summary>
+    /// Waits until <paramref name="client"/> has a datagram to read, or the real-time budget is spent.
+    /// Returns whether one arrived.
+    /// </summary>
+    public static bool WaitForDatagram(UdpClient client, TimeSpan? budget = null)
+    {
+        PumpDeadline deadline = PumpDeadline.Start(budget);
+        while (client.Available == 0)
+        {
+            if (deadline.Expired)
+            {
+                return false;
+            }
+
+            PumpDeadline.Yield();
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Pumps the dialler, draining after every Pump into <see cref="DiallerEvents"/>, until
+    /// <paramref name="condition"/> holds, <paramref name="pumps"/> Pumps have run, or the real-time
+    /// budget is spent.
+    /// </summary>
+    public void PumpDiallerUntil(Func<bool> condition, int pumps = int.MaxValue)
+    {
+        PumpDeadline deadline = PumpDeadline.Start();
+        for (int i = 0; i < pumps; i++)
+        {
+            Dialler.Reactor.Pump();
+            DrainCapturing(Dialler, DiallerEvents, DiallerReceived);
+            if (condition() || deadline.Expired)
+            {
+                return;
+            }
+
+            PumpDeadline.Yield();
+        }
+    }
+
+    /// <summary>Pumps the proxy until several Pumps in a row read nothing new, so every datagram already sent has been captured.</summary>
+    public void SettleProxy()
+    {
+        PumpDeadline deadline = PumpDeadline.Start(TimeSpan.FromMilliseconds(500));
+        int quiet = 0;
+        while (quiet < 20 && !deadline.Expired)
+        {
+            int count = Proxy.Captures.Count;
+            Proxy.Pump();
+            quiet = Proxy.Captures.Count == count ? quiet + 1 : 0;
+            PumpDeadline.Yield();
+        }
+    }
+
+    /// <summary>
+    /// Pumps the accepter, draining after every Pump, until it has read more than
+    /// <paramref name="receivedBefore"/> datagrams in total, so a datagram sent to it directly has been handled.
+    /// </summary>
+    public void PumpAccepterUntilReceivedMoreThan(ulong receivedBefore) =>
+        PumpAccepterUntil(() => Accepter.Reactor.Counters.DatagramsReceived > receivedBefore);
 
     /// <summary>The Peer's real secret with its last byte flipped: as close as a wrong secret gets.</summary>
     public byte[] WrongSecret()

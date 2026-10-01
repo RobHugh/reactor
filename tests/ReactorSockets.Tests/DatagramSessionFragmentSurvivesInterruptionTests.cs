@@ -391,6 +391,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
         public required PeerId DiallerPeer { get; init; }
         public required PeerId AccepterPeer { get; init; }
 
+        /// <summary>Connects a dialler to an accepter through a tap then a proxy, and returns the fixture once both ends have connected.</summary>
         public static Fixture Build()
         {
             DatagramSessionReactorHarness dialler = new(
@@ -484,6 +485,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
             return PumpRoundsCollectingPayloads(rounds: 16);
         }
 
+        /// <summary>Runs <paramref name="rounds"/> relay rounds and returns every payload the accepter received, in order.</summary>
         public List<byte[]> PumpRoundsCollectingPayloads(int rounds)
         {
             List<byte[]> delivered = [];
@@ -496,6 +498,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
             return delivered;
         }
 
+        /// <summary>Pumps the dialler, tap, proxy, accepter, proxy and tap once each, so a datagram can cross the path in either direction.</summary>
         public void PumpRelayRound()
         {
             Dialler.Reactor.Pump();

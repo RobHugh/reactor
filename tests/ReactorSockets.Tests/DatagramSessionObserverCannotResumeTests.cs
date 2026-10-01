@@ -71,8 +71,9 @@ public class DatagramSessionObserverCannotResumeTests
         using Fixture fixture = Fixture.InterruptedAfterObserving();
 
         // Act
+        ulong receivedBefore = fixture.Scenario.Accepter.Reactor.Counters.DatagramsReceived;
         fixture.Observer.Send(fixture.Scenario.Accepter.Endpoint, fixture.CapturedDataDatagram);
-        fixture.PumpAccepterAFewTimes();
+        fixture.Scenario.PumpAccepterUntilReceivedMoreThan(receivedBefore);
 
         // Assert
         fixture.Scenario.AccepterEvents.Should().NotContain(e => e.Kind == SessionEventKind.PeerResumed);
@@ -89,8 +90,9 @@ public class DatagramSessionObserverCannotResumeTests
         BinaryPrimitives.WriteUInt32BigEndian(handBuilt, fixture.ObservedSessionId);
 
         // Act
+        ulong receivedBefore = fixture.Scenario.Accepter.Reactor.Counters.DatagramsReceived;
         fixture.Observer.Send(fixture.Scenario.Accepter.Endpoint, handBuilt);
-        fixture.PumpAccepterAFewTimes();
+        fixture.Scenario.PumpAccepterUntilReceivedMoreThan(receivedBefore);
 
         // Assert
         fixture.Scenario.AccepterEvents.Should().NotContain(e => e.Kind == SessionEventKind.PeerResumed);
@@ -108,10 +110,10 @@ public class DatagramSessionObserverCannotResumeTests
         scenario.Clock.Advance(_observerActsAfter);
 
         // Act
+        ulong receivedBefore = scenario.Accepter.Reactor.Counters.DatagramsReceived;
         fixture.Observer.Send(scenario.Accepter.Endpoint, Scenario.BuildResume(fixture.ObservedSessionId, Fixture.GuessedSecret()));
         fixture.Observer.Send(scenario.Accepter.Endpoint, fixture.CapturedDataDatagram);
-        scenario.PumpAccepterUntil(() => scenario.Accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
-        fixture.PumpAccepterAFewTimes();
+        scenario.PumpAccepterUntilReceivedMoreThan(receivedBefore + 1); // both of the observer's datagrams
 
         scenario.AdvanceAccepter(_linger - _observerActsAfter - TimeSpan.FromMilliseconds(1));
         scenario.PumpAccepter();
@@ -136,10 +138,10 @@ public class DatagramSessionObserverCannotResumeTests
 
         // Act — both datagrams, then further send-idle intervals: the Interrupted Peer keeps pinging,
         // and where those Pings go is its send address.
+        ulong receivedBefore = scenario.Accepter.Reactor.Counters.DatagramsReceived;
         fixture.Observer.Send(scenario.Accepter.Endpoint, Scenario.BuildResume(fixture.ObservedSessionId, Fixture.GuessedSecret()));
         fixture.Observer.Send(scenario.Accepter.Endpoint, fixture.CapturedDataDatagram);
-        scenario.PumpAccepterUntil(() => scenario.Accepter.Sink.Received.Any(r => r.Id == DiagnosticId.ResumeUnmatched));
-        fixture.PumpAccepterAFewTimes();
+        scenario.PumpAccepterUntilReceivedMoreThan(receivedBefore + 1); // both of the observer's datagrams
 
         int pingsToTheProxyBefore = scenario.Proxy.Captures.Count(c => c.Direction == RelayDirection.UpstreamToClient);
         for (int i = 0; i < 3; i++)
@@ -218,16 +220,6 @@ public class DatagramSessionObserverCannotResumeTests
 
         /// <summary>A secret the observer made up: not the issued one.</summary>
         public static byte[] GuessedSecret() => [.. Enumerable.Range(1, Scenario.ResumeSecretLength).Select(i => (byte)i)];
-
-        /// <summary>Pumps the accepter a few times, draining after every Pump, so a datagram the observer sent has been handled.</summary>
-        public void PumpAccepterAFewTimes()
-        {
-            for (int i = 0; i < 20; i++)
-            {
-                Scenario.PumpAccepter();
-                Thread.Sleep(1);
-            }
-        }
 
         /// <inheritdoc/>
         public void Dispose()

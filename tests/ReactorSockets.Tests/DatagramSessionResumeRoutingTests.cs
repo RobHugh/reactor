@@ -277,12 +277,9 @@ public class DatagramSessionResumeRoutingTests
         using UdpClient resumer = Scenario.NewResumer();
 
         // Act
+        ulong receivedBefore = scenario.Accepter.Reactor.Counters.DatagramsReceived;
         resumer.Send(Scenario.BuildResume(scenario.AccepterSessionId, scenario.ResumeSecret), scenario.Accepter.Endpoint);
-        for (int i = 0; i < 20; i++)
-        {
-            scenario.PumpAccepter();
-            Thread.Sleep(1);
-        }
+        scenario.PumpAccepterUntilReceivedMoreThan(receivedBefore);
 
         // Assert
         scenario.AccepterEvents.Should().BeEmpty();

@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using FluentAssertions;
 using Xunit;
 
@@ -9,21 +8,14 @@ namespace ReactorSockets.Tests;
 /// <see cref="DatagramSessionReactor.Close"/>) never sends a Resume, even when its receive-idle deadline
 /// passes. A Closing Peer does not go Interrupted at all, so it raises no
 /// <see cref="SessionEventKind.PeerInterrupted"/> either, and it ends through Linger measured from Close.
-/// Resume datagrams are recognised on the wire by hand, as in <see cref="DatagramSessionInterruptedDiallerResumeTests"/>.
+/// Resume datagrams are recognised on the wire by <see cref="DatagramSessionResumeScenario.IsResume"/>.
 /// </summary>
 public class DatagramSessionClosingNeverResumesTests
 {
-    private const int ControlTypeOffset = 4;
-    private const byte ResumeType = 6;
     private const int MissedHeartbeats = 3;
 
     private static readonly TimeSpan _sendIdleInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan _linger = TimeSpan.FromSeconds(10);
-
-    private static bool IsResume(byte[] payload) =>
-        payload.Length > ControlTypeOffset
-        && BinaryPrimitives.ReadUInt32BigEndian(payload) == 0
-        && payload[ControlTypeOffset] == ResumeType;
 
     private static (DatagramSessionReactorHarness Dialler, DatagramSessionReactorHarness Accepter, LossyProxy Proxy, PeerId Peer) Connect()
     {
@@ -72,7 +64,7 @@ public class DatagramSessionClosingNeverResumesTests
 
             // Assert
             beforeLinger.Should().BeEmpty("the Peer stayed Closing: not Interrupted, not closed");
-            proxy.Captures.Where(c => c.Direction == RelayDirection.ClientToUpstream && IsResume(c.Payload)).Should().BeEmpty(
+            proxy.Captures.Where(c => c.Direction == RelayDirection.ClientToUpstream && DatagramSessionResumeScenario.IsResume(c.Payload)).Should().BeEmpty(
                 "a Closing dialled Peer sends no Resume");
             events.Should().ContainSingle()
                 .Which.Should().Be((SessionEventKind.PeerClosed, peer, DisconnectReason.LingerExpired));
