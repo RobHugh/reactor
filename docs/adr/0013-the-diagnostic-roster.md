@@ -260,6 +260,11 @@ size and regardless of send success, as it does a data Datagram. The accepting e
 Resume to the Peer's bytes received. A Resume that names no Peer, names a dialled Peer, or presents the
 wrong secret charges no Peer. Handshake control datagrams are still excluded.
 
+**Amended (issue #59).** The datagram session profile emits `LingerNegotiated`, `ResumeMatched` and
+`ResumeUnmatched` from the stream block. ADR 0020 decides this is deliberate: a block names the profile
+that defined a condition, not the profile that emitted a record. The supported Sink style is
+range-checking the blocks.
+
 Sixteen members as first drafted. What the rules **removed** is the more useful half of the exercise:
 
 - **`DatagramDuplicate` and `PacketOutOfWindow`** are per-packet volume driven by loss and reordering.
