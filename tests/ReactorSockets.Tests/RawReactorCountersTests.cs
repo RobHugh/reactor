@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using FluentAssertions;
 using Xunit;
 
@@ -85,6 +86,103 @@ public class RawReactorCountersTests
 
         // Assert
         harness.Reactor.Counters.DatagramsReceived.Should().Be(1);
+    }
+
+    [Fact]
+    public void Pump_DatagramExchange_MovesTheDatagramFiguresTheArenaHighWaterAndEachLinksOwnBytesOnly()
+    {
+        // Arrange — issue #61: every field rises where expected and nowhere else.
+        using RawReactorHarness harness = new();
+        (LinkId sender, _) = harness.BindLoopbackLink();
+        (LinkId receiver, IPEndPoint receiverEndPoint) = harness.BindLoopbackLink();
+        ReactorCounters reactorBefore = harness.Reactor.Counters;
+        LinkCounters senderBefore = harness.Reactor.CountersOf(sender);
+        LinkCounters receiverBefore = harness.Reactor.CountersOf(receiver);
+
+        // Act
+        harness.Reactor.SendTo(sender, Source.FromIPEndPoint(receiverEndPoint), new byte[64])
+            .IsSuccess.Should().BeTrue();
+        harness.Reactor.Pump();
+        harness.DrainToList().Should().ContainSingle();
+
+        // Assert
+        CounterFields.Moved(reactorBefore, harness.Reactor.Counters).Should().BeEquivalentTo(
+            nameof(ReactorCounters.DatagramsSent),
+            nameof(ReactorCounters.DatagramsReceived),
+            nameof(ReactorCounters.ArenaHighWaterBytes));
+        CounterFields.Moved(senderBefore, harness.Reactor.CountersOf(sender))
+            .Should().BeEquivalentTo(nameof(LinkCounters.BytesSent));
+        CounterFields.Moved(receiverBefore, harness.Reactor.CountersOf(receiver))
+            .Should().BeEquivalentTo(nameof(LinkCounters.BytesReceived));
+    }
+
+    [Fact]
+    public void Pump_StreamExchange_MovesTheArenaHighWaterAndTheLinksBytesButNoDatagramFigure()
+    {
+        // Arrange
+        using RawReactorHarness harness = new();
+        (_, IPEndPoint listenEndPoint) = harness.ListenOnLoopback();
+        using Socket counterparty = harness.ConnectCounterpartyTo(listenEndPoint);
+        harness.Reactor.Pump();
+        LinkId accepted = harness.FirstAcceptedLink();
+        ReactorCounters reactorBefore = harness.Reactor.Counters;
+        LinkCounters linkBefore = harness.Reactor.CountersOf(accepted);
+
+        // Act
+        harness.Reactor.Send(accepted, new byte[32]).IsSuccess.Should().BeTrue();
+        counterparty.Send(new byte[48]);
+        harness.PumpUntil(() => harness.Reactor.CountersOf(accepted).BytesReceived - linkBefore.BytesReceived == 48);
+
+        // Assert
+        CounterFields.Moved(reactorBefore, harness.Reactor.Counters)
+            .Should().BeEquivalentTo(nameof(ReactorCounters.ArenaHighWaterBytes));
+        LinkCounters linkAfter = harness.Reactor.CountersOf(accepted);
+        (linkAfter.BytesSent - linkBefore.BytesSent).Should().Be(32);
+        (linkAfter.BytesReceived - linkBefore.BytesReceived).Should().Be(48);
+    }
+
+    [Fact]
+    public void Pump_ThreeConnectionsWaitingBehindOneListeningLink_CountsOneDeferralAndNothingElse()
+    {
+        // Arrange — the unit is declinings, not connections: one listening Link declines its whole
+        // backlog with one declining, so three waiting connections must still read one (issue #61).
+        using RawReactorHarness harness = new(capacity: 8, admissionCap: 1);
+        (_, IPEndPoint listenEndPoint) = harness.ListenOnLoopback();
+        using Socket first = harness.ConnectCounterpartyTo(listenEndPoint);
+        using Socket second = harness.ConnectCounterpartyTo(listenEndPoint);
+        using Socket third = harness.ConnectCounterpartyTo(listenEndPoint);
+        ReactorCounters before = harness.Reactor.Counters;
+
+        // Act
+        harness.PumpUntil(() => harness.Reactor.Counters.AdmissionDeferrals > before.AdmissionDeferrals);
+
+        // Assert
+        ReactorCounters after = harness.Reactor.Counters;
+        (after.AdmissionDeferrals - before.AdmissionDeferrals).Should().Be(1);
+        CounterFields.Moved(before, after).Should().BeEquivalentTo(nameof(ReactorCounters.AdmissionDeferrals));
+    }
+
+    [Fact]
+    public void Counters_SnapshotsTakenBeforeMoreTraffic_AreValuesTheReactorDoesNotChange()
+    {
+        // Arrange
+        using RawReactorHarness harness = new();
+        (LinkId sender, _) = harness.BindLoopbackLink();
+        (_, IPEndPoint receiverEndPoint) = harness.BindLoopbackLink();
+        ReactorCounters reactorSnapshot = harness.Reactor.Counters;
+        LinkCounters linkSnapshot = harness.Reactor.CountersOf(sender);
+        IReadOnlyDictionary<string, ulong> reactorValues = CounterFields.Read(reactorSnapshot);
+        IReadOnlyDictionary<string, ulong> linkValues = CounterFields.Read(linkSnapshot);
+
+        // Act
+        harness.Reactor.SendTo(sender, Source.FromIPEndPoint(receiverEndPoint), new byte[64]);
+        harness.Reactor.Pump();
+
+        // Assert — the Reactor moved, and the snapshots taken before it did not.
+        harness.Reactor.Counters.Should().NotBe(reactorSnapshot);
+        harness.Reactor.CountersOf(sender).Should().NotBe(linkSnapshot);
+        CounterFields.Read(reactorSnapshot).Should().Equal(reactorValues);
+        CounterFields.Read(linkSnapshot).Should().Equal(linkValues);
     }
 
     [Fact]

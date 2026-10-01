@@ -360,7 +360,7 @@ public class DatagramSessionCookieTests
         // Assert — discarded as malformed, the same outcome a zero maxMessageSize already produces,
         // and no Session ever came to exist over it.
         events.Should().NotContain(evt => evt.Kind == SessionEventKind.PeerConnected);
-        harness.Reactor.Counters.UnknownSourceDiscards.Should().Be(1);
+        harness.Reactor.Counters.UnknownSourceDatagrams.Should().Be(1);
         harness.Sink.Received.Should().Contain(record => record.Id == DiagnosticId.DatagramMalformed);
     }
 
@@ -389,7 +389,7 @@ public class DatagramSessionCookieTests
         // Assert — discarded as malformed, the same outcome a zero send-idle interval or maxMessageSize
         // already produces, and no Session ever came to exist over it.
         events.Should().NotContain(evt => evt.Kind == SessionEventKind.PeerConnected);
-        harness.Reactor.Counters.UnknownSourceDiscards.Should().Be(1);
+        harness.Reactor.Counters.UnknownSourceDatagrams.Should().Be(1);
         harness.Sink.Received.Should().Contain(record => record.Id == DiagnosticId.DatagramMalformed);
     }
 

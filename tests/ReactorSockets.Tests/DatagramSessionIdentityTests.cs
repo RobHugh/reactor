@@ -304,7 +304,7 @@ public class DatagramSessionIdentityTests
         using DatagramSessionReactorHarness accepter = new();
         using RawPeer peer = new();
         (uint assigned, _, _) = CompleteHandshake(accepter, peer, clientNonce: 17);
-        ulong discardsBefore = accepter.Reactor.Counters.UnknownSourceDiscards;
+        ulong unknownBefore = accepter.Reactor.Counters.UnknownSourceDatagrams;
 
         // Act
         using RawPeer rebound = new();
@@ -312,7 +312,7 @@ public class DatagramSessionIdentityTests
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
 
         // Assert
-        accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(discardsBefore);
+        accepter.Reactor.Counters.UnknownSourceDatagrams.Should().Be(unknownBefore);
     }
 
     [Fact]
@@ -324,12 +324,12 @@ public class DatagramSessionIdentityTests
 
         // Act
         stranger.Send(accepter.Endpoint, BuildDataDatagram(0xDEAD_BEEF));
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
 
         // Assert
         drained.Should().BeEmpty();
-        accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(1);
+        accepter.Reactor.Counters.UnknownSourceDatagrams.Should().Be(1);
         accepter.Sink.Received.Should().Contain(record => record.Id == DiagnosticId.DatagramMalformed);
     }
 
@@ -343,14 +343,14 @@ public class DatagramSessionIdentityTests
         accepter.Reactor.Pump(); // Ends the Frame the PeerConnected belongs to, so the drain below sees only the close.
         accepter.CloseImmediately(established);
         accepter.DrainToList().Where(e => e.Kind == SessionEventKind.PeerClosed).Should().ContainSingle().Which.Kind.Should().Be(SessionEventKind.PeerClosed);
-        ulong discardsBefore = accepter.Reactor.Counters.UnknownSourceDiscards;
+        ulong unknownBefore = accepter.Reactor.Counters.UnknownSourceDatagrams;
 
         // Act
         peer.Send(accepter.Endpoint, BuildDataDatagram(assigned));
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > discardsBefore);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > unknownBefore);
 
         // Assert
-        accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(discardsBefore + 1);
+        accepter.Reactor.Counters.UnknownSourceDatagrams.Should().Be(unknownBefore + 1);
         accepter.PumpAndDrainAll(3).Should().BeEmpty();
     }
 

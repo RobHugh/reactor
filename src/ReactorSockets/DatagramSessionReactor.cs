@@ -862,7 +862,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
                 case UdpLinkReceiveOutcome.Truncated:
                     _counters.RecordDatagramReceived();
-                    _counters.RecordUnknownSourceDiscard();
+                    _counters.RecordUnknownSourceDatagram();
                     _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(result.Source, _scratchBuffer.Length));
                     break;
 
@@ -2688,16 +2688,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         int payloadOffset = _arena.BytesUsed;
         ArenaReservation reservation = _arena.Reserve(slot.Handle.Index, totalLength);
-        if (reservation.Outcome != ArenaReservationOutcome.Committed)
+        if (!AccountForReservation(slot, reservation))
         {
-            if (reservation.Outcome == ArenaReservationOutcome.ArenaExhausted && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
-            {
-                _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(
-                    ToPeerId(slot.Handle),
-                    reservation.BytesRequested,
-                    reservation.BytesFree));
-            }
-
             return false;
         }
 
@@ -3048,6 +3040,36 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// Answers whether <paramref name="reservation"/> committed, and charges whichever outcome it had:
+    /// a commit raises the Arena high-water, a spent read share is counted on the Peer, and an Arena
+    /// with no room is a <see cref="DiagnosticId.ArenaExhausted"/> record (issue #61).
+    /// </summary>
+    private bool AccountForReservation(PeerSlot slot, ArenaReservation reservation)
+    {
+        switch (reservation.Outcome)
+        {
+            case ArenaReservationOutcome.Committed:
+                _counters.ObserveArenaUsage(_arena.BytesUsed);
+                return true;
+            case ArenaReservationOutcome.ShareExhausted:
+                slot.Counters.RecordReadShareExhaustion();
+                return false;
+            case ArenaReservationOutcome.ArenaExhausted:
+                if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                {
+                    _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(
+                        ToPeerId(slot.Handle),
+                        reservation.BytesRequested,
+                        reservation.BytesFree));
+                }
+
+                return false;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// The last step every mode's delivery rule ends at: copy the payload into the shared frame arena
     /// under this Peer's own share-holder identity (ADR 0014), queue it as a pending
     /// <see cref="SessionEventKind.MessageReceived"/>, and raise this Peer's
@@ -3064,17 +3086,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     {
         int payloadOffset = _arena.BytesUsed;
         ArenaReservation reservation = _arena.Reserve(slot.Handle.Index, payload);
-
-        if (reservation.Outcome != ArenaReservationOutcome.Committed)
+        if (!AccountForReservation(slot, reservation))
         {
-            if (reservation.Outcome == ArenaReservationOutcome.ArenaExhausted && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
-            {
-                _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(
-                    ToPeerId(slot.Handle),
-                    reservation.BytesRequested,
-                    reservation.BytesFree));
-            }
-
             return;
         }
 
@@ -3148,7 +3161,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         if (!_cookies.Verify(source, clientNonce, epoch, cookie))
         {
-            _counters.RecordUnknownSourceDiscard();
+            _counters.RecordUnknownSourceDatagram();
             _diagnostics.Log(DiagnosticRecord.ForCookieRejected(source, epoch, _cookies.CurrentEpoch));
             return;
         }
@@ -3636,20 +3649,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Discards a datagram nothing in which could be attributed to a Peer — a control datagram that
     /// did not read, a control reply answering no dial, or a session id naming no Session — and counts
-    /// it on <see cref="ReactorCounters.UnknownSourceDiscards"/>. A data datagram that failed to parse
+    /// it on <see cref="ReactorCounters.UnknownSourceDatagrams"/>. A data datagram that failed to parse
     /// <em>after</em> its session id resolved goes to <see cref="DiscardMalformedForSession"/>
     /// instead (issue #275).
     /// </summary>
     private void DiscardMalformed(Source source, int bytesReceived)
     {
-        _counters.RecordUnknownSourceDiscard();
+        _counters.RecordUnknownSourceDatagram();
         _diagnostics.Log(DiagnosticRecord.ForDatagramMalformed(source, bytesReceived));
     }
 
     /// <summary>
     /// Discards a data datagram that named a live Session and then failed to parse, counting it on
-    /// <see cref="ReactorCounters.MalformedSessionDiscards"/> rather than
-    /// <see cref="ReactorCounters.UnknownSourceDiscards"/> (issue #275): the id resolved, which is the
+    /// <see cref="ReactorCounters.MalformedSessionDatagrams"/> rather than
+    /// <see cref="ReactorCounters.UnknownSourceDatagrams"/> (issue #275): the id resolved, which is the
     /// only reason parsing was reached at all, so this is not traffic that named nobody. The
     /// Diagnostic is the same <see cref="DiagnosticId.DatagramMalformed"/> and stays Source-subjected
     /// — a body that did not parse is no proof the sender is the Peer whose id it carried, so neither
@@ -3657,7 +3670,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private void DiscardMalformedForSession(Source source, int bytesReceived)
     {
-        _counters.RecordMalformedSessionDiscard();
+        _counters.RecordMalformedSessionDatagram();
         _diagnostics.Log(DiagnosticRecord.ForDatagramMalformed(source, bytesReceived));
     }
 

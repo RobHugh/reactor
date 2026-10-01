@@ -70,7 +70,7 @@ public class DatagramSessionMalformedControlRecordTests
 
         // Act
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
@@ -94,7 +94,7 @@ public class DatagramSessionMalformedControlRecordTests
 
         // Act
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
@@ -119,7 +119,7 @@ public class DatagramSessionMalformedControlRecordTests
 
         // Act
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: datagram.Length);
@@ -146,7 +146,7 @@ public class DatagramSessionMalformedControlRecordTests
         // Act — the malformed datagram arrives and is discarded, then the accepter Sends a Message of
         // its own so its next outbound datagram's ack block can be read back.
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDatagrams > 0);
         List<byte[]> payloads = accepter.DrainPayloads();
 
         accepter.Reactor.Send(accepterPeer, DeliveryMode.ReliableOrdered, [0x01]).Should().Be(SendOutcome.Sent);
@@ -320,7 +320,7 @@ public class DatagramSessionMalformedControlRecordTests
     private static void AssertOneMalformedDiscard(DatagramSessionReactorHarness accepter, int expectedBytesReceived)
     {
         accepter.DrainToList().Should().BeEmpty();
-        accepter.Reactor.Counters.MalformedSessionDiscards.Should().Be(1);
+        accepter.Reactor.Counters.MalformedSessionDatagrams.Should().Be(1);
 
         DiagnosticRecord record = accepter.Sink.Received.Should()
             .ContainSingle(r => r.Id == DiagnosticId.DatagramMalformed)

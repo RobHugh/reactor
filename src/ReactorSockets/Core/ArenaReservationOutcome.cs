@@ -18,11 +18,10 @@ internal enum ArenaReservationOutcome
     /// one in the same Frame.
     /// </summary>
     /// <remarks>
-    /// No profile produces this yet, and the Raw profile cannot: it reads each ready Link once per
-    /// Pump, so a share-holder never reaches a second reservation in one Frame. This is retained
-    /// rather than deleted because it is the bound a profile that reads a Link in a loop must have,
-    /// and the arena is already sized on the assumption that it exists. Anything asserting it needs
-    /// such a profile first — treat it as unexercised until then.
+    /// Both Session profiles produce this, because they can deliver several Messages from one Peer in
+    /// a Frame, and count it on <see cref="PeerCounters.ReadShareExhaustions"/>. The Raw profile cannot: it
+    /// reads each ready Link once per Pump, so a share-holder never reaches a second reservation in
+    /// one Frame.
     /// </remarks>
     ShareExhausted,
 

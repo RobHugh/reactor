@@ -14,8 +14,8 @@ internal sealed class ReactorCounterSet
     private ulong _arenaHighWaterBytes;
     private ulong _admissionDeferrals;
     private ulong _admissionDiscards;
-    private ulong _unknownSourceDiscards;
-    private ulong _malformedSessionDiscards;
+    private ulong _unknownSourceDatagrams;
+    private ulong _malformedSessionDatagrams;
 
     /// <summary>Records that the installed Sink threw and has been disabled for the life of the Reactor.</summary>
     public void RecordSinkFaulted() => _sinkFaulted++;
@@ -61,23 +61,23 @@ internal sealed class ReactorCounterSet
     /// Records one datagram taken from the transport and thrown away because nothing in it could be
     /// attributed to a Peer — a malformed control datagram, a session id naming no Session, or a
     /// well-formed control reply matching no live dial. A data datagram whose session id did name a
-    /// live Session is <see cref="RecordMalformedSessionDiscard"/> instead. Kept apart from
+    /// live Session is <see cref="RecordMalformedSessionDatagram"/> instead. Kept apart from
     /// <see cref="RecordAdmissionDiscard"/> because this is not a declined Admission: nothing was
     /// turned away, the bytes simply meant nothing. Budget may still have been spent getting here —
     /// a Hello-with-cookie is charged an Admission before its cookie is verified, precisely so that
     /// the verifying work is bounded — but that unit bought an answer to a question, not a refusal.
     /// </summary>
-    public void RecordUnknownSourceDiscard() => _unknownSourceDiscards++;
+    public void RecordUnknownSourceDatagram() => _unknownSourceDatagrams++;
 
     /// <summary>
     /// Records one data datagram thrown away because it failed to parse after its session id had
-    /// already resolved to a live Session. Split from <see cref="RecordUnknownSourceDiscard"/> so the
+    /// already resolved to a live Session. Split from <see cref="RecordUnknownSourceDatagram"/> so the
     /// two causes stay distinguishable to someone reading counters in the field: that figure is
     /// traffic that named nobody, this is traffic that named somebody and then said nothing readable.
     /// Reactor-scope rather than charged to the named Peer, because a datagram that did not parse is
     /// no proof of who sent it.
     /// </summary>
-    public void RecordMalformedSessionDiscard() => _malformedSessionDiscards++;
+    public void RecordMalformedSessionDatagram() => _malformedSessionDatagrams++;
 
     /// <summary>Takes a point-in-time snapshot of every Reactor-scope counter.</summary>
     public ReactorCounters Snapshot() =>
@@ -88,6 +88,6 @@ internal sealed class ReactorCounterSet
             _arenaHighWaterBytes,
             _admissionDeferrals,
             _admissionDiscards,
-            _unknownSourceDiscards,
-            _malformedSessionDiscards);
+            _unknownSourceDatagrams,
+            _malformedSessionDatagrams);
 }
