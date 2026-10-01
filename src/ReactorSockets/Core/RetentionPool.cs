@@ -59,6 +59,18 @@ internal sealed class RetentionPool
     private readonly ushort[] _slotFragmentCount;
 
     /// <summary>
+    /// Whether the slot at a given per-slot index holds a control record — an idle-triggered Ping
+    /// (issue #340), never a Message a consumer Sent — rather than an ordinary payload-carrying record.
+    /// Parallel to <see cref="_slotIsFragment"/> and set the same way: recorded once by
+    /// <see cref="TryAcquire"/> and read back by <see cref="TryRead"/> so a resend packs the same
+    /// control shape the original transmission did, exactly as a Fragment's shape is never recomputed
+    /// (issue #250) — a control record is retained and retransmitted through the same path as any other
+    /// reliable record, and this flag is the only thing that tells <see cref="DatagramSessionReactor"/>'s
+    /// flush to pack it as one rather than as an ordinary empty payload.
+    /// </summary>
+    private readonly bool[] _slotIsControl;
+
+    /// <summary>
     /// The bytes a share-holder currently has retained, summed across both reliable Spaces — one entry
     /// per share-holder, not per Space, since <see cref="HighWaterBytes"/> answers a question about one
     /// share-holder's memory (issue #43) rather than one Space's bound. Kept as a running total rather
@@ -153,6 +165,7 @@ internal sealed class RetentionPool
         _slotIsFragment = new bool[slotCount];
         _slotFragmentIndex = new ushort[slotCount];
         _slotFragmentCount = new ushort[slotCount];
+        _slotIsControl = new bool[slotCount];
 
         _retainedBytes = new int[capacity];
         _highWaterBytes = new ulong[capacity];
@@ -306,6 +319,12 @@ internal sealed class RetentionPool
     /// </param>
     /// <param name="fragmentIndex">This piece's position within its Message, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
     /// <param name="fragmentCount">The Message's total piece count, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
+    /// <param name="isControl">
+    /// Whether this slot holds a control record — an idle-triggered Ping (issue #340) — rather than a
+    /// Message a consumer Sent. <see langword="false"/> by default. Recorded against the slot so
+    /// <see cref="TryRead"/> can hand a retransmit the same shape back, exactly as <paramref name="isFragment"/>
+    /// already does for a cut Message.
+    /// </param>
     /// <exception cref="ArgumentException"><paramref name="payload"/> is longer than <see cref="FragmentSize"/>.</exception>
     public RetentionSlotOutcome TryAcquire(
         int shareHolderId,
@@ -314,7 +333,8 @@ internal sealed class RetentionPool
         ReadOnlySpan<byte> payload,
         bool isFragment = false,
         ushort fragmentIndex = 0,
-        ushort fragmentCount = 0)
+        ushort fragmentCount = 0,
+        bool isControl = false)
     {
         int regionBase = ValidateRegion(shareHolderId, spaceIndex);
 
@@ -350,6 +370,7 @@ internal sealed class RetentionPool
         _slotIsFragment[stateIndex] = isFragment;
         _slotFragmentIndex[stateIndex] = fragmentIndex;
         _slotFragmentCount[stateIndex] = fragmentCount;
+        _slotIsControl[stateIndex] = isControl;
 
         _retainedBytes[shareHolderId] += payload.Length;
         if ((ulong)_retainedBytes[shareHolderId] > _highWaterBytes[shareHolderId])
@@ -422,6 +443,12 @@ internal sealed class RetentionPool
     /// </param>
     /// <param name="fragmentIndex">On success, this piece's position within its Message, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>. On a miss, 0.</param>
     /// <param name="fragmentCount">On success, the Message's total piece count, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>. On a miss, 0.</param>
+    /// <param name="isControl">
+    /// On success, whether this record was retained as a control record — an idle-triggered Ping
+    /// (issue #340) — rather than a Message a consumer Sent (the shape <see cref="TryAcquire"/> was
+    /// given for this slot). On a miss, <see langword="false"/>. A retransmit reads this back rather
+    /// than recomputing it, so a resent Ping packs the same control shape the original did.
+    /// </param>
     public bool TryRead(
         int shareHolderId,
         int spaceIndex,
@@ -429,7 +456,8 @@ internal sealed class RetentionPool
         out ReadOnlySpan<byte> payload,
         out bool isFragment,
         out ushort fragmentIndex,
-        out ushort fragmentCount)
+        out ushort fragmentCount,
+        out bool isControl)
     {
         int regionBase = ValidateRegion(shareHolderId, spaceIndex);
 
@@ -443,6 +471,7 @@ internal sealed class RetentionPool
                 isFragment = _slotIsFragment[stateIndex];
                 fragmentIndex = _slotFragmentIndex[stateIndex];
                 fragmentCount = _slotFragmentCount[stateIndex];
+                isControl = _slotIsControl[stateIndex];
                 return true;
             }
         }
@@ -451,6 +480,7 @@ internal sealed class RetentionPool
         isFragment = false;
         fragmentIndex = 0;
         fragmentCount = 0;
+        isControl = false;
         return false;
     }
 

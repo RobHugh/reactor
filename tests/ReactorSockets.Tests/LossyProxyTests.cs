@@ -468,6 +468,136 @@ public class LossyProxyTests
         Receive(upstream).Should().Equal(held, "the held datagram is released only once a relay actually reaches and passes the queue");
     }
 
+    [Fact]
+    public void MoveUpstreamFacingSocket_AfterwardsRelaysReachUpstreamFromANewSourcePort()
+    {
+        // Arrange
+        using Socket client = CreateLoopbackUdpSocket();
+        using Socket upstream = CreateLoopbackUdpSocket();
+        using LossyProxy proxy = new((IPEndPoint)upstream.LocalEndPoint!, new FakeTimeProvider());
+        client.SendTo([1], proxy.PublicEndPoint);
+        proxy.Pump();
+        (byte[] _, IPEndPoint before) = ReceiveFrom(upstream);
+
+        // Act
+        IPEndPoint moved = proxy.MoveUpstreamFacingSocket();
+        client.SendTo([2], proxy.PublicEndPoint);
+        proxy.Pump();
+        (byte[] payload, IPEndPoint after) = ReceiveFrom(upstream);
+
+        // Assert
+        payload.Should().Equal([2]);
+        after.Port.Should().NotBe(before.Port);
+        after.Should().Be(moved);
+    }
+
+    [Fact]
+    public void MoveUpstreamFacingSocket_ReplyToNewAddressReachesClient_ReplyToOldAddressDoesNot()
+    {
+        // Arrange
+        using Socket client = CreateLoopbackUdpSocket();
+        using Socket upstream = CreateLoopbackUdpSocket();
+        using LossyProxy proxy = new((IPEndPoint)upstream.LocalEndPoint!, new FakeTimeProvider());
+        client.SendTo([1], proxy.PublicEndPoint);
+        proxy.Pump();
+        (byte[] _, IPEndPoint oldAddress) = ReceiveFrom(upstream);
+        IPEndPoint newAddress = proxy.MoveUpstreamFacingSocket();
+
+        // Act
+        upstream.SendTo([7], oldAddress);
+        proxy.Pump();
+        byte[]? viaOld = Receive(client, timeoutMilliseconds: 200);
+        upstream.SendTo([8], newAddress);
+        proxy.Pump();
+
+        // Assert
+        viaOld.Should().BeNull("the old socket is closed and no longer relays");
+        Receive(client).Should().Equal([8]);
+    }
+
+    [Fact]
+    public void Captures_RecordTheSocketEachDatagramArrivedOn_AcrossAMove()
+    {
+        // Arrange
+        using Socket client = CreateLoopbackUdpSocket();
+        using Socket upstream = CreateLoopbackUdpSocket();
+        using LossyProxy proxy = new((IPEndPoint)upstream.LocalEndPoint!, new FakeTimeProvider());
+        client.SendTo([1], proxy.PublicEndPoint);
+        proxy.Pump();
+        (byte[] _, IPEndPoint oldAddress) = ReceiveFrom(upstream);
+        upstream.SendTo([2], oldAddress);
+        proxy.Pump();
+        Receive(client);
+        IPEndPoint newAddress = proxy.MoveUpstreamFacingSocket();
+
+        // Act
+        upstream.SendTo([3], newAddress);
+        proxy.Pump();
+        Receive(client);
+
+        // Assert
+        proxy.Captures.Select(c => c.ReceivedOn).Should().Equal(proxy.PublicEndPoint, oldAddress, newAddress);
+    }
+
+    [Fact]
+    public void MoveUpstreamFacingSocket_WhileStopped_StaysStoppedUntilResumed()
+    {
+        // Arrange
+        using Socket client = CreateLoopbackUdpSocket();
+        using Socket upstream = CreateLoopbackUdpSocket();
+        using LossyProxy proxy = new((IPEndPoint)upstream.LocalEndPoint!, new FakeTimeProvider());
+        client.SendTo([1], proxy.PublicEndPoint);
+        proxy.Pump();
+        ReceiveFrom(upstream);
+        proxy.StopRelayingBothDirections();
+
+        // Act
+        IPEndPoint newAddress = proxy.MoveUpstreamFacingSocket();
+        client.SendTo([2], proxy.PublicEndPoint);
+        proxy.Pump();
+        byte[]? whileStopped = Receive(upstream, timeoutMilliseconds: 200);
+        proxy.ResumeRelayingBothDirections();
+        client.SendTo([3], proxy.PublicEndPoint);
+        proxy.Pump();
+        (byte[] payload, IPEndPoint sender) = ReceiveFrom(upstream);
+        upstream.SendTo([4], newAddress);
+        proxy.Pump();
+
+        // Assert
+        whileStopped.Should().BeNull();
+        payload.Should().Equal([3]);
+        sender.Should().Be(newAddress);
+        Receive(client).Should().Equal([4]);
+    }
+
+    [Fact]
+    public void ResumeRelayingBothDirections_AfterStop_RelaysBothDirectionsAgain()
+    {
+        // Arrange
+        using Socket client = CreateLoopbackUdpSocket();
+        using Socket upstream = CreateLoopbackUdpSocket();
+        using LossyProxy proxy = new((IPEndPoint)upstream.LocalEndPoint!, new FakeTimeProvider());
+        client.SendTo([1], proxy.PublicEndPoint);
+        proxy.Pump();
+        (byte[] _, IPEndPoint proxyAddress) = ReceiveFrom(upstream);
+        proxy.StopRelayingBothDirections();
+        client.SendTo([2], proxy.PublicEndPoint);
+        upstream.SendTo([3], proxyAddress);
+        proxy.Pump();
+        Receive(upstream, timeoutMilliseconds: 200).Should().BeNull();
+        Receive(client, timeoutMilliseconds: 200).Should().BeNull();
+
+        // Act
+        proxy.ResumeRelayingBothDirections();
+        client.SendTo([4], proxy.PublicEndPoint);
+        upstream.SendTo([5], proxyAddress);
+        proxy.Pump();
+
+        // Assert
+        Receive(upstream).Should().Equal([4]);
+        Receive(client).Should().Equal([5]);
+    }
+
     private static Socket CreateLoopbackUdpSocket()
     {
         Socket socket = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);

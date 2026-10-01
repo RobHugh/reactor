@@ -97,7 +97,7 @@ public class RetransmissionExpirySweepTests
         }
 
         accepter.DrainToList();
-        accepter.Reactor.Close(firstPeer);
+        accepter.CloseImmediately(firstPeer);
         accepter.Reactor.Pump();
         accepter.DrainToList();
 

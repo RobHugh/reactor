@@ -9,16 +9,18 @@ namespace ReactorSockets.Tests;
 /// Issue #262: a half-arrived Fragment set survives an interruption of its Peer's transport at no
 /// cost, because the pieces already held live in the ordinary per-Peer receive window
 /// (<see cref="DatagramSessionReactor.HoldFragment"/>'s own remarks) — state a lost and rebuilt
-/// transport never touches. The Datagram profile has no wire-level Resume of its own yet (that is
-/// Slice 8, issue #52, still open); what already exists, and is exercised here, is the property that
-/// makes such a Resume unnecessary for this purpose in the first place: a Session is identified by its
-/// wire token rather than by the address or link a datagram arrived on
+/// transport never touches. The Datagram profile now has a wire-level Resume (issue #52, slice 8.4):
+/// the dialling end sends one at the send-idle cadence while Interrupted, and the accepting end
+/// authorises it by secret, routes it by session id and moves its send address. The end-to-end test
+/// that a half-arrived Fragment set survives that Resume lives in the Fragment-set Resume test class
+/// added for issue #387. This class exercises the property that makes the Resume cheap for this
+/// purpose: a Session is identified by its wire token rather than by the address or link a datagram
+/// arrived on
 /// (<see cref="DatagramSessionReactor.ProcessDataDatagram"/>'s remarks; proved for demultiplexing by
 /// <see cref="DatagramSessionIdentityTests.Pump_WhenALiveSessionsDatagramArrivesFromANewAddress_StillAttributesItToThatSession"/>).
-/// An "interruption" here is therefore a real transport-level outage — a sustained run of dropped
-/// datagrams in both directions — rather than a protocol event, and "resume" is nothing more than the
-/// outage ending: no handshake, no counter exchange, nothing this library has to do to make the held
-/// Fragments still be there afterwards.
+/// The "interruption" here is a real transport-level outage — a sustained run of dropped datagrams
+/// in both directions — with no address change, and it ends with the outage: no handshake, no counter
+/// exchange, nothing this library has to do to make the held Fragments still be there afterwards.
 /// </summary>
 /// <remarks>
 /// Every test drives two real <see cref="DatagramSessionReactor"/>s through a <see cref="WireTap"/>
@@ -251,6 +253,8 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
     private const uint ProtocolVersion = 1;
     private const uint DialerSessionId = 0xCAFE_BABE;
     private const uint DialerMaxMessageSize = 4096;
+    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
+    private const ulong DialerLingerMilliseconds = 30_000;
     private const byte ModeReliableOrdered = 0b0000_0011;
     private const byte ModeReliableUnordered = 0b0000_0010;
 
@@ -328,7 +332,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
 
     private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + InjectionResumeSecretLength];
+        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + 8 + InjectionResumeSecretLength];
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
         offset += 4;
@@ -341,6 +345,11 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
+        offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
+        offset += 8;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
+        offset += 8;
         // The remaining InjectionResumeSecretLength bytes are the dialler's resume secret; an all-zero
         // one is fine, since nothing in this file's path ever reads it.
         return BuildControlDatagram(HelloWithCookieType, body);

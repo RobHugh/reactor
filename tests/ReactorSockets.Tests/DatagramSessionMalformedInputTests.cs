@@ -19,7 +19,6 @@ public class DatagramSessionMalformedInputTests
     private const uint ControlSession = 0;
 
     private const byte HelloType = 1;
-    private const byte ResumeType = 6;
     private const byte UnknownType = 200;
 
     private const int HelloBodyLength = 12;
@@ -182,22 +181,6 @@ public class DatagramSessionMalformedInputTests
     }
 
     [Fact]
-    public void Pump_ControlType6Resume_OnTheRosterButNotImplemented_IsDiscardedLikeAnUnknownType()
-    {
-        // Arrange
-        using DatagramSessionReactorHarness accepter = new();
-        using HostilePeer peer = new();
-        byte[] datagram = BuildControlDatagram(ControlSession, ResumeType, BuildHelloBody());
-
-        // Act
-        peer.SendDatagram(accepter.Endpoint, datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
-
-        // Assert
-        AssertOneMalformedDiscard(accepter, expectedBytesReceived: ControlDatagramSize);
-    }
-
-    [Fact]
     public void Pump_WellFormedHelloWithOneNonZeroPaddingByte_IsDiscardedNotAccepted()
     {
         // Arrange — a Hello whose body is otherwise entirely valid, but the zero padding that must
@@ -253,7 +236,6 @@ public class DatagramSessionMalformedInputTests
             BuildWellFormedHello()[..150],
             [.. BuildWellFormedHello(), 0x00, 0x00, 0x00, 0x00],
             BuildControlDatagram(ControlSession, UnknownType, BuildHelloBody()),
-            BuildControlDatagram(ControlSession, ResumeType, BuildHelloBody()),
             WithOneNonZeroPaddingByte(BuildWellFormedHello()),
             BuildControlDatagram(0x1234_5678, HelloType, BuildHelloBody()),
         ];

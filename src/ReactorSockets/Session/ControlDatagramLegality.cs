@@ -39,20 +39,23 @@ internal static class ControlDatagramLegality
         DatagramControlType.Cookie => new ControlDatagramShape(true, 48),
 
         // version(4) + clientNonce(8) + epoch(8) + mac(32) + sessionIdForMe(4) + maxMessageSize(4)
-        // + resumeSecret(16). Everything a Session needs, arriving only once the round trip is paid.
-        DatagramControlType.HelloWithCookie => new ControlDatagramShape(true, 76),
+        // + sendIdleIntervalMilliseconds(8) + lingerMilliseconds(8) + resumeSecret(16). Everything a
+        // Session needs, arriving only once the round trip is paid.
+        DatagramControlType.HelloWithCookie => new ControlDatagramShape(true, 92),
 
-        // clientNonce(8) + sessionIdForMe(4) + maxMessageSize(4) + resumeSecret(16).
-        DatagramControlType.Accept => new ControlDatagramShape(true, 32),
+        // clientNonce(8) + sessionIdForMe(4) + maxMessageSize(4) + sendIdleIntervalMilliseconds(8)
+        // + lingerMilliseconds(8) + resumeSecret(16).
+        DatagramControlType.Accept => new ControlDatagramShape(true, 48),
 
         // clientNonce(8) + reason(1) + versionOffered(4) + versionRequired(4). The two version fields
         // are populated only for a version refusal and are zero otherwise, rather than the refusal
         // splitting into two datagram types over four bytes.
         DatagramControlType.Refusal => new ControlDatagramShape(true, 17),
 
-        // On the roster because the wire format defines it; not implemented until the slice that
-        // implements Resume, and therefore discarded here rather than half-answered.
-        DatagramControlType.Resume => new ControlDatagramShape(false, 0),
+        // targetSessionId(4) + resumeSecret(16). The codec reads and writes it (issue #373). The
+        // dialling end sends it while Interrupted and the accepting end routes it by targetSessionId
+        // and authorises it by resumeSecret.
+        DatagramControlType.Resume => new ControlDatagramShape(true, 20),
 
         // The discard arm refuses. An unknown control type is a protocol violation, not an extension
         // point: this profile has no forward-compatibility rule that would let it skip a body of

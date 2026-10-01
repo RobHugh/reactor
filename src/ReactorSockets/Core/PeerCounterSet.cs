@@ -35,7 +35,9 @@ internal sealed class PeerCounterSet
     /// Called exactly once per <see cref="SessionEventKind.PeerResumed"/> raised — on the listening
     /// side's <c>ResumeHeldPeer</c> once its rewind succeeds, and on the dialling side's
     /// <c>DeliverCompleteMessages</c> once its own reciprocal rewind succeeds — never on a resume
-    /// refused for a retention gap or any other reason. Never called by anything that resets a Peer's
+    /// refused for a retention gap or any other reason. The datagram profile calls it when a matched
+    /// Resume takes an Interrupted accepting-end Peer out of Interrupted, and when an Interrupted
+    /// dialling-end Peer that has sent a Resume hears its session again. Never called by anything that resets a Peer's
     /// other counters: <see cref="RetentionArena.ResetShareHolder"/> is reachable only from
     /// <c>ClosePeer</c>, never from a resume path, so this and every counter beside it keep accumulating
     /// across as many resumes as a Peer lives through (ADR 0013).

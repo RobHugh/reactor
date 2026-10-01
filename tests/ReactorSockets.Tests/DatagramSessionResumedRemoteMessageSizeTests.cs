@@ -7,16 +7,16 @@ namespace ReactorSockets.Tests;
 /// Issue #289: a Peer that has Resumed still validates a reliable <see cref="DatagramSessionReactor.Send"/>
 /// against the peer's own announced <c>MaxMessageSize</c> — captured on the Peer's <c>Slot</c> at
 /// handshake (issue #284) — rather than losing it and falling back to zero or to this Reactor's own
-/// setting. The Datagram profile has no wire-level Resume of its own yet (that is Slice 8, issue #52,
-/// still open); what already exists, and is exercised here, is the property that makes such a Resume
-/// unnecessary for this purpose in the first place: a Session is identified by its wire token rather
-/// than by the address or link a datagram arrived on
-/// (<see cref="DatagramSessionReactor.ProcessDataDatagram"/>'s remarks). An "interruption" here is
-/// therefore a real transport-level outage — a sustained run of dropped Datagrams in both directions,
-/// through the same <see cref="LossyProxy"/> <see cref="DatagramSessionFragmentSurvivesInterruptionTests"/>
-/// uses — rather than a protocol event, and "resume" is nothing more than the outage ending: no
-/// handshake, no counter exchange, nothing this library has to do to make the Slot's captured
-/// <c>RemoteMaxMessageSize</c> still be there afterwards.
+/// setting. The Datagram profile has a wire-level Resume (issue #52, slice 8.4) that carries no
+/// parameters and only moves the send address; this class exercises the property that keeps the
+/// captured limit intact across it: a Session is identified by its wire token rather than by the
+/// address or link a datagram arrived on
+/// (<see cref="DatagramSessionReactor.ProcessDataDatagram"/>'s remarks). The "interruption" here is a
+/// real transport-level outage — a sustained run of dropped Datagrams in both directions, through the
+/// same <see cref="LossyProxy"/> <see cref="DatagramSessionFragmentSurvivesInterruptionTests"/> uses —
+/// with no address change, and it ends with the outage: no handshake, no counter exchange, nothing
+/// this library has to do to make the Slot's captured <c>RemoteMaxMessageSize</c> still be there
+/// afterwards.
 /// </summary>
 /// <remarks>
 /// Every test drives two real <see cref="DatagramSessionReactor"/>s through a <see cref="WireTap"/>

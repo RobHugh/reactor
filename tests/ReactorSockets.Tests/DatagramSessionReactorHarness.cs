@@ -42,7 +42,9 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
         bool bindLoopback = true,
         IReadOnlyList<IPEndPoint>? endpoints = null,
         RandomNumberGenerator? entropy = null,
-        FakeTimeProvider? timeProvider = null)
+        FakeTimeProvider? timeProvider = null,
+        TimeSpan? linger = null,
+        TimeSpan? sendIdleInterval = null)
     {
         IReactorDiagnostics? installedSink = withoutDiagnostics ? null : sinkOverride ?? Sink;
         Entropy = entropy ?? RandomNumberGenerator.Create();
@@ -63,8 +65,11 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
             FragmentSize = fragmentSize,
             ReceiveWindowFragments = receiveWindowFragments,
             MissedHeartbeats = missedHeartbeats,
-            SendIdleInterval = TimeSpan.FromSeconds(1),
-            Linger = TimeSpan.FromSeconds(1),
+            // Defaults far out (issue #340): a test that never mentions the send-idle timer should
+            // never see a Ping arrive uninvited mid-scenario and upset a wire-count assertion it wrote
+            // long before the Ping existed. Tests exercising the timer itself pass their own short value.
+            SendIdleInterval = sendIdleInterval ?? TimeSpan.FromHours(1),
+            Linger = linger ?? TimeSpan.FromSeconds(1),
             Endpoints = endpoints ?? (bindLoopback ? [new IPEndPoint(IPAddress.Loopback, 0)] : []),
             Entropy = Entropy,
         };
@@ -136,6 +141,21 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
         {
             _ = evt.Kind;
         }
+    }
+
+    /// <summary>
+    /// Ends <paramref name="peer"/>'s Session at once with <see cref="DisconnectReason.LocalClose"/>; the
+    /// Frame then holds the <see cref="SessionEventKind.PeerInterrupted"/> the wait caused as well as the
+    /// <see cref="SessionEventKind.PeerClosed"/>. <c>Close</c> on an
+    /// Established Peer now starts a Goodbye instead of closing (issue #397), so a test that only needs the
+    /// Peer gone (a freed Slot, a stale <see cref="PeerId"/>) lets the receive-idle deadline pass first: an
+    /// Interrupted Peer keeps the immediate <c>Close</c>.
+    /// </summary>
+    public void CloseImmediately(PeerId peer)
+    {
+        TimeProvider.Advance(Options.SendIdleInterval * Options.ResolvedMissedHeartbeats);
+        Reactor.Pump();
+        Reactor.Close(peer);
     }
 
     /// <summary>
@@ -442,6 +462,23 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
 
             PumpDeadline.Yield();
         }
+    }
+
+    /// <summary>
+    /// Splits a large wait into "advance to one millisecond short, Pump once, advance the final
+    /// millisecond" so the Pump immediately following this call observes a one-millisecond cadence
+    /// rather than the whole wait (<see cref="DatagramSessionPingRetransmissionTests"/>'s own remarks
+    /// give the full reasoning: <see cref="RetransmissionTimer.EffectiveTimeout"/> floors the RTO at the
+    /// observed Pump interval, so a large advance immediately before an assertion Pump would corrupt
+    /// that floor for whatever timer that Pump is meant to exercise). Promoted here from that file
+    /// (issue #352) because every liveness test that advances the clock by a whole idle interval needs
+    /// the same technique, not only the Ping-retransmission ones.
+    /// </summary>
+    public static void SettleThenAdvance(DatagramSessionReactorHarness harness, TimeSpan interval)
+    {
+        harness.TimeProvider.Advance(interval - TimeSpan.FromMilliseconds(1));
+        harness.Reactor.Pump();
+        harness.TimeProvider.Advance(TimeSpan.FromMilliseconds(1));
     }
 
     public void Dispose()

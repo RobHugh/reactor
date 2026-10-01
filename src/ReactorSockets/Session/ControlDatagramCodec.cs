@@ -94,7 +94,11 @@ internal static class ControlDatagramCodec
 
     /// <summary>
     /// Writes a <see cref="DatagramControlType.HelloWithCookie"/>: the Hello repeated with the Cookie
-    /// echoed, carrying everything a Session needs to exist now that the round trip is paid.
+    /// echoed, carrying everything a Session needs to exist now that the round trip is paid, including
+    /// the dialler's own <paramref name="sendIdleIntervalMilliseconds"/> — the interval the accepting
+    /// end needs to compute its receive-idle deadline once it stores the value (issue #349) — and the
+    /// dialler's own <paramref name="lingerMilliseconds"/>, which the accepting end needs to negotiate
+    /// the effective (minimum) Linger once it stores the value (issue #363).
     /// </summary>
     public static void WriteHelloWithCookie(
         Span<byte> destination,
@@ -104,6 +108,8 @@ internal static class ControlDatagramCodec
         ReadOnlySpan<byte> cookie,
         uint sessionIdForMe,
         uint maxMessageSize,
+        ulong sendIdleIntervalMilliseconds,
+        ulong lingerMilliseconds,
         ReadOnlySpan<byte> resumeSecret)
     {
         ValidateDestinationSize(destination);
@@ -124,18 +130,28 @@ internal static class ControlDatagramCodec
         offset += sizeof(uint);
         BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], maxMessageSize);
         offset += sizeof(uint);
+        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], sendIdleIntervalMilliseconds);
+        offset += sizeof(ulong);
+        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], lingerMilliseconds);
+        offset += sizeof(ulong);
         resumeSecret.CopyTo(destination.Slice(offset, DatagramSessionProtocol.ResumeSecretLength));
     }
 
     /// <summary>
     /// Writes a <see cref="DatagramControlType.Accept"/>: the accepting end's agreement, carrying the
-    /// session id it wants stamped on datagrams sent to it.
+    /// session id it wants stamped on datagrams sent to it, along with its own
+    /// <paramref name="sendIdleIntervalMilliseconds"/> — the interval the dialling end needs to
+    /// compute its receive-idle deadline once it stores the value (issue #349) — and its own
+    /// <paramref name="lingerMilliseconds"/> — the value the dialling end needs to negotiate the
+    /// effective (minimum) Linger once it stores the value (issue #363).
     /// </summary>
     public static void WriteAccept(
         Span<byte> destination,
         ulong clientNonce,
         uint sessionIdForMe,
         uint maxMessageSize,
+        ulong sendIdleIntervalMilliseconds,
+        ulong lingerMilliseconds,
         ReadOnlySpan<byte> resumeSecret)
     {
         ValidateDestinationSize(destination);
@@ -148,6 +164,29 @@ internal static class ControlDatagramCodec
         BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], sessionIdForMe);
         offset += sizeof(uint);
         BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], maxMessageSize);
+        offset += sizeof(uint);
+        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], sendIdleIntervalMilliseconds);
+        offset += sizeof(ulong);
+        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], lingerMilliseconds);
+        offset += sizeof(ulong);
+        resumeSecret.CopyTo(destination.Slice(offset, DatagramSessionProtocol.ResumeSecretLength));
+    }
+
+    /// <summary>
+    /// Writes a <see cref="DatagramControlType.Resume"/>: a dialler's request to take over the Session
+    /// the receiver knows as <paramref name="targetSessionId"/>. That id is the receiver's own local
+    /// session id and is the only field that routes the datagram to a Session. The
+    /// <paramref name="resumeSecret"/> is the only field that authorises the takeover and is never used
+    /// to route. The session id is not an authenticator (ADR 0009), so neither field stands in for the other.
+    /// </summary>
+    public static void WriteResume(Span<byte> destination, uint targetSessionId, ReadOnlySpan<byte> resumeSecret)
+    {
+        ValidateDestinationSize(destination);
+        ValidateFixedLength(resumeSecret, DatagramSessionProtocol.ResumeSecretLength, nameof(resumeSecret));
+        WriteHeader(destination, DatagramControlType.Resume);
+
+        int offset = DatagramSessionProtocol.ControlBodyOffset;
+        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], targetSessionId);
         offset += sizeof(uint);
         resumeSecret.CopyTo(destination.Slice(offset, DatagramSessionProtocol.ResumeSecretLength));
     }
@@ -281,9 +320,11 @@ internal static class ControlDatagramCodec
     /// Reads a <see cref="DatagramControlType.HelloWithCookie"/>'s body. Fails when
     /// <paramref name="cookie"/> or <paramref name="resumeSecret"/> is not exactly its wire length,
     /// for the same reason <see cref="TryReadCookie"/> does, and when the announced
-    /// <paramref name="maxMessageSize"/> is zero — as meaningless off the wire as a local
-    /// <see cref="DatagramSessionOptions.MaxMessageSize"/> of zero is by
-    /// <see cref="DatagramSessionOptions.Validate"/> (issue #287).
+    /// <paramref name="maxMessageSize"/>, <paramref name="sendIdleIntervalMilliseconds"/> or
+    /// <paramref name="lingerMilliseconds"/> is zero — as meaningless off the wire as a local
+    /// <see cref="DatagramSessionOptions.MaxMessageSize"/>, <see cref="DatagramSessionOptions.SendIdleInterval"/>
+    /// or <see cref="DatagramSessionOptions.Linger"/> of zero is by
+    /// <see cref="DatagramSessionOptions.Validate"/> (issue #287, issue #347, issue #361).
     /// </summary>
     public static bool TryReadHelloWithCookie(
         ReadOnlySpan<byte> datagram,
@@ -293,6 +334,8 @@ internal static class ControlDatagramCodec
         Span<byte> cookie,
         out uint sessionIdForMe,
         out uint maxMessageSize,
+        out ulong sendIdleIntervalMilliseconds,
+        out ulong lingerMilliseconds,
         Span<byte> resumeSecret)
     {
         if (cookie.Length != DatagramSessionProtocol.CookieLength
@@ -305,6 +348,8 @@ internal static class ControlDatagramCodec
             epoch = default;
             sessionIdForMe = default;
             maxMessageSize = default;
+            sendIdleIntervalMilliseconds = default;
+            lingerMilliseconds = default;
             return false;
         }
 
@@ -321,14 +366,20 @@ internal static class ControlDatagramCodec
         offset += sizeof(uint);
         maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
         offset += sizeof(uint);
+        sendIdleIntervalMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
+        offset += sizeof(ulong);
+        lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
+        offset += sizeof(ulong);
 
-        if (maxMessageSize == 0)
+        if (maxMessageSize == 0 || sendIdleIntervalMilliseconds == 0 || lingerMilliseconds == 0)
         {
             version = default;
             clientNonce = default;
             epoch = default;
             sessionIdForMe = default;
             maxMessageSize = default;
+            sendIdleIntervalMilliseconds = default;
+            lingerMilliseconds = default;
             return false;
         }
 
@@ -340,14 +391,17 @@ internal static class ControlDatagramCodec
     /// Reads a <see cref="DatagramControlType.Accept"/>'s body. Fails when
     /// <paramref name="resumeSecret"/> is not exactly its wire length, for the same reason
     /// <see cref="TryReadCookie"/> does for a cookie, and when the announced
-    /// <paramref name="maxMessageSize"/> is zero, for the same reason
-    /// <see cref="TryReadHelloWithCookie"/> does.
+    /// <paramref name="maxMessageSize"/>, <paramref name="sendIdleIntervalMilliseconds"/> or
+    /// <paramref name="lingerMilliseconds"/> is zero, for the same reason
+    /// <see cref="TryReadHelloWithCookie"/> does (issue #363).
     /// </summary>
     public static bool TryReadAccept(
         ReadOnlySpan<byte> datagram,
         out ulong clientNonce,
         out uint sessionIdForMe,
         out uint maxMessageSize,
+        out ulong sendIdleIntervalMilliseconds,
+        out ulong lingerMilliseconds,
         Span<byte> resumeSecret)
     {
         if (resumeSecret.Length != DatagramSessionProtocol.ResumeSecretLength
@@ -357,6 +411,8 @@ internal static class ControlDatagramCodec
             clientNonce = default;
             sessionIdForMe = default;
             maxMessageSize = default;
+            sendIdleIntervalMilliseconds = default;
+            lingerMilliseconds = default;
             return false;
         }
 
@@ -367,15 +423,48 @@ internal static class ControlDatagramCodec
         offset += sizeof(uint);
         maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
         offset += sizeof(uint);
+        sendIdleIntervalMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
+        offset += sizeof(ulong);
+        lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
+        offset += sizeof(ulong);
 
-        if (maxMessageSize == 0)
+        if (maxMessageSize == 0 || sendIdleIntervalMilliseconds == 0 || lingerMilliseconds == 0)
         {
             clientNonce = default;
             sessionIdForMe = default;
             maxMessageSize = default;
+            sendIdleIntervalMilliseconds = default;
+            lingerMilliseconds = default;
             return false;
         }
 
+        datagram.Slice(offset, DatagramSessionProtocol.ResumeSecretLength).CopyTo(resumeSecret);
+        return true;
+    }
+
+    /// <summary>
+    /// Reads a <see cref="DatagramControlType.Resume"/>'s body. <paramref name="targetSessionId"/> routes
+    /// the datagram to a Session and <paramref name="resumeSecret"/> authorises the takeover, and
+    /// neither is used for the other's job (ADR 0009). Fails when <paramref name="resumeSecret"/> is
+    /// not exactly <see cref="DatagramSessionProtocol.ResumeSecretLength"/> bytes, and, through
+    /// <see cref="TryReadControlType"/>, on any datagram whose length is not the control size or whose
+    /// bytes past the 20-byte body are not zero, so a body one byte long is never read. A body one byte
+    /// short, or empty, cannot be told apart: zero padding makes it the same bytes as a full body whose
+    /// trailing bytes are zero, and it reads as one.
+    /// </summary>
+    public static bool TryReadResume(ReadOnlySpan<byte> datagram, out uint targetSessionId, Span<byte> resumeSecret)
+    {
+        if (resumeSecret.Length != DatagramSessionProtocol.ResumeSecretLength
+            || !TryReadControlType(datagram, out DatagramControlType type)
+            || type != DatagramControlType.Resume)
+        {
+            targetSessionId = default;
+            return false;
+        }
+
+        int offset = DatagramSessionProtocol.ControlBodyOffset;
+        targetSessionId = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
+        offset += sizeof(uint);
         datagram.Slice(offset, DatagramSessionProtocol.ResumeSecretLength).CopyTo(resumeSecret);
         return true;
     }

@@ -107,6 +107,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private readonly Dictionary<(Source Remote, ulong Nonce), SlotHandle> _acceptedHandshakes = [];
 
+    /// <summary>
+    /// Closed-session records (ADR 0017, second amendment 2026-09-29): one ring entry per capacity Slot,
+    /// written by <see cref="RememberClosedSession"/> when a Peer closes while the remote may still be
+    /// waiting for the ack of its Goodbye. Holds no capacity Slot. When the ring is full the oldest entry
+    /// is overwritten, so a burst of closes larger than Capacity within one Linger can lose the oldest
+    /// re-ack, which degrades that sender to <see cref="DisconnectReason.LingerExpired"/> as before.
+    /// </summary>
+    private readonly ClosedSession[] _closedSessions;
+
+    /// <summary>Ring index in <see cref="_closedSessions"/> by the closed session's local id. Sized once, never grows.</summary>
+    private readonly Dictionary<uint, int> _closedSessionIndex;
+
+    /// <summary>The ring position the next <see cref="RememberClosedSession"/> writes to.</summary>
+    private int _closedSessionNext;
+
     private readonly byte[] _scratchBuffer = new byte[MaxUdpDatagramSize];
     private readonly byte[] _sendBuffer = new byte[DatagramSessionProtocol.ControlDatagramSize];
 
@@ -230,6 +245,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _maxLegalFragmentCount = options.ResolvedReceiveWindowFragments;
         _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
 
+        _closedSessions = new ClosedSession[options.Reactor.Capacity];
+        _closedSessionIndex = new Dictionary<uint, int>(options.Reactor.Capacity);
+
         _receiveWindows = new ReceiveWindowSpaces[options.Reactor.Capacity];
         for (int i = 0; i < _receiveWindows.Length; i++)
         {
@@ -296,6 +314,28 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     internal TimeSpan ObservedPumpInterval => _pumpIntervalObserver.Interval;
 
+    /// <summary>
+    /// This Reactor's <see cref="DatagramSessionOptions.SendIdleInterval"/> as announced on
+    /// Hello-with-cookie and Accept, in whole milliseconds rounded up. Rounding up keeps a
+    /// sub-millisecond interval from going out as zero, which the peer rejects as malformed, and never
+    /// shortens the deadline the peer derives from it.
+    /// </summary>
+    private ulong AnnouncedSendIdleIntervalMilliseconds => (ulong)Math.Ceiling(_options.SendIdleInterval.TotalMilliseconds);
+
+    /// <summary>
+    /// This Reactor's <see cref="DatagramSessionOptions.Linger"/> as announced on Hello-with-cookie and
+    /// Accept, in whole milliseconds rounded up, for the same reason
+    /// <see cref="AnnouncedSendIdleIntervalMilliseconds"/> rounds up: a sub-millisecond Linger going out
+    /// as zero would be rejected as malformed, and rounding up never shortens the value the far end
+    /// negotiates the effective (minimum) Linger from (issue #363). This is also this end's own operand
+    /// of the minimum in <see cref="PeerSlot.EffectiveLinger"/> — rounded here once, on both the dialling
+    /// (<see cref="OnAccept"/>) and accepting (<see cref="NewAcceptedPeer"/>) paths — so both ends
+    /// negotiate from identical whole-millisecond values and land on the same effective Linger, whatever
+    /// fractional-millisecond <see cref="DatagramSessionOptions.Linger"/> either end configured. The
+    /// stream profile mirrors this with its own equivalent (issue #55 follow-up).
+    /// </summary>
+    private ulong AnnouncedLingerMilliseconds => (ulong)Math.Ceiling(_options.Linger.TotalMilliseconds);
+
     /// <inheritdoc cref="ISessionEventSource.PendingEventCount"/>
     int ISessionEventSource.PendingEventCount => _pendingEvents.Count;
 
@@ -321,10 +361,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             _admissionsThisFrame = 0;
             _capDiscardsThisFrame = 0;
             _capacityDiscardsThisFrame = 0;
+            MarkDrainedClosingPeersCloseDue();
             _dispatcher.Pump();
+            CloseAckedGoodbyePeers();
             RetryPendingFragmentDeliveries();
             ReportExpiredRetransmissions();
+            EnforceReceiveIdleTimer();
+            EnforceLingerExpiry();
+            QueueDeferredGoodbyes();
+            EnforceSendIdleTimer();
             FlushOutboundDatagrams();
+            ClosePeersWithCloseDue();
             ReportDeclinedAdmissions();
         }
         finally
@@ -378,6 +425,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
+            IsDialled = true,
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
@@ -395,22 +443,45 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Ends the Session with <paramref name="peer"/> and queues a
-    /// <see cref="SessionEventKind.PeerClosed"/> carrying <see cref="DisconnectReason.LocalClose"/>.
-    /// Idempotent: a stale <see cref="PeerId"/> is a no-op, because a Peer closing under a caller is an
-    /// ordinary race rather than a programmer error.
+    /// Ends the Session with <paramref name="peer"/>. On an Established, non-Interrupted Peer this queues a
+    /// Goodbye in the Peer's <c>ReliableOrdered</c> Space and puts the Peer in Closing (issue #397): later
+    /// <see cref="Send"/> calls return <see cref="SendOutcome.Closed"/> and no
+    /// <see cref="SessionEventKind.PeerClosed"/> is raised yet. On any other Peer (dialling or Interrupted)
+    /// it queues a <see cref="SessionEventKind.PeerClosed"/> carrying <see cref="DisconnectReason.LocalClose"/>
+    /// at once. Idempotent: a stale <see cref="PeerId"/> is a no-op, because a Peer closing under a caller
+    /// is an ordinary race rather than a programmer error, and a second call on a Closing Peer queues no
+    /// second Goodbye.
     /// </summary>
     /// <remarks>
-    /// This slice closes locally and says nothing to the remote. The Goodbye exchange, and the Linger
-    /// that lets it be retransmitted, belong to the slice that implements them; until then a closed
-    /// Peer is discovered on the far side by its silence.
+    /// A Closing Peer ends with <see cref="DisconnectReason.LocalClose"/> once the Goodbye and every
+    /// <c>ReliableOrdered</c> record before it are acknowledged, or <see cref="DisconnectReason.LingerExpired"/> once its effective Linger has elapsed since this
+    /// call with the Goodbye still unacknowledged. It is never Interrupted and never sends a Resume.
+    /// When both ends Close at once, each ends with <see cref="DisconnectReason.LocalClose"/>: a Closing Peer
+    /// that receives the remote's Goodbye acknowledges it and raises neither
+    /// <see cref="SessionEventKind.PeerClosing"/> nor <see cref="DisconnectReason.PeerGoodbye"/>.
+    /// Accepted gap: the Goodbye is ordered only within <c>ReliableOrdered</c>, so a
+    /// <c>ReliableUnordered</c> Message sent before this call can still arrive after the Goodbye, and
+    /// the remote, already closed or Closing, does not deliver it.
     /// </remarks>
     public void Close(PeerId peer)
     {
         EnsureUsable();
         EnsureCallingThreadIsConstructingThread();
 
-        ClosePeer(ToHandle(peer), DisconnectReason.LocalClose);
+        SlotHandle handle = ToHandle(peer);
+        if (_peers.TryResolve(handle) is PeerSlot { State: HandshakeState.Established, IsInterrupted: false } slot)
+        {
+            if (!slot.IsClosing)
+            {
+                slot.LocalClose = LocalCloseState.GoodbyeDeferred;
+                slot.ClosingTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+                QueueGoodbye(slot);
+            }
+
+            return;
+        }
+
+        ClosePeer(handle, DisconnectReason.LocalClose);
     }
 
     /// <summary>
@@ -421,9 +492,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// now reflect what the four per-Space receive windows have refused (issue #172);
     /// <see cref="PeerCounters.UnreliableLossPackets"/> reflects gaps either unreliable Space's window
     /// has slid past (issues #173, #176).
-    /// <see cref="PeerCounters.MessagesReceived"/> and <see cref="PeerCounters.Resumes"/> still read
-    /// zero for every Peer, since this profile has no delivery or resume machinery yet to increment
-    /// them. <see cref="PeerCounters.RetentionHighWaterBytes"/> reads the true per-Peer figure — summed
+    /// <see cref="PeerCounters.MessagesReceived"/> still reads zero for every Peer, since this profile
+    /// has no delivery machinery yet to increment it. <see cref="PeerCounters.Resumes"/> counts the
+    /// Peer's resumes: once per <see cref="SessionEventKind.PeerResumed"/> raised for it, on the
+    /// accepting end when a matching Resume moves it out of Interrupted and on the dialling end when it
+    /// hears its session again after sending a Resume, and never reset by one (ADR 0013).
+    /// <see cref="PeerCounters.RetentionHighWaterBytes"/> reads the true per-Peer figure — summed
     /// across both reliable Spaces — from <see cref="_retention"/> (subtask 6.5.6, issue #205).
     /// </summary>
     public PeerCounters CountersOf(PeerId peer)
@@ -538,9 +612,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return SendOutcome.Closed;
         }
 
+        if (slot.RemoteGoodbyeDelivered)
+        {
+            return SendOutcome.Closed;
+        }
+
         if (slot.State != HandshakeState.Established)
         {
             return SendOutcome.NotEstablished;
+        }
+
+        if (slot.IsClosing)
+        {
+            return SendOutcome.Closed;
         }
 
         // The fragment size used to cut this Message is this Peer's own, captured on the Slot at
@@ -688,6 +772,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _lifecycle.IsDisposed = true;
         _peers.DrainAll();
         _peersBySessionId.Clear();
+        _closedSessionIndex.Clear();
         _dialsByNonce.Clear();
         _acceptedHandshakes.Clear();
         _pendingEvents.Clear();
@@ -703,13 +788,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return sessionEvent;
         }
 
-        // The one kind this profile queues that the shared half cannot build, because it alone needs
+        // MessageReceived is the one kind here the shared half cannot build, because it alone needs
         // the arena the payload was committed to (subtask 6.6.6, issue #219). The span is handed out
         // aliasing the arena directly, so it is valid for this Frame only — the same contract the
         // stream profile's own MessageReceived carries.
-        return pending.Kind == SessionEventKind.MessageReceived
-            ? SessionEvent.ForMessageReceived(pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength))
-            : throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind.");
+        return pending.Kind switch
+        {
+            SessionEventKind.MessageReceived => SessionEvent.ForMessageReceived(
+                pending.Peer, _arena.GetCommitted(pending.PayloadOffset, pending.PayloadLength)),
+            SessionEventKind.PeerClosing => SessionEvent.ForPeerClosing(pending.Peer),
+            _ => throw new InvalidOperationException($"{pending.Kind} is not a recognised SessionEventKind."),
+        };
     }
 
     /// <summary>
@@ -813,7 +902,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         if (session != DatagramSessionProtocol.ControlSession)
         {
-            ProcessDataDatagram(source, session, datagram);
+            ProcessDataDatagram(link, source, session, datagram);
             return;
         }
 
@@ -845,6 +934,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 OnRefusal(source, datagram);
                 break;
 
+            case DatagramControlType.Resume:
+                OnResume(link, source, datagram);
+                break;
+
             // The discard arm refuses. TryReadControlType has already rejected every type this
             // profile does not process, so reaching here means a type was added to the roster without
             // a decision made here — which is discarded rather than guessed at.
@@ -859,13 +952,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// counted rather than treated as an introduction — a Session is created by the handshake and by
     /// nothing else. The source address is deliberately not checked against the one the Session was
     /// established from: a Peer behind a NAT that rebinds, or a device that changes network, keeps its
-    /// Session, which is the whole reason the identity is a token rather than an address.
+    /// Session, which is the whole reason the identity is a token rather than an address. A session id
+    /// naming a recently closed Session goes to <see cref="TryReAckClosedSession"/> first (ADR 0017,
+    /// second amendment) and is discarded only if that declines.
     /// </summary>
-    private void ProcessDataDatagram(Source source, uint session, ReadOnlySpan<byte> datagram)
+    private void ProcessDataDatagram(UdpLink link, Source source, uint session, ReadOnlySpan<byte> datagram)
     {
         if (!_peersBySessionId.TryGetValue(session, out SlotHandle handle) || _peers.TryResolve(handle) is not PeerSlot slot)
         {
-            DiscardMalformed(source, datagram.Length);
+            if (!TryReAckClosedSession(link, source, session, datagram))
+            {
+                DiscardMalformed(source, datagram.Length);
+            }
+
             return;
         }
 
@@ -925,7 +1024,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ReadOnlySpan<byte> remainder = body;
         while (remainder.Length > 0)
         {
-            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
+            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
             {
                 // One refusal out of the several this read can reach is worth naming separately
                 // (issue #273): a Fragment in an unreliable mode is well-formed at every level but
@@ -956,6 +1055,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
+        // The well-formedness proof above is what earns this datagram the right to keep slot's
+        // receive-idle deadline alive (issue #351, PeerSlot.LastReceiveTimestamp): every record parsed
+        // and any Fragment sets they claim are internally consistent. A datagram refused below for
+        // declaring more Fragments than this Reactor's own receive window could ever hold does not
+        // matter either way — slot is closed by that refusal, so nothing reads this timestamp again.
+        slot.LastReceiveTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+
         // A declared fragmentCount larger than this Reactor's own receive window is refused with a
         // close, not a discard (issue #282, reworked under #264) — the record is individually legal and
         // its set internally consistent (both already proved above), but the set it claims could never
@@ -974,7 +1080,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             PacketRecordCodec.TryRead(
                 remainder, out PacketRecordMode oversizedMode, out _, out _,
-                out bool oversizedIsFragment, out _, out ushort oversizedFragmentCount, out int oversizedBytesConsumed);
+                out bool oversizedIsFragment, out _, out ushort oversizedFragmentCount, out _, out int oversizedBytesConsumed);
 
             if (oversizedIsFragment
                 && oversizedMode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered
@@ -993,6 +1099,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             remainder = remainder[oversizedBytesConsumed..];
         }
 
+        // Fully parsed and not refused above: this is what "well-formed" means for leaving Interrupted
+        // (issue #383). It sits after the oversized-set close so a datagram that closes the Peer never
+        // resumes it first.
+        ResumeInterruptedDialledPeerOnData(slot);
+
         // The proof above is what attributes this Datagram to slot's Peer: it names an established
         // session id (ProcessDataDatagram's own lookup) and every record in it parses. Only from this
         // point on is the whole Datagram's length, header included, counted against that Peer (issue
@@ -1000,10 +1111,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // DiscardMalformedForSession's Reactor-scope figure instead, above, and never reaches here.
         slot.Counters.RecordBytesReceived((ulong)datagram.Length);
 
-        TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
+        TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits, effectiveRto);
+        ReleaseRetentionForAck(slot, PacketRecordMode.ReliableOrdered);
         ApplyAckToStallSignature(slot);
         slot.AckTracker.ApplyAck(PacketRecordMode.ReliableUnordered, reliableUnorderedAckBase, reliableUnorderedAckBits, effectiveRto);
+        ReleaseRetentionForAck(slot, PacketRecordMode.ReliableUnordered);
         ApplyAckToStallSignature(slot);
         ReconcileHorizonDeferrals(slot);
 
@@ -1016,12 +1129,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             // is derived from them the moment it is held.
             PacketRecordCodec.TryRead(
                 remainder, out PacketRecordMode mode, out uint sequence, out ushort length,
-                out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount, out int bytesConsumed);
+                out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount, out bool isControl,
+                out int bytesConsumed);
 
             // The payload is the tail of what this record consumed, so it is sliced from the record's
             // own span rather than re-derived from a header width this method would then have to know.
             ReadOnlySpan<byte> payload = remainder.Slice(bytesConsumed - length, length);
-            ClassifyRecord(slot, mode, sequence, isFragment, fragmentIndex, fragmentCount, payload);
+            ClassifyRecord(slot, mode, sequence, isFragment, isControl, fragmentIndex, fragmentCount, payload);
             remainder = remainder[bytesConsumed..];
         }
     }
@@ -1119,7 +1233,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             PacketRecordCodec.TryRead(
                 remainder, out PacketRecordMode mode, out uint sequence, out _, out bool isFragment,
-                out ushort index, out ushort count, out int bytesConsumed);
+                out ushort index, out ushort count, out _, out int bytesConsumed);
 
             if (isFragment)
             {
@@ -1518,7 +1632,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger);
+            TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger);
             slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableOrdered, effectiveRto);
             slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableUnordered, effectiveRto);
 
@@ -1558,6 +1672,60 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         if (releasedUnfragmentedRecord)
         {
             slot.StallSignature.RecordUnfragmentedRecordAcked();
+        }
+    }
+
+    /// <summary>
+    /// Frees the retention slot of every sequence the <see cref="OutstandingReliableSequences.ApplyAck"/>
+    /// call that just ran actually released on <paramref name="mode"/>'s reliable Space (issue #345):
+    /// called once per <see cref="OutstandingReliableSequences.ApplyAck"/> call, immediately after it, so
+    /// each Space's own release is read before the other Space's call overwrites
+    /// <see cref="OutstandingReliableSequences.LastAckReleasedSequences"/> — the same idiom
+    /// <see cref="ApplyAckToStallSignature"/> already follows for <see cref="OutstandingReliableSequences.LastAckRelease"/>.
+    /// Without this, nothing ever freed a slot <see cref="_retention"/>'s <see cref="RetentionPool.TryAcquire"/>
+    /// committed: a quiet Session's idle-triggered Pings and a Peer's reliable Sends would both hold
+    /// their slots forever and every further reliable Send would eventually see
+    /// <see cref="RetentionSlotOutcome.Exhausted"/>.
+    /// </summary>
+    /// <remarks>
+    /// Allocates nothing: <see cref="OutstandingReliableSequences.LastAckReleasedSequences"/> is a reused
+    /// scratch span and <c>foreach</c> over a <see cref="ReadOnlySpan{T}"/> does not allocate an
+    /// enumerator, matching this whole ack path's no-allocation discipline.
+    /// </remarks>
+    private void ReleaseRetentionForAck(PeerSlot slot, PacketRecordMode mode)
+    {
+        int spaceIndex = ReliableSpaceIndex(mode);
+        foreach (uint sequence in slot.AckTracker.LastAckReleasedSequences(mode))
+        {
+            _retention.Release(slot.Handle.Index, spaceIndex, sequence);
+
+            if (slot.LocalClose == LocalCloseState.GoodbyeUnacked
+                && mode == PacketRecordMode.ReliableOrdered
+                && sequence == slot.GoodbyeSequence)
+            {
+                slot.LocalClose = LocalCloseState.GoodbyeAcked;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Closes every Closing Peer whose Goodbye has been acknowledged (<see cref="LocalCloseState.GoodbyeAcked"/>,
+    /// issue #398) with <see cref="DisconnectReason.LocalClose"/>, once every <c>ReliableOrdered</c> record
+    /// up to the Goodbye is acknowledged too: a selective ack of the Goodbye behind an unacknowledged earlier
+    /// Message would otherwise free the Slot and stop that Message's retransmission, leaving the remote's
+    /// Goodbye waiting behind a hole that never fills. Run right after the read pass, so an ack
+    /// that arrived this Pump closes the Peer this Pump, and before <see cref="EnforceLingerExpiry"/>, so an
+    /// ack arriving in the Pump Linger would also have run out wins and no second close follows.
+    /// </summary>
+    private void CloseAckedGoodbyePeers()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is PeerSlot { LocalClose: LocalCloseState.GoodbyeAcked } slot
+                && !slot.AckTracker.HasOutstandingAtOrBelow(PacketRecordMode.ReliableOrdered, slot.GoodbyeSequence))
+            {
+                ClosePeer(slot.Handle, DisconnectReason.LocalClose);
+            }
         }
     }
 
@@ -1614,12 +1782,364 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            if (slot.PendingSends.Count == 0)
+            // A Peer whose Goodbye close is due is flushed even with nothing queued: its Slot is freed
+            // right after, so this datagram is the last that could carry the ack of the Goodbye.
+            // The same holds for a Closing Peer that just acknowledged the remote's Goodbye (AckDue): that
+            // datagram is what tells the remote its Goodbye arrived.
+            bool finalAckDue = slot.RemoteClose is RemoteCloseState.CloseDue or RemoteCloseState.AckDue;
+            if (slot.PendingSends.Count == 0 && !finalAckDue)
             {
                 continue;
             }
 
             FlushPeer(slot);
+
+            if (slot.RemoteClose == RemoteCloseState.AckDue)
+            {
+                slot.RemoteClose = RemoteCloseState.Acked;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="slot"/> has gone silent past this end's receive-idle deadline (issue
+    /// #352): elapsed time since <see cref="PeerSlot.LastReceiveTimestamp"/> at or past
+    /// <see cref="PeerSlot.RemoteSendIdleInterval"/> times <see cref="DatagramSessionOptions.ResolvedMissedHeartbeats"/>.
+    /// Mirrors <see cref="StreamSessionReactor.HasExceededReceiveIdleDeadline"/>.
+    /// </summary>
+    /// <remarks>
+    /// This profile has an adaptive RTO already, unlike the stream profile, and the deadline is
+    /// deliberately not derived from it (issue #359, ADR 0012). The RTO answers "when do I resend the
+    /// probe", a fact about the current path that must keep adapting. The count answers "how many
+    /// missed intervals before I give up", the consumer's own tolerance, which must not adapt with it.
+    /// Deriving the deadline from the RTO would stretch that tolerance exactly when the path degrades,
+    /// since backing off the RTO is what the estimator does when the path is bad, so the consumer
+    /// would wait longest precisely when it most wanted to be told. It would also tie a consumer-facing
+    /// promise to an estimator that Karn's algorithm is already discarding samples from. The Ping
+    /// still inherits the adaptive RTO for its own retransmission (#343), so the path-adaptivity this
+    /// profile has stays there instead of leaking into liveness. Keeping the deadline a plain count
+    /// also means a consumer moving between the datagram and stream session profiles does not have to
+    /// relearn how liveness works.
+    ///
+    /// Validating this is structural rather than arithmetic: <see cref="DatagramSessionOptions"/>
+    /// rejects a <see cref="DatagramSessionOptions.MissedHeartbeats"/> count below 2 at construction,
+    /// and a count of at least 2 already guarantees room for one probe and one retransmission, because
+    /// the RTO floor is the observed Pump interval (<see cref="ObservedPumpInterval"/>) and the
+    /// send-idle interval necessarily exceeds one Pump. No round-trip term needs to appear in the
+    /// deadline itself. In consumer terms: a peer announcing a 10-second send-idle interval, at the
+    /// default count of 3, is declared lost after 30 seconds of silence from it.
+    ///
+    /// See the tolerance test that degrades the path and confirms the deadline does not stretch with
+    /// it, referred to in this codebase as <c>DatagramSessionLivenessToleranceTests</c>.
+    /// </remarks>
+    private bool HasExceededReceiveIdleDeadline(PeerSlot slot) =>
+        _options.Reactor.TimeProvider.GetElapsedTime(slot.LastReceiveTimestamp)
+            >= slot.RemoteSendIdleInterval * _options.ResolvedMissedHeartbeats;
+
+    /// <summary>
+    /// Moves every Established Peer that has exceeded <see cref="HasExceededReceiveIdleDeadline"/> to
+    /// <see cref="PeerSlot.IsInterrupted"/> and queues its <see cref="SessionEventKind.PeerInterrupted"/>
+    /// (issue #352), run once per <see cref="Pump"/> ahead of
+    /// <see cref="EnforceSendIdleTimer"/> — the two timers are independent: this one reads only receive
+    /// state, that one only send state, and neither call arms or disarms the other. No
+    /// <see cref="DiagnosticGateway"/> record is logged for the transition, since it is already reported
+    /// as an Event (ADR 0013). Also stamps <see cref="PeerSlot.InterruptedTimestamp"/> on the same Pump
+    /// (issue #366) — the moment this Peer's effective Linger begins counting down (#55). Skips a Peer
+    /// already <see cref="PeerSlot.IsInterrupted"/> (issue #353), so a deadline that stays exceeded after
+    /// the transition never raises a second Event, and never re-stamps the timestamp, for it.
+    /// </summary>
+    private void EnforceReceiveIdleTimer()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            {
+                continue;
+            }
+
+            // A Closing Peer never goes Interrupted (issue #406): this end has already said Goodbye, so a
+            // silent remote is not a path to win back with a Resume. Only the Goodbye's ack or Linger
+            // measured from Close (EnforceLingerExpiry) ends it, and no PeerInterrupted is raised.
+            if (slot.IsInterrupted || slot.IsClosing)
+            {
+                continue;
+            }
+
+            if (!HasExceededReceiveIdleDeadline(slot))
+            {
+                continue;
+            }
+
+            slot.IsInterrupted = true;
+            slot.InterruptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+            slot.ResumesSentSinceInterrupted = 0;
+            _pendingEvents.Add(new PendingEvent
+            {
+                Kind = SessionEventKind.PeerInterrupted,
+                Peer = ToPeerId(slot.Handle),
+            });
+        }
+    }
+
+    /// <summary>
+    /// Whether an <see cref="PeerSlot.IsInterrupted"/> Peer's effective Linger
+    /// (<see cref="PeerSlot.EffectiveLinger"/>, negotiated at handshake and already reported via
+    /// <c>LingerNegotiated</c>) has run out since <see cref="PeerSlot.InterruptedTimestamp"/> (issue
+    /// #367, parent #55) — the datagram twin of <see cref="StreamSessionReactor.HasExceededLinger"/>.
+    /// Linger is what closes an Interrupted Peer, not the transport loss that produced it — the loss
+    /// already happened, potentially long before this check ever runs (<see cref="EnforceReceiveIdleTimer"/>
+    /// stamped <see cref="PeerSlot.InterruptedTimestamp"/> on whichever earlier Pump crossed the
+    /// receive-idle deadline, issue #366), so the deadline is measured from the moment this end stopped
+    /// waiting on that transport rather than from anything about the transport itself.
+    /// </summary>
+    private bool HasLingerExpired(PeerSlot slot) =>
+        _options.Reactor.TimeProvider.GetElapsedTime(slot.InterruptedTimestamp) >= slot.EffectiveLinger;
+
+    /// <summary>
+    /// Closes every Established, <see cref="PeerSlot.IsInterrupted"/> Peer whose <see cref="HasLingerExpired"/>
+    /// with <see cref="DisconnectReason.LingerExpired"/> (issue #367, parent #55), run once per
+    /// <see cref="Pump"/> right after <see cref="EnforceReceiveIdleTimer"/> — mirroring
+    /// <see cref="StreamSessionReactor.EnforceIdleTimers"/>'s own ordering, where the Linger check for an
+    /// already-Interrupted Peer runs in the same pass as, and right after, the receive-idle check that
+    /// can newly interrupt one. A Peer <see cref="EnforceReceiveIdleTimer"/> interrupted this very Pump
+    /// can in principle be seen by this pass in the same Pump — nothing here waits a Pump before
+    /// checking it — but <see cref="HasLingerExpired"/> can never be true for it yet:
+    /// <see cref="PeerSlot.InterruptedTimestamp"/> was just stamped to this Pump's own clock reading, so
+    /// the elapsed time this pass reads is zero, and <see cref="DatagramSessionOptions"/> rejects a zero
+    /// <see cref="PeerSlot.EffectiveLinger"/> at construction — <c>0 &gt;= EffectiveLinger</c> can only
+    /// hold for an <see cref="PeerSlot.EffectiveLinger"/> that validation already refuses to admit. Runs
+    /// ahead of <see cref="EnforceSendIdleTimer"/> so a Peer this pass closes is never offered a Ping
+    /// into a Slot it no longer occupies. Also closes a Closing Peer (<see cref="PeerSlot.IsClosing"/>)
+    /// whose Goodbye is still unacknowledged once its effective Linger has elapsed since
+    /// <see cref="PeerSlot.ClosingTimestamp"/> (issue #399).
+    /// </summary>
+    /// <remarks>
+    /// Iterates by index over every occupied Slot exactly as <see cref="EnforceReceiveIdleTimer"/> and
+    /// <see cref="StreamSessionReactor.EnforceIdleTimers"/> do, and calls <see cref="ClosePeer"/> directly
+    /// from inside that loop — safe for the same reason it is safe there: <see cref="ClosePeer"/> only
+    /// ever removes the occupant at the handle's own index from <see cref="_peers"/>, never shifts or
+    /// touches any other index, so the loop's remaining iterations see every other Slot exactly as they
+    /// would have regardless of whether this iteration's Peer closed.
+    /// </remarks>
+    private void EnforceLingerExpiry()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            {
+                continue;
+            }
+
+            // A Closing Peer's Linger runs from Close, not from any interruption (issue #399).
+            bool expired = slot.IsClosing
+                ? _options.Reactor.TimeProvider.GetElapsedTime(slot.ClosingTimestamp) >= slot.EffectiveLinger
+                : slot.IsInterrupted && HasLingerExpired(slot);
+            if (!expired)
+            {
+                continue;
+            }
+
+            ClosePeer(slot.Handle, DisconnectReason.LingerExpired);
+        }
+    }
+
+    /// <summary>
+    /// Queues one Ping for every Established Peer that has sent no data datagram for
+    /// <see cref="DatagramSessionOptions.SendIdleInterval"/> (issue #340, subtask 8.1.4), run once per
+    /// <see cref="Pump"/> ahead of <see cref="FlushOutboundDatagrams"/> so a Ping this call queues rides
+    /// the same Pump's flush out — a Peer this method queues against is never left waiting a whole
+    /// further Pump just to reach the wire. A Ping is a Heartbeat, and a Heartbeat is not a keepalive:
+    /// it proves the party behind this Session is still there to receive and eventually acknowledge
+    /// application data, not merely that some NAT mapping between here and there is still open — a bare
+    /// keepalive a middlebox itself could answer would prove nothing about the party ADR 0011's
+    /// liveness deadline (#54) actually cares about.
+    /// </summary>
+    /// <remarks>
+    /// Reads <see cref="PeerSlot.LastSendTimestamp"/> against this Reactor's own
+    /// <see cref="ReactorOptions.TimeProvider"/>, never the ambient clock, matching every other timer in
+    /// this Reactor. A Peer still mid-handshake is skipped exactly as <see cref="FlushOutboundDatagrams"/>
+    /// skips one — there is no established Session yet for a Heartbeat to prove anything about. This loop
+    /// deliberately does not read <see cref="PeerSlot.IsInterrupted"/> (issue #371, parent #55): an
+    /// Interrupted datagram Peer's <see cref="PeerSlot.State"/> is still <see cref="HandshakeState.Established"/>,
+    /// so it keeps being offered a Ping here exactly like any other Established Peer. A datagram Session
+    /// has no re-dial schedule (#55) — there is nothing to re-dial, and the interrupted end can only
+    /// resume by being heard from again — so it keeps probing the path with Pings, at the send-idle
+    /// interval or as the adaptive retransmission of one still unacknowledged, for as long as Linger
+    /// keeps the Peer alive.
+    /// </remarks>
+    private void EnforceSendIdleTimer()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            {
+                continue;
+            }
+
+            SendResumeIfDue(slot);
+
+            if (_options.Reactor.TimeProvider.GetElapsedTime(slot.LastSendTimestamp) < _options.SendIdleInterval)
+            {
+                continue;
+            }
+
+            QueuePing(slot);
+        }
+    }
+
+    /// <summary>
+    /// Sends one <see cref="DatagramControlType.Resume"/> control datagram to <paramref name="slot"/>'s
+    /// address when the Peer is a dialled, <see cref="PeerSlot.IsInterrupted"/> one and no Resume has
+    /// left for it within the last <see cref="DatagramSessionOptions.SendIdleInterval"/> (issue #382,
+    /// parent #56): the first goes out on the Pump that finds the Peer Interrupted, every later one a
+    /// send-idle interval after the previous. Only the dialling end sends Resume, because the accepting
+    /// end cannot know the dialler's new address. The datagram is routed by the accepting end's own
+    /// session id (<see cref="PeerSlot.RemoteSessionId"/>) and authorised by the secret it issued
+    /// (<see cref="PeerSlot.RemoteResumeSecret"/>), ADR 0009.
+    /// </summary>
+    /// <remarks>
+    /// A Resume is deliberately not a data datagram, so it does not stamp
+    /// <see cref="PeerSlot.LastSendTimestamp"/>: Pings keep exactly their own send-idle cadence, and the
+    /// Resume cadence reads <see cref="PeerSlot.LastResumeTimestamp"/> instead. It is still charged to
+    /// the Peer's <see cref="PeerCounters.SocketWrites"/> and <see cref="PeerCounters.BytesSent"/>, send
+    /// success or not, as a data datagram is (ADR 0013).
+    /// </remarks>
+    private void SendResumeIfDue(PeerSlot slot)
+    {
+        if (!slot.IsDialled || !slot.IsInterrupted)
+        {
+            return;
+        }
+
+        long now = _options.Reactor.TimeProvider.GetTimestamp();
+        if (slot.ResumesSentSinceInterrupted > 0
+            && _options.Reactor.TimeProvider.GetElapsedTime(slot.LastResumeTimestamp, now) < _options.SendIdleInterval)
+        {
+            return;
+        }
+
+        ControlDatagramCodec.WriteResume(_sendBuffer, slot.RemoteSessionId, slot.RemoteResumeSecret);
+        SendControl(slot.Link, slot.Remote);
+
+        // Unlike a handshake control datagram, a Resume has a Peer to charge (ADR 0013).
+        slot.Counters.RecordSocketWrite();
+        slot.Counters.RecordBytesSent(DatagramSessionProtocol.ControlDatagramSize);
+        slot.LastResumeTimestamp = now;
+        slot.ResumesSentSinceInterrupted++;
+    }
+
+    /// <summary>
+    /// Takes an <see cref="PeerSlot.IsInterrupted"/> dialled Peer out of Interrupted on hearing its
+    /// session again (issue #383, parent #56): clears the flag, queues
+    /// <see cref="SessionEventKind.PeerResumed"/> with the same <see cref="PeerId"/> (generation
+    /// included), calls <see cref="Core.PeerCounterSet.RecordResume"/> once and logs
+    /// <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c> 0 (a datagram Session rewinds nothing).
+    /// Does nothing for an accepting-end Peer or a Peer that is not Interrupted.
+    /// </summary>
+    /// <remarks>
+    /// Called once <see cref="ParseDataDatagram"/> has fully parsed a data datagram, the same well-formedness
+    /// proof that stamps <see cref="PeerSlot.LastReceiveTimestamp"/>. An observer who can see the session id
+    /// can forge such a datagram, so it can fake this exit on the dialling end. That is accepted: the exit
+    /// grants no takeover (the accepting end still demands the resume secret, ADR 0009) and on-path
+    /// attackers are out of scope. Counters are never reset by a Resume (ADR 0013).
+    /// <para>
+    /// No "has sent a Resume yet" check is needed (ADR 0015): the Pump that marks a dialled Peer
+    /// Interrupted also sends its first Resume (<c>SendResumeIfDue</c> runs after the receive-idle
+    /// check), and datagrams are read before either, so every datagram that reaches an Interrupted
+    /// dialled Peer arrives after at least one Resume went out.
+    /// </para>
+    /// </remarks>
+    private void ResumeInterruptedDialledPeerOnData(PeerSlot slot)
+    {
+        if (!slot.IsDialled || !slot.IsInterrupted)
+        {
+            return;
+        }
+
+        PeerId peer = ToPeerId(slot.Handle);
+        LeaveInterrupted(slot, peer);
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForResumeMatched(peer, bytesRewound: 0));
+        }
+    }
+
+    /// <summary>
+    /// Queues one seven-byte control record — the send-idle Ping (issue #340) — on
+    /// <paramref name="slot"/>'s <see cref="PeerSlot.PendingSends"/>, exactly as an ordinary
+    /// single-Fragment reliable <see cref="Send"/> queues one: the same <c>ReliableUnordered</c>
+    /// sequence allocation and retention commit, with <see cref="RetentionPool.TryAcquire"/>'s
+    /// <c>isControl</c> flag set so <see cref="TryResolvePendingPayload"/> — on this send and on every
+    /// later resend <see cref="ReportExpiredRetransmissions"/> re-queues — packs it through
+    /// <see cref="Session.DatagramRecordPacker.TryPackPingRecord"/> rather than as an ordinary
+    /// zero-length Message. A Ping is always <c>ReliableUnordered</c> (ADR 0009's control-record shape,
+    /// issue #338): ordering a Heartbeat against application data would only ever add a head-of-line
+    /// dependency neither needs.
+    /// </summary>
+    /// <remarks>
+    /// Spends nothing on a refusal, the same contract issue #244 established for <see cref="Send"/>: the
+    /// sequence is only read, never allocated, until <see cref="RetentionPool.TryAcquire"/> commits, so a
+    /// Peer whose <c>ReliableUnordered</c> Space has no free slot this Pump leaves its next sequence
+    /// exactly where it was and is tried again — this same check, unconditionally, every Pump — the next
+    /// time <see cref="EnforceSendIdleTimer"/> finds it still idle.
+    /// </remarks>
+    private void QueuePing(PeerSlot slot)
+    {
+        const PacketRecordMode mode = PacketRecordMode.ReliableUnordered;
+        int spaceIndex = ReliableSpaceIndex(mode);
+
+        uint sequence = slot.OutboundSequences.Peek(mode);
+        RetentionSlotOutcome outcome = _retention.TryAcquire(
+            slot.Handle.Index, spaceIndex, sequence, ReadOnlySpan<byte>.Empty, isControl: true);
+
+        if (outcome != RetentionSlotOutcome.Committed)
+        {
+            return;
+        }
+
+        slot.OutboundSequences.Allocate(mode);
+        slot.PendingSends.Add(new PendingOutboundRecord { Mode = mode, Sequence = sequence });
+    }
+
+    /// <summary>
+    /// Queues this end's Goodbye — a zero-length control record in <paramref name="slot"/>'s
+    /// <c>ReliableOrdered</c> Space (issue #397) — exactly as <see cref="QueuePing"/> queues a Ping: the next
+    /// sequence, retained with the control flag so first send and every resend pack it as a Goodbye.
+    /// Spends nothing when the Space's retention is full, leaving <see cref="PeerSlot.LocalClose"/> at
+    /// <see cref="LocalCloseState.GoodbyeDeferred"/> for <see cref="QueueDeferredGoodbyes"/> to retry.
+    /// </summary>
+    private void QueueGoodbye(PeerSlot slot)
+    {
+        const PacketRecordMode mode = PacketRecordMode.ReliableOrdered;
+        int spaceIndex = ReliableSpaceIndex(mode);
+
+        uint sequence = slot.OutboundSequences.Peek(mode);
+        RetentionSlotOutcome outcome = _retention.TryAcquire(
+            slot.Handle.Index, spaceIndex, sequence, ReadOnlySpan<byte>.Empty, isControl: true);
+
+        if (outcome != RetentionSlotOutcome.Committed)
+        {
+            return;
+        }
+
+        slot.OutboundSequences.Allocate(mode);
+        slot.PendingSends.Add(new PendingOutboundRecord { Mode = mode, Sequence = sequence });
+        slot.GoodbyeSequence = sequence;
+        slot.LocalClose = LocalCloseState.GoodbyeUnacked;
+    }
+
+    /// <summary>
+    /// Retries the Goodbye of every Closing Peer whose <see cref="Close"/> found its <c>ReliableOrdered</c>
+    /// retention full (issue #397).
+    /// </summary>
+    private void QueueDeferredGoodbyes()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is PeerSlot { LocalClose: LocalCloseState.GoodbyeDeferred } slot)
+            {
+                QueueGoodbye(slot);
+            }
         }
     }
 
@@ -1634,6 +2154,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// (<see cref="TryResolvePendingPayload"/>).
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>A record already acked before its flush.</b> An ack read earlier this same Pump (issue #345)
+    /// can release a sequence's retention slot before it reaches this flush — queued for its first send,
+    /// or re-queued for retransmission by <see cref="ReportExpiredRetransmissions"/> — in which case
+    /// <see cref="TryResolvePendingPayload"/> fails and the record below is consumed unsent rather than
+    /// retried: resending an already-released sequence would be a duplicate the far end has already
+    /// acknowledged, and no path on this ticket's live traffic wrote a payload to a released slot.
+    /// </para>
     /// <para>
     /// <b>A record that does not fit waits for the next Pump</b> (issue #230). Packing stops at the
     /// first record <see cref="DatagramRecordPacker.TryPackRecord"/> refuses — this Datagram is full —
@@ -1674,15 +2202,25 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         foreach (PendingOutboundRecord pending in slot.PendingSends)
         {
             if (!TryResolvePendingPayload(
-                slot, pending, out ReadOnlySpan<byte> payload, out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount))
+                slot, pending, out ReadOnlySpan<byte> payload, out bool isFragment, out ushort fragmentIndex,
+                out ushort fragmentCount, out bool isControl))
             {
                 consumed++;
                 continue;
             }
 
-            bool packed = isFragment
-                ? packer.TryPackFragmentRecord(pending.Mode, pending.Sequence, fragmentIndex, fragmentCount, payload)
-                : packer.TryPackRecord(pending.Mode, pending.Sequence, payload);
+            // A control record — the send-idle Ping (issue #340) — is packed through its own seven-byte
+            // shape, never through TryPackRecord: retention marked it control at TryAcquire, and that
+            // mark is what routes a first send and every later resend through the same packing call.
+            // Retention's control mark cannot tell a Ping from a Goodbye, but their Spaces can: a Ping is
+            // ReliableUnordered and a Goodbye is ReliableOrdered (issue #397).
+            bool packed = isControl
+                ? pending.Mode == PacketRecordMode.ReliableOrdered
+                    ? packer.TryPackGoodbyeRecord(pending.Sequence)
+                    : packer.TryPackPingRecord(pending.Sequence)
+                : isFragment
+                    ? packer.TryPackFragmentRecord(pending.Mode, pending.Sequence, fragmentIndex, fragmentCount, payload)
+                    : packer.TryPackRecord(pending.Mode, pending.Sequence, payload);
 
             if (!packed)
             {
@@ -1703,7 +2241,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 slot.AckTracker.RecordSent(
                     pending.Mode,
                     pending.Sequence,
-                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, _options.Linger),
+                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger),
                     isFragment);
             }
 
@@ -1718,7 +2256,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         slot.PendingSends.RemoveRange(0, consumed);
 
-        if (packer.RecordsPacked == 0)
+        // Nothing packed sends nothing, except for a Peer whose Goodbye close is due: it sends the header
+        // and ack blocks alone, the one datagram that can still tell the remote its Goodbye arrived.
+        if (packer.RecordsPacked == 0 && slot.RemoteClose is not (RemoteCloseState.CloseDue or RemoteCloseState.AckDue))
         {
             return;
         }
@@ -1730,6 +2270,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             _counters.RecordDatagramSent();
         }
+
+        // A data datagram just left for this Peer — this flush packed at least one record, or the
+        // RecordsPacked == 0 return above would already have exited — so the send-idle interval
+        // restarts from now (issue #340): the Ping this same flush may just have packed counts as a
+        // sent datagram exactly like any other, which is what keeps a Session that has nothing but
+        // Pings to send from ever emitting a second one before the next interval elapses.
+        slot.LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
     }
 
     /// <summary>
@@ -1739,8 +2286,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// at the reliable Space <paramref name="pending"/>'s mode addresses, which is where <see cref="Send"/>
     /// recorded them and the only place a retransmit — <paramref name="pending"/> itself carries nothing
     /// of the shape — can recover them from (issue #250). Fails — nothing to pack — only if a reliable
-    /// sequence was already released from retention between being queued and this flush, which no path
-    /// on this ticket's live traffic does yet.
+    /// sequence was already released from retention between being queued and this flush: an ack read
+    /// earlier the same Pump (issue #345) is the live path that does this today.
     /// </summary>
     /// <param name="slot">The Peer this record was queued against.</param>
     /// <param name="pending">The queued record whose bytes and shape are being resolved.</param>
@@ -1748,13 +2295,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <param name="isFragment">Whether the record is one piece of a Message cut into Fragments.</param>
     /// <param name="fragmentIndex">This piece's position within its Message, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
     /// <param name="fragmentCount">The Message's total piece count, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
+    /// <param name="isControl">
+    /// Whether this record is a control record — an idle-triggered Ping (issue #340) — rather than a
+    /// Message a consumer Sent, read back from <see cref="_retention"/> exactly as <paramref name="isFragment"/>
+    /// is. Always <see langword="false"/> for an unreliable record: nothing but a reliable
+    /// <c>ReliableUnordered</c> send-idle Ping is ever marked control.
+    /// </param>
     private bool TryResolvePendingPayload(
         PeerSlot slot,
         PendingOutboundRecord pending,
         out ReadOnlySpan<byte> payload,
         out bool isFragment,
         out ushort fragmentIndex,
-        out ushort fragmentCount)
+        out ushort fragmentCount,
+        out bool isControl)
     {
         if (pending.UnreliablePayload is byte[] bytes)
         {
@@ -1762,12 +2316,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             isFragment = false;
             fragmentIndex = 0;
             fragmentCount = 0;
+            isControl = false;
             return true;
         }
 
         int spaceIndex = ReliableSpaceIndex(pending.Mode);
         return _retention.TryRead(
-            slot.Handle.Index, spaceIndex, pending.Sequence, out payload, out isFragment, out fragmentIndex, out fragmentCount);
+            slot.Handle.Index, spaceIndex, pending.Sequence, out payload, out isFragment, out fragmentIndex, out fragmentCount, out isControl);
     }
 
     /// <summary>
@@ -1823,11 +2378,32 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// on ordinary loss as readily as on anything more serious, so nothing here closes, disconnects, or
     /// otherwise changes Session state — that is issue #270's job, off a different signal.
     /// </para>
+    /// <para>
+    /// <b>An admitted control record — a Ping — is acknowledged and never delivered</b> (issue #339).
+    /// <paramref name="isControl"/> comes from <see cref="PacketRecordCodec.TryRead"/>, which reports it
+    /// only for a record that is legally a Ping: <c>ReliableUnordered</c>, unfragmented, zero length.
+    /// Admission runs exactly as it does for any other record — the same <see
+    /// cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/> call above, the same
+    /// duplicate and out-of-window counting, the same ack block once <see
+    /// cref="ReceiveWindowSpaces.GenerateAckBlocks"/> next runs — so a Ping at sequence N is covered by
+    /// the ordinary ack block exactly as a Message at N would be, and a duplicate Ping raises <see
+    /// cref="PeerCounters.DuplicatePackets"/> exactly as a duplicate Message does. What differs is what
+    /// happens once admitted: neither <see cref="DeliverAdmittedRecord"/> nor <see cref="HoldFragment"/>
+    /// is reached for it, so no <see cref="SessionEventKind.MessageReceived"/> is queued and <see
+    /// cref="PeerCounters.MessagesReceived"/> does not rise.
+    /// </para>
     /// </remarks>
     private void ClassifyRecord(
-        PeerSlot slot, PacketRecordMode mode, uint sequence, bool isFragment,
+        PeerSlot slot, PacketRecordMode mode, uint sequence, bool isFragment, bool isControl,
         ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload)
     {
+        // A Goodbye earlier in this same Datagram may have closed the Peer directly (issue #400); its
+        // Slot can already belong to no one, and nothing after the Goodbye is admitted.
+        if (_peers.TryResolve(slot.Handle) is null)
+        {
+            return;
+        }
+
         ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
         ReceiveWindowOutcome outcome = windows.Classify(mode, sequence, out int ringSlot);
 
@@ -1854,13 +2430,36 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 break;
         }
 
-        if (mode == PacketRecordMode.Unreliable)
+        // Receiver-side Closing (issue #401): the record was still admitted above, so it is acked, but a
+        // Peer whose remote has said Goodbye accepts no further Messages from it.
+        bool acceptsMessages = !slot.RemoteGoodbyeDelivered;
+
+        if (acceptsMessages && mode == PacketRecordMode.Unreliable)
         {
             DeliverUnreliableRecord(slot, sequence, payload, alreadyCountedAsRefused: outcome != ReceiveWindowOutcome.Admitted);
         }
-        else if (outcome == ReceiveWindowOutcome.Admitted)
+        else if (acceptsMessages && outcome == ReceiveWindowOutcome.Admitted)
         {
-            if (isFragment && mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
+            if (isControl)
+            {
+                // Admitted into its Space's receive window exactly like any other record above, so the
+                // ordinary ack block covers it and a duplicate counts like any other duplicate, but it
+                // carries no payload for a consumer to receive, so MessagesReceived does not rise.
+                // A ReliableUnordered one is a Ping (#339) and nothing more happens. A ReliableOrdered
+                // one is a Goodbye (#400): it takes its turn in send order like a Message would, and
+                // acts only when delivered. The lowest sequence is kept so a second, misbehaving
+                // Goodbye can never displace an earlier one.
+                if (mode == PacketRecordMode.ReliableOrdered)
+                {
+                    if (slot.RemoteGoodbyeSequence is not uint pending || SequenceNumber.IsNewerThan(pending, sequence))
+                    {
+                        slot.RemoteGoodbyeSequence = sequence;
+                    }
+
+                    DeliverAdmittedRecord(slot, mode, sequence, payload);
+                }
+            }
+            else if (isFragment && mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
             {
                 bool groupComplete = HoldFragment(slot, mode, sequence, ringSlot, fragmentIndex, fragmentCount, payload);
                 if (groupComplete)
@@ -2144,9 +2743,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     {
         while (true)
         {
+            // Nothing behind a delivered Goodbye is ever delivered (issue #400).
+            if (slot.RemoteGoodbyeDelivered)
+            {
+                return;
+            }
+
+            uint releasedSequence = slot.OrderedDelivery.NextSequence;
             while (slot.OrderedDelivery.TryReleaseNext(out ReadOnlyMemory<byte> released))
             {
-                DeliverToConsumer(slot, released.Span);
+                if (DeliverOrderedRecord(slot, releasedSequence, released.Span))
+                {
+                    return;
+                }
+
+                releasedSequence = slot.OrderedDelivery.NextSequence;
             }
 
             if (!TryFlushPendingOrderedFragmentGroup(slot))
@@ -2285,8 +2896,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 return;
             }
 
-            DeliverToConsumer(slot, payload);
-            DrainOrderedDelivery(slot);
+            if (!DeliverOrderedRecord(slot, sequence, payload))
+            {
+                DrainOrderedDelivery(slot);
+            }
 
             return;
         }
@@ -2307,6 +2920,133 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         DeliverToConsumer(slot, payload);
+    }
+
+    /// <summary>
+    /// Releases one <c>ReliableOrdered</c> record that has reached its turn in send order: a Message goes
+    /// to <see cref="DeliverToConsumer"/>, and the Goodbye recorded in
+    /// <see cref="PeerSlot.RemoteGoodbyeSequence"/> goes to <see cref="OnGoodbyeDelivered"/> instead.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when the record was the Goodbye, in which case the caller must not
+    /// deliver anything further to this Peer.
+    /// </returns>
+    private bool DeliverOrderedRecord(PeerSlot slot, uint sequence, ReadOnlySpan<byte> payload)
+    {
+        if (slot.RemoteGoodbyeSequence == sequence)
+        {
+            OnGoodbyeDelivered(slot);
+            return true;
+        }
+
+        DeliverToConsumer(slot, payload);
+        return false;
+    }
+
+    /// <summary>
+    /// The remote's Goodbye has reached its turn in send order (issues #400, #401), so every Message
+    /// sent before it has been delivered. If none of them is still undelivered — see
+    /// <see cref="HasUndeliveredMessages"/> — the Peer closes at once with
+    /// <see cref="DisconnectReason.PeerGoodbye"/> and no <see cref="SessionEventKind.PeerClosing"/> is
+    /// raised. Otherwise the Peer enters receiver-side Closing: <see cref="SessionEventKind.PeerClosing"/>
+    /// is queued after those Messages, and <see cref="MarkDrainedClosingPeersCloseDue"/> and
+    /// <see cref="ClosePeersWithCloseDue"/> raise <see cref="SessionEventKind.PeerClosed"/> on a later Pump. This mirrors the stream profile's
+    /// Goodbye handling.
+    /// </summary>
+    private void OnGoodbyeDelivered(PeerSlot slot)
+    {
+        slot.RemoteGoodbyeSequence = null;
+
+        // Both ends closing at once: this end's own Close is already in progress, so the remote's Goodbye is
+        // acknowledged and nothing more. The reason stays LocalClose (or LingerExpired), whichever end's
+        // Goodbye reached the wire first.
+        if (slot.IsClosing)
+        {
+            slot.RemoteClose = RemoteCloseState.AckDue;
+            return;
+        }
+
+        if (!HasUndeliveredMessages(slot))
+        {
+            // Closed after this Pump's flush, not here: the read pass is still running and the ack of the
+            // Goodbye (issue #398) has to reach the wire before the Slot that owns its ack state is freed.
+            slot.RemoteClose = RemoteCloseState.CloseDue;
+            return;
+        }
+
+        slot.RemoteClose = RemoteCloseState.Closing;
+        _pendingEvents.Add(new PendingEvent
+        {
+            Kind = SessionEventKind.PeerClosing,
+            Peer = ToPeerId(slot.Handle),
+        });
+    }
+
+    /// <summary>
+    /// Whether <paramref name="slot"/>'s Peer still has Messages the consumer has not been handed:
+    /// a <see cref="SessionEventKind.MessageReceived"/> queued for it this Frame (the consumer has not
+    /// drained this Frame yet, since <see cref="Pump"/> clears undrained events at its start), or a
+    /// completed <c>ReliableUnordered</c> Fragment group deferred for lack of arena room. Deferred
+    /// <c>ReliableOrdered</c> groups are not counted: a Goodbye reaching its turn means none is ahead of it.
+    /// </summary>
+    private bool HasUndeliveredMessages(PeerSlot slot)
+    {
+        if (PendingGroupsOf(slot, PacketRecordMode.ReliableUnordered).Count > 0)
+        {
+            return true;
+        }
+
+        PeerId peer = ToPeerId(slot.Handle);
+        for (int i = 0; i < _pendingEvents.Count; i++)
+        {
+            if (_pendingEvents[i].Kind == SessionEventKind.MessageReceived && _pendingEvents[i].Peer == peer)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Drain-then-close, step one: moves every Peer in receiver-side Closing
+    /// (<see cref="RemoteCloseState.Closing"/>) that has nothing deferred left to
+    /// <see cref="RemoteCloseState.CloseDue"/>, so <see cref="ClosePeersWithCloseDue"/> closes it with
+    /// <see cref="DisconnectReason.PeerGoodbye"/> at the end of this Pump. Run at the start of each Pump,
+    /// after the previous Frame's events are cleared, so a Peer that entered Closing this Frame stays
+    /// Closing until the consumer has been able to drain its Messages and
+    /// <see cref="SessionEventKind.PeerClosing"/>. A Peer with nothing to drain is already
+    /// <see cref="RemoteCloseState.CloseDue"/> in the Pump its Goodbye arrived.
+    /// </summary>
+    private void MarkDrainedClosingPeersCloseDue()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is PeerSlot { RemoteClose: RemoteCloseState.Closing } slot
+                && PendingGroupsOf(slot, PacketRecordMode.ReliableUnordered).Count == 0)
+            {
+                slot.RemoteClose = RemoteCloseState.CloseDue;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Closes every Peer that is <see cref="RemoteCloseState.CloseDue"/> with
+    /// <see cref="DisconnectReason.PeerGoodbye"/>, after <see cref="FlushOutboundDatagrams"/> (issue #398).
+    /// <see cref="FlushPeer"/> sent such a Peer one final datagram even with nothing queued, carrying the
+    /// ack of the Goodbye, so the sender learns it was received before the Slot that owns that ack state
+    /// is freed. <see cref="SessionEventKind.PeerClosed"/> follows in the same Pump with no
+    /// <see cref="SessionEventKind.PeerClosing"/> on the direct path.
+    /// </summary>
+    private void ClosePeersWithCloseDue()
+    {
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is PeerSlot { RemoteClose: RemoteCloseState.CloseDue } slot)
+            {
+                ClosePeer(slot.Handle, DisconnectReason.PeerGoodbye);
+            }
+        }
     }
 
     /// <summary>
@@ -2400,6 +3140,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 cookie,
                 out uint remoteSessionId,
                 out uint remoteMaxMessageSize,
+                out ulong remoteSendIdleIntervalMilliseconds,
+                out ulong remoteLingerMilliseconds,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2427,11 +3169,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         if (_acceptedHandshakes.TryGetValue((source, clientNonce), out SlotHandle existing)
             && _peers.TryResolve(existing) is PeerSlot established)
         {
-            SendAccept(link, established);
+            SendAccept(link, established, source);
             return;
         }
 
-        if (_peers.TryAdd(NewAcceptedPeer(source, link, remoteSessionId, remoteMaxMessageSize, remoteResumeSecret, clientNonce))
+        TimeSpan remoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
+        TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
+        if (_peers.TryAdd(NewAcceptedPeer(
+                source, link, remoteSessionId, remoteMaxMessageSize, remoteSendIdleInterval, remoteLinger, announcedLinger, remoteResumeSecret, clientNonce))
             is not SlotHandle handle)
         {
             _counters.RecordAdmissionDiscard();
@@ -2451,8 +3197,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _retention.ResetShareHolder(handle.Index);
         _peersBySessionId[slot.LocalSessionId] = handle;
         _acceptedHandshakes[(source, clientNonce)] = handle;
-        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(handle) });
-        SendAccept(link, slot);
+        PeerId peer = ToPeerId(handle);
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = peer });
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForLingerNegotiated(
+                peer, (long)AnnouncedLingerMilliseconds, (long)slot.EffectiveLinger.TotalMilliseconds));
+        }
+
+        SendAccept(link, slot, source);
     }
 
     /// <summary>
@@ -2476,6 +3230,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         slot.State = HandshakeState.AwaitingAccept;
+        slot.HelloWithCookieSentTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
         ControlDatagramCodec.WriteHelloWithCookie(
             _sendBuffer,
             DatagramSessionProtocol.Version,
@@ -2484,6 +3239,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             cookie,
             slot.LocalSessionId,
             (uint)_options.MaxMessageSize,
+            AnnouncedSendIdleIntervalMilliseconds,
+            AnnouncedLingerMilliseconds,
             slot.LocalResumeSecret);
         SendControl(link, source);
     }
@@ -2494,6 +3251,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// which is which. The fragment size is not announced: it is each sender's own path property, and
     /// a receiver that reassembles by offset and length never needs to know it.
     /// </summary>
+    /// <remarks>
+    /// Also seeds the Peer's round-trip estimate with the time since its Hello-with-cookie was sent
+    /// (<see cref="PeerSlot.HelloWithCookieSentTimestamp"/>), so the first reliable record has a real
+    /// retransmission timeout rather than one equal to the Linger (ADR 0018). A zero-length measurement is
+    /// not sampled.
+    /// </remarks>
     private void OnAccept(Source source, ReadOnlySpan<byte> datagram)
     {
         Span<byte> remoteResumeSecret = stackalloc byte[DatagramSessionProtocol.ResumeSecretLength];
@@ -2502,6 +3265,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out ulong clientNonce,
                 out uint remoteSessionId,
                 out uint remoteMaxMessageSize,
+                out ulong remoteSendIdleIntervalMilliseconds,
+                out ulong remoteLingerMilliseconds,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2514,14 +3279,61 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
+        // ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize, send-idle
+        // interval or Linger at parse (issue #287, issue #348, issue #362), so all three values are
+        // already trusted by the time this Peer reaches Established — an internal invariant to assert
+        // rather than input to re-validate, mirroring NewAcceptedPeer's asserts on the accepting path.
+        Debug.Assert(
+            remoteMaxMessageSize != 0,
+            "ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize before this is called.");
+        Debug.Assert(
+            remoteSendIdleIntervalMilliseconds != 0,
+            "ControlDatagramCodec.TryReadAccept rejects a zero-announced send-idle interval before this is called.");
+        Debug.Assert(
+            remoteLingerMilliseconds != 0,
+            "ControlDatagramCodec.TryReadAccept rejects a zero-announced Linger before this is called.");
+
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
+        TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
+
         slot.RemoteSessionId = remoteSessionId;
         slot.RemoteMaxMessageSize = remoteMaxMessageSize;
+        slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
+        slot.RemoteLinger = remoteLinger;
+        slot.EffectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
         slot.State = HandshakeState.Established;
 
+        // Both idle-timer timestamps start counting from the moment this Peer exists, not from
+        // default(long) — which would read as an interval already elapsed. The Accept that just
+        // arrived is itself received activity, so LastReceiveTimestamp is stamped here rather than
+        // left to wait for the first post-establishment data datagram (issue #351), mirroring
+        // StreamSessionReactor.OnHelloRecordReceived's same reasoning for the stream profile.
+        long now = _options.Reactor.TimeProvider.GetTimestamp();
+        slot.LastSendTimestamp = now;
+        slot.LastReceiveTimestamp = now;
+
+        // Seed the round-trip estimate from Hello-with-cookie -> Accept. Unseeded, the RTO equals the
+        // Linger, so the Peer's first reliable record (a Goodbye included) could be resent only once
+        // per Linger and never inside it. The handshake resends nothing, so this leg is never ambiguous.
+        // A leg that measures zero ticks is below the clock's resolution (a frozen clock, never a real
+        // network) and says nothing about the round trip, so it leaves the estimator unseeded.
+        TimeSpan handshakeRoundTrip = _options.Reactor.TimeProvider.GetElapsedTime(slot.HelloWithCookieSentTimestamp, now);
+        if (handshakeRoundTrip > TimeSpan.Zero)
+        {
+            slot.RetransmitTimer.Estimator.Sample(handshakeRoundTrip);
+        }
+
         _dialsByNonce.Remove(clientNonce);
         _peersBySessionId[slot.LocalSessionId] = slot.Handle;
-        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = ToPeerId(slot.Handle) });
+        PeerId peer = ToPeerId(slot.Handle);
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerConnected, Peer = peer });
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForLingerNegotiated(
+                peer, (long)AnnouncedLingerMilliseconds, (long)slot.EffectiveLinger.TotalMilliseconds));
+        }
     }
 
     /// <summary>
@@ -2553,6 +3365,140 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// Routes a Resume by the session id in its body. A datagram that does not read as a Resume is
+    /// discarded like any other malformed control datagram. A target that names no Peer this Reactor
+    /// holds, or names a dialled Peer (<see cref="PeerSlot.IsDialled"/>, never a Resume target), logs
+    /// <see cref="DiagnosticId.ResumeUnmatched"/> against the Source with <c>Value0</c> 0
+    /// (no reservation was checked) and <c>Value1</c> 6 (the Resume record type), and changes nothing:
+    /// no event is raised and no Peer is touched. The session id only routes (ADR 0009): a target that
+    /// names a Peer must also present that Peer's <see cref="PeerSlot.LocalResumeSecret"/>, compared in
+    /// constant time, and a mismatch logs <see cref="DiagnosticId.ResumeUnmatched"/> with <c>Value0</c> 1
+    /// and leaves the Peer exactly as it was. A matching secret aimed at a Peer in Closing, either side
+    /// (<see cref="PeerSlot.IsClosing"/> or <see cref="PeerSlot.RemoteGoodbyeDelivered"/>), is refused
+    /// the same way with <c>Value0</c> 1.
+    /// </summary>
+    private void OnResume(UdpLink link, Source source, ReadOnlySpan<byte> datagram)
+    {
+        Span<byte> presentedSecret = stackalloc byte[DatagramSessionProtocol.ResumeSecretLength];
+        if (!ControlDatagramCodec.TryReadResume(datagram, out uint targetSessionId, presentedSecret))
+        {
+            DiscardMalformed(source, datagram.Length);
+            return;
+        }
+
+        // A dialled Peer is never a Resume target: only the dialling end sends Resume, since only it can
+        // know its own new address. Its session id and secret both travel in its HelloWithCookie, so
+        // matching them here would let an observer of the handshake move where the dialler sends.
+        if (!_peersBySessionId.TryGetValue(targetSessionId, out SlotHandle handle)
+            || _peers.TryResolve(handle) is not PeerSlot slot
+            || slot.IsDialled)
+        {
+            LogResumeUnmatched(source, candidatesChecked: 0);
+            return;
+        }
+
+        // Constant time, so how long the comparison takes does not say how many leading bytes of a
+        // guess were right.
+        if (!CryptographicOperations.FixedTimeEquals(presentedSecret, slot.LocalResumeSecret))
+        {
+            LogResumeUnmatched(source, candidatesChecked: 1);
+            return;
+        }
+
+        // A Goodbye, sent (IsClosing) or received (RemoteGoodbyeDelivered), forbids a Resume: the Peer is
+        // winding down, so moving its address or resuming it would be a silent success. The secret matched,
+        // so this counts as one candidate checked, and nothing about the Peer changes.
+        if (slot.IsClosing || slot.RemoteGoodbyeDelivered)
+        {
+            LogResumeUnmatched(source, candidatesChecked: 1);
+            return;
+        }
+
+        ResumeInterruptedPeer(slot, link, source);
+    }
+
+    /// <summary>
+    /// Points every later datagram to <paramref name="slot"/> at <paramref name="source"/>, the address
+    /// a matched Resume arrived from, and sends them from <paramref name="link"/>, the bound socket it
+    /// arrived on: that socket demonstrably reaches the new source, which the Peer's earlier socket may
+    /// not (a different address family, or a different bound endpoint). Only a matched Resume calls
+    /// this. The accepted-handshake map is keyed by <see cref="PeerSlot.HandshakeSource"/>, which does
+    /// not move, so a replayed handshake from the original address still finds this Peer and
+    /// <see cref="ClosePeer"/> still removes the entry it inserted.
+    /// </summary>
+    private static void MoveSendAddress(PeerSlot slot, UdpLink link, Source source)
+    {
+        slot.Remote = source;
+        slot.Link = link;
+    }
+
+    /// <summary>
+    /// The matched-Resume branch. For an Established Peer of any liveness it points sends at the
+    /// Resume's source (<see cref="MoveSendAddress"/>), charges the Resume to
+    /// <see cref="PeerCounters.BytesReceived"/> (ADR 0013), stamps <see cref="PeerSlot.LastReceiveTimestamp"/>
+    /// so the receive-idle deadline restarts from the Resume, and logs
+    /// <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c> 0, since nothing is rewound on this
+    /// profile: retransmission already re-sends anything unacknowledged. Sequence state, ack state,
+    /// receive windows and held Fragments are not touched. If the Peer is
+    /// <see cref="PeerSlot.IsInterrupted"/> it also leaves Interrupted, queues
+    /// <see cref="SessionEventKind.PeerResumed"/> for the same <see cref="PeerId"/> it had before,
+    /// generation included, and counts it once in <see cref="PeerCounters.Resumes"/>. Linger stops counting because the Peer is no longer Interrupted, and a later
+    /// interruption stamps <see cref="PeerSlot.InterruptedTimestamp"/> afresh. A Peer this end does not
+    /// consider Interrupted (the dialling end can notice an interruption first) raises no event and
+    /// leaves <see cref="PeerCounters.Resumes"/> unchanged.
+    /// </summary>
+    private void ResumeInterruptedPeer(PeerSlot slot, UdpLink link, Source source)
+    {
+        if (slot.State != HandshakeState.Established)
+        {
+            return;
+        }
+
+        MoveSendAddress(slot, link, source);
+        slot.Counters.RecordBytesReceived(DatagramSessionProtocol.ControlDatagramSize);
+
+        // The Resume is hearing from the Peer. Pump reads datagrams before it runs the timers, so a
+        // stale timestamp here would have EnforceReceiveIdleTimer interrupt the Peer again on this very Pump.
+        slot.LastReceiveTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+
+        PeerId peer = ToPeerId(slot.Handle);
+        if (slot.IsInterrupted)
+        {
+            LeaveInterrupted(slot, peer);
+        }
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForResumeMatched(peer, bytesRewound: 0));
+        }
+    }
+
+    /// <summary>
+    /// Takes an <see cref="PeerSlot.IsInterrupted"/> Peer out of Interrupted, the steps both ends share
+    /// (issues #380 and #383): clears the flag, counts one <see cref="PeerCounters.Resumes"/> and queues
+    /// <see cref="SessionEventKind.PeerResumed"/> for <paramref name="peer"/>, the same
+    /// <see cref="PeerId"/> it had before, generation included.
+    /// </summary>
+    private void LeaveInterrupted(PeerSlot slot, PeerId peer)
+    {
+        slot.IsInterrupted = false;
+        slot.Counters.RecordResume();
+        _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = peer });
+    }
+
+    /// <summary>
+    /// Logs <see cref="DiagnosticId.ResumeUnmatched"/> for a Resume that was not matched onto a Peer,
+    /// with <c>Value1</c> the Resume record type (<see cref="DatagramControlType.Resume"/>).
+    /// </summary>
+    private void LogResumeUnmatched(Source source, long candidatesChecked)
+    {
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForResumeUnmatched(source, candidatesChecked, (long)DatagramControlType.Resume));
+        }
+    }
+
+    /// <summary>
     /// The dial a control datagram claims to answer, or <see langword="null"/> when it answers none —
     /// checking the nonce, the state the dial is actually in, and that the reply came from the address
     /// dialled. All three must hold: a nonce alone would let a reply from anywhere redirect a dial.
@@ -2575,32 +3521,50 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         UdpLink link,
         uint remoteSessionId,
         uint remoteMaxMessageSize,
+        TimeSpan remoteSendIdleInterval,
+        TimeSpan remoteLinger,
+        TimeSpan announcedLinger,
         ReadOnlySpan<byte> remoteResumeSecret,
         ulong clientNonce)
     {
-        // ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize at parse
-        // (issue #287), so by the time a Peer is built here, straight into Established, the value is
-        // already trusted — an internal invariant to assert rather than input to re-validate.
+        // ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize,
+        // send-idle interval or Linger at parse (issue #287, issue #347, issue #361), so by the time a
+        // Peer is built here, straight into Established, all three values are already trusted — an
+        // internal invariant to assert rather than input to re-validate.
         Debug.Assert(
             remoteMaxMessageSize != 0,
             "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize before this is called.");
+        Debug.Assert(
+            remoteSendIdleInterval > TimeSpan.Zero,
+            "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced send-idle interval before this is called.");
+        Debug.Assert(
+            remoteLinger > TimeSpan.Zero,
+            "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced Linger before this is called.");
 
         RetransmissionTimer retransmitTimer = new();
+        long now = _options.Reactor.TimeProvider.GetTimestamp();
+        TimeSpan effectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
         return new()
         {
             Remote = source,
+            HandshakeSource = source,
             Link = link,
             ClientNonce = clientNonce,
             LocalSessionId = NextSessionId(),
             LocalResumeSecret = NextResumeSecret(),
             RemoteSessionId = remoteSessionId,
             RemoteMaxMessageSize = remoteMaxMessageSize,
+            RemoteSendIdleInterval = remoteSendIdleInterval,
+            RemoteLinger = remoteLinger,
+            EffectiveLinger = effectiveLinger,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
             State = HandshakeState.Established,
             AckTracker = NewAckTracker(retransmitTimer),
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
+            LastSendTimestamp = now,
+            LastReceiveTimestamp = now,
         };
     }
 
@@ -2615,15 +3579,22 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private OutstandingReliableSequences NewAckTracker(RetransmissionTimer retransmitTimer) =>
         new(_options.Reactor.TimeProvider, retransmitTimer);
 
-    private void SendAccept(UdpLink link, PeerSlot slot)
+    /// <summary>
+    /// Answers a Hello-with-cookie with the Peer's Accept, to <paramref name="destination"/>, the
+    /// address that Hello came from. Not <see cref="PeerSlot.Remote"/>, which a matched Resume may
+    /// have moved since: a replay from the original address is answered there.
+    /// </summary>
+    private void SendAccept(UdpLink link, PeerSlot slot, Source destination)
     {
         ControlDatagramCodec.WriteAccept(
             _sendBuffer,
             slot.ClientNonce,
             slot.LocalSessionId,
             (uint)_options.MaxMessageSize,
+            AnnouncedSendIdleIntervalMilliseconds,
+            AnnouncedLingerMilliseconds,
             slot.LocalResumeSecret);
-        SendControl(link, slot.Remote);
+        SendControl(link, destination);
     }
 
     /// <summary>
@@ -2709,14 +3680,154 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         _peersBySessionId.Remove(slot.LocalSessionId);
+        RememberClosedSession(slot, reason);
         _dialsByNonce.Remove(slot.ClientNonce);
-        _acceptedHandshakes.Remove((slot.Remote, slot.ClientNonce));
+        if (slot.HandshakeSource is Source handshakeSource)
+        {
+            _acceptedHandshakes.Remove((handshakeSource, slot.ClientNonce));
+        }
         _pendingEvents.Add(new PendingEvent
         {
             Kind = SessionEventKind.PeerClosed,
             Peer = ToPeerId(handle),
             Reason = reason,
         });
+    }
+
+    /// <summary>
+    /// Remembers a Peer that just closed on a Goodbye for one effective Linger, so a resend of the remote's
+    /// Goodbye can still be acknowledged (ADR 0017, second amendment). Applies when the remote may still be
+    /// waiting for the ack of its Goodbye: a close with <see cref="DisconnectReason.PeerGoodbye"/>, or a
+    /// <see cref="DisconnectReason.LocalClose"/> of a Closing Peer, whose remote Goodbye may not have been
+    /// delivered yet. Writes one <see cref="ClosedSession"/> into the ring, overwriting the oldest entry when
+    /// it is full, and holds no capacity Slot. A Closing Peer whose remote Goodbye was delivered but not yet
+    /// acknowledged on the wire (<see cref="RemoteCloseState.AckDue"/>) has that ack sent here, since the
+    /// Pump's flush no longer reaches its Slot.
+    /// </summary>
+    private void RememberClosedSession(PeerSlot slot, DisconnectReason reason)
+    {
+        bool goodbyeClose = reason == DisconnectReason.PeerGoodbye
+            || (reason == DisconnectReason.LocalClose && slot.IsClosing);
+        if (slot.State != HandshakeState.Established || !goodbyeClose)
+        {
+            return;
+        }
+
+        int ring = _closedSessionNext;
+        _closedSessionNext = (ring + 1) % _closedSessions.Length;
+
+        uint overwritten = _closedSessions[ring].LocalSessionId;
+        if (overwritten != 0 && _closedSessionIndex.TryGetValue(overwritten, out int overwrittenRing) && overwrittenRing == ring)
+        {
+            _closedSessionIndex.Remove(overwritten);
+        }
+
+        ((uint Base, uint Bits) reliableOrdered, (uint Base, uint Bits) reliableUnordered) =
+            _receiveWindows[slot.Handle.Index].GenerateAckBlocks();
+
+        _closedSessions[ring] = new ClosedSession
+        {
+            LocalSessionId = slot.LocalSessionId,
+            Remote = slot.Remote,
+            RemoteSessionId = slot.RemoteSessionId,
+            ReliableOrderedBase = reliableOrdered.Base,
+            ReliableOrderedBits = reliableOrdered.Bits,
+            ReliableUnorderedBase = reliableUnordered.Base,
+            ReliableUnorderedBits = reliableUnordered.Bits,
+            ClosedTimestamp = _options.Reactor.TimeProvider.GetTimestamp(),
+            Linger = slot.EffectiveLinger,
+        };
+        _closedSessionIndex[slot.LocalSessionId] = ring;
+
+        if (slot.RemoteClose == RemoteCloseState.AckDue)
+        {
+            SendClosedSessionAck(slot.Link, in _closedSessions[ring]);
+        }
+    }
+
+    /// <summary>
+    /// Answers a data datagram naming a recently closed Session with one header-only datagram carrying the
+    /// stored ack blocks, and reports whether it did (ADR 0017, second amendment). Declines, so the caller
+    /// discards as for any unknown session, unless the id has a live record inside its Linger, the source is
+    /// the stored remote endpoint, the datagram is well-formed, and it carries at least one ReliableOrdered
+    /// record. The last condition stops two closed ends answering each other's replies. The reply is the
+    /// 20-byte header alone, never larger than the datagram that triggered it, and raises no event, takes no
+    /// Slot and touches no per-Peer counter. The stored blocks acknowledge exactly one thing beyond what the
+    /// Peer had received: the remote's Goodbye, when it is the next <c>ReliableOrdered</c> sequence
+    /// (<see cref="ClosedSession.AcknowledgeGoodbye"/>). A Message is never acknowledged, since nothing is
+    /// delivered after the close, so its sender ends <see cref="DisconnectReason.LingerExpired"/> honestly.
+    /// </summary>
+    private bool TryReAckClosedSession(UdpLink link, Source source, uint session, ReadOnlySpan<byte> datagram)
+    {
+        if (!_closedSessionIndex.TryGetValue(session, out int ring))
+        {
+            return false;
+        }
+
+        ref ClosedSession closed = ref _closedSessions[ring];
+        if (_options.Reactor.TimeProvider.GetElapsedTime(closed.ClosedTimestamp) >= closed.Linger)
+        {
+            _closedSessionIndex.Remove(session);
+            closed = default;
+            return false;
+        }
+
+        if (closed.Remote != source || !DatagramHeaderCodec.TryReadHeader(datagram, out _, out _, out _, out _, out _))
+        {
+            return false;
+        }
+
+        ReadOnlySpan<byte> body = datagram[DatagramSessionProtocol.DatagramHeaderSize..];
+        bool carriesReliableRecord = false;
+        ReadOnlySpan<byte> remainder = body;
+        while (remainder.Length > 0)
+        {
+            if (!PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
+            {
+                return false;
+            }
+
+            carriesReliableRecord |= mode == PacketRecordMode.ReliableOrdered;
+            remainder = remainder[bytesConsumed..];
+        }
+
+        if (!carriesReliableRecord)
+        {
+            return false;
+        }
+
+        remainder = body;
+        while (remainder.Length > 0)
+        {
+            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out _, out _, out _, out _, out bool isControl, out int bytesConsumed);
+            if (mode == PacketRecordMode.ReliableOrdered && isControl)
+            {
+                closed.AcknowledgeGoodbye(sequence);
+            }
+
+            remainder = remainder[bytesConsumed..];
+        }
+
+        SendClosedSessionAck(link, in closed);
+        return true;
+    }
+
+    /// <summary>Writes and sends the header-only ack datagram for <paramref name="closed"/> to its remote endpoint.</summary>
+    private void SendClosedSessionAck(UdpLink link, in ClosedSession closed)
+    {
+        DatagramHeaderCodec.WriteHeader(
+            _outboundDatagramBuffer,
+            closed.RemoteSessionId,
+            closed.ReliableOrderedBase,
+            closed.ReliableOrderedBits,
+            closed.ReliableUnorderedBase,
+            closed.ReliableUnorderedBits);
+
+        UdpLinkSendResult result = link.SendTo(closed.Remote, _outboundDatagramBuffer.AsSpan(0, DatagramSessionProtocol.DatagramHeaderSize));
+        if (result.IsSuccess)
+        {
+            _counters.RecordDatagramSent();
+        }
     }
 
     /// <summary>
@@ -2734,7 +3845,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             _entropy.GetBytes(bytes);
             uint candidate = BitConverter.ToUInt32(bytes);
-            if (candidate != DatagramSessionProtocol.ControlSession && !_peersBySessionId.ContainsKey(candidate))
+            if (candidate != DatagramSessionProtocol.ControlSession
+                && !_peersBySessionId.ContainsKey(candidate)
+                && !_closedSessionIndex.ContainsKey(candidate))
             {
                 return candidate;
             }
@@ -2847,6 +3960,116 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         Established,
     }
 
+    /// <summary>Where this end's own <see cref="Close"/> has got a Peer (issues #397 to #399).</summary>
+    private enum LocalCloseState
+    {
+        /// <summary><see cref="Close"/> has not been called on this Peer.</summary>
+        None,
+
+        /// <summary>
+        /// <see cref="Close"/> was called but the <c>ReliableOrdered</c> retention was full, so no Goodbye is
+        /// queued yet. <see cref="QueueDeferredGoodbyes"/> retries it each Pump.
+        /// </summary>
+        GoodbyeDeferred,
+
+        /// <summary>The Goodbye is queued and retained, and no ack has released it yet.</summary>
+        GoodbyeUnacked,
+
+        /// <summary>
+        /// An ack released the Goodbye from retention. <see cref="CloseAckedGoodbyePeers"/> closes the Peer
+        /// once no earlier <c>ReliableOrdered</c> record is outstanding either.
+        /// </summary>
+        GoodbyeAcked,
+    }
+
+    /// <summary>Where the remote's Goodbye has got a Peer (issues #400, #401).</summary>
+    private enum RemoteCloseState
+    {
+        /// <summary>The remote's Goodbye has not been delivered in order.</summary>
+        None,
+
+        /// <summary>
+        /// The Goodbye was delivered while Messages were still undelivered, so <see cref="SessionEventKind.PeerClosing"/>
+        /// was raised. <see cref="MarkDrainedClosingPeersCloseDue"/> makes it <see cref="CloseDue"/> on a later Pump.
+        /// </summary>
+        Closing,
+
+        /// <summary>
+        /// The Goodbye was delivered with nothing undelivered. <see cref="ClosePeersWithCloseDue"/> closes the
+        /// Peer after this Pump's flush, so the flush can carry the ack of the Goodbye.
+        /// </summary>
+        CloseDue,
+
+        /// <summary>
+        /// The Goodbye was delivered while this end's own <see cref="Close"/> was in progress. No
+        /// <see cref="SessionEventKind.PeerClosing"/> or <see cref="DisconnectReason.PeerGoodbye"/> follows: the Peer
+        /// keeps waiting for its own Goodbye's ack or its Linger. <see cref="FlushOutboundDatagrams"/> sends the
+        /// ack of the remote Goodbye this Pump even with no records, then moves the Peer to <see cref="Acked"/>.
+        /// </summary>
+        AckDue,
+
+        /// <summary>The ack of a remote Goodbye delivered during this end's own Close has been flushed.</summary>
+        Acked,
+    }
+
+    /// <summary>
+    /// What a Peer that closed on a Goodbye leaves behind for one effective Linger (ADR 0017, second
+    /// amendment), so a resent Goodbye can still be acknowledged. A fixed-size value in
+    /// <see cref="_closedSessions"/>, one entry per capacity Slot, never allocated per datagram. Both ack
+    /// blocks are the final <see cref="ReceiveWindowSpaces.GenerateAckBlocks"/> values, extended by
+    /// <see cref="AcknowledgeGoodbye"/> only when the remote's Goodbye arrives next in order.
+    /// </summary>
+    private struct ClosedSession
+    {
+        /// <summary>The session id this Reactor assigned, which the remote stamps on its datagrams. Zero marks an unused entry.</summary>
+        public uint LocalSessionId;
+
+        /// <summary>The only endpoint a reply is sent to.</summary>
+        public Source Remote;
+
+        /// <summary>The session id to stamp on the reply.</summary>
+        public uint RemoteSessionId;
+
+        public uint ReliableOrderedBase;
+
+        public uint ReliableOrderedBits;
+
+        public uint ReliableUnorderedBase;
+
+        public uint ReliableUnorderedBits;
+
+        /// <summary>When the Peer closed; the entry expires <see cref="Linger"/> later.</summary>
+        public long ClosedTimestamp;
+
+        /// <summary>The Peer's effective Linger.</summary>
+        public TimeSpan Linger;
+
+        /// <summary>
+        /// Acknowledges the remote's Goodbye at <paramref name="sequence"/>, the only thing this record may
+        /// acknowledge beyond its stored state: nothing is delivered once the Session is closed, so a Message
+        /// must never be acked. It counts only when it is exactly the next <c>ReliableOrdered</c> sequence
+        /// (<see cref="ReliableOrderedBase"/>), meaning every ordered record before it was delivered and the
+        /// ack truthfully says its Goodbye reached its turn. A Goodbye behind a hole, or one already below the
+        /// base, changes nothing. Uses the base-plus-32-bits shape of <see cref="ReceiveWindow.DescribeAsAckBlock"/>.
+        /// </summary>
+        public void AcknowledgeGoodbye(uint sequence)
+        {
+            if (sequence != ReliableOrderedBase)
+            {
+                return;
+            }
+
+            bool nextAlreadyReceived;
+            do
+            {
+                ReliableOrderedBase = unchecked(ReliableOrderedBase + 1);
+                nextAlreadyReceived = (ReliableOrderedBits & 1) != 0;
+                ReliableOrderedBits >>= 1;
+            }
+            while (nextAlreadyReceived);
+        }
+    }
+
     /// <summary>
     /// The state one occupied capacity Slot holds. The two session ids are deliberately separate:
     /// each end assigns the value it wants stamped on datagrams sent to it, so neither has to agree
@@ -2856,13 +4079,28 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private sealed class PeerSlot
     {
         /// <summary>The address this Peer was last known at — a claim, never an authenticator.</summary>
-        public required Source Remote { get; init; }
+        public required Source Remote { get; set; }
 
-        /// <summary>The bound socket this Peer's datagrams are sent from.</summary>
-        public required UdpLink Link { get; init; }
+        /// <summary>
+        /// The address and nonce an accepted Peer's handshake arrived from, which key
+        /// <see cref="_acceptedHandshakes"/>. Unlike <see cref="Remote"/> it never moves, so the entry
+        /// can always be found and removed when the Peer closes. <see langword="null"/> for a dialled Peer.
+        /// </summary>
+        public Source? HandshakeSource { get; init; }
+
+        /// <summary>The bound socket this Peer's datagrams are sent from. Moves with <see cref="Remote"/> on a matched Resume.</summary>
+        public required UdpLink Link { get; set; }
 
         /// <summary>The nonce that ties every datagram of this handshake to this Peer and no other.</summary>
         public required ulong ClientNonce { get; init; }
+
+        /// <summary>
+        /// <see cref="TimeProvider.GetTimestamp"/> at the moment a dialled Peer sent its
+        /// Hello-with-cookie. <see cref="OnAccept"/> measures the Accept's arrival against it to seed
+        /// <see cref="RetransmitTimer"/>'s estimator. The handshake never resends, so the request is
+        /// sent exactly once and the sample is never ambiguous under Karn's rule. Unused on an accepted Peer.
+        /// </summary>
+        public long HelloWithCookieSentTimestamp { get; set; }
 
         /// <summary>The id this Reactor assigned, which the remote stamps on datagrams sent here.</summary>
         public required uint LocalSessionId { get; init; }
@@ -2883,13 +4121,55 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// and <see cref="OnAccept"/>, therefore reject a zero announcement off the wire before a Peer
         /// ever reaches Established, and each asserts or re-asserts the resulting non-zero invariant
         /// rather than defaulting a missing value to something permissive or something that refuses. The
-        /// Datagram profile has no wire-level Resume yet (issue #52): what looks like "surviving an
-        /// interruption" here is a Session identified by its wire token rather than by address, so an
-        /// outage never tears down the <see cref="PeerSlot"/> and this field is never re-read or
-        /// re-established — it simply was never lost. A real Resume, when #52 lands, would have to
-        /// re-establish this value the same way the initial handshake does.
+        /// Datagram profile's wire-level Resume (issues #52, #56) carries no parameters: what looks like
+        /// "surviving an interruption" here is a Session identified by its wire token rather than by
+        /// address, so an outage, and the Resume that ends it, never tear down the
+        /// <see cref="PeerSlot"/>. This field is never re-read or re-established — it simply was never
+        /// lost, and a Resume only moves the send address.
         /// </summary>
         public uint RemoteMaxMessageSize { get; set; }
+
+        /// <summary>
+        /// The send-idle interval the peer itself announced during the handshake (issue #349) — never
+        /// this end's own <see cref="DatagramSessionOptions.SendIdleInterval"/>. Set on both Established
+        /// paths, <see cref="DatagramSessionReactor.NewAcceptedPeer"/> (from the Hello-with-cookie field,
+        /// issue #347) and <see cref="DatagramSessionReactor.OnAccept"/> (from the Accept field, issue #348), from
+        /// the value <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> and
+        /// <see cref="ControlDatagramCodec.TryReadAccept"/> already reject as zero at parse, so it is
+        /// always positive once a Peer reaches Established. The stream profile's
+        /// <see cref="StreamSessionReactor.PeerSlot.RemoteSendIdleInterval"/> is the model this mirrors.
+        /// <see cref="DatagramSessionReactor.HasExceededReceiveIdleDeadline"/> multiplies it by the
+        /// missed-heartbeat count to get this Peer's receive-idle deadline.
+        /// </summary>
+        public TimeSpan RemoteSendIdleInterval { get; set; }
+
+        /// <summary>
+        /// The Linger the peer itself announced during the handshake (issue #361, issue #362) — never
+        /// this end's own <see cref="DatagramSessionOptions.Linger"/>. Set on both Established paths,
+        /// <see cref="DatagramSessionReactor.NewAcceptedPeer"/> (from the Hello-with-cookie field) and
+        /// <see cref="DatagramSessionReactor.OnAccept"/> (from the Accept field), from the value
+        /// <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> and
+        /// <see cref="ControlDatagramCodec.TryReadAccept"/> already reject as zero at parse. The minimum
+        /// of this end's own <see cref="DatagramSessionReactor.AnnouncedLingerMilliseconds"/> (already whole milliseconds) and
+        /// this governs (<see cref="EffectiveLinger"/>, ADR 0012 adopting ADR 0011's shape). The stream
+        /// profile's <see cref="StreamSessionReactor.PeerSlot.RemoteLinger"/> is the model this mirrors.
+        /// </summary>
+        public TimeSpan RemoteLinger { get; set; }
+
+        /// <summary>
+        /// The negotiated Linger — the minimum of this end's own <see cref="DatagramSessionReactor.AnnouncedLingerMilliseconds"/>
+        /// (this end's <see cref="DatagramSessionOptions.Linger"/> rounded up to whole milliseconds once,
+        /// the same value announced on the wire) and <see cref="RemoteLinger"/> — set once the Session
+        /// establishes, on both Established paths, exactly where <see cref="RemoteLinger"/> is. Both
+        /// operands are already whole milliseconds, so the minimum is exact: no further rounding happens
+        /// here. Immutable for the Session's lifetime from that point on, exactly as every other
+        /// negotiated parameter is. This is the RTO's ceiling (subtask 6.4, issue #365): every
+        /// <see cref="RetransmissionTimer.EffectiveTimeout"/> call in <see cref="DatagramSessionReactor"/>
+        /// clamps against this value, never against this end's own
+        /// <see cref="DatagramSessionOptions.Linger"/>, so the ceiling and Linger expiry (issue #367)
+        /// read the same effective value. The Diagnostic is issue #364; expiry is issue #367.
+        /// </summary>
+        public TimeSpan EffectiveLinger { get; set; }
 
         /// <summary>
         /// This Peer's own fragment size, resolved from <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
@@ -2902,7 +4182,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// </summary>
         public required int FragmentSize { get; init; }
 
-        /// <summary>The secret the remote will require before it resumes this Session. Stored, unused until Resume lands.</summary>
+        /// <summary>The secret the remote issued for resuming this Session. The dialling end sends it in each Resume (<see cref="DatagramSessionReactor.SendResumeIfDue"/>). The accepting end stores it but never reads it: it authorises a Resume against <see cref="PeerSlot.LocalResumeSecret"/>, the secret it issued.</summary>
         public byte[] RemoteResumeSecret { get; set; } = [];
 
         /// <summary>The Slot this Peer occupies, filled in once the table has admitted it.</summary>
@@ -2910,6 +4190,128 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>How far through the handshake this Peer has got.</summary>
         public required HandshakeState State { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> reading of this Peer's most recent data
+        /// datagram sent — set the moment this Peer reaches <see cref="HandshakeState.Established"/>,
+        /// on both the dialling path (<see cref="DatagramSessionReactor.OnAccept"/>) and the accepting
+        /// one (<see cref="DatagramSessionReactor.NewAcceptedPeer"/>), and restarted by
+        /// <see cref="DatagramSessionReactor.FlushPeer"/> every time a data Datagram actually reaches
+        /// the wire for this Peer (issue #340). The handshake's own control datagrams never touch this:
+        /// they are not data datagrams, and a Session that took several retransmitted Hellos to connect
+        /// should not start its idle clock earlier than the moment it actually became a Session.
+        /// </summary>
+        public long LastSendTimestamp { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> reading of the most recent moment this Peer's
+        /// wire proved it was still there (issue #351) — set the instant this Peer reaches
+        /// <see cref="HandshakeState.Established"/>, on both the dialling path
+        /// (<see cref="DatagramSessionReactor.OnAccept"/>) and the accepting one
+        /// (<see cref="DatagramSessionReactor.NewAcceptedPeer"/>), exactly where
+        /// <see cref="LastSendTimestamp"/> is set, so the receive-idle deadline starts from the moment
+        /// the Session exists rather than from <see langword="default"/>(<see cref="long"/>), which
+        /// would read as an interval already elapsed.
+        /// </summary>
+        /// <remarks>
+        /// Updated only once <see cref="DatagramSessionReactor.ParseDataDatagram"/>'s well-formedness
+        /// pass has accepted the whole datagram — every record parses, and any Fragment sets it
+        /// declares are internally consistent — never merely because a datagram named this Peer's
+        /// session id. Anything carrying a session id could be forged or corrupted (session ids are
+        /// not secrets), so a datagram that fails that proof must not keep a dead Peer's receive-idle
+        /// deadline alive; a malformed or truncated datagram routed here by session id alone touches
+        /// neither this field nor anything else about the Peer. A well-formed datagram later refused
+        /// with a close (for example, an oversized fragment count) does not matter either way, because
+        /// the Peer is closed by the time anything would have read this field again.
+        /// </remarks>
+        public long LastReceiveTimestamp { get; set; }
+
+        /// <summary>
+        /// Whether this Peer's receive-idle deadline (issue #352, <see cref="HasExceededReceiveIdleDeadline"/>)
+        /// has fired: the Peer stays open when it is set — <see cref="_peers"/> still holds its Slot and
+        /// <see cref="CountersOf"/> keeps answering, and nothing here resets any queue or retention.
+        /// <see langword="false"/> for a fresh Slot. Re-checked before a later Pump would otherwise raise
+        /// another <see cref="SessionEventKind.PeerInterrupted"/> for a Peer already Interrupted (issue
+        /// #353).
+        /// </summary>
+        /// <remarks>
+        /// What Interrupted changes about this Peer, now that parent #55's sub-issues have landed:
+        /// <see cref="Send"/> keeps succeeding, queuing and retaining exactly as it does for an
+        /// established Peer, until the Space's retention fills, at which point it returns
+        /// <see cref="SendOutcome.RetentionExhausted"/> while the Peer stays Interrupted rather than
+        /// closing (issue #369) — the same rule, for the same reasons, as the stream profile. The
+        /// Interrupted end keeps sending Pings, at the send-idle interval or as the adaptive
+        /// retransmission of one still unacknowledged, since <see cref="EnforceSendIdleTimer"/>
+        /// deliberately does not read this flag (issue #371) — a datagram Session has no re-dial
+        /// schedule, so probing the path is the only way an Interrupted end can ever be heard from
+        /// again. The dialling end also sends a Resume each send-idle interval
+        /// (<see cref="SendResumeIfDue"/>, issue #382). And this Peer's <see cref="EffectiveLinger"/>, elapsed since
+        /// <see cref="InterruptedTimestamp"/>, is what ends it: <c>HasLingerExpired</c> closes it with
+        /// <see cref="DisconnectReason.LingerExpired"/> once that wait runs out (issue #367), mirroring
+        /// <see cref="StreamSessionReactor.HasExceededLinger"/>. Leaving Interrupted through an actual
+        /// Resume is the other way out. On the accepting end a Resume matched by session id and secret
+        /// clears the flag (<see cref="ResumeInterruptedPeer"/>). On the dialling end, hearing
+        /// its session again after it has sent a Resume clears it
+        /// (<see cref="ResumeInterruptedDialledPeerOnData"/>, issue #383). Either end then raises
+        /// <see cref="SessionEventKind.PeerResumed"/>, and a later interruption stamps
+        /// <see cref="InterruptedTimestamp"/> afresh.
+        /// </remarks>
+        public bool IsInterrupted { get; set; }
+
+        /// <summary>
+        /// How far this end's own <see cref="Close"/> has got (issue #397, parent #57). Anything but
+        /// <see cref="LocalCloseState.None"/> means the Peer is Closing: <see cref="Send"/> returns
+        /// <see cref="SendOutcome.Closed"/>, and the Peer stays open until the Goodbye is acknowledged or
+        /// Linger runs out.
+        /// </summary>
+        public LocalCloseState LocalClose { get; set; }
+
+        /// <summary>Whether <see cref="Close"/> has put this Peer in Closing.</summary>
+        public bool IsClosing => LocalClose != LocalCloseState.None;
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> value when <see cref="Close"/> put this Peer in
+        /// Closing (issue #399): the instant its effective Linger begins counting down.
+        /// </summary>
+        public long ClosingTimestamp { get; set; }
+
+        /// <summary>
+        /// The <c>ReliableOrdered</c> sequence this end's Goodbye was queued at, valid once
+        /// <see cref="LocalClose"/> has passed <see cref="LocalCloseState.GoodbyeDeferred"/> (issue #398).
+        /// </summary>
+        public uint GoodbyeSequence { get; set; }
+
+        /// <summary>
+        /// How far the remote's Goodbye has got (issues #398, #400, #401). Anything but
+        /// <see cref="RemoteCloseState.None"/> means the remote's Goodbye was delivered in order.
+        /// </summary>
+        public RemoteCloseState RemoteClose { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> value at the instant <see cref="EnforceReceiveIdleTimer"/>
+        /// set <see cref="IsInterrupted"/> (issue #366) — the moment this Peer's effective Linger begins
+        /// counting down (#55). Stamped on the same Pump as <see cref="IsInterrupted"/> and only then:
+        /// the #353 guard that skips a Peer already Interrupted also skips this field, so it is never
+        /// re-stamped while the interruption continues.
+        /// </summary>
+        public long InterruptedTimestamp { get; set; }
+
+        /// <summary>
+        /// Whether this end dialled this Peer (<see cref="Connect"/>) rather than accepted it. Only a
+        /// dialled Peer sends Resume (issue #382): the accepting end cannot know the dialler's new address.
+        /// </summary>
+        public bool IsDialled { get; init; }
+
+        /// <summary>
+        /// How many Resume datagrams this dialled Peer has sent since it was last interrupted, reset to
+        /// zero each time <see cref="EnforceReceiveIdleTimer"/> sets <see cref="IsInterrupted"/> (issue
+        /// #382). Nonzero means at least one Resume has left, so <see cref="LastResumeTimestamp"/> is
+        /// meaningful and <c>SendResumeIfDue</c> paces the next one from it.
+        /// </summary>
+        public int ResumesSentSinceInterrupted { get; set; }
+
+        /// <summary>The <see cref="TimeProvider.GetTimestamp"/> value of this Peer's latest Resume datagram (issue #382), meaningful only while <see cref="ResumesSentSinceInterrupted"/> is nonzero.</summary>
+        public long LastResumeTimestamp { get; set; }
 
         /// <summary>
         /// This Peer's own mutable counters (ADR 0013), incremented on the hot path and read only
@@ -3016,5 +4418,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// </summary>
         public OrderedDeliveryQueue OrderedDelivery { get; } = new();
 
+        /// <summary>
+        /// The lowest <c>ReliableOrdered</c> sequence a received Goodbye record (issue #400) has arrived
+        /// at and not yet been delivered, or <see langword="null"/> when none is waiting. The record sits
+        /// in <see cref="OrderedDelivery"/> like any other, so it acts only once every record before it
+        /// has been delivered; the ordered release path compares each released sequence against this to
+        /// tell a Goodbye from a zero-length Message, which the queue itself cannot.
+        /// </summary>
+        public uint? RemoteGoodbyeSequence { get; set; }
+
+        /// <summary>
+        /// Whether the remote's Goodbye has been delivered in order and this end has entered receiver-side
+        /// Closing (issues #400, #401): the Peer accepts no further Messages and
+        /// <see cref="DatagramSessionReactor.Send"/> answers <see cref="SendOutcome.Closed"/>. Independent of
+        /// <see cref="LocalClose"/>: this one records that the remote said Goodbye.
+        /// </summary>
+        public bool RemoteGoodbyeDelivered => RemoteClose != RemoteCloseState.None;
     }
 }

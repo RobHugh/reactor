@@ -174,6 +174,18 @@ internal sealed class OutstandingReliableSequences
     public bool IsOutstanding(PacketRecordMode mode, uint sequence) => SpaceOf(mode).IsOutstanding(sequence);
 
     /// <summary>
+    /// Whether any sequence at or below <paramref name="sequence"/> on <paramref name="mode"/>'s reliable
+    /// Space is still outstanding, that is, sent and not yet released by an acknowledging ack block. False
+    /// once the cumulative ack has passed <paramref name="sequence"/>, or once every sequence up to it has
+    /// been released selectively.
+    /// </summary>
+    /// <param name="mode">Which reliable Space to query.</param>
+    /// <param name="sequence">The <c>u32</c> sequence number to query up to, inclusive.</param>
+    /// <returns><see langword="true"/> if any sequence at or below <paramref name="sequence"/> is still outstanding.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
+    public bool HasOutstandingAtOrBelow(PacketRecordMode mode, uint sequence) => SpaceOf(mode).HasOutstandingAtOrBelow(sequence);
+
+    /// <summary>
     /// Attempts to read <paramref name="sequence"/>'s current retransmit deadline, as a monotonic
     /// <see cref="TimeProvider.GetTimestamp"/> value, on <paramref name="mode"/>'s reliable Space. Fails
     /// when <paramref name="sequence"/> is not outstanding at all, and also fails while it is
@@ -264,6 +276,25 @@ internal sealed class OutstandingReliableSequences
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
     public void ApplyAck(PacketRecordMode mode, uint ackBase, uint ackBits, TimeSpan effectiveRto) =>
         LastAckRelease = SpaceOf(mode).ApplyAck(ackBase, ackBits, _time, effectiveRto, _timer);
+
+    /// <summary>
+    /// The sequence numbers <paramref name="mode"/>'s reliable Space actually released, once each — by a
+    /// bit or swept up by the cumulative base advancing past it — during the most recent
+    /// <see cref="ApplyAck"/> call made for this <paramref name="mode"/> (issue #345). Read this
+    /// immediately after the <see cref="ApplyAck"/> call it belongs to, mirroring
+    /// <see cref="LastAckRelease"/>'s own idiom: <see cref="ReactorSockets.Core.RetentionPool.Release"/>
+    /// is what a caller feeds each entry to, one call per sequence, to free the retention slot every
+    /// released record held — nothing else in this tracker frees one.
+    /// </summary>
+    /// <remarks>
+    /// Allocates nothing: like <see cref="CollectExpired"/>, this is a reused scratch buffer sized
+    /// alongside the Space's own ring, overwritten by every <see cref="ApplyAck"/> call including a
+    /// stale or empty one, which leaves it empty rather than the previous call's contents standing. The
+    /// span is only valid until the next <see cref="ApplyAck"/> call on this Space.
+    /// </remarks>
+    /// <param name="mode">Which reliable Space's most recent release to read.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
+    public ReadOnlySpan<uint> LastAckReleasedSequences(PacketRecordMode mode) => SpaceOf(mode).LastReleasedSequences;
 
     /// <summary>
     /// Reports every sequence on <paramref name="mode"/>'s reliable Space whose retransmit deadline has
@@ -410,6 +441,23 @@ internal sealed class OutstandingReliableSequences
         /// </summary>
         private uint[] _expiredSequences = new uint[InitialCapacity];
 
+        /// <summary>
+        /// Scratch buffer <see cref="ApplyAck"/> writes the sequences it actually released into (issue
+        /// #345), reused by every call and grown alongside the other per-slot arrays in
+        /// <see cref="EnsureCapacity"/> — the number of sequences one <see cref="ApplyAck"/> call can
+        /// release is bounded by <see cref="_count"/>, which is already bounded by <see cref="_capacity"/>,
+        /// exactly like <see cref="_expiredSequences"/>. Its contents past
+        /// <see cref="_releasedSequenceCount"/> are meaningless.
+        /// </summary>
+        private uint[] _releasedSequences = new uint[InitialCapacity];
+
+        /// <summary>
+        /// How many entries in <see cref="_releasedSequences"/> the most recent <see cref="ApplyAck"/>
+        /// call wrote. Reset to zero at the start of every <see cref="ApplyAck"/> call, including a stale
+        /// one, so <see cref="LastReleasedSequences"/> never reports a previous call's releases.
+        /// </summary>
+        private int _releasedSequenceCount;
+
         private int _capacity = InitialCapacity;
 
         /// <summary>
@@ -486,6 +534,29 @@ internal sealed class OutstandingReliableSequences
         /// released by <see cref="ApplyAck"/>.
         /// </summary>
         public bool IsOutstanding(uint sequence) => TryGetSlot(sequence, out int slot) && !_released[slot];
+
+        /// <summary>
+        /// Whether any tracked sequence at or below <paramref name="sequence"/> is still outstanding, that is,
+        /// sent and not yet released. A sequence below <see cref="_oldest"/> is already released.
+        /// </summary>
+        public bool HasOutstandingAtOrBelow(uint sequence)
+        {
+            for (int offset = 0; offset < _count; offset++)
+            {
+                uint tracked = unchecked(_oldest + (uint)offset);
+                if (tracked != sequence && SequenceNumber.IsNewerThan(tracked, sequence))
+                {
+                    return false;
+                }
+
+                if (!_released[SlotFor((uint)offset)])
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         /// <summary>
         /// Attempts to read <paramref name="sequence"/>'s deadline timestamp: fails when it is not
@@ -597,6 +668,8 @@ internal sealed class OutstandingReliableSequences
         public (bool ReleasedFragment, bool ReleasedUnfragmentedRecord) ApplyAck(
             uint ackBase, uint ackBits, TimeProvider time, TimeSpan effectiveRto, RetransmissionTimer timer)
         {
+            _releasedSequenceCount = 0;
+
             bool stale = ackBase != _ackBase && !SequenceNumber.IsNewerThan(ackBase, _ackBase);
             if (stale)
             {
@@ -619,7 +692,7 @@ internal sealed class OutstandingReliableSequences
                 uint sequence = unchecked(ackBase + (uint)n + 1);
                 if (TryGetSlot(sequence, out int slot))
                 {
-                    Release(slot, time, now, timer, ref releasedFragment, ref releasedUnfragmentedRecord);
+                    Release(slot, sequence, time, now, timer, ref releasedFragment, ref releasedUnfragmentedRecord);
                 }
             }
 
@@ -628,6 +701,13 @@ internal sealed class OutstandingReliableSequences
 
             return (releasedFragment, releasedUnfragmentedRecord);
         }
+
+        /// <summary>
+        /// The sequence numbers this Space actually released during the most recent <see cref="ApplyAck"/>
+        /// call (issue #345) — see the enclosing type's <c>LastAckReleasedSequences</c> for the full
+        /// contract.
+        /// </summary>
+        public ReadOnlySpan<uint> LastReleasedSequences => _releasedSequences.AsSpan(0, _releasedSequenceCount);
 
         /// <summary>
         /// Releases every tracked sequence strictly below <paramref name="ackBase"/> in one step — each
@@ -650,7 +730,9 @@ internal sealed class OutstandingReliableSequences
 
             for (int i = 0; i < steps; i++)
             {
-                Release(SlotFor((uint)i), time, now, timer, ref releasedFragment, ref releasedUnfragmentedRecord);
+                Release(
+                    SlotFor((uint)i), unchecked(_oldest + (uint)i), time, now, timer,
+                    ref releasedFragment, ref releasedUnfragmentedRecord);
             }
 
             _oldest = unchecked(_oldest + (uint)steps);
@@ -684,7 +766,7 @@ internal sealed class OutstandingReliableSequences
         /// </para>
         /// </summary>
         private void Release(
-            int slot, TimeProvider time, long now, RetransmissionTimer timer,
+            int slot, uint sequence, TimeProvider time, long now, RetransmissionTimer timer,
             ref bool releasedFragment, ref bool releasedUnfragmentedRecord)
         {
             if (_released[slot])
@@ -710,6 +792,12 @@ internal sealed class OutstandingReliableSequences
 
             _armed[slot] = false;
             _released[slot] = true;
+
+            // _releasedSequences is sized to _capacity, which already bounds _count — the number of
+            // slots this Space can ever have outstanding at once — so _releasedSequenceCount, bounded by
+            // one entry per newly-released slot in one ApplyAck call, never exceeds it.
+            _releasedSequences[_releasedSequenceCount] = sequence;
+            _releasedSequenceCount++;
         }
 
         /// <summary>
@@ -846,9 +934,10 @@ internal sealed class OutstandingReliableSequences
             _armedAtTimestamp = newArmedAtTimestamp;
             _deadlineTimestamp = newDeadlineTimestamp;
 
-            // Scratch buffer for CollectExpired: never needs its stale contents preserved across a
-            // resize, only room for as many entries as the ring can ever hold at once.
+            // Scratch buffers for CollectExpired and ApplyAck: neither needs its stale contents
+            // preserved across a resize, only room for as many entries as the ring can ever hold at once.
             _expiredSequences = new uint[newCapacity];
+            _releasedSequences = new uint[newCapacity];
 
             _capacity = newCapacity;
             _headSlot = 0;

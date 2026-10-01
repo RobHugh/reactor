@@ -37,7 +37,9 @@ public enum SessionEventKind
     /// #23) and a <see cref="SessionEventKind.PeerClosed"/> carrying
     /// <see cref="DisconnectReason.PeerGoodbye"/> follows once all of that is exhausted. Never raised
     /// when nothing was outstanding on either side — a Goodbye that finds the Peer already caught up
-    /// closes it directly, with no zero-Frame Closing observable in between.
+    /// closes it directly, with no zero-Frame Closing observable in between. In the datagram profile the
+    /// Goodbye acts at its turn in <c>ReliableOrdered</c> send order, and "outstanding" means Messages
+    /// received but not yet delivered.
     /// </summary>
     PeerClosing = 4,
 

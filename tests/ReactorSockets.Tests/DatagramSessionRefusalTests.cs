@@ -28,7 +28,7 @@ public class DatagramSessionRefusalTests
 
     private const int HelloBodyLength = 12;
     private const int CookieBodyLength = 48;
-    private const int HelloWithCookieBodyLength = 76;
+    private const int HelloWithCookieBodyLength = 92;
     private const int RefusalBodyLength = 17;
 
     private const int CookieLength = 32;
@@ -74,7 +74,9 @@ public class DatagramSessionRefusalTests
         ReadOnlySpan<byte> cookie,
         uint sessionIdForMe,
         uint maxMessageSize,
-        ReadOnlySpan<byte> resumeSecret)
+        ReadOnlySpan<byte> resumeSecret,
+        ulong sendIdleIntervalMilliseconds = 60_000,
+        ulong lingerMilliseconds = 30_000)
     {
         byte[] body = new byte[HelloWithCookieBodyLength];
         int offset = 0;
@@ -90,6 +92,10 @@ public class DatagramSessionRefusalTests
         offset += 4;
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), maxMessageSize);
         offset += 4;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), sendIdleIntervalMilliseconds);
+        offset += 8;
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), lingerMilliseconds);
+        offset += 8;
         resumeSecret.CopyTo(body.AsSpan(offset, ResumeSecretLength));
         return BuildControlDatagram(HelloWithCookieType, body);
     }
@@ -484,7 +490,7 @@ public class DatagramSessionRefusalTests
         ParseRefusal(refusalReply).Reason.Should().Be(RefusalReasonCapacity);
 
         // Act — close the first Session, freeing its Slot, then retry the same peer.
-        accepter.Reactor.Close(peerAId);
+        accepter.CloseImmediately(peerAId);
         accepter.Reactor.Pump();
         accepter.DrainToList();
 
