@@ -425,7 +425,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
-            IsDialled = true,
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
@@ -1872,7 +1871,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
             slot.IsInterrupted = true;
             slot.InterruptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
-            slot.ResumesSentSinceInterrupted = 0;
+            slot.LastResumeTimestamp = null;
             _pendingEvents.Add(new PendingEvent
             {
                 Kind = SessionEventKind.PeerInterrupted,
@@ -2012,8 +2011,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         long now = _options.Reactor.TimeProvider.GetTimestamp();
-        if (slot.ResumesSentSinceInterrupted > 0
-            && _options.Reactor.TimeProvider.GetElapsedTime(slot.LastResumeTimestamp, now) < _options.SendIdleInterval)
+        if (slot.LastResumeTimestamp is long lastResume
+            && _options.Reactor.TimeProvider.GetElapsedTime(lastResume, now) < _options.SendIdleInterval)
         {
             return;
         }
@@ -2025,7 +2024,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         slot.Counters.RecordSocketWrite();
         slot.Counters.RecordBytesSent(DatagramSessionProtocol.ControlDatagramSize);
         slot.LastResumeTimestamp = now;
-        slot.ResumesSentSinceInterrupted++;
     }
 
     /// <summary>
@@ -4299,19 +4297,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <summary>
         /// Whether this end dialled this Peer (<see cref="Connect"/>) rather than accepted it. Only a
         /// dialled Peer sends Resume (issue #382): the accepting end cannot know the dialler's new address.
+        /// Derived from <see cref="HandshakeSource"/>, which only an accepted Peer has (issue #393).
         /// </summary>
-        public bool IsDialled { get; init; }
+        public bool IsDialled => HandshakeSource is null;
 
         /// <summary>
-        /// How many Resume datagrams this dialled Peer has sent since it was last interrupted, reset to
-        /// zero each time <see cref="EnforceReceiveIdleTimer"/> sets <see cref="IsInterrupted"/> (issue
-        /// #382). Nonzero means at least one Resume has left, so <see cref="LastResumeTimestamp"/> is
-        /// meaningful and <c>SendResumeIfDue</c> paces the next one from it.
+        /// The <see cref="TimeProvider.GetTimestamp"/> value of this Peer's latest Resume datagram (issue
+        /// #382), or <see langword="null"/> when none has left since <see cref="EnforceReceiveIdleTimer"/>
+        /// last set <see cref="IsInterrupted"/>, which clears it. <c>SendResumeIfDue</c> paces the next
+        /// Resume from it (issue #393).
         /// </summary>
-        public int ResumesSentSinceInterrupted { get; set; }
-
-        /// <summary>The <see cref="TimeProvider.GetTimestamp"/> value of this Peer's latest Resume datagram (issue #382), meaningful only while <see cref="ResumesSentSinceInterrupted"/> is nonzero.</summary>
-        public long LastResumeTimestamp { get; set; }
+        public long? LastResumeTimestamp { get; set; }
 
         /// <summary>
         /// This Peer's own mutable counters (ADR 0013), incremented on the hot path and read only

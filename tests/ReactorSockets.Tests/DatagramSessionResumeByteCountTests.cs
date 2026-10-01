@@ -13,17 +13,15 @@ namespace ReactorSockets.Tests;
 /// </summary>
 public class DatagramSessionResumeByteCountTests
 {
-    private const byte ResumeType = 6;
-
     [Fact]
     public void Pump_InterruptedDiallerSendingResumes_ChargesEveryDatagramItSendsToThePeer()
     {
         // Arrange
         using Scenario scenario = Scenario.Establish(Scenario.ResumableLinger);
         scenario.InterruptBothEnds();
-        SettleProxy(scenario);
+        scenario.SettleProxy();
         PeerCounters before = scenario.Dialler.Reactor.CountersOf(scenario.DiallerPeer);
-        int capturedBefore = ClientToUpstream(scenario).Count;
+        int capturedBefore = scenario.Captured(RelayDirection.ClientToUpstream).Count;
 
         // Act — three send-idle intervals, so at least two more Resumes go out.
         for (int i = 0; i < 3 * (int)(Scenario.SendIdleInterval / Scenario.StepInterval); i++)
@@ -33,18 +31,12 @@ public class DatagramSessionResumeByteCountTests
 
         PeerCounters after = scenario.Dialler.Reactor.CountersOf(scenario.DiallerPeer);
         ulong writes = after.SocketWrites - before.SocketWrites;
-        PumpDeadline deadline = PumpDeadline.Start();
-        while ((ulong)(ClientToUpstream(scenario).Count - capturedBefore) < writes && !deadline.Expired)
-        {
-            scenario.Proxy.Pump();
-            PumpDeadline.Yield();
-        }
-
-        SettleProxy(scenario);
-        List<RelayCapture> sent = [.. ClientToUpstream(scenario).Skip(capturedBefore)];
+        Scenario.PumpProxyUntilCaptured(scenario.Proxy, RelayDirection.ClientToUpstream, capturedBefore, writes);
+        scenario.SettleProxy();
+        List<RelayCapture> sent = [.. scenario.Captured(RelayDirection.ClientToUpstream).Skip(capturedBefore)];
 
         // Assert
-        sent.Count(c => c.Payload[Scenario.ControlBodyOffset - 1] == ResumeType && IsControl(c.Payload))
+        sent.Count(c => Scenario.IsResume(c.Payload))
             .Should().BeGreaterThanOrEqualTo(2, "the window must hold Resumes for this test to prove anything");
         writes.Should().Be((ulong)sent.Count, "every datagram the dialler sent to its Peer is one socket write");
         (after.BytesSent - before.BytesSent).Should().Be((ulong)sent.Sum(c => c.Payload.Length));
@@ -85,26 +77,5 @@ public class DatagramSessionResumeByteCountTests
 
         // Assert
         scenario.Accepter.Reactor.CountersOf(scenario.AccepterPeer).BytesReceived.Should().Be(before);
-    }
-
-    /// <summary>A control datagram carries zero in its session field and is exactly 256 bytes.</summary>
-    private static bool IsControl(byte[] payload) =>
-        payload.Length == Scenario.ControlDatagramSize && !payload.AsSpan(0, sizeof(uint)).ContainsAnyExcept((byte)0);
-
-    private static List<RelayCapture> ClientToUpstream(Scenario scenario) =>
-        [.. scenario.Proxy.Captures.Where(c => c.Direction == RelayDirection.ClientToUpstream)];
-
-    /// <summary>Pumps the proxy until several Pumps in a row read nothing new, so every datagram already sent has been captured.</summary>
-    private static void SettleProxy(Scenario scenario)
-    {
-        PumpDeadline deadline = PumpDeadline.Start(TimeSpan.FromMilliseconds(500));
-        int quiet = 0;
-        while (quiet < 20 && !deadline.Expired)
-        {
-            int count = scenario.Proxy.Captures.Count;
-            scenario.Proxy.Pump();
-            quiet = scenario.Proxy.Captures.Count == count ? quiet + 1 : 0;
-            PumpDeadline.Yield();
-        }
     }
 }

@@ -24,21 +24,21 @@ public class DatagramSessionDiallerRejectsResumeTests
         // Arrange
         using Scenario scenario = Scenario.Establish(bindDialler: true);
         using UdpClient resumer = Scenario.NewResumer();
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerEvents = [];
+        int eventsBefore = scenario.DiallerEvents.Count;
 
         // Act
         resumer.Send(Scenario.BuildResume(scenario.DiallerSessionId, scenario.DiallerResumeSecret), scenario.Dialler.Endpoint);
-        PumpDiallerUntil(scenario, diallerEvents, () => scenario.Dialler.Sink.Received.Any(IsResumeRecord));
-        PumpDiallerUntil(scenario, diallerEvents, () => false, pumps: 5);
+        scenario.PumpDiallerUntil(() => scenario.Dialler.Sink.Received.Any(IsResumeRecord));
+        scenario.PumpDiallerUntil(() => false, pumps: 5);
 
         // Assert
         DiagnosticRecord record = scenario.Dialler.Sink.Received.Should()
             .ContainSingle(r => r.Id == DiagnosticId.ResumeUnmatched).Which;
         record.SubjectKind.Should().Be(DiagnosticSubjectKind.Source);
         record.Value0.Should().Be(0, "a dialled Peer is not a Resume target, so no reservation was checked");
-        record.Value1.Should().Be(6);
+        record.Value1.Should().Be(Scenario.ResumeType);
         scenario.Dialler.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ResumeMatched);
-        diallerEvents.Should().BeEmpty();
+        scenario.DiallerEvents.Skip(eventsBefore).Should().BeEmpty();
         scenario.Dialler.Reactor.CountersOf(scenario.DiallerPeer).Resumes.Should().Be(0);
     }
 
@@ -48,10 +48,9 @@ public class DatagramSessionDiallerRejectsResumeTests
         // Arrange
         using Scenario scenario = Scenario.Establish(bindDialler: true);
         using UdpClient resumer = Scenario.NewResumer();
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerEvents = [];
         resumer.Send(Scenario.BuildResume(scenario.DiallerSessionId, scenario.DiallerResumeSecret), scenario.Dialler.Endpoint);
-        PumpDiallerUntil(scenario, diallerEvents, () => scenario.Dialler.Sink.Received.Any(IsResumeRecord));
-        int relayedBefore = ClientToUpstreamCount(scenario);
+        scenario.PumpDiallerUntil(() => scenario.Dialler.Sink.Received.Any(IsResumeRecord));
+        int relayedBefore = Scenario.CapturedCount(scenario.Proxy, RelayDirection.ClientToUpstream);
 
         // Act — two send-idle intervals, so the dialler Pings at least once more.
         for (int i = 0; i < 2 * (int)(Scenario.SendIdleInterval / Scenario.StepInterval); i++)
@@ -60,38 +59,10 @@ public class DatagramSessionDiallerRejectsResumeTests
         }
 
         // Assert
-        ClientToUpstreamCount(scenario).Should().BeGreaterThan(relayedBefore, "the dialler still sends to the proxy");
+        Scenario.CapturedCount(scenario.Proxy, RelayDirection.ClientToUpstream).Should().BeGreaterThan(relayedBefore, "the dialler still sends to the proxy");
         resumer.Available.Should().Be(0, "nothing the dialler sends reaches the party that sent the Resume");
     }
 
     private static bool IsResumeRecord(DiagnosticRecord record) =>
         record.Id is DiagnosticId.ResumeMatched or DiagnosticId.ResumeUnmatched;
-
-    private static int ClientToUpstreamCount(Scenario scenario) =>
-        scenario.Proxy.Captures.Count(c => c.Direction == RelayDirection.ClientToUpstream);
-
-    /// <summary>
-    /// Pumps the dialler, draining after every Pump into <paramref name="events"/>, until
-    /// <paramref name="condition"/> holds, <paramref name="pumps"/> Pumps have run, or the real-time
-    /// budget is spent.
-    /// </summary>
-    private static void PumpDiallerUntil(
-        Scenario scenario,
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events,
-        Func<bool> condition,
-        int pumps = int.MaxValue)
-    {
-        PumpDeadline deadline = PumpDeadline.Start();
-        for (int i = 0; i < pumps; i++)
-        {
-            scenario.Dialler.Reactor.Pump();
-            events.AddRange(scenario.Dialler.DrainToList());
-            if (condition() || deadline.Expired)
-            {
-                return;
-            }
-
-            PumpDeadline.Yield();
-        }
-    }
 }

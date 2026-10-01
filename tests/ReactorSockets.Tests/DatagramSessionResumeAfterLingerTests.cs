@@ -16,9 +16,6 @@ namespace ReactorSockets.Tests;
 /// </remarks>
 public class DatagramSessionResumeAfterLingerTests
 {
-    private const byte ResumeType = 6;
-    private const int ControlTypeOffset = 4;
-
     private static readonly TimeSpan _linger = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan _step = TimeSpan.FromMilliseconds(500);
 
@@ -58,7 +55,7 @@ public class DatagramSessionResumeAfterLingerTests
             .ContainSingle(r => r.Id == DiagnosticId.ResumeUnmatched).Which;
         record.SubjectKind.Should().Be(DiagnosticSubjectKind.Source);
         record.Value0.Should().Be(0);
-        record.Value1.Should().Be(ResumeType);
+        record.Value1.Should().Be(Scenario.ResumeType);
         scenario.AccepterEvents.Should().NotContain(e => e.Kind == SessionEventKind.PeerResumed);
     }
 
@@ -95,7 +92,7 @@ public class DatagramSessionResumeAfterLingerTests
         using Scenario scenario = Scenario.Establish(_linger);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerEvents = [];
         ExpireLinger(scenario, diallerEvents);
-        int resumesAtClose = DiallerResumes(scenario);
+        int resumesAtClose = Scenario.DiallerResumes(scenario.Proxy).Count;
 
         // Act
         for (int i = 0; i < 6; i++)
@@ -105,14 +102,8 @@ public class DatagramSessionResumeAfterLingerTests
 
         // Assert
         resumesAtClose.Should().BeGreaterThan(0, "the dialler did send Resumes while Interrupted");
-        DiallerResumes(scenario).Should().Be(resumesAtClose);
+        Scenario.DiallerResumes(scenario.Proxy).Count.Should().Be(resumesAtClose);
     }
-
-    private static int DiallerResumes(Scenario scenario) =>
-        scenario.Proxy.Captures.Count(c =>
-            c.Direction == RelayDirection.ClientToUpstream
-            && c.Payload.Length == Scenario.ControlDatagramSize
-            && c.Payload[ControlTypeOffset] == ResumeType);
 
     private static void Step(Scenario scenario, List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerEvents)
     {

@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using FluentAssertions;
 using Xunit;
+using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 
 namespace ReactorSockets.Tests;
 
@@ -21,10 +22,8 @@ namespace ReactorSockets.Tests;
 /// </remarks>
 public class DatagramSessionInterruptedDiallerResumeTests
 {
-    private const int ControlTypeOffset = 4;
     private const int ControlBodyOffset = 5;
     private const byte AcceptType = 4;
-    private const byte ResumeType = 6;
     private const int AcceptSessionIdOffset = ControlBodyOffset + sizeof(ulong);
     private const int AcceptSecretOffset = ControlBodyOffset + sizeof(ulong) + sizeof(uint) + sizeof(uint) + sizeof(ulong) + sizeof(ulong);
     private const int ResumeSessionIdOffset = ControlBodyOffset;
@@ -68,7 +67,7 @@ public class DatagramSessionInterruptedDiallerResumeTests
         using Fixture fixture = new();
         PeerId peer = fixture.Connect();
         byte[] accept = fixture.Proxy.Captures
-            .Single(c => c.Direction == RelayDirection.UpstreamToClient && c.Payload[ControlTypeOffset] == AcceptType && IsControl(c.Payload))
+            .Single(c => c.Direction == RelayDirection.UpstreamToClient && Scenario.IsControl(c.Payload) && c.Payload[Scenario.ControlTypeOffset] == AcceptType)
             .Payload;
         uint issuedSessionId = BinaryPrimitives.ReadUInt32BigEndian(accept.AsSpan(AcceptSessionIdOffset));
         byte[] issuedSecret = accept.AsSpan(AcceptSecretOffset, SecretLength).ToArray();
@@ -108,7 +107,7 @@ public class DatagramSessionInterruptedDiallerResumeTests
         // Assert
         accepterInterrupted.Should().BeTrue("the accepting end's own receive-idle deadline was crossed");
         fixture.Proxy.Captures
-            .Where(c => c.Direction == RelayDirection.UpstreamToClient && IsControl(c.Payload) && c.Payload[ControlTypeOffset] == ResumeType)
+            .Where(c => c.Direction == RelayDirection.UpstreamToClient && Scenario.IsResume(c.Payload))
             .Should().BeEmpty("the accepting end never sends Resume");
     }
 
@@ -204,15 +203,13 @@ public class DatagramSessionInterruptedDiallerResumeTests
         fixture.DiallerCounters(peer).Resumes.Should().Be(0);
     }
 
-    private static bool IsControl(byte[] payload) =>
-        payload.Length > ControlTypeOffset && BinaryPrimitives.ReadUInt32BigEndian(payload) == 0;
-
     /// <summary>A dialler, a proxy and an accepter sharing one clock.</summary>
     private sealed class Fixture : IDisposable
     {
         private readonly DatagramSessionReactorHarness _dialler;
         private readonly DatagramSessionReactorHarness _accepter;
 
+        /// <summary>Builds the dialler, the accepter and the proxy between them. Nothing is connected yet.</summary>
         public Fixture()
         {
             _dialler = new(bindLoopback: false, sendIdleInterval: _sendIdleInterval, linger: _linger, missedHeartbeats: MissedHeartbeats);
@@ -222,6 +219,7 @@ public class DatagramSessionInterruptedDiallerResumeTests
             Proxy = new LossyProxy(_accepter.Endpoint, _dialler.TimeProvider);
         }
 
+        /// <summary>The proxy between the two ends, which captures every datagram either sends.</summary>
         public LossyProxy Proxy { get; }
 
         /// <summary>The dialler's events drained by the latest <see cref="Step"/>.</summary>
@@ -233,6 +231,7 @@ public class DatagramSessionInterruptedDiallerResumeTests
         /// <summary>The dialler's counter snapshot for <paramref name="peer"/>.</summary>
         public PeerCounters DiallerCounters(PeerId peer) => _dialler.Reactor.CountersOf(peer);
 
+        /// <summary>Dials the accepter through the proxy and pumps until both ends are connected. Returns the dialler's <see cref="PeerId"/>.</summary>
         public PeerId Connect()
         {
             PeerId peer = _dialler.Reactor.Connect(Proxy.PublicEndPoint);
@@ -253,28 +252,27 @@ public class DatagramSessionInterruptedDiallerResumeTests
             DiallerEvents = [];
             for (int round = 0; round < relayRounds; round++)
             {
-                _dialler.Reactor.Pump();
-                DiallerEvents.AddRange(_dialler.DrainToList());
-                Proxy.Pump();
+                // Loopback delivery is real UDP, so a datagram sent this round may not have reached the
+                // proxy's socket by its first Pump. The proxy is pumped until it has captured it.
+                Scenario.PumpEndThenProxy(Proxy, RelayDirection.ClientToUpstream, _dialler, () =>
+                {
+                    _dialler.Reactor.Pump();
+                    DiallerEvents.AddRange(_dialler.DrainToList());
+                });
                 if (pumpAccepter)
                 {
-                    _accepter.Reactor.Pump();
-                    accepterEvents.AddRange(_accepter.DrainToList());
-                    Proxy.Pump();
+                    Scenario.PumpEndThenProxy(Proxy, RelayDirection.UpstreamToClient, _accepter, () =>
+                    {
+                        _accepter.Reactor.Pump();
+                        accepterEvents.AddRange(_accepter.DrainToList());
+                    });
                 }
-            }
-
-            // Loopback delivery is real UDP, so a datagram sent this Step may not have reached the
-            // proxy's socket by its first Pump; give it a few more so the capture is complete.
-            for (int settle = 0; settle < 10; settle++)
-            {
-                Thread.Sleep(2);
-                Proxy.Pump();
             }
 
             return accepterEvents;
         }
 
+        /// <summary>Steps one send-idle interval at a time, the accepter unpumped, until the dialler raises <see cref="SessionEventKind.PeerInterrupted"/> for <paramref name="peer"/>.</summary>
         public void StepUntilDiallerInterrupted(PeerId peer)
         {
             for (int i = 0; i < MissedHeartbeats + 2; i++)
@@ -289,11 +287,10 @@ public class DatagramSessionInterruptedDiallerResumeTests
             throw new InvalidOperationException("The dialled Peer never became Interrupted.");
         }
 
-        public List<byte[]> DiallerResumes() =>
-            [.. Proxy.Captures
-                .Where(c => c.Direction == RelayDirection.ClientToUpstream && IsControl(c.Payload) && c.Payload[ControlTypeOffset] == ResumeType)
-                .Select(c => c.Payload)];
+        /// <summary>Every Resume the proxy captured from the dialler, in arrival order.</summary>
+        public List<byte[]> DiallerResumes() => Scenario.DiallerResumes(Proxy);
 
+        /// <inheritdoc/>
         public void Dispose()
         {
             Proxy.Dispose();

@@ -20,8 +20,6 @@ namespace ReactorSockets.Tests;
 /// </remarks>
 public class DatagramSessionResumeAtClosingPeerTests
 {
-    private const byte ResumeType = 6;
-
     [Fact]
     public void Pump_ValidResumeAtAPeerInReceiverSideClosing_LogsResumeUnmatchedAndRaisesNoPeerResumed()
     {
@@ -39,7 +37,7 @@ public class DatagramSessionResumeAtClosingPeerTests
             .ContainSingle(r => r.Id == DiagnosticId.ResumeUnmatched).Which;
         record.SubjectKind.Should().Be(DiagnosticSubjectKind.Source);
         record.Value0.Should().Be(1, "the secret matched a Peer, which refused it");
-        record.Value1.Should().Be(ResumeType);
+        record.Value1.Should().Be(Scenario.ResumeType);
         scenario.AccepterEvents.Should().NotContain(e => e.Kind == SessionEventKind.PeerResumed);
     }
 
