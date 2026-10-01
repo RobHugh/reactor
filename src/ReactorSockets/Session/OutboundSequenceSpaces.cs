@@ -27,6 +27,19 @@ internal sealed class OutboundSequenceSpaces
     private uint _reliableOrdered;
 
     /// <summary>
+    /// Initializes each Space with the specified sequence values. Used by Resume (#56) to
+    /// preserve sequence state across an interruption (ADR 0009). All Spaces default to zero
+    /// if not specified.
+    /// </summary>
+    public OutboundSequenceSpaces(uint unreliable = 0, uint unreliableSequenced = 0, uint reliableUnordered = 0, uint reliableOrdered = 0)
+    {
+        _unreliable = unreliable;
+        _unreliableSequenced = unreliableSequenced;
+        _reliableUnordered = reliableUnordered;
+        _reliableOrdered = reliableOrdered;
+    }
+
+    /// <summary>
     /// Allocates the next sequence number in <paramref name="mode"/>'s Space and advances that Space
     /// by one. The first value allocated in a Space is zero. Allocating in one Space never moves any
     /// other Space's next sequence, and the counter wraps through the full <c>u32</c> range rather
