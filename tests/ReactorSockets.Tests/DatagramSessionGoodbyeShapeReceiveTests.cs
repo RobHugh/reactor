@@ -63,7 +63,7 @@ public class DatagramSessionGoodbyeShapeReceiveTests
         byte[] reply = ExchangeUntilReceived(client, accepter);
 
         // Assert
-        accepter.Reactor.Counters.MalformedSessionDiscards.Should().Be(0);
+        accepter.Reactor.Counters.MalformedSessionDatagrams.Should().Be(0);
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         payloads.Should().BeEmpty();
         accepter.Reactor.CountersOf(accepterPeer).MessagesReceived.Should().Be(0);

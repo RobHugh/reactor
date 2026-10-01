@@ -58,7 +58,7 @@ public class DatagramSessionPumpFlushTests
         receiver.PumpUntil(() => receiver.Reactor.Counters.DatagramsReceived > 0);
 
         // Assert
-        receiver.Reactor.Counters.UnknownSourceDiscards.Should().Be(0UL, "a well-formed Datagram is never discarded as malformed");
+        receiver.Reactor.Counters.UnknownSourceDatagrams.Should().Be(0UL, "a well-formed Datagram is never discarded as malformed");
         PeerCounters receiverCounters = receiver.Reactor.CountersOf(receiverPeer);
         receiverCounters.DuplicatePackets.Should().Be(0UL, "every record above is a first arrival in its Space");
         receiverCounters.OutOfWindowPackets.Should().Be(0UL, "every record above is a first arrival in its Space");

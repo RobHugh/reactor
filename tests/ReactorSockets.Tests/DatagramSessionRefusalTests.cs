@@ -332,7 +332,7 @@ public class DatagramSessionRefusalTests
         // Act
         Action act = () => peer.Send(dialler.Endpoint, BuildRefusal(clientNonce: 0xDEAD_BEEF_DEAD_BEEFUL, RefusalReasonVersion, 2, 1));
         act.Should().NotThrow();
-        dialler.PumpUntil(() => dialler.Reactor.Counters.UnknownSourceDiscards > 0);
+        dialler.PumpUntil(() => dialler.Reactor.Counters.UnknownSourceDatagrams > 0);
 
         // Assert
         dialler.DrainToList().Should().BeEmpty();

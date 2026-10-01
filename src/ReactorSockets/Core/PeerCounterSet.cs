@@ -109,7 +109,7 @@ internal sealed class PeerCounterSet
     /// Records that one sequence arrived beyond a reliable Space's ack horizon, so its retransmit timer
     /// was withheld rather than started (subtask 6.3, issue #41; ADR 0013). Called from the horizon
     /// gate (issue #185) once a record classifies as beyond <c>[base, base + 32]</c> for the Space it
-    /// belongs to; nothing calls this yet. No Diagnostic accompanies this — a deferral can recur every
+    /// belongs to. No Diagnostic accompanies this — a deferral can recur every
     /// Pump under sustained load, which is exactly why this is a Counter (ADR 0013).
     /// </summary>
     public void RecordHorizonDeferral() => HorizonDeferrals++;
@@ -123,7 +123,7 @@ internal sealed class PeerCounterSet
 
     /// <summary>
     /// Records <paramref name="count"/> packet records this Peer has resent (subtask 6.4.6, issue #196;
-    /// ADR 0013). Nothing calls this yet — the expiry path that does is issue #198. Takes a count rather
+    /// ADR 0013), from the expiry sweep (issue #198). Takes a count rather
     /// than being called once per record for the same reason as <see cref="RecordUnreliableLoss"/>: one
     /// Pump's sweep can report many expired sequences retransmitted at once, and adding the whole figure
     /// in one op keeps the hot path a single add regardless of how many sequences it covered.
@@ -184,6 +184,20 @@ internal sealed class PeerCounterSet
     public ulong SocketWrites { get; private set; }
 
     /// <summary>
+    /// Records that this Peer had a whole Message ready and the frame arena refused it because the
+    /// Peer had already used its read share this Frame (issue #61). Called from both Session profiles'
+    /// arena reservation on <see cref="ArenaReservationOutcome.ShareExhausted"/>.
+    /// </summary>
+    public void RecordReadShareExhaustion() => ReadShareExhaustions++;
+
+    /// <summary>
+    /// The live count of read-share exhaustions so far — the same figure <see cref="Snapshot"/>
+    /// exposes as <see cref="PeerCounters.ReadShareExhaustions"/>. Monotonic and never reset, exactly
+    /// like <see cref="MessagesReceived"/>.
+    /// </summary>
+    public ulong ReadShareExhaustions { get; private set; }
+
+    /// <summary>
     /// Takes a point-in-time snapshot of every counter belonging to this Peer.
     /// <paramref name="retentionHighWaterBytes"/> is pulled fresh from <see cref="RetentionArena"/> by
     /// the caller (ADR 0005 — Counters are pulled, not pushed) rather than held here, since this set
@@ -201,5 +215,6 @@ internal sealed class PeerCounterSet
             PacketsRetransmitted,
             BytesSent,
             BytesReceived,
-            SocketWrites);
+            SocketWrites,
+            ReadShareExhaustions);
 }

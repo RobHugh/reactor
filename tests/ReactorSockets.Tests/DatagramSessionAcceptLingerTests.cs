@@ -65,13 +65,13 @@ public class DatagramSessionAcceptLingerTests
         fakeAccepter.SendTo(fakeAccepterLink, dialSource, zeroLingerAccept);
 
         // Act
-        dialler.PumpUntil(() => dialler.Reactor.Counters.UnknownSourceDiscards > 0);
+        dialler.PumpUntil(() => dialler.Reactor.Counters.UnknownSourceDatagrams > 0);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = dialler.DrainToList();
 
         // Assert — discarded as malformed, the same outcome a zero maxMessageSize or a zero send-idle
         // interval already produces, and no Session ever came to exist over it.
         events.Should().NotContain(evt => evt.Kind == SessionEventKind.PeerConnected);
-        dialler.Reactor.Counters.UnknownSourceDiscards.Should().Be(1);
+        dialler.Reactor.Counters.UnknownSourceDatagrams.Should().Be(1);
     }
 
     /// <summary>

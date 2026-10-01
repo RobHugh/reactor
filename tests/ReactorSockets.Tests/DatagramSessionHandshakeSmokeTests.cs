@@ -51,11 +51,11 @@ public class DatagramSessionHandshakeSmokeTests
         stranger.SendFromCounterparty(accepter.Endpoint, [1, 2, 3]);
 
         // Act
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
 
         // Assert
         accepter.DrainToList().Should().BeEmpty();
-        accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(1);
+        accepter.Reactor.Counters.UnknownSourceDatagrams.Should().Be(1);
         accepter.Sink.Received.Should().Contain(record => record.Id == DiagnosticId.DatagramMalformed);
     }
 }

@@ -126,9 +126,9 @@ public class DatagramSessionAckBlockTests
         byte[] datagram = BuildHeader(sessionId, reliableOrderedAckBase: 5, reliableOrderedAckBits: 0xFF, 0, 0)[..16];
 
         // Act
-        ulong before = accepter.Reactor.Counters.UnknownSourceDiscards;
+        ulong before = accepter.Reactor.Counters.UnknownSourceDatagrams;
         client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > before);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > before);
 
         // Assert — discarded exactly as an unrecognisable-length datagram always was, and nothing was
         // applied: the horizon-deferral figure stays at zero, matching a Peer nothing was ever applied

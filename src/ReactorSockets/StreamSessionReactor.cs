@@ -806,6 +806,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         slot.Handle = handle;
         pending.Record.CopyTo(slot.HandshakeBuffer, 0);
         slot.HandshakeBytesFilled = StreamHandshakeCodec.RecordSize;
+        slot.Counters.RecordBytesReceived(StreamHandshakeCodec.RecordSize);
         RegisterPeerTransport(handle, slot);
         SendHandshakeRecord(handle, slot);
         OnHandshakeRecordFilled(handle, slot);
@@ -837,6 +838,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return false;
         }
 
+        matched.Counters.RecordBytesReceived(StreamHandshakeCodec.RecordSize);
         ResumeHeldPeer(matched, ReleasePendingAdmission(pending), deliveryCount);
         return true;
     }
@@ -1389,6 +1391,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     {
         TcpLinkSendResult result = link.Send(record.Span);
         counters?.RecordSocketWrite();
+        counters?.RecordBytesSent((ulong)result.BytesSent);
         if (!result.IsSuccess)
         {
             remainder = default;
@@ -1859,6 +1862,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         TcpLinkSendResult firstResult = slot.Link.Send(first.AsSpan());
         slot.Counters.RecordSocketWrite();
+        slot.Counters.RecordBytesSent((ulong)firstResult.BytesSent);
         if (!firstResult.IsSuccess)
         {
             InterruptOrCloseOnTransportFailure(handle, slot);
@@ -1885,6 +1889,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         TcpLinkSendResult secondResult = slot.Link.Send(second.AsSpan());
         slot.Counters.RecordSocketWrite();
+        slot.Counters.RecordBytesSent((ulong)secondResult.BytesSent);
         if (!secondResult.IsSuccess)
         {
             InterruptOrCloseOnTransportFailure(handle, slot);
@@ -1956,6 +1961,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         TcpLinkSendResult result = slot.Link.Send(segments);
         slot.Counters.RecordSocketWrite();
+        slot.Counters.RecordBytesSent((ulong)result.BytesSent);
         if (!result.IsSuccess)
         {
             InterruptOrCloseOnTransportFailure(handle, slot);
@@ -2113,6 +2119,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         {
             case TcpLinkReceiveOutcome.Delivered:
                 slot.HandshakeBytesFilled += result.Payload.Length;
+                slot.Counters.RecordBytesReceived((ulong)result.Payload.Length);
                 if (slot.HandshakeBytesFilled == StreamHandshakeCodec.RecordSize)
                 {
                     OnHandshakeRecordFilled(handle, slot);
@@ -2164,6 +2171,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         {
             case TcpLinkReceiveOutcome.Delivered:
                 slot.ReceiveBytesFilled += result.Payload.Length;
+                slot.Counters.RecordBytesReceived((ulong)result.Payload.Length);
                 MarkReceiveActivity(slot);
                 DeliverCompleteMessages(handle, slot);
                 break;
@@ -2233,7 +2241,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 case MessageFramingOutcome.Ready:
                 {
                     ReadOnlySpan<byte> message = slot.ReceiveBuffer.AsSpan(MessageFramingCodec.LengthPrefixSize, (int)length);
-                    if (!TryReserveMessage(handle, message, out int payloadOffset))
+                    if (!TryReserveMessage(handle, slot, message, out int payloadOffset))
                     {
                         // Arena or per-Peer share exhausted for this Frame. The Message stays
                         // buffered, whole, at the front of ReceiveBuffer — nothing is consumed. Reads
@@ -2477,16 +2485,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Reserves <paramref name="message"/> in the shared frame arena under this Peer's own
     /// share-holder identity (<see cref="SlotHandle.Index"/>, per ADR 0014), logging
     /// <see cref="DiagnosticId.ArenaExhausted"/> only for the outcome that names an actual shortfall.
+    /// A commit raises the Arena high-water and a spent read share is counted on the Peer (issue #61).
     /// </summary>
-    private bool TryReserveMessage(SlotHandle handle, ReadOnlySpan<byte> message, out int payloadOffset)
+    private bool TryReserveMessage(SlotHandle handle, PeerSlot slot, ReadOnlySpan<byte> message, out int payloadOffset)
     {
         payloadOffset = _arena.BytesUsed;
         ArenaReservation reservation = _arena.Reserve(handle.Index, message);
         switch (reservation.Outcome)
         {
             case ArenaReservationOutcome.Committed:
+                _counters.ObserveArenaUsage(_arena.BytesUsed);
                 return true;
             case ArenaReservationOutcome.ShareExhausted:
+                slot.Counters.RecordReadShareExhaustion();
                 return false;
             case ArenaReservationOutcome.ArenaExhausted:
                 if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))

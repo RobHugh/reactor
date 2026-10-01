@@ -101,7 +101,7 @@ public class DatagramSessionFragmentDeliveryTests
         // Assert — the gapped datagram was not discarded: its two Fragments were held, and the set
         // completes and assembles in index order once the missing one arrives.
         deliveredFromSubset.Should().BeEmpty("an incomplete set is held, not delivered");
-        accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(0, "a gapped subset of one group is honest traffic, not a forgery");
+        accepter.Reactor.Counters.UnknownSourceDatagrams.Should().Be(0, "a gapped subset of one group is honest traffic, not a forgery");
         delivered.Should().ContainSingle().Which.Should().Equal(new byte[] { 0x01, 0x02, 0x03, 0x04, 0x05 });
         PeerCounters after = accepter.Reactor.CountersOf(accepterPeer);
         after.MessagesReceived.Should().Be(before.MessagesReceived + 1);

@@ -79,7 +79,7 @@ public class DatagramSessionResumeRoutingTests
 
         // Act
         resumer.SendDatagram(accepter.Endpoint, datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: length);
@@ -96,7 +96,7 @@ public class DatagramSessionResumeRoutingTests
 
         // Act
         resumer.SendDatagram(accepter.Endpoint, datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: Scenario.ControlDatagramSize);
@@ -290,7 +290,7 @@ public class DatagramSessionResumeRoutingTests
     private static void AssertOneMalformedDiscard(DatagramSessionReactorHarness accepter, int expectedBytesReceived)
     {
         accepter.DrainToList().Should().BeEmpty();
-        accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(1);
+        accepter.Reactor.Counters.UnknownSourceDatagrams.Should().Be(1);
         accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ResumeUnmatched);
 
         DiagnosticRecord record = accepter.Sink.Received.Should()

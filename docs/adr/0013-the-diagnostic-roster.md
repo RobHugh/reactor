@@ -296,14 +296,15 @@ derivability test honestly. Per-subject only was the more elegant answer and was
 makes every Reactor-lifetime figure unobtainable under Peer churn, which is exactly the situation being
 investigated.
 
-**A counter lives where its subject lives.** `SinkFaulted`, the arena high-water and datagrams discarded
+**A counter lives where its subject lives.** `SinkFaulted`, the arena high-water and datagrams
 from an unknown Source have no Peer *by construction* and exist only on the Reactor. Retransmissions,
 retention high-water and discards belong to a Peer. Very few appear in both.
 
 | Scope | Counters |
 | --- | --- |
-| Reactor | `SinkFaulted`, datagrams sent, datagrams received, datagrams discarded from an unknown Source, arena high-water in bytes, admission deferrals |
-| Per subject | bytes sent, bytes received, packets retransmitted, duplicate packets, out-of-window packets, unreliable loss packets, horizon deferrals, read-share exhaustions, retention high-water in bytes, resumes, socket writes |
+| Reactor | `SinkFaulted`, `DatagramsSent`, `DatagramsReceived`, `UnknownSourceDatagrams`, `MalformedSessionDatagrams`, `ArenaHighWaterBytes`, `AdmissionDeferrals`, `AdmissionDiscards` |
+| Per Peer | `BytesSent`, `BytesReceived`, `MessagesReceived`, `PacketsRetransmitted`, `DuplicatePackets`, `OutOfWindowPackets`, `UnreliableLossPackets`, `HorizonDeferrals`, `ReadShareExhaustions`, `RetentionHighWaterBytes`, `Resumes`, `SocketWrites` |
+| Per Link (Raw) | `BytesSent`, `BytesReceived` |
 
 **Counters are monotonic `ulong` and there is no reset.** A reset is a *write* to observation state, and
 observation state is the one thing here with more than one plausible reader: a consumer's metrics export
@@ -324,6 +325,36 @@ Pump.
 
 At the design scale this is cheap: a per-subject counter block is a few dozen bytes inside an allocation
 ADR 0011 already makes per Peer, so it adds no allocation and no per-Pump cost beyond the adds.
+
+**Amended (issue #61, the Counter audit).** The table above now names the shipped members. Five
+changes came out of the audit:
+
+- **Two members were renamed** from `UnknownSourceDiscards` and `MalformedSessionDiscards` to
+  `UnknownSourceDatagrams` and `MalformedSessionDatagrams`. `CONTEXT.md` defines a Discard as work held
+  and let go because a cap or capacity was spent. A datagram that names nobody, or names a Peer and
+  then does not parse, was never an Admission, so "Discard" meant two things in one record. The new
+  names count datagrams, the same unit as `DatagramsSent` and `DatagramsReceived`.
+- **`LinkCounters.ReadShareExhaustions` was removed.** Raw reads a ready Link once per Pump, so a Link
+  never reaches a second reservation in one Frame and the field could only read zero. A field that
+  cannot move fails the counter test.
+- **`PeerCounters.ReadShareExhaustions` was added**, which is where the `ReadShareReached` candidate
+  above was always meant to land. Both Session profiles can deliver several Messages from one Peer in
+  a Frame, so both can spend a share. The stream profile keeps a refused Message for a later Pump. The
+  datagram profile keeps nothing: an unreliable record is lost and a reliable one returns only by
+  retransmission. Bytes received and Messages received show that delivery lagged, but not that the
+  share was the cause rather than the Arena running out.
+- **`ArenaHighWaterBytes` now moves on both Session profiles.** Only Raw fed it before, so a Session
+  Reactor reported a false zero.
+- **The stream profile now counts Peer bytes.** `BytesSent` is what each send call reported written and
+  `BytesReceived` is every byte read on the Peer's connection, handshake and Resume records included,
+  the same scope `SocketWrites` already had. The first record on an accepted connection is charged
+  once it is admitted or matched as a Resume, because no Peer exists before that.
+
+`AdmissionDeferrals` and `AdmissionDiscards` stay two members although they are never both non-zero
+on one Reactor. Their units differ. A Deferral counts declinings and is coarse, because one endpoint
+declines its whole backlog with one declining. A Discard counts pieces of work and is exact. One shared
+field would invite a sum or comparison across profiles that means nothing. Tests pin both negatives,
+the coarseness, and each member's "Not derivable" line in its XML doc.
 
 ## Consequences
 

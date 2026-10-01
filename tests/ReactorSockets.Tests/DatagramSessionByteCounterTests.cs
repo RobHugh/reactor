@@ -122,7 +122,7 @@ public class DatagramSessionByteCounterTests
     {
         // Arrange — a data Datagram naming a session id no Peer holds is discarded as malformed
         // (DatagramSessionReactor.ProcessDataDatagram) and lands on the Reactor-scope
-        // UnknownSourceDiscards figure. It names no Peer, so it must charge no Peer's BytesReceived.
+        // UnknownSourceDatagrams figure. It names no Peer, so it must charge no Peer's BytesReceived.
         using DatagramSessionReactorHarness accepter = new();
         using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
         using HostilePeer stray = new();
@@ -133,17 +133,17 @@ public class DatagramSessionByteCounterTests
         PeerId accepterPeer = accepterEvents.First(e => e.Kind == SessionEventKind.PeerConnected).Peer;
 
         ulong bytesReceivedBefore = accepter.Reactor.CountersOf(accepterPeer).BytesReceived;
-        ulong unknownSourceDiscardsBefore = accepter.Reactor.Counters.UnknownSourceDiscards;
+        ulong unknownSourceDatagramsBefore = accepter.Reactor.Counters.UnknownSourceDatagrams;
 
         // Act — a session id that names no Session (0 is reserved for control; every assigned id here
         // starts from 1), followed by an arbitrary header-shaped body.
         byte[] strayDatagram = new byte[24];
         BinaryPrimitives.WriteUInt32BigEndian(strayDatagram, 0xFFFF_FFFEU);
         stray.SendDatagram(accepter.Endpoint, strayDatagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > unknownSourceDiscardsBefore);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > unknownSourceDatagramsBefore);
 
         // Assert
-        accepter.Reactor.Counters.UnknownSourceDiscards.Should().BeGreaterThan(unknownSourceDiscardsBefore);
+        accepter.Reactor.Counters.UnknownSourceDatagrams.Should().BeGreaterThan(unknownSourceDatagramsBefore);
         accepter.Reactor.CountersOf(accepterPeer).BytesReceived.Should().Be(
             bytesReceivedBefore, "a Datagram naming no Peer charges no Peer's bytes received");
     }

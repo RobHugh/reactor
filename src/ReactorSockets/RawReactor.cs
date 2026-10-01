@@ -602,9 +602,10 @@ public sealed class RawReactor : IDisposable
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>What the two refusals cost.</b> <see cref="ArenaReservationOutcome.ShareExhausted"/> is a
-    /// per-Link counter rather than a Diagnostic (ADR 0013: the condition can recur every Pump under
-    /// sustained load, so it fails the record test); <see cref="ArenaReservationOutcome.ArenaExhausted"/>
+    /// <b>What the two refusals cost.</b> <see cref="ArenaReservationOutcome.ShareExhausted"/> costs
+    /// nothing and is counted nowhere, because it cannot happen here: a ready Link is read once per
+    /// Pump, so it never reaches a second reservation in one Frame, and <see cref="LinkCounters"/> has
+    /// no read-share figure for that reason (issue #61). <see cref="ArenaReservationOutcome.ArenaExhausted"/>
     /// is a <c>Warn</c> Diagnostic carrying the arithmetic that explains it. Neither says anything on
     /// the wire — the Raw profile owns no protocol, so a Payload it cannot hold is simply not delivered.
     /// A Session profile must answer differently, which is why this policy is Raw's and not
@@ -633,7 +634,6 @@ public sealed class RawReactor : IDisposable
                 _counters.ObserveArenaUsage(_arena.BytesUsed);
                 return true;
             case ArenaReservationOutcome.ShareExhausted:
-                slot.Counters.RecordReadShareExhaustion();
                 return false;
             case ArenaReservationOutcome.ArenaExhausted:
                 if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
