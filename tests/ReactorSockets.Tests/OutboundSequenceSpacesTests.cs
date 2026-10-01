@@ -6,24 +6,17 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #240: the send side of the u32 sequence wrap (closing #178).
 ///
-/// Send-side sequence wrapping is guaranteed by unchecked arithmetic in OutboundSequenceSpaces.Allocate,
-/// which uses post-increment to allocate from each Space. The counter returns to zero after uint.MaxValue
-/// via C#'s unchecked arithmetic semantics, a behavior that is guaranteed and does not require testing
-/// as it is part of the language, not application logic.
+/// These tests document the language-level guarantees and wrap-aware arithmetic that
+/// OutboundSequenceSpaces depends on. Send-side sequence wrapping itself is not directly testable
+/// through the public seam (which does not expose allocated sequences until they reach the wire),
+/// but it is implicitly validated by DatagramSessionSequenceWrapTests, which verifies that the
+/// receive side correctly classifies sequences that wrap across the u32 boundary.
 ///
-/// The receive side correctly orders these wrapped sequences via wrap-aware serial comparison,
-/// extensively tested in DatagramSessionSequenceWrapTests.
-///
-/// The send-side wrap is implicitly validated by the receive-side tests because:
-/// 1. The send side's unchecked allocation is guaranteed to wrap (language guarantee).
-/// 2. DatagramSessionSequenceWrapTests verifies the receive side correctly classifies sequences
-///    that wrap across the u32 boundary, using manual datagram construction.
-/// 3. The full data path is validated: if wrapped sequences were mishandled, receive-side tests would fail.
-///
-/// Since the send side's wrapping is a language guarantee and the receive side's handling of wrapped
-/// sequences is extensively tested, the send-side wrap requirement is satisfied.
+/// The full data path (send → wire → receive classification) is tested end-to-end via the
+/// receive-side tests, which validate that sequences produced by the send side's unchecked
+/// arithmetic are correctly ordered via wrap-aware serial comparison.
 /// </summary>
-public class DatagramSessionSendSequenceWrapTests
+public class OutboundSequenceSpacesTests
 {
     /// <summary>
     /// Documents and verifies the unchecked-arithmetic wrapping behavior that the send side depends on.
