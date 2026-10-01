@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Net;
+using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Xunit;
 
@@ -13,9 +14,10 @@ namespace ReactorSockets.Tests;
 /// the arena's own preallocation: a bare <see cref="RawReactor"/> peer — the hand-built-datagram
 /// instrument <see cref="HostilePeer"/> wraps, and the one
 /// <see cref="DatagramSessionHostileFragmentDiscardTests"/> and
-/// <see cref="DatagramSessionFragmentInterleavingTests"/> already drive a live Session with — opens many
-/// Fragment groups that never complete, sustained far past the point a per-group allocation would show
-/// up in <see cref="GC.GetAllocatedBytesForCurrentThread"/>. The flooded Peer's own window is what limits
+/// <see cref="DatagramSessionFragmentInterleavingTests"/> already drive a live Session with — fills a
+/// Reactor's window with Fragment groups that never complete, and
+/// <see cref="GC.GetAllocatedBytesForCurrentThread"/> shows it costs no more than a Reactor holding
+/// nothing (#279). The flooded Peer's own window is what limits
 /// the damage, on the existing <see cref="PeerCounters.OutOfWindowPackets"/> and
 /// <see cref="PeerCounters.DuplicatePackets"/> figures rather than a new counter; other Peers on the same
 /// Reactor are unaffected; and nothing ever expires an incomplete set on a timer — see the doc comments
@@ -44,73 +46,77 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
 
     private const byte ModeReliableOrdered = 0b0000_0011;
 
+    private const int FloodWindowCapacity = 4096;
+
+    /// <summary>The smallest fragment size the options accept, which keeps the 4096-slot arena small.</summary>
+    private const int FloodFragmentSize = 576;
+    private const int FloodRecordsPerDatagram = 128;
+
+    /// <summary>
+    /// The lone index-0 pieces the flood holds above the window's pinned base of 0: odd sequences 1
+    /// through 4093. The flood holds only groups whose index-1 sequence would also fit the window, so
+    /// it stops short of 4095, whose sibling 4096 would not.
+    /// </summary>
+    private const int HeldPartialSets = (FloodWindowCapacity / 2) - 1;
+
+    /// <summary>The first odd sequence past the window's far edge.</summary>
+    private const uint FirstBeyondWindowSequence = FloodWindowCapacity + 1;
+
+    /// <summary>
+    /// The bound sits above the 7.4 KB of jitter
+    /// <see cref="DatagramSessionReceiveArenaAllocationTests"/>'s exact-equality measurements have shown
+    /// between otherwise identical runs. A 24-byte object allocated per held Fragment, injected into the
+    /// hold path, measured about 24 KB over the control, well above the bound.
+    /// </summary>
+    private const long AllocationToleranceBytes = 8 * 1024;
+
     private static readonly byte[] _floodPayload = [0xFF];
 
     /// <summary>
-    /// Closes #261's first two acceptance criteria together: a sustained flood of single-piece "index 0
-    /// of 2" Fragment records at strictly consecutive sequences. Each record is individually a legal,
-    /// admissible Fragment (#253) and each opens a brand-new group — <c>FragmentGroup.FirstSequenceOf</c>
-    /// resolves a Fragment's own sequence back to itself when its index is zero — but because no gap is
-    /// ever left between one group's lone piece and the next group's, the receive window's base advances
-    /// over every one of them immediately, exactly like ordinary in-order traffic, so the flood never
-    /// once hits the window's far edge and is never refused. Every group opened this way stays open
-    /// forever: its second piece never arrives, so none of them ever completes. If reassembly held a
-    /// separate buffer per open group, memory would climb with how many groups the flood has opened so
-    /// far; because it instead reuses the ring slot each Fragment's own admission already occupies, the
-    /// cost is bounded by the window's Capacity, never by how long the flood has run.
+    /// Closes #261's first two acceptance criteria, as #279 tightened them. The flood sends single-piece
+    /// "index 0 of 2" Fragment records at odd sequences and never sends sequence 0. That hole pins the
+    /// base (<c>ReliableOrdered</c> never slides), so every in-window piece is held as its own open group
+    /// at once, and the window ends up full of partial sets. The flood then sends as many again beyond
+    /// the window's far edge, all refused. The control Reactor receives the same records, same count
+    /// and size, but all beyond the window, so it refuses everything and holds nothing, exactly as at
+    /// construction. Both runs are measured from construction to the end of the flood. Construction
+    /// and the per-datagram socket cost are identical, so any byte the flood takes beyond the control
+    /// is the cost of holding the partial sets.
     /// </summary>
     [Fact]
-    public void Pump_AFloodOfManyNeverCompletingFragmentGroups_DoesNotGrowAllocationAsTheFloodContinues()
+    public void Pump_AFloodHoldingAWindowFullOfPartialSets_AllocatesNoMoreFromConstructionThanAReactorHoldingNothing()
     {
-        // Arrange
-        const int windowCapacity = 64;
-        const int groupsPerDatagram = 1000;
-        const int warmupGroups = 2000;
-        const int measuredGroupsPerPhase = 5000;
+        // Arrange — prebuilt so building them is outside every measurement.
+        byte[][] flood = BuildFloodDatagrams(holdInWindow: true);
+        byte[][] control = BuildFloodDatagrams(holdInWindow: false);
 
-        using DatagramSessionReactorHarness accepter = new(receiveWindowFragments: windowCapacity, maxMessageSize: 4096);
-        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
-        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
-        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        // A throwaway run of each pays the first-measurement JIT and static-initialisation cost at the
+        // measured window size (#171/#174's measurement discipline).
+        MeasureFromConstructionThrough(flood);
+        MeasureFromConstructionThrough(control);
 
-        // A throwaway warm-up phase pays the first-measurement JIT and static-initialisation cost
-        // (#171/#174's measurement discipline), so neither of the two phases compared below pays it.
-        uint sequence = FloodNeverCompletingGroups(
-            accepter, client, clientLink, sessionId, startingSequence: 0, groupCount: warmupGroups, perDatagram: groupsPerDatagram);
+        // Act
+        (long floodAllocated, PeerCounters floodCounters) = MeasureFromConstructionThrough(flood);
+        (long controlAllocated, PeerCounters controlCounters) = MeasureFromConstructionThrough(control);
 
-        // Act — two equal-length phases run back to back, deep into the flood so far: thousands of
-        // never-completing groups already sit behind phase two before it even starts. If reassembly
-        // accumulated anything per group, phase two — identical in shape to phase one, just further
-        // along — would allocate visibly more.
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-        long beforePhaseOne = GC.GetAllocatedBytesForCurrentThread();
-        sequence = FloodNeverCompletingGroups(
-            accepter, client, clientLink, sessionId, sequence, measuredGroupsPerPhase, groupsPerDatagram);
-        long phaseOneDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseOne;
+        // Assert — the flood held a window full of partial sets: every in-window piece was admitted,
+        // every beyond-window piece was refused, and no set ever completed.
+        floodCounters.OutOfWindowPackets.Should().Be((ulong)HeldPartialSets);
+        floodCounters.DuplicatePackets.Should().Be(0);
+        floodCounters.MessagesReceived.Should().Be(0, "no set in this flood ever completed");
 
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-        long beforePhaseTwo = GC.GetAllocatedBytesForCurrentThread();
-        FloodNeverCompletingGroups(
-            accepter, client, clientLink, sessionId, sequence, measuredGroupsPerPhase, groupsPerDatagram);
-        long phaseTwoDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseTwo;
+        // Assert — the control held nothing: it refused every record.
+        controlCounters.OutOfWindowPackets.Should().Be((ulong)HeldPartialSets * 2);
 
-        // Assert — a per-datagram cost from the socket layer (L1, not this ticket's concern) is expected
-        // and unavoidable, exactly as DatagramSessionReceiveArenaAllocationTests's own sustained-run test
-        // accepts; what must not happen is that cost climbing as thousands more never-completing groups
-        // pile up behind the flood. The multiple is generous headroom against GC noise — that file's
-        // allocation tests are known to flake under parallel test execution — not a tight bound.
-        phaseTwoDelta.Should().BeLessThanOrEqualTo(phaseOneDelta * 2 + 1);
+        // Assert — holding the window full of partial sets cost no more than holding nothing.
+        (floodAllocated - controlAllocated).Should().BeLessThanOrEqualTo(AllocationToleranceBytes);
     }
 
     /// <summary>
     /// Closes #261's third acceptance criterion: the flooded Peer's own receive window bounds the
     /// damage, and an arrival beyond it is refused and counted by the existing
     /// <see cref="PeerCounters.OutOfWindowPackets"/> and <see cref="PeerCounters.DuplicatePackets"/>
-    /// figures rather than a new one invented for this case. Unlike the memory test above, every group
+    /// figures rather than a new one invented for this case. As in the memory test above, every group
     /// here leaves a permanent hole — its index-0 piece is sent, its index-1 piece never is — so the
     /// base can never advance past the very first hole (<c>ReliableOrdered</c> never slides), which
     /// pins the window's reachable span for the rest of the flood.
@@ -327,42 +333,81 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
     }
 
     /// <summary>
-    /// Sends <paramref name="groupCount"/> consecutive, single-piece "index 0 of 2" Fragment records —
-    /// each starting a brand-new group at its own sequence, none of them ever completed — split into
-    /// datagrams of <paramref name="perDatagram"/> records apiece so a large flood costs few sends.
-    /// Returns the next unused sequence, so a caller can keep extending the same flood across calls.
+    /// Builds <see cref="HeldPartialSets"/> × 2 lone "index 0 of 2" Fragment records at odd sequences,
+    /// so sequence 0 stays a permanent hole. With <paramref name="holdInWindow"/>, the first half run
+    /// from sequence 1 inside the window and the second half from <see cref="FirstBeyondWindowSequence"/>.
+    /// Without it, all of them run from <see cref="FirstBeyondWindowSequence"/>, so every record has the
+    /// same size and only where it lands differs. The session id is stamped in once the handshake
+    /// assigns it.
     /// </summary>
-    private static uint FloodNeverCompletingGroups(
-        DatagramSessionReactorHarness accepter,
-        RawReactor client,
-        LinkId clientLink,
-        uint sessionId,
-        uint startingSequence,
-        int groupCount,
-        int perDatagram)
+    private static byte[][] BuildFloodDatagrams(bool holdInWindow)
     {
-        uint sequence = startingSequence;
-        int remaining = groupCount;
-        Source destination = Source.FromIPEndPoint(accepter.Endpoint);
-
-        while (remaining > 0)
+        List<uint> sequences = [];
+        int beyondWindowRecords = HeldPartialSets * 2;
+        if (holdInWindow)
         {
-            int thisBatch = Math.Min(perDatagram, remaining);
-            List<byte> body = [.. BuildHeader(sessionId)];
-            for (int i = 0; i < thisBatch; i++)
+            for (int i = 0; i < HeldPartialSets; i++)
             {
-                body.AddRange(BuildFragmentRecord(ModeReliableOrdered, sequence, fragmentIndex: 0, fragmentCount: 2, payload: _floodPayload));
-                sequence = unchecked(sequence + 1);
+                sequences.Add((uint)((i * 2) + 1));
             }
 
-            ulong before = accepter.Reactor.Counters.DatagramsReceived;
-            client.SendTo(clientLink, destination, [.. body]);
-            accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > before);
-            accepter.DrainAndDiscard();
-            remaining -= thisBatch;
+            beyondWindowRecords = HeldPartialSets;
         }
 
-        return sequence;
+        for (int i = 0; i < beyondWindowRecords; i++)
+        {
+            sequences.Add(FirstBeyondWindowSequence + (uint)(i * 2));
+        }
+
+        List<byte[]> datagrams = [];
+        List<byte> body = [];
+
+        for (int i = 0; i < sequences.Count; i++)
+        {
+            if (body.Count == 0)
+            {
+                body.AddRange(BuildHeader(0));
+            }
+
+            body.AddRange(BuildFragmentRecord(ModeReliableOrdered, sequences[i], fragmentIndex: 0, fragmentCount: 2, payload: _floodPayload));
+
+            if ((i + 1) % FloodRecordsPerDatagram == 0 || i == sequences.Count - 1)
+            {
+                datagrams.Add([.. body]);
+                body.Clear();
+            }
+        }
+
+        return [.. datagrams];
+    }
+
+    /// <summary>
+    /// Constructs a Reactor and a hostile <see cref="RawReactor"/>, completes the handshake, and sends
+    /// <paramref name="datagrams"/> after writing the live session id into each one in place. Returns the bytes this thread
+    /// allocated from construction to the last datagram's arrival, and the flooded Peer's counters.
+    /// Non-inlined so nothing from one run is reachable during the next. Diagnostics are off so the
+    /// test's own sink, which records into a list, is not part of what is measured.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static (long Allocated, PeerCounters Counters) MeasureFromConstructionThrough(byte[][] datagrams)
+    {
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        using DatagramSessionReactorHarness accepter = new(
+            maxMessageSize: 4096, fragmentSize: FloodFragmentSize, receiveWindowFragments: FloodWindowCapacity, withoutDiagnostics: true);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        foreach (byte[] datagram in datagrams)
+        {
+            BinaryPrimitives.WriteUInt32BigEndian(datagram.AsSpan(0, 4), sessionId);
+            SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
+            accepter.DrainAndDiscard();
+        }
+
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        return (allocated, accepter.Reactor.CountersOf(accepterPeer));
     }
 
     private static void SendAndPumpUntilReceived(
