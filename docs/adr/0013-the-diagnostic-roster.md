@@ -141,9 +141,9 @@ Value slot meanings belong in XML docs on each member, per ADR 0005; they are gi
 
 | # | Member | Level | Subject | `Value0` / `Value1` |
 | --- | --- | --- | --- | --- |
-| 1 | `AdmissionCapReached` | `Warn` | none | cap / deferrals |
+| 1 | `AdmissionCapReached` | `Warn` | none | cap / Admissions declined |
 | 2 | `ArenaExhausted` | `Warn` | Peer or Link | bytes requested / bytes free |
-| 3 | `CapacityExhausted` | `Warn` | none | capacity / deferrals |
+| 3 | `CapacityExhausted` | `Warn` | none | capacity / Admissions declined |
 
 A **deferral** is one declining of an Admission that leaves the work where it was. Where the work waits
 out of reach it is counted once per Frame per Link or bound endpoint, not once per connection waiting:
@@ -193,9 +193,9 @@ apart reads the diagnostics, which is what diagnostics are for.
 
 | # | Member | Level | Subject | `Value0` / `Value1` |
 | --- | --- | --- | --- | --- |
-| 300 | `PeerRefused` | `Info` | Source | capacity / — |
+| 300 | `PeerRefused` | `Info` | Source | capacity / — (capacity refusal); version offered / version required (version refusal) |
 | 301 | `LingerNegotiated` | `Info` | Peer | ours in ms / effective in ms |
-| 302 | `MalformedFraming` | `Warn` | Peer | claimed length / — |
+| 302 | `MalformedFraming` | `Warn` | Peer | offending length prefix, 0 for a truncation / `MaxMessageSize` |
 | 303 | `DataAfterGoodbye` | `Warn` | Peer | — / — |
 | 304 | `ResumeMatched` | `Info` | Peer | bytes rewound / — |
 | 305 | `ResumeUnmatched` | `Warn` | Source | reservations checked / claim record type |
@@ -264,6 +264,13 @@ wrong secret charges no Peer. Handshake control datagrams are still excluded.
 `ResumeUnmatched` from the stream block. ADR 0020 decides this is deliberate: a block names the profile
 that defined a condition, not the profile that emitted a record. The supported Sink style is
 range-checking the blocks.
+
+**Amended (issue #60).** Four rows had fallen behind the member docs and now follow the code.
+`AdmissionCapReached` and `CapacityExhausted` carry Admissions declined in `Value1`, deferrals and
+Discards together, as the paragraphs under the Common table already say. `PeerRefused` shipped a version
+refusal as well as a capacity refusal, each with its own slots. `MalformedFraming` carries this Reactor's
+`MaxMessageSize` in `Value1`. `DiagnosticFormatter` renders every member from the member docs, which stay
+the authority.
 
 Sixteen members as first drafted. What the rules **removed** is the more useful half of the exercise:
 
