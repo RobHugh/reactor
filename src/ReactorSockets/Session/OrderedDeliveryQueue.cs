@@ -26,7 +26,7 @@ namespace ReactorSockets.Session;
 /// the parse loop's own view straight into the received Datagram — and answers only whether the caller
 /// should deliver those same bytes now. A record held behind a gap outlives that Datagram, so it, and
 /// only it, is copied into storage this queue owns, and comes back out of
-/// <see cref="TryReleaseNext"/> afterwards. The steady in-order path therefore copies nothing and
+/// <see cref="TryPeekNext"/> afterwards. The steady in-order path therefore copies nothing and
 /// allocates nothing: it writes no slot, and returns before touching any storage at all.
 /// </para>
 /// <para>
@@ -104,7 +104,7 @@ internal sealed class OrderedDeliveryQueue
     /// <returns>
     /// <see langword="true"/> when <paramref name="sequence"/> is the one the queue was waiting for and
     /// the caller should deliver <paramref name="payload"/> now, then drain the run behind it with
-    /// <see cref="TryReleaseNext"/>. <see langword="false"/> when the payload was held behind a gap, or
+    /// <see cref="TryPeekNext"/> and <see cref="ReleaseNext"/>. <see langword="false"/> when the payload was held behind a gap, or
     /// dropped as a duplicate of a sequence already yielded or already held; either way the caller
     /// delivers nothing for this call.
     /// </returns>
@@ -113,7 +113,7 @@ internal sealed class OrderedDeliveryQueue
         if (sequence == NextSequence)
         {
             // The sequence the queue was waiting for: the caller delivers these bytes straight from the
-            // Datagram they arrived in, and TryReleaseNext walks whatever was held behind them.
+            // Datagram they arrived in, and TryPeekNext and ReleaseNext walk whatever was held behind them.
             Advance();
             return true;
         }
@@ -149,19 +149,20 @@ internal sealed class OrderedDeliveryQueue
     }
 
     /// <summary>
-    /// Releases the next payload held contiguously behind the sequence the last <see cref="Admit"/>
-    /// call filled, in send order. Called in a loop until it answers <see langword="false"/>, it drains
-    /// the whole run a filled gap unblocked, oldest first.
+    /// Shows the payload held at <see cref="NextSequence"/>, if any, without releasing it. A caller
+    /// that delivers it then calls <see cref="ReleaseNext"/>; one that cannot deliver it yet leaves it
+    /// held, still first in line, for a later attempt. Called in that pairing until it answers
+    /// <see langword="false"/>, it drains the whole run a filled gap unblocked, oldest first.
     /// </summary>
     /// <param name="payload">
-    /// The released payload, on loan from this queue's own storage and valid only until the next
-    /// <see cref="Admit"/> or <see cref="TryReleaseNext"/> call, which may reuse the buffer behind it.
+    /// The held payload, on loan from this queue's own storage and valid only until the next
+    /// <see cref="Admit"/> or <see cref="ReleaseNext"/> call, which may reuse the buffer behind it.
     /// </param>
     /// <returns>
-    /// <see langword="true"/> when a held payload was released, <see langword="false"/> when the next
-    /// sequence is still missing and nothing more can be released yet.
+    /// <see langword="true"/> when a payload is held at <see cref="NextSequence"/>,
+    /// <see langword="false"/> when that sequence is still missing and nothing can be released yet.
     /// </returns>
-    public bool TryReleaseNext(out ReadOnlyMemory<byte> payload)
+    public bool TryPeekNext(out ReadOnlyMemory<byte> payload)
     {
         int length = _heldLengths[_headSlot];
         if (length < 0)
@@ -170,17 +171,25 @@ internal sealed class OrderedDeliveryQueue
             return false;
         }
 
-        // The buffer stays in its slot to be refilled by a later hold; only the length is cleared, which
-        // is what marks the slot empty.
         payload = _held[_headSlot].AsMemory(0, length);
-        _heldLengths[_headSlot] = -1;
-        Advance();
         return true;
     }
 
     /// <summary>
+    /// Releases the payload <see cref="TryPeekNext"/> just showed and steps past its sequence. Call it
+    /// only after <see cref="TryPeekNext"/> answered <see langword="true"/>.
+    /// </summary>
+    public void ReleaseNext()
+    {
+        // The buffer stays in its slot to be refilled by a later hold; only the length is cleared, which
+        // is what marks the slot empty.
+        _heldLengths[_headSlot] = -1;
+        Advance();
+    }
+
+    /// <summary>
     /// Advances <see cref="NextSequence"/> straight to <paramref name="newNextSequence"/> without ever
-    /// calling <see cref="Admit"/> or <see cref="TryReleaseNext"/> for the sequences in between (issue
+    /// calling <see cref="Admit"/> or <see cref="ReleaseNext"/> for the sequences in between (issue
     /// #259): what a caller uses when a whole contiguous run of sequences — a Fragment group's own
     /// span — is accounted for entirely outside this queue, because the receive window holds and
     /// reassembles a Fragment's bytes itself rather than handing them to this queue one at a time. A

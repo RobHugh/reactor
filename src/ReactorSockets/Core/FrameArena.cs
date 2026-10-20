@@ -117,11 +117,45 @@ internal sealed class FrameArena
     }
 
     /// <summary>
-    /// The one place the share and arena rules are decided, shared by both <c>Reserve</c> overloads:
-    /// only their handling of the reserved bytes differs — one copies data in immediately, the other
-    /// hands the destination back for the caller to fill afterward.
+    /// Answers what <see cref="Reserve(int, int)"/> would decide for <paramref name="length"/> bytes
+    /// on behalf of <paramref name="shareHolderId"/>, and commits nothing. The returned
+    /// <see cref="ArenaReservation.Payload"/> is always empty, whatever the outcome. What lets a caller
+    /// refuse work it could not deliver before taking any step it cannot undo.
+    /// </summary>
+    /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
+    /// <param name="length">The number of bytes a later reservation would ask for.</param>
+    public ArenaReservation Check(int shareHolderId, int length)
+    {
+        ArenaReservationOutcome outcome = Decide(shareHolderId, length, out int bytesFreeAtRequest);
+        return new ArenaReservation(outcome, default, length, bytesFreeAtRequest);
+    }
+
+    /// <summary>
+    /// Commits <paramref name="length"/> bytes when <see cref="Decide"/> allows it, shared by both
+    /// <c>Reserve</c> overloads: only their handling of the reserved bytes differs — one copies data
+    /// in immediately, the other hands the destination back for the caller to fill afterward.
     /// </summary>
     private ArenaReservationOutcome TryReserve(int shareHolderId, int length, out Span<byte> destination, out int bytesFreeAtRequest)
+    {
+        ArenaReservationOutcome outcome = Decide(shareHolderId, length, out bytesFreeAtRequest);
+        if (outcome != ArenaReservationOutcome.Committed)
+        {
+            destination = default;
+            return outcome;
+        }
+
+        destination = _buffer.AsSpan(BytesUsed, length);
+        BytesUsed += length;
+        _bytesUsedByShareHolder[shareHolderId] += length;
+
+        return ArenaReservationOutcome.Committed;
+    }
+
+    /// <summary>
+    /// The one place the share and arena rules are decided, for <see cref="TryReserve"/> and
+    /// <see cref="Check"/> alike, so a check can never disagree with the reservation that follows it.
+    /// </summary>
+    private ArenaReservationOutcome Decide(int shareHolderId, int length, out int bytesFreeAtRequest)
     {
         if (shareHolderId < 0 || shareHolderId >= Capacity)
         {
@@ -134,20 +168,14 @@ internal sealed class FrameArena
         bytesFreeAtRequest = BytesFree;
         if (length > bytesFreeAtRequest)
         {
-            destination = default;
             return ArenaReservationOutcome.ArenaExhausted;
         }
 
         int bytesUsedByHolder = _bytesUsedByShareHolder[shareHolderId];
         if (bytesUsedByHolder > 0 && bytesUsedByHolder + length > ReadShare)
         {
-            destination = default;
             return ArenaReservationOutcome.ShareExhausted;
         }
-
-        destination = _buffer.AsSpan(BytesUsed, length);
-        BytesUsed += length;
-        _bytesUsedByShareHolder[shareHolderId] = bytesUsedByHolder + length;
 
         return ArenaReservationOutcome.Committed;
     }

@@ -176,9 +176,10 @@ namespace ReactorSockets;
 /// How many times this Peer had a whole Message ready and was refused Arena room because it had
 /// already used its read share for the Frame (issue #61; ADR 0013, where <c>ReadShareReached</c>
 /// became this counter). Counted once per refused reservation. What becomes of the Message differs by
-/// profile. The stream profile keeps it buffered and delivers it on a later Pump. The datagram profile
-/// keeps nothing for a retry: an unreliable record is lost, and a reliable one arrives again only
-/// through the far end's retransmission. Recurs every Pump while one Peer outpaces its share, which is
+/// profile. The stream profile keeps it buffered and delivers it on a later Pump. On the datagram
+/// profile an unreliable record is lost. A reliable one is delivered on a later Pump: a record still
+/// held for send order or reassembly is retried from where it is held, and any other is left
+/// unacknowledged so the far end retransmits it. Recurs every Pump while one Peer outpaces its share, which is
 /// why it is a Counter and not a Diagnostic. Moves on both Session profiles. Monotonic
 /// and never reset, exactly like <see cref="HorizonDeferrals"/>: its lifetime is the Peer's, not the
 /// transport's, so a Resume does not zero it. Not derivable: bytes received and
