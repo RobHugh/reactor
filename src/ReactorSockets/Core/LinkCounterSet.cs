@@ -10,7 +10,6 @@ internal sealed class LinkCounterSet
 {
     private ulong _bytesSent;
     private ulong _bytesReceived;
-    private ulong _readShareExhaustions;
 
     /// <summary>Records that <paramref name="byteCount"/> bytes were sent on this Link.</summary>
     public void RecordBytesSent(int byteCount) => _bytesSent += (ulong)byteCount;
@@ -18,9 +17,6 @@ internal sealed class LinkCounterSet
     /// <summary>Records that <paramref name="byteCount"/> bytes were received on this Link.</summary>
     public void RecordBytesReceived(int byteCount) => _bytesReceived += (ulong)byteCount;
 
-    /// <summary>Records that this Link's read share was exhausted for the current Frame.</summary>
-    public void RecordReadShareExhaustion() => _readShareExhaustions++;
-
     /// <summary>Takes a point-in-time snapshot of every counter belonging to this Link.</summary>
-    public LinkCounters Snapshot() => new(_bytesSent, _bytesReceived, _readShareExhaustions);
+    public LinkCounters Snapshot() => new(_bytesSent, _bytesReceived);
 }

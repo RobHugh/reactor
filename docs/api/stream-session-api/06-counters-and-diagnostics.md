@@ -23,8 +23,8 @@ Interrupted Peer, right up to the close.
 | `AdmissionDeferrals` | Times a listening endpoint turned its backlog away because the admission cap was reached. Coarse — one declining per endpoint, not per connection. |
 | `SinkFaulted` | Times your Sink threw. Non-zero means diagnostics are off for the rest of this Reactor's life. |
 
-`DatagramsSent`, `DatagramsReceived`, `AdmissionDiscards`, `UnknownSourceDiscards` and
-`MalformedSessionDiscards` stay at zero here. They are true zeros, not gaps — this profile carries no datagram transport, and it answers a
+`DatagramsSent`, `DatagramsReceived`, `AdmissionDiscards`, `UnknownSourceDatagrams` and
+`MalformedSessionDatagrams` stay at zero here. They are true zeros, not gaps — this profile carries no datagram transport, and it answers a
 refused connection in protocol rather than discarding it.
 
 A capacity refusal touches neither admission counter. Read `PeerRefused` (300) for those; it names
@@ -38,6 +38,12 @@ the remote, which a counter cannot.
 | `RetentionHighWaterBytes` | The most bytes this Peer's retention ever held at once. Compare against `RetentionBytes` to size it. |
 | `Resumes` | Successful resumes for this Peer. Never reset by a resume, so a flapping path shows itself here. |
 | `SocketWrites` | Socket send calls made on this Peer's connection, handshake records included. Well above your Pump rate means writes are not batching. |
+| `BytesSent` | Bytes the socket accepted on this Peer's connection, framing and handshake records included. |
+| `BytesReceived` | Bytes read from this Peer's connection, framing and handshake records included. Once nothing is in flight, it equals the far end's `BytesSent`. |
+| `ReadShareExhaustions` | Times this Peer had a whole Message ready but had used its read share for the Frame. The Message waits for a later Pump. A steady rise means one Peer is outpacing its share of `ArenaSize`. |
+
+`OutOfWindowPackets`, `DuplicatePackets`, `UnreliableLossPackets`, `HorizonDeferrals` and
+`PacketsRetransmitted` stay at zero here. This profile has no packets.
 
 ## Installing a Sink
 
@@ -67,6 +73,10 @@ Rules for a Sink:
   Reactor**. Never let one throw.
 - Calling back into the Reactor from a Sink is a programmer error and throws.
 - `IsEnabled` gates record construction, so a disabled level costs one comparison.
+
+To write diagnostics to `Microsoft.Extensions.Logging`, use `LoggerSink` from the
+`ReactorSockets.Logging` package instead of writing your own. To render a record as text in your
+own Sink, call `DiagnosticFormatter.Format(record)`.
 
 A record carries no strings, no boxing and no closures: an id, a level, a tagged subject (Peer,
 Source or none) and two numeric slots whose meaning is documented per id.

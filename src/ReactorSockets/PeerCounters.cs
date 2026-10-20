@@ -6,18 +6,29 @@ namespace ReactorSockets;
 /// <see cref="LinkCounters"/>'s Raw-profile shape and the same "no accessor enumerates every Peer's
 /// counters in one call" rule.
 /// </summary>
+/// <remarks>
+/// The shape is shared by both Session profiles; which members move is not. The packet figures
+/// (<c>OutOfWindowPackets</c>, <c>DuplicatePackets</c>, <c>UnreliableLossPackets</c>,
+/// <c>HorizonDeferrals</c>, <c>PacketsRetransmitted</c>) stay at zero on the stream profile, which has
+/// no packets. A member that never moves on a profile is reporting a true zero, not a gap. Every
+/// member says, under "Not derivable", what it tells a consumer that the other counters do not (ADR
+/// 0013). A field that could not be given that line would not exist.
+/// </remarks>
 /// <param name="MessagesReceived">
 /// Whole Messages handed to the frame arena for delivery — incremented at that point only, never
 /// when a Message's bytes finish arriving or while it sits buffered waiting for a read share or
 /// arena room (subtask 3.4.4, issue #82). This is what makes a share exhaustion visible: a Frame in
 /// which bytes plainly arrived but this figure did not move is a Message still buffered, not one
-/// dropped.
+/// dropped. Not derivable: byte figures include framing and handshake bytes and say nothing of how
+/// many Messages they carried.
 /// </param>
 /// <param name="RetentionHighWaterBytes">
 /// The most bytes this Peer's retention ring has ever held at once (written minus released) since
 /// the Peer was established — <see cref="Core.RetentionArena.HighWaterBytes(int)"/> read fresh at
 /// snapshot time, never pushed. Monotonic for the Peer's lifetime: draining the ring after a burst
-/// lowers what is currently retained but never lowers this figure (subtask 3.5.5, issue #87).
+/// lowers what is currently retained but never lowers this figure (subtask 3.5.5, issue #87). Not
+/// derivable: bytes sent is a running total, and how much of it was unacknowledged at once is what
+/// sizes retention.
 /// </param>
 /// <param name="Resumes">
 /// How many times this Peer's transport has been successfully resumed after an Interruption (issue
@@ -28,7 +39,8 @@ namespace ReactorSockets;
 /// them back out is not generally possible once drained, while this figure is a Counter — read fresh
 /// by value at any time, the same as every other figure here. Monotonic and never reset: a resume
 /// carries no counter's history away with it, so a retransmission count spanning several resumes is
-/// how a flapping path shows itself instead of being hidden by a zeroing on every reconnect.
+/// how a flapping path shows itself instead of being hidden by a zeroing on every reconnect. Not
+/// derivable: no other counter moves only on a Resume.
 /// </param>
 /// <param name="OutOfWindowPackets">
 /// How many packet records this Peer's per-Space receive window has classified as out of window —
@@ -38,7 +50,9 @@ namespace ReactorSockets;
 /// the parse loop's classification of each arriving record (issue #172); a freshly connected Peer
 /// reads zero. Note that only the two reliable Spaces raise this on a far-ahead arrival: the
 /// unreliable Spaces slide their window forward instead and count the retirement as loss (issue
-/// #173), so for those Spaces out-of-window means a sequence below the base alone.
+/// #173), so for those Spaces out-of-window means a sequence below the base alone. Moves only on the
+/// datagram profile. Not derivable: bytes received counts these records together with admitted ones,
+/// and no other figure separates reordering beyond the window from repeats.
 /// </param>
 /// <param name="DuplicatePackets">
 /// How many packet records this Peer's per-Space receive window has classified as duplicates — a
@@ -54,7 +68,9 @@ namespace ReactorSockets;
 /// often on <see cref="OutOfWindowPackets"/>, since a repeat usually arrives below a base that has
 /// already passed it — so one record raises one figure and never both. A repeat delayed past those 64
 /// sequences is delivered and raises neither: suppression there is bounded by design, and these
-/// figures count what was refused rather than what was repeated.
+/// figures count what was refused rather than what was repeated. Moves only on the datagram profile.
+/// Not derivable: this end's retransmissions are <see cref="PacketsRetransmitted"/>, and only this
+/// figure sees the far end's, from the receiving side.
 /// </param>
 /// <param name="UnreliableLossPackets">
 /// How many sequences an unreliable Space's receive window has lost — retired by sliding its base
@@ -68,7 +84,9 @@ namespace ReactorSockets;
 /// because their windows do not slide: retransmission is what fills their holes, and what they refuse
 /// lands on <see cref="OutOfWindowPackets"/> instead. No Diagnostic accompanies a gap in either Space;
 /// a lossy path must not fill the Sink with volume. Monotonic and never reset, exactly like
-/// <see cref="OutOfWindowPackets"/>; a freshly connected Peer reads zero.
+/// <see cref="OutOfWindowPackets"/>; a freshly connected Peer reads zero. Moves only on the datagram
+/// profile. Not derivable: a sequence that never arrives is never classified, so no other figure can
+/// see it.
 /// </param>
 /// <param name="HorizonDeferrals">
 /// How many sequences arrived beyond a reliable Space's ack horizon and so had their retransmit timer
@@ -83,7 +101,9 @@ namespace ReactorSockets;
 /// only under the horizon scenario (issue #185) and stays zero in ordinary operation, where every
 /// sequence lands inside the horizon as it arrives. Monotonic and never reset, exactly like
 /// <see cref="OutOfWindowPackets"/>: a Resume carries no counter's history away with it, and this one's
-/// lifetime is the Peer's, not the transport's. A freshly connected Peer reads zero.
+/// lifetime is the Peer's, not the transport's. A freshly connected Peer reads zero. Moves only on the
+/// datagram profile. Not derivable: these sequences were admitted, so no refusal figure counts them,
+/// and only this one says the ack horizon was outrun.
 /// </param>
 /// <param name="PacketsRetransmitted">
 /// How many packet records this Peer has resent (subtask 6.4.6, issue #196; ADR 0013). Counts packet
@@ -94,39 +114,49 @@ namespace ReactorSockets;
 /// lossy path, which fails the record test, and it keeps its own identity — rather than folding into
 /// <see cref="OutOfWindowPackets"/> or <see cref="HorizonDeferrals"/> — because counters have a
 /// per-Peer scope. Monotonic and never reset, exactly like <see cref="HorizonDeferrals"/>: its lifetime
-/// is the Peer's, not the transport's, so a Resume does not zero it. Nothing increments this yet — the
-/// expiry path that does is issue #198 — so a freshly connected Peer reads zero.
+/// is the Peer's, not the transport's, so a Resume does not zero it. Raised by the retransmit expiry
+/// sweep (issue #198); a freshly connected Peer reads zero. Moves only on the datagram profile. Not
+/// derivable: bytes sent mixes first sends with resends, and only this figure separates them.
 /// </param>
 /// <param name="BytesSent">
-/// The datagram bytes a flush has handed the transport for this Peer, header included (subtask 6.7.4,
-/// issue #231; ADR 0013). Incremented once per Datagram, at the size the coalescing packer actually
-/// wrote for it — the 20-byte session header plus every packet record's own header and payload —
-/// rather than per record or per payload byte, since header bytes amortising across a Pump's coalesced
-/// records is exactly what this figure exists to let a consumer see; counting payload alone would hide
-/// that amortisation. Raised regardless of whether the underlying send call reports success, since the
-/// bytes were handed to the transport at that point either way — distinct from the Reactor-scope send
-/// figure, which counts only a confirmed success. A data Datagram to an Established Peer moves this, and
-/// so does each Resume control datagram the dialling end sends it (issue #56), at its fixed 256 bytes,
-/// because a Peer exists to charge. A handshake's control datagrams carry no session id yet to attribute
-/// them to, so they are never counted here, on either the sent or the received side (see
-/// <see cref="BytesReceived"/>).
+/// On the datagram profile, the datagram bytes a flush has handed the transport for this Peer, header
+/// included (subtask 6.7.4, issue #231; ADR 0013). Incremented once per Datagram, at the size the
+/// coalescing packer actually wrote for it — the 20-byte session header plus every packet record's own
+/// header and payload — rather than per record or per payload byte, since header bytes amortising
+/// across a Pump's coalesced records is exactly what this figure exists to let a consumer see; counting
+/// payload alone would hide that amortisation. Raised regardless of whether the underlying send call
+/// reports success, since the bytes were handed to the transport at that point either way — distinct
+/// from the Reactor-scope send figure, which counts only a confirmed success. A data Datagram to an
+/// Established Peer moves this, and so does each Resume control datagram the dialling end sends it
+/// (issue #56), at its fixed 256 bytes, because a Peer exists to charge. A handshake's control
+/// datagrams carry no session id yet to attribute them to, so they are never counted here, on either
+/// the sent or the received side (see <see cref="BytesReceived"/>).
+/// On the stream profile, the bytes the socket accepted on this Peer's connection, framing included:
+/// every write a Peer is charged a <see cref="SocketWrites"/> for, handshake and Resume records too,
+/// at the count each call reported written (issue #61). A short write counts the part that went.
 /// Monotonic and never reset, exactly like <see cref="HorizonDeferrals"/>: its lifetime is the Peer's,
-/// not the transport's, so a Resume does not zero it. A freshly connected Peer reads zero.
+/// not the transport's, so a Resume does not zero it. Not derivable: the Reactor-scope datagram
+/// figures count datagrams for every Peer at once and lose closed Peers, and the stream profile has no
+/// other byte figure.
 /// </param>
 /// <param name="BytesReceived">
-/// The datagram bytes attributed to this Peer on arrival (subtask 6.7.4, issue #231; ADR 0013).
-/// Incremented once per data Datagram that both names an established Peer's session id and proves
-/// well-formed — the same proof that gates ack application and record classification — at the whole
-/// Datagram's length, header included, mirroring <see cref="BytesSent"/>. A Datagram naming no
-/// Session, or one so malformed it cannot be attributed to the Peer it claims, charges no Peer: it
-/// lands on the Reactor-scope unknown-source figure instead, the same bucket a genuinely unknown
-/// source falls into. A handshake's control datagrams are never counted here either, for the same
-/// reason as <see cref="BytesSent"/>: at the point one arrives, no Peer's session id has been assigned
-/// yet for it to name. A Resume that matches this Peer (issue #56) is counted at its fixed 256 bytes,
-/// because a Peer exists to charge. A Resume naming no Peer, or presenting the wrong secret, charges
-/// none. Monotonic and never reset, exactly like <see cref="HorizonDeferrals"/>: its
-/// lifetime is the Peer's, not the transport's, so a Resume does not zero it. A freshly connected Peer
-/// reads zero.
+/// On the datagram profile, the datagram bytes attributed to this Peer on arrival (subtask 6.7.4,
+/// issue #231; ADR 0013). Incremented once per data Datagram that both names an established Peer's
+/// session id and proves well-formed — the same proof that gates ack application and record
+/// classification — at the whole Datagram's length, header included, mirroring
+/// <see cref="BytesSent"/>. A Datagram naming no Session, or one so malformed it cannot be attributed
+/// to the Peer it claims, charges no Peer: it lands on a Reactor-scope figure instead. A handshake's
+/// control datagrams are never counted here either, for the same reason as <see cref="BytesSent"/>: at
+/// the point one arrives, no Peer's session id has been assigned yet for it to name. A Resume that
+/// matches this Peer (issue #56) is counted at its fixed 256 bytes, because a Peer exists to charge. A
+/// Resume naming no Peer, or presenting the wrong secret, charges none.
+/// On the stream profile, every byte read from this Peer's connection, framing and handshake records
+/// included (issue #61). The first record on an accepted connection is charged once it is admitted as
+/// this Peer or matched as its Resume. A connection refused or never matched charges no Peer.
+/// Monotonic and never reset, exactly like <see cref="HorizonDeferrals"/>: its lifetime is the Peer's,
+/// not the transport's, so a Resume does not zero it. A freshly connected datagram Peer reads zero.
+/// Not derivable: <see cref="MessagesReceived"/> counts Messages rather than bytes, and the
+/// Reactor-scope figures neither attribute bytes to a Peer nor see a stream connection.
 /// </param>
 /// <param name="SocketWrites">
 /// How many socket send calls this Reactor has made on this Peer's transport (issue #325; ADR 0013).
@@ -136,11 +166,24 @@ namespace ReactorSockets;
 /// Resume records, delivery-counter records sent alone, and each retention write, where a delivery
 /// counter riding that write (issue #132) adds nothing. On the datagram profile it counts one per data
 /// Datagram a flush hands the transport and one per Resume control datagram the dialling end sends,
-/// beside <see cref="BytesSent"/>; a handshake's control datagrams are never counted, for the same reason they never reach <see cref="BytesSent"/>. Not
-/// derivable from any byte figure, since how many bytes went out says nothing about how many calls
-/// carried them, and a rate well above the Pump rate for one Peer names a write path that is not
-/// batching. Monotonic and never reset, exactly like <see cref="HorizonDeferrals"/>: its lifetime is
-/// the Peer's, not the transport's, so a Resume does not zero it.
+/// beside <see cref="BytesSent"/>; a handshake's control datagrams are never counted, for the same
+/// reason they never reach <see cref="BytesSent"/>. A rate well above the Pump rate for one Peer names
+/// a write path that is not batching. Monotonic and never reset, exactly like
+/// <see cref="HorizonDeferrals"/>: its lifetime is the Peer's, not the transport's, so a Resume does
+/// not zero it. Not derivable: how many bytes went out says nothing about how many calls carried them.
+/// </param>
+/// <param name="ReadShareExhaustions">
+/// How many times this Peer had a whole Message ready and was refused Arena room because it had
+/// already used its read share for the Frame (issue #61; ADR 0013, where <c>ReadShareReached</c>
+/// became this counter). Counted once per refused reservation. What becomes of the Message differs by
+/// profile. The stream profile keeps it buffered and delivers it on a later Pump. The datagram profile
+/// keeps nothing for a retry: an unreliable record is lost, and a reliable one arrives again only
+/// through the far end's retransmission. Recurs every Pump while one Peer outpaces its share, which is
+/// why it is a Counter and not a Diagnostic. Moves on both Session profiles. Monotonic
+/// and never reset, exactly like <see cref="HorizonDeferrals"/>: its lifetime is the Peer's, not the
+/// transport's, so a Resume does not zero it. Not derivable: bytes received and
+/// <see cref="MessagesReceived"/> show that delivery lagged arrival, but not that the read share was
+/// the cause rather than the Arena itself running out.
 /// </param>
 public readonly record struct PeerCounters(
     ulong MessagesReceived,
@@ -153,4 +196,5 @@ public readonly record struct PeerCounters(
     ulong PacketsRetransmitted,
     ulong BytesSent,
     ulong BytesReceived,
-    ulong SocketWrites);
+    ulong SocketWrites,
+    ulong ReadShareExhaustions);

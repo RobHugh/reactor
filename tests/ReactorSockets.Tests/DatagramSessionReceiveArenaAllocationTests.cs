@@ -29,6 +29,22 @@ public class DatagramSessionReceiveArenaAllocationTests
     private const int MeasurementWindowFragments = 32;
 
     /// <summary>
+    /// The largest multiple of <see cref="MeasurementWindowFragments"/> any test here measures at, so
+    /// <see cref="WarmUpTheMeasurement"/> covers every size (issue #415). Raise it with any test that
+    /// measures a wider window.
+    /// </summary>
+    private const int MeasuredWindowMultiples = 3;
+
+    /// <summary>
+    /// The number of samples <see cref="MeasureReceiveSideAllocation"/> takes the minimum of (issue
+    /// #415). With test classes and test assemblies running concurrently, a one-off allocation that
+    /// is not the construction's own, such as process-wide runtime state growing, can land on this
+    /// thread mid-sample. That noise only ever adds bytes, so the smallest of a few samples is the
+    /// construction's own cost, and the exact-match assertions stay exact.
+    /// </summary>
+    private const int SamplesPerMeasurement = 5;
+
+    /// <summary>
     /// Mirrors the internal <c>DatagramSessionOptions.FragmentLengthBytes</c> (#257) — this test file
     /// cannot reference it directly (no <c>InternalsVisibleTo</c>, per tests/CLAUDE.md), so it restates
     /// the same width the production bill is computed from.
@@ -107,21 +123,43 @@ public class DatagramSessionReceiveArenaAllocationTests
     }
 
     /// <summary>
-    /// Takes and discards one measurement before the real ones.
+    /// Takes and discards one sample at every window size the tests measure before the real ones.
     /// <see cref="GC.GetAllocatedBytesForCurrentThread"/> counts everything the thread allocates,
     /// including the one-off JIT and static-initialisation cost of the first construction, which
-    /// would otherwise land entirely in the first data point and tilt the line. Discarding a
-    /// measurement pays that cost up front so the points that are compared differ only by the window.
+    /// would otherwise land entirely in the first data point and tilt the line. Warming every size,
+    /// not only the first (issue #415), also pays for any path a larger window alone takes, so the
+    /// points that are compared differ only by the window.
     /// </summary>
-    private static void WarmUpTheMeasurement() => MeasureReceiveSideAllocation(MeasurementWindowFragments);
+    private static void WarmUpTheMeasurement()
+    {
+        for (int windows = 1; windows <= MeasuredWindowMultiples; windows++)
+        {
+            SampleReceiveSideAllocation(MeasurementWindowFragments * windows);
+        }
+    }
+
+    /// <summary>
+    /// The smallest of <see cref="SamplesPerMeasurement"/> samples of
+    /// <see cref="SampleReceiveSideAllocation"/> at <paramref name="receiveWindowFragments"/>.
+    /// </summary>
+    private static long MeasureReceiveSideAllocation(int receiveWindowFragments)
+    {
+        long smallest = long.MaxValue;
+        for (int i = 0; i < SamplesPerMeasurement; i++)
+        {
+            smallest = Math.Min(smallest, SampleReceiveSideAllocation(receiveWindowFragments));
+        }
+
+        return smallest;
+    }
 
     /// <summary>
     /// Builds one Reactor of <paramref name="receiveWindowFragments"/> window, fills every one of its
     /// Peer Slots by dialling, and returns the bytes that took. Non-inlined and self-contained so the
-    /// Reactor and its Peers are unreachable by the time the caller compares two measurements.
+    /// Reactor and its Peers are unreachable by the time it returns.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static long MeasureReceiveSideAllocation(int receiveWindowFragments)
+    private static long SampleReceiveSideAllocation(int receiveWindowFragments)
     {
         long before = GC.GetAllocatedBytesForCurrentThread();
         using DatagramSessionReactorHarness harness = new(

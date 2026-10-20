@@ -82,7 +82,7 @@ public class DatagramSessionMatchedResumeTests
             scenario.AdvanceAccepter(Scenario.SendIdleInterval);
             scenario.PumpAccepter();
             scenario.Proxy.Pump();
-            reachedTheResumer = WaitForDatagram(resumer);
+            reachedTheResumer = Scenario.WaitForDatagram(resumer);
         }
 
         // Assert
@@ -117,7 +117,7 @@ public class DatagramSessionMatchedResumeTests
         }
 
         // Assert
-        WaitForDatagram(replayer, TimeSpan.FromMilliseconds(100)).Should().BeFalse("only a matched Resume moves the send address");
+        Scenario.WaitForDatagram(replayer, TimeSpan.FromMilliseconds(100)).Should().BeFalse("only a matched Resume moves the send address");
         scenario.Proxy.Captures.Count(c => c.Direction == RelayDirection.UpstreamToClient)
             .Should().BeGreaterThan(toTheProxyBefore, "the Peer's datagrams still go to the address it was established from");
     }
@@ -265,7 +265,7 @@ public class DatagramSessionMatchedResumeTests
             scenario.AdvanceAccepter(Scenario.SendIdleInterval);
             scenario.PumpAccepter();
             scenario.Proxy.Pump();
-            reachedTheResumer = WaitForDatagram(resumer);
+            reachedTheResumer = Scenario.WaitForDatagram(resumer);
         }
 
         // Assert
@@ -299,22 +299,6 @@ public class DatagramSessionMatchedResumeTests
     }
 
     private static int CountOf(Scenario scenario, SessionEventKind kind) => scenario.AccepterEvents.Count(e => e.Kind == kind);
-
-    private static bool WaitForDatagram(UdpClient client, TimeSpan? budget = null)
-    {
-        PumpDeadline deadline = PumpDeadline.Start(budget);
-        while (client.Available == 0)
-        {
-            if (deadline.Expired)
-            {
-                return false;
-            }
-
-            PumpDeadline.Yield();
-        }
-
-        return true;
-    }
 
     private static void SendMatchingResume(Scenario scenario, UdpClient resumer) =>
         resumer.Send(Scenario.BuildResume(scenario.AccepterSessionId, scenario.ResumeSecret), scenario.Accepter.Endpoint);

@@ -128,7 +128,7 @@
     <text class="ex-r" x="1505" y="467" text-anchor="middle">cs:516-524</text>
     <rect class="discard" x="1390" y="565.5" width="230" height="93" rx="6"/>
     <text class="ex-t" x="1505" y="581.5" text-anchor="middle">Silent discard</text>
-    <text class="ex-b" x="1505" y="594" text-anchor="middle">RecordUnknownSourceDiscard +</text>
+    <text class="ex-b" x="1505" y="594" text-anchor="middle">RecordUnknownSourceDatagram +</text>
     <text class="ex-b" x="1505" y="605.5" text-anchor="middle">ForCookieRejected — never a Refusal</text>
     <text class="ex-b" x="1505" y="617" text-anchor="middle">(ADR 0009: Refusal answers only a</text>
     <text class="ex-b" x="1505" y="628.5" text-anchor="middle">cookie-validated Hello)</text>

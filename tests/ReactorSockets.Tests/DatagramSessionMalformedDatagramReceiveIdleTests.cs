@@ -7,7 +7,7 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #354 (parent #54): the malformed side of #351's rule. Only a well-formed data datagram
 /// counts as hearing from the peer — a malformed one still reaches the Reactor and is counted (proof
-/// via <see cref="ReactorCounters.MalformedSessionDiscards"/>), but must never touch
+/// via <see cref="ReactorCounters.MalformedSessionDatagrams"/>), but must never touch
 /// <c>PeerSlot.LastReceiveTimestamp</c>, so #352's receive-idle deadline
 /// (<c>peerSendIdle × ResolvedMissedHeartbeats</c>) keeps counting from the last well-formed
 /// datagram no matter how much malformed noise arrives in between.
@@ -82,21 +82,21 @@ public class DatagramSessionMalformedDatagramReceiveIdleTests
         ];
 
         TimeSpan elapsed = TimeSpan.Zero;
-        ulong expectedDiscards = 0;
+        ulong expectedMalformed = 0;
         foreach (TimeSpan point in injectionPoints)
         {
             accepter.TimeProvider.Advance(point - elapsed);
             elapsed = point;
 
             intruder.SendDatagram(accepter.Endpoint, malformedDatagram);
-            expectedDiscards++;
-            ulong discardsToReach = expectedDiscards;
-            accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDiscards >= discardsToReach);
+            expectedMalformed++;
+            ulong malformedToReach = expectedMalformed;
+            accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDatagrams >= malformedToReach);
         }
 
         // Assert — AC2: every injected datagram is shown to have reached the Reactor via its
         // malformed-discard counter, and none of it reached the event stream.
-        accepter.Reactor.Counters.MalformedSessionDiscards.Should().Be((ulong)injectionPoints.Length);
+        accepter.Reactor.Counters.MalformedSessionDatagrams.Should().Be((ulong)injectionPoints.Length);
         accepter.DrainToList().Should().NotContain(
             e => e.Kind == SessionEventKind.PeerInterrupted,
             "the last injection landed one millisecond short of the deadline — nothing has happened yet");

@@ -425,7 +425,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
-            IsDialled = true,
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
@@ -863,7 +862,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
                 case UdpLinkReceiveOutcome.Truncated:
                     _counters.RecordDatagramReceived();
-                    _counters.RecordUnknownSourceDiscard();
+                    _counters.RecordUnknownSourceDatagram();
                     _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(result.Source, _scratchBuffer.Length));
                     break;
 
@@ -1872,7 +1871,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
             slot.IsInterrupted = true;
             slot.InterruptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
-            slot.ResumesSentSinceInterrupted = 0;
+            slot.LastResumeTimestamp = null;
             _pendingEvents.Add(new PendingEvent
             {
                 Kind = SessionEventKind.PeerInterrupted,
@@ -2012,8 +2011,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         long now = _options.Reactor.TimeProvider.GetTimestamp();
-        if (slot.ResumesSentSinceInterrupted > 0
-            && _options.Reactor.TimeProvider.GetElapsedTime(slot.LastResumeTimestamp, now) < _options.SendIdleInterval)
+        if (slot.LastResumeTimestamp is long lastResume
+            && _options.Reactor.TimeProvider.GetElapsedTime(lastResume, now) < _options.SendIdleInterval)
         {
             return;
         }
@@ -2025,7 +2024,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         slot.Counters.RecordSocketWrite();
         slot.Counters.RecordBytesSent(DatagramSessionProtocol.ControlDatagramSize);
         slot.LastResumeTimestamp = now;
-        slot.ResumesSentSinceInterrupted++;
     }
 
     /// <summary>
@@ -2690,16 +2688,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         int payloadOffset = _arena.BytesUsed;
         ArenaReservation reservation = _arena.Reserve(slot.Handle.Index, totalLength);
-        if (reservation.Outcome != ArenaReservationOutcome.Committed)
+        if (!AccountForReservation(slot, reservation))
         {
-            if (reservation.Outcome == ArenaReservationOutcome.ArenaExhausted && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
-            {
-                _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(
-                    ToPeerId(slot.Handle),
-                    reservation.BytesRequested,
-                    reservation.BytesFree));
-            }
-
             return false;
         }
 
@@ -3050,6 +3040,36 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// Answers whether <paramref name="reservation"/> committed, and charges whichever outcome it had:
+    /// a commit raises the Arena high-water, a spent read share is counted on the Peer, and an Arena
+    /// with no room is a <see cref="DiagnosticId.ArenaExhausted"/> record (issue #61).
+    /// </summary>
+    private bool AccountForReservation(PeerSlot slot, ArenaReservation reservation)
+    {
+        switch (reservation.Outcome)
+        {
+            case ArenaReservationOutcome.Committed:
+                _counters.ObserveArenaUsage(_arena.BytesUsed);
+                return true;
+            case ArenaReservationOutcome.ShareExhausted:
+                slot.Counters.RecordReadShareExhaustion();
+                return false;
+            case ArenaReservationOutcome.ArenaExhausted:
+                if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                {
+                    _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(
+                        ToPeerId(slot.Handle),
+                        reservation.BytesRequested,
+                        reservation.BytesFree));
+                }
+
+                return false;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// The last step every mode's delivery rule ends at: copy the payload into the shared frame arena
     /// under this Peer's own share-holder identity (ADR 0014), queue it as a pending
     /// <see cref="SessionEventKind.MessageReceived"/>, and raise this Peer's
@@ -3066,17 +3086,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     {
         int payloadOffset = _arena.BytesUsed;
         ArenaReservation reservation = _arena.Reserve(slot.Handle.Index, payload);
-
-        if (reservation.Outcome != ArenaReservationOutcome.Committed)
+        if (!AccountForReservation(slot, reservation))
         {
-            if (reservation.Outcome == ArenaReservationOutcome.ArenaExhausted && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
-            {
-                _diagnostics.Log(DiagnosticRecord.ForArenaExhausted(
-                    ToPeerId(slot.Handle),
-                    reservation.BytesRequested,
-                    reservation.BytesFree));
-            }
-
             return;
         }
 
@@ -3150,7 +3161,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         if (!_cookies.Verify(source, clientNonce, epoch, cookie))
         {
-            _counters.RecordUnknownSourceDiscard();
+            _counters.RecordUnknownSourceDatagram();
             _diagnostics.Log(DiagnosticRecord.ForCookieRejected(source, epoch, _cookies.CurrentEpoch));
             return;
         }
@@ -3638,20 +3649,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Discards a datagram nothing in which could be attributed to a Peer — a control datagram that
     /// did not read, a control reply answering no dial, or a session id naming no Session — and counts
-    /// it on <see cref="ReactorCounters.UnknownSourceDiscards"/>. A data datagram that failed to parse
+    /// it on <see cref="ReactorCounters.UnknownSourceDatagrams"/>. A data datagram that failed to parse
     /// <em>after</em> its session id resolved goes to <see cref="DiscardMalformedForSession"/>
     /// instead (issue #275).
     /// </summary>
     private void DiscardMalformed(Source source, int bytesReceived)
     {
-        _counters.RecordUnknownSourceDiscard();
+        _counters.RecordUnknownSourceDatagram();
         _diagnostics.Log(DiagnosticRecord.ForDatagramMalformed(source, bytesReceived));
     }
 
     /// <summary>
     /// Discards a data datagram that named a live Session and then failed to parse, counting it on
-    /// <see cref="ReactorCounters.MalformedSessionDiscards"/> rather than
-    /// <see cref="ReactorCounters.UnknownSourceDiscards"/> (issue #275): the id resolved, which is the
+    /// <see cref="ReactorCounters.MalformedSessionDatagrams"/> rather than
+    /// <see cref="ReactorCounters.UnknownSourceDatagrams"/> (issue #275): the id resolved, which is the
     /// only reason parsing was reached at all, so this is not traffic that named nobody. The
     /// Diagnostic is the same <see cref="DiagnosticId.DatagramMalformed"/> and stays Source-subjected
     /// — a body that did not parse is no proof the sender is the Peer whose id it carried, so neither
@@ -3659,7 +3670,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private void DiscardMalformedForSession(Source source, int bytesReceived)
     {
-        _counters.RecordMalformedSessionDiscard();
+        _counters.RecordMalformedSessionDatagram();
         _diagnostics.Log(DiagnosticRecord.ForDatagramMalformed(source, bytesReceived));
     }
 
@@ -4299,19 +4310,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <summary>
         /// Whether this end dialled this Peer (<see cref="Connect"/>) rather than accepted it. Only a
         /// dialled Peer sends Resume (issue #382): the accepting end cannot know the dialler's new address.
+        /// Derived from <see cref="HandshakeSource"/>, which only an accepted Peer has (issue #393).
         /// </summary>
-        public bool IsDialled { get; init; }
+        public bool IsDialled => HandshakeSource is null;
 
         /// <summary>
-        /// How many Resume datagrams this dialled Peer has sent since it was last interrupted, reset to
-        /// zero each time <see cref="EnforceReceiveIdleTimer"/> sets <see cref="IsInterrupted"/> (issue
-        /// #382). Nonzero means at least one Resume has left, so <see cref="LastResumeTimestamp"/> is
-        /// meaningful and <c>SendResumeIfDue</c> paces the next one from it.
+        /// The <see cref="TimeProvider.GetTimestamp"/> value of this Peer's latest Resume datagram (issue
+        /// #382), or <see langword="null"/> when none has left since <see cref="EnforceReceiveIdleTimer"/>
+        /// last set <see cref="IsInterrupted"/>, which clears it. <c>SendResumeIfDue</c> paces the next
+        /// Resume from it (issue #393).
         /// </summary>
-        public int ResumesSentSinceInterrupted { get; set; }
-
-        /// <summary>The <see cref="TimeProvider.GetTimestamp"/> value of this Peer's latest Resume datagram (issue #382), meaningful only while <see cref="ResumesSentSinceInterrupted"/> is nonzero.</summary>
-        public long LastResumeTimestamp { get; set; }
+        public long? LastResumeTimestamp { get; set; }
 
         /// <summary>
         /// This Peer's own mutable counters (ADR 0013), incremented on the hot path and read only

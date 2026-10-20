@@ -10,7 +10,7 @@ namespace ReactorSockets.Tests;
 /// both raise <see cref="SessionEventKind.PeerInterrupted"/> when the path is cut, then
 /// <see cref="SessionEventKind.PeerResumed"/> once the proxy's upstream-facing socket has moved to a new
 /// port and relaying restarts, with the same <see cref="PeerId"/> as before. The accepter then sends to
-/// the new port only.
+/// the new port only. Issue #393 (P2) repeats the move onto a second loopback address.
 /// </summary>
 /// <remarks>
 /// Every Pump is drained by <see cref="Scenario.Step"/>, so an event raised on any Pump is counted.
@@ -75,6 +75,32 @@ public class DatagramSessionResumeAddressChangeTests
         fromAccepter.Should().NotBeEmpty("the accepter kept sending after the Resume");
         fromAccepter.Should().OnlyContain(c => c.ReceivedOn!.Equals(newPort), "every datagram after the move reached the new port");
         fromAccepter.Should().NotContain(c => c.ReceivedOn!.Equals(oldPort), "nothing further reached the old port");
+    }
+
+    [Fact]
+    public void Pump_PathCutThenMovedToANewAddress_AccepterResumesAndSendsToTheNewAddressOnly()
+    {
+        // Arrange — 127.0.0.2 is another loopback address, so the source address changes, not just the port.
+        using Scenario scenario = Scenario.Establish(Scenario.ResumableLinger);
+        IPEndPoint oldEndPoint = scenario.UpstreamFacingEndPoint;
+        scenario.InterruptBothEnds();
+        int capturesBeforeMove = scenario.Proxy.Captures.Count;
+
+        // Act
+        IPEndPoint newEndPoint = scenario.ResumeThroughNewPort(IPAddress.Parse("127.0.0.2"));
+        for (int i = 0; i < 6; i++)
+        {
+            scenario.Step(Scenario.StepInterval);
+        }
+
+        // Assert
+        newEndPoint.Address.Should().NotBe(oldEndPoint.Address);
+        AssertLifecycle(scenario.AccepterEvents, scenario.AccepterPeer);
+        List<RelayCapture> fromAccepter = [.. scenario.Proxy.Captures
+            .Skip(capturesBeforeMove)
+            .Where(c => c.Direction == RelayDirection.UpstreamToClient)];
+        fromAccepter.Should().NotBeEmpty("the accepter kept sending after the Resume");
+        fromAccepter.Should().OnlyContain(c => c.ReceivedOn!.Equals(newEndPoint), "every datagram after the move reached the new address");
     }
 
     [Fact]

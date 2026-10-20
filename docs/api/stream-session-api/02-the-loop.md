@@ -61,9 +61,9 @@ Each Peer may deliver `ArenaSize / Capacity` bytes of Messages per Frame, with o
 may always deliver one whole Message even when it exceeds that share.
 
 A Message that does not fit is held, in order, and delivered on a later Pump. Nothing is dropped and
-nothing is reordered. If you see bytes arriving but `MessagesReceived` not moving, that is the share
-biting — raise `ArenaSize`. Share exhaustion is silent; only the arena filling outright logs
-`ArenaExhausted`.
+nothing is reordered. Each time the share holds a Message back, that Peer's `ReadShareExhaustions`
+counter rises. A steady rise means you should raise `ArenaSize`. Share exhaustion logs no
+diagnostic. Only the arena filling outright logs `ArenaExhausted`.
 
 ## The event roster
 

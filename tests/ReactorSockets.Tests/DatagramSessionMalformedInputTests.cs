@@ -61,7 +61,7 @@ public class DatagramSessionMalformedInputTests
         // Act
         Action act = () => peer.SendDatagram(accepter.Endpoint, []);
         act.Should().NotThrow();
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: 0);
@@ -76,7 +76,7 @@ public class DatagramSessionMalformedInputTests
 
         // Act
         peer.SendDatagram(accepter.Endpoint, [0xFF]);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: 1);
@@ -91,7 +91,7 @@ public class DatagramSessionMalformedInputTests
 
         // Act
         peer.SendDatagram(accepter.Endpoint, [0x01, 0x02, 0x03]);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: 3);
@@ -107,7 +107,7 @@ public class DatagramSessionMalformedInputTests
 
         // Act
         peer.SendDatagram(accepter.Endpoint, datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: ControlDatagramSize);
@@ -124,7 +124,7 @@ public class DatagramSessionMalformedInputTests
 
         // Act
         peer.SendDatagram(accepter.Endpoint, datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: ControlDatagramSize);
@@ -140,7 +140,7 @@ public class DatagramSessionMalformedInputTests
 
         // Act
         peer.SendDatagram(accepter.Endpoint, truncated);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: 200);
@@ -158,7 +158,7 @@ public class DatagramSessionMalformedInputTests
 
         // Act
         peer.SendDatagram(accepter.Endpoint, oversized);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: oversized.Length);
@@ -174,7 +174,7 @@ public class DatagramSessionMalformedInputTests
 
         // Act
         peer.SendDatagram(accepter.Endpoint, datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: ControlDatagramSize);
@@ -193,7 +193,7 @@ public class DatagramSessionMalformedInputTests
 
         // Act
         peer.SendDatagram(accepter.Endpoint, datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
 
         // Assert
         AssertOneMalformedDiscard(accepter, expectedBytesReceived: ControlDatagramSize);
@@ -210,7 +210,7 @@ public class DatagramSessionMalformedInputTests
 
         // Act
         peer.SendDatagram(accepter.Endpoint, datagram);
-        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDiscards > 0);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> further = accepter.PumpAndDrainAll(5);
 
         // Assert — the drain immediately after the discard, and every further Pump's drain, are both
@@ -346,7 +346,7 @@ public class DatagramSessionMalformedInputTests
     private static void AssertOneMalformedDiscard(DatagramSessionReactorHarness accepter, int expectedBytesReceived)
     {
         accepter.DrainToList().Should().BeEmpty();
-        accepter.Reactor.Counters.UnknownSourceDiscards.Should().Be(1);
+        accepter.Reactor.Counters.UnknownSourceDatagrams.Should().Be(1);
 
         DiagnosticRecord record = accepter.Sink.Received.Should()
             .ContainSingle(r => r.Id == DiagnosticId.DatagramMalformed)

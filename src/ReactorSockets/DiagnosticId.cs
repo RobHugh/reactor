@@ -7,6 +7,26 @@ namespace ReactorSockets;
 /// <c>None</c> or <c>Unknown</c> member and zero is never used: every <see cref="DiagnosticRecord"/>
 /// has a cause by construction.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Supported Sink style: range-check the blocks.</b> The enum grows inside its blocks, so a Sink
+/// that classifies an id by the block it sits in, or that switches on members it cares about with a
+/// default arm for the rest, keeps working when a member is added. A Sink whose <c>switch</c> assumes
+/// it lists every member is not supported: the next additive release breaks it.
+/// </para>
+/// <para>
+/// <b>A block names the profile that defined a condition, not the profile that emitted a record</b>
+/// (ADR 0020). <see cref="LingerNegotiated"/>, <see cref="ResumeMatched"/> and
+/// <see cref="ResumeUnmatched"/> sit in the stream block and are emitted by the datagram session
+/// profile too, because each is one condition and a member names a condition. A Raw-only Sink's
+/// range check over 100-199 is exact, since nothing outside Raw shares that block. A Sink that needs
+/// to know which profile emitted a record knows which Reactor it was given to.
+/// </para>
+/// <para>
+/// Each member's documentation is the authority on its subject and value slots. ADR 0013's roster table
+/// is the one place to check them side by side and is kept in step with these docs.
+/// </para>
+/// </remarks>
 public enum DiagnosticId
 {
     /// <summary>
@@ -22,7 +42,8 @@ public enum DiagnosticId
 
     /// <summary>
     /// The frame arena had no room left for a request, regardless of the read-share escape.
-    /// Subject is the Link that made the request. <c>Value0</c> is the bytes requested,
+    /// Subject is the Link that made the request on Raw, and the Peer whose Message could not be
+    /// reserved on either session profile (ADR 0014). <c>Value0</c> is the bytes requested,
     /// <c>Value1</c> is the arena's bytes free at the moment of the request.
     /// </summary>
     ArenaExhausted = 2,
@@ -237,9 +258,8 @@ public enum DiagnosticId
     /// produce, not a condition a consumer needs to act on.
     /// </para>
     /// <para>
-    /// <c>Value0</c> reads 0 until issue #127 supplies the rewind: this slice matches the Resume and
-    /// reads the counter it reports without acting on it, so no bytes have been rewound yet and 0 is
-    /// what the match can honestly report.
+    /// Shared with the datagram session profile rather than duplicated in the datagram block, as are
+    /// <see cref="LingerNegotiated"/> and <see cref="ResumeUnmatched"/> (ADR 0020).
     /// </para>
     /// <para>
     /// Numbered 304 rather than the 302 the slice-4 spec named: 302 and 303 were taken by

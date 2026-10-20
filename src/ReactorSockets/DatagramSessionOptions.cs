@@ -40,6 +40,13 @@ namespace ReactorSockets;
 /// </description></item>
 /// </list>
 /// <para>
+/// <c>FragmentSize</c> is in one line and not the other because the window counts packets and retention
+/// counts bytes. Neither line has a traffic term: both are allocated at construction and never grow.
+/// Each line also carries a few bytes of bookkeeping per fragment slot, which
+/// <see cref="ReceiveBudgetBytes"/> and <see cref="SendBudgetBytes"/> include exactly — under 2% at the
+/// default fragment size.
+/// </para>
+/// <para>
 /// The frame arena (<see cref="ReactorOptions.ArenaSize"/>) is over and above those two lines and is
 /// shared across the whole Reactor rather than multiplied by capacity.
 /// </para>
@@ -54,6 +61,13 @@ namespace ReactorSockets;
 /// <see cref="ResolvedFragmentSize"/> rather than by <see cref="MaxMessageSize"/>, because a
 /// reliable Space retransmits fragment by fragment and needs only one fragment to have something to
 /// resend.
+/// </para>
+/// <para>
+/// <b>Security.</b> The session field on every datagram is a demultiplexing token, not an
+/// authenticator: it makes blind off-path injection a 32-bit guess, and does nothing against anyone who
+/// has seen one datagram of the Session. This library does not encrypt, and on-path attackers are out
+/// of scope (ADR 0009). A consumer who needs confidentiality or integrity against an on-path attacker
+/// provides it themselves, inside the Message.
 /// </para>
 /// <para>
 /// Every check below is deterministic and entirely the caller's, so failures throw at construction —
@@ -179,10 +193,9 @@ public sealed class DatagramSessionOptions
     /// The Ping this produces is a Heartbeat, and a Heartbeat is not a keepalive: it proves the party
     /// behind this Session is still there — able to receive and eventually acknowledge application data
     /// — not merely that some NAT mapping between here and there is still open, which a bare keepalive a
-    /// middlebox itself could answer would not prove. Only the send side is built here
-    /// (<see cref="DatagramSessionReactor"/>'s send-idle timer); the receive-idle deadline that declares
-    /// a silent peer gone, and the missed-heartbeat count it is measured against, are a later slice's
-    /// (ADR 0011).
+    /// middlebox itself could answer would not prove. The receive side is derived, not configured: a
+    /// Peer is declared gone after the remote's announced interval times <see cref="MissedHeartbeats"/>
+    /// of silence (ADR 0012).
     /// </remarks>
     public required TimeSpan SendIdleInterval { get; init; }
 
@@ -197,15 +210,17 @@ public sealed class DatagramSessionOptions
     /// The endpoints to bind at construction, in the order supplied; possibly empty. Declared once
     /// and never rebound (ADR 0014) — a Session's addresses are part of what it is, not something it
     /// acquires later. An empty set binds nothing until the first dial, which binds a single
-    /// wildcard, port-zero socket in the destination's address family.
+    /// wildcard, port-zero socket in the destination's address family. Provenance: empty is the
+    /// absence of a declaration, not a chosen address — the dial-only socket's family and port are
+    /// derived from the destination and the OS, never configured.
     /// </summary>
     public IReadOnlyList<IPEndPoint> Endpoints { get; init; } = [];
 
     /// <summary>
     /// The bytes a fragment carries, and therefore the unit every buffer here is measured in.
-    /// Defaults to 1200 — QUIC's floor beneath the 1280-byte IPv6 minimum MTU — which is the one
-    /// value with citable provenance for surviving an arbitrary path. Must lie between 576 (RFC 791's
-    /// guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).
+    /// Defaults to 1200. Provenance: QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000),
+    /// the one value with citable provenance for surviving an arbitrary path. Must lie between 576
+    /// (RFC 791's guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).
     /// </summary>
     /// <remarks>
     /// Unilateral and per-direction (ADR 0004): each side of a Session cuts its own outbound Messages
@@ -220,8 +235,8 @@ public sealed class DatagramSessionOptions
 
     /// <summary>
     /// The fragments each reliable Space may have outstanding per Peer. Defaults to exactly the
-    /// number a maximum Message occupies, which is ADR 0004's deadlock floor rather than a
-    /// performance choice: a window narrower than one whole Message can never deliver one, so it can
+    /// number a maximum Message occupies. Provenance: derived from <see cref="MaxMessageSize"/> and
+    /// <see cref="FragmentSize"/> — ADR 0004's deadlock floor rather than a performance choice: a window narrower than one whole Message can never deliver one, so it can
     /// never advance, so the sender can never send the rest. This resolved value is also the inbound
     /// bound a declared Fragment <c>fragmentCount</c> is checked against (issue #282, under #264): a set
     /// larger than the window can never be reassembled, since there is no slot to hold every one of
@@ -231,8 +246,8 @@ public sealed class DatagramSessionOptions
 
     /// <summary>
     /// How many consecutive heartbeat intervals may pass in silence before a Peer is declared gone.
-    /// Defaults to 3, RFC 4271's hold-time multiple. Must be at least 2, because a count of 1 makes a
-    /// single lost datagram fatal and no network is that reliable.
+    /// Defaults to 3. Provenance: RFC 4271's hold time, three times the keepalive interval. Must be at
+    /// least 2, because a count of 1 makes a single lost datagram fatal and no network is that reliable.
     /// </summary>
     public int? MissedHeartbeats { get; init; }
 
@@ -240,8 +255,7 @@ public sealed class DatagramSessionOptions
     /// The entropy the cookie secrets, session ids and resume secrets are drawn from. A construction
     /// knob in ADR 0012's sense — the consumer's own resource, and a consumer with a hardware source
     /// or a policy about which generator may be used is entitled to supply it. It carries a default
-    /// only because that default is derived rather than guessed: the platform's own CSPRNG is the
-    /// citable provenance.
+    /// only because that default is derived rather than guessed. Provenance: the platform's own CSPRNG.
     /// </summary>
     /// <remarks>
     /// Nothing disposes this, and nothing should. A supplied generator belongs to the consumer, who
@@ -313,9 +327,15 @@ public sealed class DatagramSessionOptions
     internal int PendingGroupsPerSpace =>
         ResolvedReceiveWindowFragments / 2 < 1 ? 1 : ResolvedReceiveWindowFragments / 2;
 
-    /// <summary>The send line of the memory bill in bytes, reported the same way.</summary>
+    /// <summary>
+    /// The send line of the memory bill in bytes, reported the same way: <see cref="RetentionSlots"/>
+    /// whole fragment slots per reliable Space per Peer, each priced at its payload plus the 15 bytes
+    /// of bookkeeping that records what it holds (issue #63). Exact, like the receive line, so it can be
+    /// below <c>Capacity × 2 × RetentionBytes</c> when retention is not a whole number of fragments.
+    /// </summary>
     public long SendBudgetBytes =>
-        (long)Reactor.Capacity * ReliableSpaceCount * RetentionBytes;
+        (long)Reactor.Capacity * ReliableSpaceCount * RetentionSlots
+            * (ResolvedFragmentSize + Core.RetentionPool.SlotBookkeepingBytes);
 
     /// <summary>
     /// The uniform retention slots one reliable Space holds per Peer: <see cref="RetentionBytes"/>
@@ -459,7 +479,8 @@ public sealed class DatagramSessionOptions
                 $"length bytes + {FragmentGroupEntryBytes} group-identity bytes) + {SpaceCount} Spaces × 1 " +
                 $"admission byte) plus Capacity {Reactor.Capacity} × {ReliableSpaceCount} reliable Spaces × " +
                 $"{PendingGroupsPerSpace} waiting groups × {PendingGroupEntryBytes} bytes = {receive}; send is " +
-                $"Capacity {Reactor.Capacity} × {ReliableSpaceCount} reliable Spaces × {RetentionBytes} bytes = " +
+                $"Capacity {Reactor.Capacity} × {ReliableSpaceCount} reliable Spaces × {RetentionSlots} slots × " +
+                $"({ResolvedFragmentSize} payload bytes + {Core.RetentionPool.SlotBookkeepingBytes} bookkeeping bytes) = " +
                 $"{send}. Lower Capacity, MaxMessageSize, ReceiveWindowFragments or RetentionBytes.",
                 nameof(Reactor));
         }

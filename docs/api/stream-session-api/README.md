@@ -44,7 +44,7 @@ PeerCounters  CountersOf(PeerId peer)
 void          Dispose()
 ```
 
-Eight members. Everything else in this guide describes what they do, not more of them.
+A constructor and nine members. Everything else in this guide describes what they do, not more of them.
 
 ## Smallest working program
 

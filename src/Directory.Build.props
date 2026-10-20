@@ -1,0 +1,11 @@
+<Project>
+
+  <!--
+    One version for every package under src/, so ReactorSockets.Logging versions in lockstep with the
+    core (ADR 0006). LoggerSinkPackageTests asserts the two assemblies agree.
+  -->
+  <PropertyGroup>
+    <VersionPrefix>1.0.0</VersionPrefix>
+  </PropertyGroup>
+
+</Project>

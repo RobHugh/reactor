@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Xunit;
 
@@ -10,16 +12,17 @@ namespace ReactorSockets.Tests;
 public class ReactorOptionsTests
 {
     [Fact]
-    public void Constructor_CapacityOmitted_ThrowsArgumentOutOfRangeException()
+    public void Capacity_Declaration_IsARequiredMemberTheCompilerEnforces()
     {
-        // Arrange
-        ReactorOptions options = new();
+        // Arrange — Capacity has no derivable default (ADR 0011), so omitting it fails to compile
+        // rather than defaulting to a zero that construction would reject.
+        PropertyInfo capacity = typeof(ReactorOptions).GetProperty(nameof(ReactorOptions.Capacity))!;
 
         // Act
-        Action act = () => new RawReactor(options);
+        bool required = capacity.IsDefined(typeof(RequiredMemberAttribute));
 
         // Assert
-        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(ReactorOptions.Capacity));
+        required.Should().BeTrue();
     }
 
     [Theory]

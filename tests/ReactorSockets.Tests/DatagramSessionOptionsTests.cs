@@ -437,16 +437,17 @@ public class DatagramSessionOptionsTests
     }
 
     [Fact]
-    public void SendBudgetBytes_WorkedExample_EqualsCapacityTimesTwoTimesRetentionBytes()
+    public void SendBudgetBytes_WorkedExample_EqualsCapacityTimesTwoTimesWholeRetentionSlotsWithTheirBookkeeping()
     {
-        // Arrange — distinct numbers so a transposed factor in the formula is caught.
+        // Arrange — distinct numbers so a transposed factor in the formula is caught, and a retention
+        // that is not a whole number of 1200-byte fragments, so the truncation to five slots is too.
         DatagramSessionOptions options = CreateOptions(capacity: 3, retentionBytes: 7000);
 
         // Act
         long budget = options.SendBudgetBytes;
 
-        // Assert
-        budget.Should().Be(3L * 2 * 7000);
+        // Assert — each slot is its payload plus 15 bytes recording what it holds (issue #63).
+        budget.Should().Be(3L * 2 * 5 * (1200 + 15));
     }
 
     [Fact]
@@ -459,7 +460,8 @@ public class DatagramSessionOptionsTests
         // half-window bound, never fewer than one (issue #259). The payload term also carries a 2-byte
         // Fragment-length slot (issue #257) and a 6-byte Fragment-group slot (issue #297) per fragment.
         long expectedReceive = (100_000L * 2 * 1 * (1200 + 2 + 6)) + (100_000L * 4 * 1) + (100_000L * 2 * 1 * 6);
-        long expectedSend = 100_000L * 2 * 100_000;
+        // Send is 83 whole 1200-byte slots per reliable Space, each with 15 bytes of bookkeeping.
+        long expectedSend = 100_000L * 2 * 83 * (1200 + 15);
         long expectedTotal = expectedReceive + expectedSend;
 
         // Act

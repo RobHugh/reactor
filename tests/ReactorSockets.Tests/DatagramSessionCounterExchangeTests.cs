@@ -12,8 +12,8 @@ namespace ReactorSockets.Tests;
 /// <see cref="PeerCounters.DuplicatePackets"/>, <see cref="PeerCounters.OutOfWindowPackets"/>,
 /// <see cref="PeerCounters.HorizonDeferrals"/>, <see cref="PeerCounters.RetentionHighWaterBytes"/>) and the
 /// four Reactor-scope figures (<see cref="ReactorCounters.DatagramsSent"/>,
-/// <see cref="ReactorCounters.DatagramsReceived"/>, <see cref="ReactorCounters.UnknownSourceDiscards"/>,
-/// <see cref="ReactorCounters.MalformedSessionDiscards"/>).
+/// <see cref="ReactorCounters.DatagramsReceived"/>, <see cref="ReactorCounters.UnknownSourceDatagrams"/>,
+/// <see cref="ReactorCounters.MalformedSessionDatagrams"/>).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -93,7 +93,7 @@ public class DatagramSessionCounterExchangeTests
         baseline.OutOfWindowPackets.Should().Be(0);
         baseline.HorizonDeferrals.Should().Be(0);
         baseline.RetentionHighWaterBytes.Should().Be(0);
-        node.Reactor.Counters.UnknownSourceDiscards.Should().Be(0);
+        node.Reactor.Counters.UnknownSourceDatagrams.Should().Be(0);
 
         ulong reactorDatagramsSentBaseline = node.Reactor.Counters.DatagramsSent;
         ulong reactorDatagramsReceivedBaseline = node.Reactor.Counters.DatagramsReceived;
@@ -224,43 +224,43 @@ public class DatagramSessionCounterExchangeTests
             3UL, "the first of the four arrivals admits; the next three are each counted a duplicate");
 
         // ------------------------------------------------------------------------------------------
-        // Phase 8 — UnknownSourceDiscards, literal 1, charged to the Reactor and to no Peer. A stray
+        // Phase 8 — UnknownSourceDatagrams, literal 1, charged to the Reactor and to no Peer. A stray
         // datagram naming a session id no Session holds (0 is reserved for control; every assigned id
         // here starts from 1).
         // ------------------------------------------------------------------------------------------
         using HostilePeer stray = new();
-        ulong unknownSourceDiscardsBefore = node.Reactor.Counters.UnknownSourceDiscards;
+        ulong unknownSourceDatagramsBefore = node.Reactor.Counters.UnknownSourceDatagrams;
         ulong bytesReceivedBeforeStray = node.Reactor.CountersOf(nodePeer).BytesReceived;
 
         byte[] strayDatagram = new byte[24];
         BinaryPrimitives.WriteUInt32BigEndian(strayDatagram, 0xFFFF_FFFEU);
         stray.SendDatagram(node.Endpoint, strayDatagram);
-        node.PumpUntil(() => node.Reactor.Counters.UnknownSourceDiscards > unknownSourceDiscardsBefore);
+        node.PumpUntil(() => node.Reactor.Counters.UnknownSourceDatagrams > unknownSourceDatagramsBefore);
 
-        (node.Reactor.Counters.UnknownSourceDiscards - unknownSourceDiscardsBefore).Should().Be(
+        (node.Reactor.Counters.UnknownSourceDatagrams - unknownSourceDatagramsBefore).Should().Be(
             1UL, "the one stray datagram named no Session this Reactor holds");
         node.Reactor.CountersOf(nodePeer).BytesReceived.Should().Be(
             bytesReceivedBeforeStray, "a datagram naming no Peer charges no Peer's bytes received");
 
         // ------------------------------------------------------------------------------------------
-        // Phase 9 — MalformedSessionDiscards, literal 1, charged to the Reactor and to no Peer, and
+        // Phase 9 — MalformedSessionDatagrams, literal 1, charged to the Reactor and to no Peer, and
         // leaving Phase 8's figure where it was (issue #275). A datagram stopping mid-header at 12
         // bytes, carrying the live session id: the id resolves, so this is the other cause — traffic
         // that named a Peer and then failed to parse — and the two must move separately or a reader in
         // the field cannot tell a scan from an established Peer sending bytes this Reactor cannot read.
         // ------------------------------------------------------------------------------------------
-        ulong malformedSessionDiscardsBefore = node.Reactor.Counters.MalformedSessionDiscards;
-        ulong unknownSourceDiscardsAfterPhase8 = node.Reactor.Counters.UnknownSourceDiscards;
+        ulong malformedSessionDatagramsBefore = node.Reactor.Counters.MalformedSessionDatagrams;
+        ulong unknownSourceDatagramsAfterPhase8 = node.Reactor.Counters.UnknownSourceDatagrams;
         ulong bytesReceivedBeforeMalformed = node.Reactor.CountersOf(nodePeer).BytesReceived;
 
         byte[] truncatedDatagram = BuildHeader(sessionId)[..12];
         client.SendTo(clientLink, Source.FromIPEndPoint(node.Endpoint), truncatedDatagram);
-        node.PumpUntil(() => node.Reactor.Counters.MalformedSessionDiscards > malformedSessionDiscardsBefore);
+        node.PumpUntil(() => node.Reactor.Counters.MalformedSessionDatagrams > malformedSessionDatagramsBefore);
 
-        (node.Reactor.Counters.MalformedSessionDiscards - malformedSessionDiscardsBefore).Should().Be(
+        (node.Reactor.Counters.MalformedSessionDatagrams - malformedSessionDatagramsBefore).Should().Be(
             1UL, "the one truncated datagram named a live Session and then failed to parse");
-        node.Reactor.Counters.UnknownSourceDiscards.Should().Be(
-            unknownSourceDiscardsAfterPhase8, "a datagram that named a live Session is not an unknown source");
+        node.Reactor.Counters.UnknownSourceDatagrams.Should().Be(
+            unknownSourceDatagramsAfterPhase8, "a datagram that named a live Session is not an unknown source");
         node.Reactor.CountersOf(nodePeer).BytesReceived.Should().Be(
             bytesReceivedBeforeMalformed, "a datagram that did not parse charges no Peer's bytes received");
 
@@ -290,8 +290,8 @@ public class DatagramSessionCounterExchangeTests
         final.DuplicatePackets.Should().BeGreaterThanOrEqualTo(duplicateBefore + 3);
         node.Reactor.Counters.DatagramsSent.Should().BeGreaterThanOrEqualTo(reactorDatagramsSentBaseline + 6);
         node.Reactor.Counters.DatagramsReceived.Should().BeGreaterThanOrEqualTo(reactorDatagramsReceivedBaseline + 12);
-        node.Reactor.Counters.UnknownSourceDiscards.Should().BeGreaterThanOrEqualTo(unknownSourceDiscardsBefore + 1);
-        node.Reactor.Counters.MalformedSessionDiscards.Should().BeGreaterThanOrEqualTo(malformedSessionDiscardsBefore + 1);
+        node.Reactor.Counters.UnknownSourceDatagrams.Should().BeGreaterThanOrEqualTo(unknownSourceDatagramsBefore + 1);
+        node.Reactor.Counters.MalformedSessionDatagrams.Should().BeGreaterThanOrEqualTo(malformedSessionDatagramsBefore + 1);
     }
 
     /// <summary>

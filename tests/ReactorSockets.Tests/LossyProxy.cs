@@ -263,15 +263,19 @@ internal sealed class LossyProxy : IDisposable
     /// queued fault and held reorder datagram untouched. Delayed relays already scheduled are re-pointed
     /// at the new socket so they release from the new port instead of the closed one.
     /// </summary>
+    /// <param name="address">
+    /// The loopback address to bind the new socket to, so the source address changes as well as the port
+    /// (issue #393). <see cref="IPAddress.Loopback"/> when omitted, which changes the port only.
+    /// </param>
     /// <returns>The new upstream-facing address, the source upstream will now see.</returns>
-    public IPEndPoint MoveUpstreamFacingSocket()
+    public IPEndPoint MoveUpstreamFacingSocket(IPAddress? address = null)
     {
         LinkId old = _upstreamFacing;
 
         // The Reactor's capacity is exactly two Links, so the old one must close before the new one binds.
         // Its Closed event is skipped by Pump, and datagrams still queued on it are discarded with it.
         _reactor.Close(old);
-        _upstreamFacing = _reactor.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        _upstreamFacing = _reactor.Bind(new IPEndPoint(address ?? IPAddress.Loopback, 0));
 
         for (int i = 0; i < _delayed.Count; i++)
         {

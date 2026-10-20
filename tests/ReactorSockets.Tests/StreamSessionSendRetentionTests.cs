@@ -85,6 +85,23 @@ public class StreamSessionSendRetentionTests
     }
 
     [Fact]
+    public void Send_EmptyMessage_Throws()
+    {
+        // Arrange — a zero-length prefix is illegal on the wire, so the far end would close the Session
+        // with ProtocolViolation; refusing here keeps that fault on the caller's side of the call.
+        using StreamSessionReactorHarness accepter = new();
+        PeerId peerId = EstablishSession(accepter, out HandshakePeer peer);
+        using (peer)
+        {
+            // Act
+            Action act = () => accepter.Reactor.Send(peerId, []);
+
+            // Assert
+            act.Should().Throw<ArgumentException>().WithParameterName("message");
+        }
+    }
+
+    [Fact]
     public void Send_ToADialledPeerBeforeItsHandshakeCompletes_ReturnsNotEstablished()
     {
         // Arrange — issue #332. Connect hands back a PeerId at once, before the TCP connect resolves.
