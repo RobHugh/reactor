@@ -1,8 +1,10 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/ReactorSockets/ReactorSockets.csproj" />
+    <Project Path="src/ReactorSockets.Logging/ReactorSockets.Logging.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ReactorSockets.Tests/ReactorSockets.Tests.csproj" />
+    <Project Path="tests/ReactorSockets.Logging.Tests/ReactorSockets.Logging.Tests.csproj" />
   </Folder>
 </Solution>
