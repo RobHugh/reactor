@@ -44,6 +44,27 @@ public class StreamSessionGoodbyeTests
     // =========================================================================================
 
     [Fact]
+    public void Close_ADialledPeerBeforeItsConnectResolves_ClosesWithLocalClose()
+    {
+        // Arrange — Connect hands back a PeerId before the TCP connect resolves, and Close is called on
+        // it at once, before any Pump has advanced the dial.
+        using StreamSessionReactorHarness accepter = new();
+        using StreamSessionReactorHarness dialler = new();
+        PeerId id = dialler.Reactor.Connect(accepter.Endpoint);
+
+        // Act
+        dialler.Reactor.Close(id);
+        (var diallerEvents, _) = StreamSessionReactorHarness.PumpBothUntilDrained(
+            dialler,
+            accepter,
+            (diallerSoFar, _) => diallerSoFar.Any(e => e.Kind == SessionEventKind.PeerClosed));
+
+        // Assert
+        diallerEvents.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Should().Be((SessionEventKind.PeerClosed, id, DisconnectReason.LocalClose));
+    }
+
+    [Fact]
     public void Send_AfterClose_ReturnsClosedOutcome()
     {
         // Arrange

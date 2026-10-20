@@ -74,6 +74,10 @@ Rules for a Sink:
 - Calling back into the Reactor from a Sink is a programmer error and throws.
 - `IsEnabled` gates record construction, so a disabled level costs one comparison.
 
+To write diagnostics to `Microsoft.Extensions.Logging`, use `LoggerSink` from the
+`ReactorSockets.Logging` package instead of writing your own. To render a record as text in your
+own Sink, call `DiagnosticFormatter.Format(record)`.
+
 A record carries no strings, no boxing and no closures: an id, a level, a tagged subject (Peer,
 Source or none) and two numeric slots whose meaning is documented per id.
 

@@ -94,10 +94,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _diagnostics = new DiagnosticGateway(options.Reactor.Sink, options.Reactor.MinimumLevel, _counters);
         _arena = new FrameArena(arenaSize, options.Reactor.Capacity);
         // The true floor of any single TryAppend call this Reactor ever makes: the Goodbye sentinel
-        // (AppendGoodbyeOrDefer) is exactly LengthPrefixSize bytes with no payload at all, and Send
-        // enforces no lower bound on message.Length, so a zero-payload Message frames to the same
-        // LengthPrefixSize bytes. Neither ever writes fewer bytes than that, so this is the minimum
-        // RetentionArena can be told without it rejecting a write this Reactor actually makes.
+        // (AppendGoodbyeOrDefer) is exactly LengthPrefixSize bytes with no payload at all, and every
+        // Message Send frames is longer than that. Nothing ever writes fewer bytes, so this is the
+        // minimum RetentionArena can be told without it rejecting a write this Reactor actually makes.
         _retention = new RetentionArena(
             options.RetentionBytes,
             options.Reactor.Capacity,
@@ -447,9 +446,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// </remarks>
     /// <param name="peer">The Peer to send to. Throws if not open, matching <see cref="CountersOf"/>.</param>
     /// <param name="message">
-    /// The Message payload, unframed. Throws if longer than <see cref="StreamSessionOptions.MaxMessageSize"/> —
-    /// the same floor the receive side enforces, so this can never frame a Message the far end's
-    /// announced limit would reject.
+    /// The Message payload, unframed. Throws if empty or longer than
+    /// <see cref="StreamSessionOptions.MaxMessageSize"/> — the same bounds the receive side enforces, so
+    /// this can never frame a Message the far end would reject.
     /// </param>
     public SendOutcome Send(PeerId peer, ReadOnlySpan<byte> message)
     {
@@ -460,6 +459,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         {
             throw new ArgumentException(
                 $"message of {message.Length} bytes exceeds MaxMessageSize of {_options.MaxMessageSize}.",
+                nameof(message));
+        }
+
+        // A zero-length prefix is illegal on the wire (MessageFramingLegality's ZeroLengthPrefix), so
+        // framing an empty Message would only have the far end close the Session with
+        // ProtocolViolation — a fault of this caller's, reported to the wrong end.
+        if (message.IsEmpty)
+        {
+            throw new ArgumentException(
+                "message of 0 bytes cannot be framed — a zero-length prefix is illegal on the wire, so a Message must carry at least 1 byte.",
                 nameof(message));
         }
 

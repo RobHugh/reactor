@@ -35,9 +35,14 @@ in one write.
 | `Sent` | Copied whole into retention. | Nothing. |
 | `RetentionExhausted` | No room. Nothing was copied. | Retry after a later Pump. |
 | `Closed` | A Goodbye already passed in one direction or the other. | Stop sending to this Peer. |
+| `NotEstablished` | The handshake has not finished. Nothing was copied. | Wait for `PeerConnected`. |
+
+A dialled Peer is addressable from `Connect`, but it accepts no Message until `PeerConnected`.
+`Closed` is checked first, so a Peer you closed before its handshake finished returns `Closed`.
 
 `Send` throws:
 
+- `ArgumentException` if `message` is empty. A zero-length prefix is illegal on the wire.
 - `ArgumentException` if `message.Length > MaxMessageSize`.
 - `ArgumentException` if the `PeerId` names no open Peer.
 
@@ -86,7 +91,9 @@ These close the Session with `ProtocolViolation`, and log `MalformedFraming` (30
 
 - A length prefix above the announced `MaxMessageSize`.
 - A length prefix of zero.
-- A stream that ended mid-prefix or mid-body.
+
+A stream that ends mid-prefix or mid-body also closes the Session with `ProtocolViolation`, but logs
+no diagnostic.
 
 Data arriving after that peer's own Goodbye closes it too, logged as `DataAfterGoodbye` (303).
 
