@@ -21,6 +21,9 @@ you, or closing the same Peer twice, is an ordinary race, not a programmer error
 Retention full at the moment you call `Close` does not lose the Goodbye. The append is retried every
 Pump until it commits.
 
+Closing an Interrupted Peer cannot put the Goodbye on the wire, because there is no transport. That
+Peer ends with `LingerExpired` once the effective Linger elapses, not with `LocalClose`.
+
 ## When the peer closes
 
 A Goodbye from the far end resolves one of two ways:
