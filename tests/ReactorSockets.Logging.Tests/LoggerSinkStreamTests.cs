@@ -8,73 +8,72 @@ using Xunit;
 namespace ReactorSockets.Logging.Tests;
 
 /// <summary>
-/// One Reactor of each profile installed with the same <see cref="LoggerSink"/>: the reason the adapter
-/// stays single is that a consumer running all three gets one log stream. Each record is provoked
-/// through the public surface, as in ReactorSockets.Tests, and each carries a Link or Peer subject so
-/// the Reactor that emitted it is named in the record itself.
+/// One Reactor of each profile, each installed with its own <see cref="LoggerSink"/> over a logger from
+/// one factory — the setup the package README recommends. The adapter is one type across all three
+/// profiles, the factory makes one stream, and the category names each record's emitter, including a
+/// record whose subject names no Reactor. Every record is provoked through the public surface, as in
+/// ReactorSockets.Tests.
 /// </summary>
 public sealed class LoggerSinkStreamTests : IDisposable
 {
-    // Windows retries a refused connect for about two seconds before reporting it, so the Raw record
-    // arrives last there. Overshooting costs nothing: the loop returns once all three have logged.
-    private static readonly TimeSpan _budget = TimeSpan.FromSeconds(10);
+    private const string RawCategory = "Reactor.Raw";
+    private const string DatagramCategory = "Reactor.DatagramSession";
+    private const string StreamCategory = "Reactor.StreamSession";
 
-    private readonly RecordingLogger _logger = new();
+    // Matches ReactorSockets.Tests' PumpDeadline: a loopback handshake occasionally takes about a
+    // millisecond on Windows, and the loop returns the moment every record has arrived.
+    private static readonly TimeSpan _budget = TimeSpan.FromSeconds(2);
+
+    private readonly RecordingLoggerFactory _factory = new();
     private readonly FakeTimeProvider _time = new();
-    private readonly Socket _closedPort = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+    private readonly Socket _counterparty = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
     private readonly RawReactor _raw;
     private readonly DatagramSessionReactor _datagramDialler;
     private readonly DatagramSessionReactor _datagramAccepter;
     private readonly StreamSessionReactor _streamDialler;
     private readonly StreamSessionReactor _streamAccepter;
 
+    /// <summary>
+    /// Builds the three Reactors under test, each with a Sink over its own category, and two accepters
+    /// with no Sink, so every entry in the stream comes from one of the three.
+    /// </summary>
     public LoggerSinkStreamTests()
     {
-        LoggerSink sink = new(_logger);
-
-        // Bound and never listening: a dial is refused, and the port stays held so nothing else in the
-        // machine can start listening on it mid-test.
-        _closedPort.Bind(new IPEndPoint(IPAddress.Loopback, 0));
-
-        _raw = new RawReactor(ReactorOptions(sink), scratchBufferSize: null);
-        _datagramDialler = new DatagramSessionReactor(DatagramOptions(sink, bindLoopback: false));
+        _raw = new RawReactor(ReactorOptions(Sink(RawCategory)), scratchBufferSize: 16);
+        _datagramDialler = new DatagramSessionReactor(DatagramOptions(Sink(DatagramCategory), bindLoopback: false));
         _datagramAccepter = new DatagramSessionReactor(DatagramOptions(sink: null, bindLoopback: true));
-        _streamDialler = new StreamSessionReactor(StreamOptions(sink, bindLoopback: false));
+        _streamDialler = new StreamSessionReactor(StreamOptions(Sink(StreamCategory), bindLoopback: false));
         _streamAccepter = new StreamSessionReactor(StreamOptions(sink: null, bindLoopback: true));
+        _counterparty.Bind(new IPEndPoint(IPAddress.Loopback, 0));
     }
 
     [Fact]
-    public void Log_OneReactorOfEachProfileSharingOneSink_ProducesOneStreamWhoseEveryRecordNamesItsEmitter()
+    public void Log_OneReactorOfEachProfileWithASinkPerReactorFromOneFactory_ProducesOneStreamWhoseEveryRecordNamesItsEmitter()
     {
-        // Arrange — a refused Raw dial logs LinkFailed; each Session dialler logs LingerNegotiated when
-        // it establishes. The accepters carry no Sink, so every entry comes from one of three Reactors.
-        // `!` works around a framework limitation: Socket.LocalEndPoint is declared nullable for an
-        // unbound socket, and this one was bound in the constructor.
-        LinkId rawLink = _raw.Connect((IPEndPoint)_closedPort.LocalEndPoint!);
-        PeerId datagramPeer = _datagramDialler.Connect(_datagramAccepter.BoundEndpoints[0]);
-        PeerId streamPeer = _streamDialler.Connect(_streamAccepter.BoundEndpoints[0]);
-        Dictionary<uint, DiagnosticId> emitters = new()
+        // Arrange — a datagram larger than Raw's 16-byte scratch buffer logs DatagramTruncated, whose
+        // Source subject names no Reactor; each Session dialler logs LingerNegotiated when it establishes.
+        LinkId rawLink = _raw.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        _counterparty.SendTo(new byte[100], _raw.LocalOf(rawLink));
+        _datagramDialler.Connect(_datagramAccepter.BoundEndpoints[0]);
+        _streamDialler.Connect(_streamAccepter.BoundEndpoints[0]);
+        Dictionary<string, DiagnosticId> provoked = new()
         {
-            [rawLink.Origin] = DiagnosticId.LinkFailed,
-            [datagramPeer.Origin] = DiagnosticId.LingerNegotiated,
-            [streamPeer.Origin] = DiagnosticId.LingerNegotiated,
+            [RawCategory] = DiagnosticId.DatagramTruncated,
+            [DatagramCategory] = DiagnosticId.LingerNegotiated,
+            [StreamCategory] = DiagnosticId.LingerNegotiated,
         };
 
         // Act
-        PumpAllUntil(() => emitters.Keys.All(origin => _logger.Entries.Exists(entry => Equals(entry.Fields.GetValueOrDefault("Reactor"), origin))));
+        PumpAllUntil(() => provoked.Keys.All(category => _factory.Entries.Exists(entry => entry.Category == category)));
 
-        // Assert — every entry names one of the three Reactors and the condition that Reactor was
-        // provoked into, and all three appear in the one stream.
-        _logger.Entries.Should().AllSatisfy(entry =>
-        {
-            uint origin = entry.Fields.GetValueOrDefault("Reactor").Should().BeOfType<uint>().Subject;
-            emitters.Should().ContainKey(origin);
-            entry.Fields["DiagnosticId"].Should().Be(emitters[origin]);
-            entry.Message.Should().Contain($"of reactor {origin}");
-        });
-        _logger.Entries.Select(entry => entry.Fields["Reactor"]).Distinct().Should().HaveCount(3);
+        // Assert — every entry in the one stream carries the category of a Reactor provoked into
+        // exactly that condition, and all three Reactors appear.
+        _factory.Entries.Should().AllSatisfy(entry =>
+            entry.Fields["DiagnosticId"].Should().Be(provoked.GetValueOrDefault(entry.Category)));
+        _factory.Entries.Select(entry => entry.Category).Distinct().Should().BeEquivalentTo(provoked.Keys);
     }
 
+    /// <summary>Disposes every Reactor and the counterparty socket.</summary>
     public void Dispose()
     {
         _streamAccepter.Dispose();
@@ -82,13 +81,16 @@ public sealed class LoggerSinkStreamTests : IDisposable
         _datagramAccepter.Dispose();
         _datagramDialler.Dispose();
         _raw.Dispose();
-        _closedPort.Dispose();
+        _counterparty.Dispose();
     }
+
+    /// <summary>A Sink over a logger of <paramref name="category"/> from the one shared factory.</summary>
+    private LoggerSink Sink(string category) => new(_factory.CreateLogger(category));
 
     /// <summary>
     /// Pumps every Reactor in turn until <paramref name="condition"/> holds or the real-time budget is
-    /// spent: a refused dial and a loopback handshake both resolve inside the platform's stack, which a
-    /// Pump count cannot wait on.
+    /// spent: a datagram's arrival and a loopback handshake both resolve inside the platform's stack,
+    /// which a Pump count cannot wait on.
     /// </summary>
     private void PumpAllUntil(Func<bool> condition)
     {
@@ -96,28 +98,25 @@ public sealed class LoggerSinkStreamTests : IDisposable
         while (!condition() && elapsed.Elapsed < _budget)
         {
             _raw.Pump();
-            DrainRaw();
+            foreach (RawEvent evt in _raw.Drain())
+            {
+                _ = evt.Kind;
+            }
+
             _datagramDialler.Pump();
-            DrainSession(_datagramDialler.Drain());
+            Discard(_datagramDialler.Drain());
             _datagramAccepter.Pump();
-            DrainSession(_datagramAccepter.Drain());
+            Discard(_datagramAccepter.Drain());
             _streamDialler.Pump();
-            DrainSession(_streamDialler.Drain());
+            Discard(_streamDialler.Drain());
             _streamAccepter.Pump();
-            DrainSession(_streamAccepter.Drain());
+            Discard(_streamAccepter.Drain());
             Thread.Sleep(1);
         }
     }
 
-    private void DrainRaw()
-    {
-        foreach (RawEvent evt in _raw.Drain())
-        {
-            _ = evt.Kind;
-        }
-    }
-
-    private static void DrainSession(SessionEventEnumerator events)
+    /// <summary>Drains one Session Reactor's Frame, keeping nothing.</summary>
+    private static void Discard(SessionEventEnumerator events)
     {
         foreach (SessionEvent evt in events)
         {
@@ -125,6 +124,7 @@ public sealed class LoggerSinkStreamTests : IDisposable
         }
     }
 
+    /// <summary>Reactor options shared by all five Reactors, with diagnostics on only when a Sink is given.</summary>
     private ReactorOptions ReactorOptions(IReactorDiagnostics? sink) => new()
     {
         Capacity = 4,
@@ -133,6 +133,7 @@ public sealed class LoggerSinkStreamTests : IDisposable
         MinimumLevel = sink is null ? null : DiagnosticLevel.Info,
     };
 
+    /// <summary>Datagram Session options, bound to loopback for the accepter and unbound for the dialler.</summary>
     private DatagramSessionOptions DatagramOptions(IReactorDiagnostics? sink, bool bindLoopback) => new()
     {
         Reactor = ReactorOptions(sink),
@@ -143,6 +144,10 @@ public sealed class LoggerSinkStreamTests : IDisposable
         Endpoints = bindLoopback ? [new IPEndPoint(IPAddress.Loopback, 0)] : [],
     };
 
+    /// <summary>
+    /// Stream Session options, bound as <see cref="DatagramOptions"/> is. Retention must hold one
+    /// Message plus its length prefix, so it is twice the Message size here.
+    /// </summary>
     private StreamSessionOptions StreamOptions(IReactorDiagnostics? sink, bool bindLoopback) => new()
     {
         Reactor = ReactorOptions(sink),

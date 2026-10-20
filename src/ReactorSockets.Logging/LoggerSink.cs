@@ -5,8 +5,10 @@ namespace ReactorSockets.Logging;
 /// <summary>
 /// An <see cref="IReactorDiagnostics"/> Sink that writes each record to an <see cref="ILogger"/>. The
 /// message is <see cref="DiagnosticFormatter.Format"/>'s text, never wording of this package's own, and
-/// the state carries the record's typed fields for a structured provider. One instance may be installed
-/// on any number of Reactors of any profile, which gives them one log stream.
+/// the state carries the record's typed fields for a structured provider. One type serves every profile:
+/// install one per Reactor, each over a logger with its own category from one
+/// <see cref="ILoggerFactory"/>, and every Reactor writes one stream with each record attributed by
+/// category.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -16,10 +18,9 @@ namespace ReactorSockets.Logging;
 /// Frame for as long as the write takes. Configure providers that hand the write off and return.
 /// </para>
 /// <para>
-/// A record with a Link or Peer subject names the Reactor that emitted it, in the <c>Reactor</c> field
-/// and in the message. A record with no subject or a Source subject does not. To attribute those, install
-/// one <see cref="LoggerSink"/> per Reactor, each over a logger created with its own category from the
-/// same <see cref="ILoggerFactory"/>: the stream stays one stream and the category names the emitter.
+/// The category is the attribution. A record with a Link or Peer subject also names its Reactor in the
+/// <c>Reactor</c> field and the message, but a record with no subject or a Source subject names none, so
+/// one instance shared between Reactors leaves those unattributed.
 /// </para>
 /// </remarks>
 /// <param name="logger">The logger every record is written to.</param>

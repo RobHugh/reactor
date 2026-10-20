@@ -2,14 +2,14 @@
 
 Writes ReactorSockets Diagnostics to a `Microsoft.Extensions.Logging` `ILogger`.
 
-```csharp
-ILogger logger = loggerFactory.CreateLogger("ReactorSockets");
-LoggerSink sink = new(logger);
+Give each Reactor its own `LoggerSink`, over a logger with its own category from one
+`ILoggerFactory`:
 
+```csharp
 ReactorOptions options = new()
 {
     Capacity = 64,
-    Sink = sink,
+    Sink = new LoggerSink(loggerFactory.CreateLogger("Reactor.Lobby")),
     MinimumLevel = DiagnosticLevel.Info,
 };
 ```
@@ -40,10 +40,13 @@ for the rest of its life. Do not call back into the Reactor from a provider: tha
 
 ## One stream for every Reactor
 
-Install one `LoggerSink` on Reactors of any profile and their Diagnostics arrive in one stream. A record
-about a Link or a Peer names the Reactor that emitted it in its `Reactor` field. A record with no
-subject or a Source subject does not. To attribute those as well, give each Reactor its own
-`LoggerSink` over a logger with its own category from the same `ILoggerFactory`.
+`LoggerSink` is one type for every profile. Loggers from one `ILoggerFactory` write one stream, so a
+Raw, a datagram Session and a stream Session Reactor, each with its own `LoggerSink`, log together. The
+category names the Reactor that emitted each record.
+
+The category is what attributes every record. A record about a Link or a Peer also carries the
+emitting Reactor's opaque number in its `Reactor` field. A record with no subject or a Source subject
+carries none, so a single `LoggerSink` shared between Reactors leaves those records unattributed.
 
 ## Why this is a separate package
 
