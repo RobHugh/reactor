@@ -108,6 +108,20 @@ internal sealed class ReceiveWindowSpaces
     public ReceiveWindowOutcome Classify(PacketRecordMode mode, uint sequence) => Classify(mode, sequence, out _);
 
     /// <summary>
+    /// Whether <paramref name="mode"/>'s window would admit <paramref name="sequence"/> right now —
+    /// see <see cref="ReceiveWindow.WouldAdmit"/>. Changes nothing, so <see cref="LastSlideLoss"/> and
+    /// <see cref="LastAbandonedFragmentSet"/> keep what the last <see cref="Classify(PacketRecordMode, uint)"/>
+    /// left. <paramref name="mode"/> must be <c>ReliableOrdered</c> or <c>ReliableUnordered</c>, the
+    /// two Spaces whose windows do not slide.
+    /// </summary>
+    public bool WouldAdmit(PacketRecordMode mode, uint sequence) => mode switch
+    {
+        PacketRecordMode.ReliableUnordered => _reliableUnordered.WouldAdmit(sequence),
+        PacketRecordMode.ReliableOrdered => _reliableOrdered.WouldAdmit(sequence),
+        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Only the two reliable Spaces' windows can be asked."),
+    };
+
+    /// <summary>
     /// <see cref="Classify(PacketRecordMode, uint)"/>, additionally reporting the ring slot
     /// <paramref name="sequence"/> resolves to in <paramref name="mode"/>'s window — see
     /// <see cref="ReceiveWindow.Classify(uint, out int)"/>. A caller holding a Fragment's payload

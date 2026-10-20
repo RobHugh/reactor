@@ -10,11 +10,11 @@ namespace ReactorSockets;
 
 /// <summary>
 /// The datagram Session profile (ADR 0009): Sessions established over UDP, addressed as Peers, driven
-/// by a single synchronous <see cref="Pump"/> from the consumer's own loop. This slice builds the
-/// handshake and everything that guards it — the stateless cookie, the amplification bound, version
-/// and capacity refusals, session identity and demultiplexing. It does not yet carry data; the packet
-/// records, the four sequence Spaces, fragmentation and the acknowledgement machinery land in the
-/// slices that follow, and <see cref="SessionEventKind"/> grows with them.
+/// by a single synchronous <see cref="Pump"/> from the consumer's own loop. It carries the handshake
+/// and everything that guards it — the stateless cookie, the amplification bound, version and
+/// capacity refusals, session identity and demultiplexing — and the data plane behind it: packet
+/// records in four sequence Spaces, one per <see cref="DeliveryMode"/>, fragmentation of reliable
+/// Messages, acknowledgement and retransmission, heartbeats, Goodbye, interruption and Resume.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -399,9 +399,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="SessionEventKind.PeerClosed"/> resolves it on a later Pump.
     /// </summary>
     /// <remarks>
-    /// The Hello is sent once. Retransmitting it when a reply never comes is liveness, which belongs
-    /// with the heartbeat and the missed-heartbeat count in the slice that implements them; until
-    /// then, a dial whose Hello or Cookie is lost simply stays pending until the consumer closes it.
+    /// The Hello is sent once, and no handshake control datagram is ever retransmitted. The heartbeat
+    /// and the missed-heartbeat deadline apply only to an Established Peer, so a dial whose Hello,
+    /// Cookie or Accept is lost has no timeout: it stays pending, holding its capacity Slot, until the
+    /// consumer closes it.
     /// </remarks>
     public PeerId Connect(IPEndPoint destination)
     {
@@ -491,8 +492,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// now reflect what the four per-Space receive windows have refused (issue #172);
     /// <see cref="PeerCounters.UnreliableLossPackets"/> reflects gaps either unreliable Space's window
     /// has slid past (issues #173, #176).
-    /// <see cref="PeerCounters.MessagesReceived"/> still reads zero for every Peer, since this profile
-    /// has no delivery machinery yet to increment it. <see cref="PeerCounters.Resumes"/> counts the
+    /// <see cref="PeerCounters.MessagesReceived"/> counts whole Messages handed to the frame arena for
+    /// delivery, and not a Message the arena refused. <see cref="PeerCounters.Resumes"/> counts the
     /// Peer's resumes: once per <see cref="SessionEventKind.PeerResumed"/> raised for it, on the
     /// accepting end when a matching Resume moves it out of Interrupted and on the dialling end when it
     /// hears its session again after sending a Resume, and never reset by one (ADR 0013).
@@ -2403,6 +2404,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
+        if (RefusesForArenaRoom(slot, windows, mode, sequence, isFragment, isControl, payload.Length))
+        {
+            return;
+        }
+
         ReceiveWindowOutcome outcome = windows.Classify(mode, sequence, out int ringSlot);
 
         // The moment a Fragment set's slot is discarded is the last moment anyone can say how much of
@@ -2480,6 +2486,43 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         {
             slot.Counters.RecordUnreliableLoss(windows.LastSlideLoss);
         }
+    }
+
+    /// <summary>
+    /// Decides, before the receive window sees it, whether a whole reliable Message that would be
+    /// delivered the moment it is admitted must be turned away because the frame arena has no room for
+    /// it this Frame. A refused record is left unadmitted, so no ack covers it and the far end's
+    /// ordinary retransmission brings it back on a later Pump. Admitting it first and failing the
+    /// reservation afterwards would lose it: the ack would stop the retransmissions, and any copy
+    /// already in flight would arrive below the window base.
+    /// </summary>
+    /// <remarks>
+    /// Only a record that would reach <see cref="DeliverToConsumer"/> straight from this datagram is
+    /// checked: a <c>ReliableUnordered</c> Message, or a <c>ReliableOrdered</c> one at the head of send
+    /// order. A <c>ReliableOrdered</c> record behind a gap is copied into
+    /// <see cref="PeerSlot.OrderedDelivery"/> and retried there, and a Fragment set is retried through
+    /// <see cref="PendingFragmentGroups"/>, so neither needs this end to refuse it. Nothing reserves arena
+    /// room between this check and the delivery that follows it, so a record this passes is delivered.
+    /// </remarks>
+    /// <returns><see langword="true"/> when the record was refused and must not be classified.</returns>
+    private bool RefusesForArenaRoom(
+        PeerSlot slot, ReceiveWindowSpaces windows, PacketRecordMode mode, uint sequence,
+        bool isFragment, bool isControl, int payloadLength)
+    {
+        bool deliversOnAdmission = mode switch
+        {
+            PacketRecordMode.ReliableUnordered => true,
+            PacketRecordMode.ReliableOrdered => sequence == slot.OrderedDelivery.NextSequence,
+            _ => false,
+        };
+
+        if (!deliversOnAdmission || isFragment || isControl || slot.RemoteGoodbyeDelivered
+            || !windows.WouldAdmit(mode, sequence))
+        {
+            return false;
+        }
+
+        return !AccountForReservation(slot, _arena.Check(slot.Handle.Index, payloadLength));
     }
 
     /// <summary>
@@ -2721,7 +2764,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Drains this Peer's <c>ReliableOrdered</c> send-order queue — every payload
-    /// <see cref="OrderedDeliveryQueue.TryReleaseNext"/> now yields, in order — and then attempts
+    /// <see cref="OrderedDeliveryQueue.TryPeekNext"/> now yields, in order — and then attempts
     /// the Space's <see cref="PendingFragmentGroups"/> if that drain reached its first sequence
     /// (issue #259). The two are interleaved rather than run once each, because delivering a group
     /// advances the queue past the whole span it occupies
@@ -2739,15 +2782,26 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 return;
             }
 
-            uint releasedSequence = slot.OrderedDelivery.NextSequence;
-            while (slot.OrderedDelivery.TryReleaseNext(out ReadOnlyMemory<byte> released))
+            uint heldSequence = slot.OrderedDelivery.NextSequence;
+            while (slot.OrderedDelivery.TryPeekNext(out ReadOnlyMemory<byte> held))
             {
-                if (DeliverOrderedRecord(slot, releasedSequence, released.Span))
+                if (slot.RemoteGoodbyeSequence == heldSequence)
+                {
+                    slot.OrderedDelivery.ReleaseNext();
+                    OnGoodbyeDelivered(slot);
+                    return;
+                }
+
+                // A held record is released only once the arena has taken it. One the arena refuses
+                // stays first in line, and RetryPendingFragmentDeliveries tries it again next Pump: it
+                // was admitted and acknowledged when it arrived, so no retransmission will bring it back.
+                if (!DeliverToConsumer(slot, held.Span))
                 {
                     return;
                 }
 
-                releasedSequence = slot.OrderedDelivery.NextSequence;
+                slot.OrderedDelivery.ReleaseNext();
+                heldSequence = slot.OrderedDelivery.NextSequence;
             }
 
             if (!TryFlushPendingOrderedFragmentGroup(slot))
@@ -2792,7 +2846,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Retries every open Peer's Fragment group still waiting to be delivered (issue #259): one whose
-    /// frame-arena reservation failed the moment it completed, in either reliable Space. Driven once
+    /// frame-arena reservation failed the moment it completed, in either reliable Space. Also drains
+    /// each Peer's <c>ReliableOrdered</c> queue, whose head may be a held record the arena refused on
+    /// an earlier Pump. Driven once
     /// per Pump, right after the datagram-processing pass that both completes new groups and can
     /// advance a <c>ReliableOrdered</c> group past a gap — this Reactor's own send path never frees
     /// receive-side room, so only a fresh Frame's wiped arena (<see cref="FrameArena.Reset"/>, at the
@@ -2810,10 +2866,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            if (PendingGroupsOf(slot, PacketRecordMode.ReliableOrdered).Count > 0)
-            {
-                DrainOrderedDelivery(slot);
-            }
+            DrainOrderedDelivery(slot);
 
             // Walks the dense prefix backwards, so a delivered group's removal — which moves the last
             // entry down into the freed position — can never skip an entry this pass has not yet tried.
@@ -2842,9 +2895,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <b>A Message the arena had no room for is not counted as received.</b> The counter moves only
     /// where the bytes did, which is what makes a share exhaustion visible: a Frame in which records
     /// plainly arrived but this figure did not move is a Message the arena refused, not one the network
-    /// lost. Unlike the stream profile, nothing is buffered for a retry — a datagram's bytes are gone
-    /// once the parse loop passes them, and the reliable modes recover a refused record through
-    /// retransmission rather than through a re-reservation this end schedules for itself.
+    /// lost. An unreliable record the arena refuses is gone. A reliable one is never refused here: one
+    /// delivered straight from its datagram was checked for room before it was admitted (see
+    /// <see cref="RefusesForArenaRoom"/>) and is otherwise left unacknowledged for the far end to
+    /// retransmit, and a <c>ReliableOrdered</c> record released from behind a gap stays held in its
+    /// queue until a later Pump's arena takes it.
     /// </para>
     /// <para>
     /// <b>The one rule applied here is <c>UnreliableSequenced</c>'s</b> (subtask 6.6.11, issue #221):
@@ -3080,15 +3135,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     /// <remarks>
     /// A Message the arena had no room for is not counted as received; the reasoning is on
-    /// <see cref="DeliverAdmittedRecord"/>, which is where every caller of this comes from.
+    /// <see cref="DeliverAdmittedRecord"/>.
     /// </remarks>
-    private void DeliverToConsumer(PeerSlot slot, ReadOnlySpan<byte> payload)
+    /// <returns>
+    /// <see langword="false"/> when the arena refused the Message, so a caller still holding it can
+    /// keep it for a later Pump.
+    /// </returns>
+    private bool DeliverToConsumer(PeerSlot slot, ReadOnlySpan<byte> payload)
     {
         int payloadOffset = _arena.BytesUsed;
         ArenaReservation reservation = _arena.Reserve(slot.Handle.Index, payload);
         if (!AccountForReservation(slot, reservation))
         {
-            return;
+            return false;
         }
 
         _pendingEvents.Add(new PendingEvent
@@ -3100,6 +3159,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         });
 
         slot.Counters.RecordMessageReceived();
+        return true;
     }
 
     /// <summary>

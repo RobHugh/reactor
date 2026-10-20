@@ -113,6 +113,7 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
         delivered.Should().BeTrue(
             $"{FragmentSizeDiagnosisFixture.LargeMessageLength} bytes lost at one relay in {LossEveryNth} on both directions must still complete through ordinary retransmission within {MaxDeliveryRounds} rounds");
         fixture.DeliveredPayloads.Should().ContainSingle(
+            payload => payload.Length == FragmentSizeDiagnosisFixture.LargeMessageLength,
             "the fixture's dialler is the only sender, and it sent exactly one large Message")
             .Which.Should().Equal(
                 Enumerable.Range(0, FragmentSizeDiagnosisFixture.LargeMessageLength).Select(i => (byte)i),
@@ -146,6 +147,7 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
             e => e.Kind == SessionEventKind.PeerClosed,
             "FragmentSetAbandoned reports loss, it never diagnoses cause, so it must never be the reason a Session closes");
         fixture.DeliveredPayloads.Should().ContainSingle(
+            payload => payload.Length == FragmentSizeDiagnosisFixture.LargeMessageLength,
             "even if some Fragment set was abandoned to ordinary loss along the way, the large Message's own retransmissions must still have completed delivery by the end of the run");
     }
 
@@ -211,7 +213,9 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
         fixture.SendLargeMessage().Should().Be(SendOutcome.Sent, "the large Message must actually have been accepted for the run to prove anything about its delivery");
         fixture.SendSmallMessage().Should().Be(SendOutcome.Sent, "the small, unfragmented Message must ride the same lossy path as the Fragments, per the issue's own framing");
 
-        bool delivered = fixture.PumpRoundsUntil(() => fixture.DeliveredPayloads.Count > 0, MaxDeliveryRounds);
+        bool delivered = fixture.PumpRoundsUntil(
+            () => fixture.DeliveredPayloads.Any(payload => payload.Length == FragmentSizeDiagnosisFixture.LargeMessageLength),
+            MaxDeliveryRounds);
         fixture.PumpRounds(MarginRounds);
         return delivered;
     }

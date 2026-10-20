@@ -279,6 +279,25 @@ internal sealed class ReceiveWindow
     internal ReceiveWindowOutcome Classify(uint sequence) => Classify(sequence, out _);
 
     /// <summary>
+    /// Whether <see cref="Classify(uint)"/> would answer <see cref="ReceiveWindowOutcome.Admitted"/>
+    /// for <paramref name="sequence"/> right now, changing nothing. Answers <see langword="false"/> for
+    /// a sequence at or beyond the far edge even on a sliding window, which would admit it by sliding:
+    /// only the two reliable windows are asked, and neither slides.
+    /// </summary>
+    /// <param name="sequence">The sequence to ask about.</param>
+    internal bool WouldAdmit(uint sequence)
+    {
+        bool atOrAboveBase = sequence == Base || SequenceNumber.IsNewerThan(sequence, Base);
+        uint offset = unchecked(sequence - Base);
+        if (!atOrAboveBase || offset >= (uint)Capacity)
+        {
+            return false;
+        }
+
+        return _admitted.Span[(int)((_baseSlot + offset) % (uint)Capacity)] == 0;
+    }
+
+    /// <summary>
     /// <see cref="Classify(uint)"/>, additionally reporting the ring slot <paramref name="sequence"/>
     /// resolves to — the same slot a caller holding a Fragment's bytes passes to
     /// <see cref="RecordFragmentLength"/> and a <see cref="Core.ReceiveArena.GetFragmentSlot"/> call
