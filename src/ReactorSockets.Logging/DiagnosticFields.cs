@@ -20,7 +20,8 @@ internal readonly struct DiagnosticFields(DiagnosticRecord record) : IReadOnlyLi
     {
         DiagnosticSubjectKind.Link or DiagnosticSubjectKind.Peer => 3,
         DiagnosticSubjectKind.Source => 1,
-        _ => 0,
+        DiagnosticSubjectKind.None => 0,
+        _ => throw UnrecognisedSubjectKind(),
     };
 
     /// <summary>The field at <paramref name="index"/>, in the order the type summary lists them.</summary>
@@ -62,6 +63,14 @@ internal readonly struct DiagnosticFields(DiagnosticRecord record) : IReadOnlyLi
         (DiagnosticSubjectKind.Peer, 0) => new("Reactor", Record.Peer.Origin),
         (DiagnosticSubjectKind.Peer, 1) => new("Slot", Record.Peer.Index),
         (DiagnosticSubjectKind.Peer, _) => new("Generation", Record.Peer.Generation),
-        _ => new("ClaimedSource", Record.Source.ToIPEndPoint().ToString()),
+        (DiagnosticSubjectKind.Source, _) => new("ClaimedSource", Record.Source.ToIPEndPoint().ToString()),
+        _ => throw UnrecognisedSubjectKind(),
     };
+
+    /// <summary>
+    /// The throw for a subject kind outside the roster, which only a hand-forged record can carry —
+    /// worded as <see cref="DiagnosticFormatter.Format"/> words its own.
+    /// </summary>
+    private ArgumentOutOfRangeException UnrecognisedSubjectKind() => new(
+        nameof(Record), Record.SubjectKind, $"{Record.SubjectKind} is not a recognised DiagnosticSubjectKind.");
 }
