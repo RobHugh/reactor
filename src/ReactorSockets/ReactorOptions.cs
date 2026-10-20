@@ -7,6 +7,7 @@ namespace ReactorSockets;
 /// into the base class ADR 0011 refused.
 /// </summary>
 /// <remarks>
+/// <para>
 /// A knob carries a default only when that default is derived — from machinery the library owns,
 /// from another knob, or from a citable standard (ADR 0011, ADR 0012). <see cref="Capacity"/> has
 /// no such derivation and is therefore required, with no default. Construction throws
@@ -14,6 +15,16 @@ namespace ReactorSockets;
 /// for a combination that cannot work, because every check here is deterministic and entirely the
 /// caller's — unlike <c>Send</c>, whose failures belong to the remote end or the network and are reported
 /// through a <c>Result</c> instead.
+/// </para>
+/// <para>
+/// <b>Every per-Pump cost a remote party can inflate is bounded at construction</b> (ADR 0012). Reading
+/// is bounded by each share-holder's share of the arena — <see cref="ArenaSize"/> divided by
+/// <see cref="Capacity"/>, with one whole unit always allowed — and accepts and handshakes are both
+/// bounded by <see cref="AdmissionCap"/>. Three mechanisms with one reason, and the checklist for
+/// anything added later: a cost a remote party can raise inside one Pump, on the consumer's thread,
+/// needs a bound fixed here, because the failure is invisible until someone points a load generator
+/// at it.
+/// </para>
 /// </remarks>
 public sealed class ReactorOptions
 {
@@ -21,49 +32,57 @@ public sealed class ReactorOptions
     /// The number of share-holders this Reactor admits — Links in Raw, Peers in a Session
     /// (ADR 0014) — and the multiplier on every preallocation. Required; there is no default
     /// derivable from anything the library owns (ADR 0011, superseding ADR 0001's "default 64").
-    /// Left unset it defaults to 0, which <see cref="Validate"/> rejects.
+    /// Must be at least 1.
     /// </summary>
-    public int Capacity { get; init; }
+    /// <remarks>
+    /// The library is designed for capacity in the tens and is unsuitable above the low hundreds; 64
+    /// survives as that statement of intent (ADR 0011), not as a default. It is not capped: a cap would
+    /// be permanent, would defend a number with no derivation behind it, and would refuse a consumer who
+    /// has measured their own case. A capacity too large to allocate fails at construction instead.
+    /// </remarks>
+    public required int Capacity { get; init; }
 
     /// <summary>
-    /// The per-Pump bound on accepts and handshakes alike. Defaults to <see cref="Capacity"/>:
-    /// one Pump never spends more admission work than a full Reactor's worth, and the remainder
-    /// waits in the OS backlog or is dropped (ADR 0012).
+    /// The per-Pump bound on accepts and handshakes alike. Defaults to <see cref="Capacity"/>.
+    /// Provenance: derived from <see cref="Capacity"/> — one Pump never spends more admission work
+    /// than a full Reactor's worth, and the remainder waits in the OS backlog or is dropped (ADR 0012).
     /// </summary>
     public int? AdmissionCap { get; init; }
 
     /// <summary>
-    /// The frame arena's size in bytes. Left unset, a Reactor defaults it to its own profile
-    /// floor — one maximum deliverable unit, since the floor is profile-specific and only the
-    /// profile's constructor knows what it must exceed (ADR 0012). A value below that floor throws
-    /// at construction, naming the arithmetic.
+    /// The frame arena's size in bytes. Left unset, a Reactor defaults it to its own profile floor.
+    /// Provenance: derived from the profile — one maximum deliverable unit, since below it that unit
+    /// could never be delivered, and only the profile's constructor knows what it must exceed
+    /// (ADR 0012). A value below that floor throws at construction, naming the arithmetic.
     /// </summary>
     public int? ArenaSize { get; init; }
 
     /// <summary>
     /// The source of monotonic time for every duration this library measures. Defaults to
     /// <see cref="System.TimeProvider.System"/>; only <c>GetTimestamp</c>/<c>GetElapsedTime</c>
-    /// are ever consulted, never <c>GetUtcNow</c>.
+    /// are ever consulted, never <c>GetUtcNow</c>. Provenance: the framework's own clock, and the only
+    /// requirement on it is that reads be monotonic, which <c>GetTimestamp</c> is (ADR 0012).
     /// </summary>
     /// <remarks>
-    /// The Raw profile measures no durations, so nothing in this slice reads this. It lives on the
-    /// shared options value because it is the same knob every profile takes, and the Session
-    /// profiles' liveness deadlines, retransmit timers and re-dial schedules are its first readers.
+    /// The Raw profile measures no durations and never reads this. It lives on the shared options
+    /// value because it is the same knob every profile takes, and the Session profiles' liveness
+    /// deadlines, retransmit timers and re-dial schedules read it.
     /// </remarks>
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     /// <summary>
     /// The Diagnostic Sink records are sent to, or <see langword="null"/> to disable diagnostics
     /// entirely. Must be supplied together with <see cref="MinimumLevel"/> — both present or both
-    /// absent — because with no Sink there is nowhere for a record to go, so no level can matter
-    /// (ADR 0012).
+    /// absent. Provenance: absent means off, which is derived rather than chosen — with no Sink there
+    /// is nowhere for a record to go, so no level can matter (ADR 0012).
     /// </summary>
     public IReactorDiagnostics? Sink { get; init; }
 
     /// <summary>
     /// The minimum <see cref="DiagnosticLevel"/> the installed <see cref="Sink"/> receives.
     /// Must be supplied together with <see cref="Sink"/> — neither carries a default, since a
-    /// default level would be a guess at how much diagnostic volume the consumer wants.
+    /// default level would be a guess at how much diagnostic volume the consumer wants. Provenance:
+    /// absent only alongside an absent <see cref="Sink"/>, where no level can matter (ADR 0012).
     /// </summary>
     public DiagnosticLevel? MinimumLevel { get; init; }
 
