@@ -24,10 +24,11 @@ namespace ReactorSockets;
 /// what those were built for, so a knob to configure one would have nothing under it.
 /// </para>
 /// <para>
-/// <b>The memory bill.</b> A Reactor built from these options preallocates
+/// <b>The memory bill.</b> A Reactor built from these options holds at most
 /// <c>Capacity × (RetentionBytes + receive buffer + Message-boundary ring)</c> bytes, all of it per
 /// Peer and none of it shared, so a <c>Send</c> on a healthy Peer never fails because of somebody
-/// else's traffic. The retention line is buffered <em>twice</em> over — once in our retention, once
+/// else's traffic. Retention and the ring are allocated at construction and each receive buffer when
+/// its Peer takes a Slot, so the bound has no traffic term. The retention line is buffered <em>twice</em> over — once in our retention, once
 /// again in the kernel's own send buffer for the socket — so a stream Peer's real footprint is this
 /// bound plus whatever the OS is holding, and the OS's half is not fully ours to control. The third
 /// line (issue #110) is what lets retention be released by what the peer has confirmed receiving
@@ -40,6 +41,11 @@ namespace ReactorSockets;
 /// <see cref="MaxMessageSize"/> appears in three places at once: announced to the remote as a receive
 /// limit, flooring the receive buffer, and flooring <see cref="RetentionBytes"/>. It is therefore the
 /// one knob whose careless enlargement multiplies memory in two directions rather than one.
+/// </para>
+/// <para>
+/// Nagle is off on every stream Session socket and there is no knob to turn it on (ADR 0011): this
+/// library batches by writing everything queued since the last Pump once, so a latency measurement
+/// measures the consumer's Pump cadence, not TCP's acknowledgement clock.
 /// </para>
 /// <para>
 /// Every check below is deterministic and entirely the caller's, so failures throw at construction —
@@ -106,6 +112,8 @@ public sealed class StreamSessionOptions
     /// acquires later. A consumer addresses Peers, never the sockets this profile binds, so binding
     /// returns no identity: an empty set means dial-only, a meaningful configuration rather than a
     /// hole, and there is no rebind — a Reactor that must listen elsewhere is a new Reactor.
+    /// Provenance: empty is the absence of a declaration, not a chosen address — a dial's local port
+    /// is the one TCP's connect binds implicitly.
     /// </summary>
     public IReadOnlyList<IPEndPoint> Endpoints { get; init; } = [];
 
@@ -113,7 +121,7 @@ public sealed class StreamSessionOptions
     /// The entropy the resume secret is drawn from. A construction knob in ADR 0011's sense — the
     /// consumer's own resource, and a consumer with a hardware source or a policy about which
     /// generator may be used is entitled to supply it. It carries a default only because that default
-    /// is derived rather than guessed: the platform's own CSPRNG is the citable provenance.
+    /// is derived rather than guessed. Provenance: the platform's own CSPRNG.
     /// </summary>
     /// <remarks>
     /// Nothing disposes this, and nothing should. A supplied generator belongs to the consumer, who
@@ -126,8 +134,9 @@ public sealed class StreamSessionOptions
 
     /// <summary>
     /// The bytes held per Peer for an incoming, not-yet-complete Message. Defaults to
-    /// <see cref="MaxMessageSize"/> plus the 4-byte length prefix — its own floor, since that is
-    /// exactly one incomplete maximum Message and nothing narrower could ever hold one.
+    /// <see cref="MaxMessageSize"/> plus the 4-byte length prefix. Provenance: derived from
+    /// <see cref="MaxMessageSize"/> — its own floor, since that is exactly one incomplete maximum
+    /// Message and nothing narrower could ever hold one.
     /// </summary>
     public int? ReceiveBufferSize { get; init; }
 
@@ -139,7 +148,8 @@ public sealed class StreamSessionOptions
     /// reports it would block and the bytes stay in retention, unsent. Unset, the two are unrelated in
     /// practice on Linux, whose send autotuning will absorb megabytes against a peer that has stopped
     /// reading; set, a consumer who needs transport backpressure to reach their own flow control at a
-    /// known point can put it there.
+    /// known point can put it there. Provenance: unset leaves the OS's own default and autotuning in
+    /// place, so the library chooses nothing.
     /// </summary>
     /// <remarks>
     /// A request, not an exact size — Linux doubles the value and holds it to its own <c>tcp_wmem</c>
@@ -151,7 +161,8 @@ public sealed class StreamSessionOptions
 
     /// <summary>
     /// How many consecutive heartbeat intervals may pass in silence before a Peer is declared gone.
-    /// Defaults to 3, RFC 4271's hold-time multiple. Must be at least 2, because a count of 1 makes a
+    /// Defaults to 3. Provenance: RFC 4271's hold time, three times the keepalive interval. Must be at
+    /// least 2, because a count of 1 makes a
     /// single lost heartbeat fatal, and in .NET the stall that produces it is as ordinary as a
     /// collection pause.
     /// </summary>

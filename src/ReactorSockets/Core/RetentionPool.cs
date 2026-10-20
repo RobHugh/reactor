@@ -21,6 +21,16 @@ namespace ReactorSockets.Core;
 /// </remarks>
 internal sealed class RetentionPool
 {
+    /// <summary>
+    /// The bytes one slot's bookkeeping occupies beside its payload, summed across the seven per-slot
+    /// arrays: <see cref="_occupied"/>, <see cref="_slotSequence"/>, <see cref="_slotLength"/>,
+    /// <see cref="_slotIsFragment"/>, <see cref="_slotFragmentIndex"/>, <see cref="_slotFragmentCount"/>
+    /// and <see cref="_slotIsControl"/> (issue #63). <see cref="DatagramSessionOptions.SendBudgetBytes"/>
+    /// prices a slot against this constant, so a new per-slot array must raise it.
+    /// </summary>
+    internal const int SlotBookkeepingBytes =
+        sizeof(bool) + sizeof(uint) + sizeof(int) + sizeof(bool) + sizeof(ushort) + sizeof(ushort) + sizeof(bool);
+
     private readonly byte[] _buffer;
 
     /// <summary>

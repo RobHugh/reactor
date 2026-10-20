@@ -76,6 +76,11 @@ public sealed class RawReactor : IDisposable
     /// Constructs a Reactor bound to the calling thread (ADR 0002) — every future mutating call must
     /// come from this same thread or it throws.
     /// </summary>
+    /// <remarks>
+    /// <b>The memory bill</b> is one scratch buffer plus one arena — <c>scratchBufferSize + ArenaSize</c>
+    /// — neither multiplied by capacity, because Raw holds nothing for a Link across a Pump. That is
+    /// what "invents nothing on the wire" looks like from the constructor (ADR 0012).
+    /// </remarks>
     /// <param name="options">
     /// The shared options value. Every knob on it is validated here, and
     /// <see cref="ReactorOptions.ArenaSize"/> is resolved against this profile's floor; a
@@ -84,7 +89,8 @@ public sealed class RawReactor : IDisposable
     /// <param name="scratchBufferSize">
     /// The single scratch buffer every Link's receive lands in, reused across Links since only one is
     /// read at any instant inside a single-threaded Pump (ADR 0012). Defaults to
-    /// <see cref="MaxUdpDatagramSize"/>, at which truncation is unreachable; this is the profile-specific
+    /// <see cref="MaxUdpDatagramSize"/>. Provenance: the largest payload a UDP datagram can carry, at
+    /// which truncation is unreachable. This is the profile-specific
     /// knob a consumer lowers to opt into truncation, kept off <see cref="ReactorOptions"/> because it
     /// has no meaning outside Raw's datagram surface.
     /// </param>

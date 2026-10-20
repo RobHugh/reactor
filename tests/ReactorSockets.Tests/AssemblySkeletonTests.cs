@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Xml.Linq;
 using FluentAssertions;
 using Xunit;
 
@@ -8,6 +9,18 @@ namespace ReactorSockets.Tests;
 public class AssemblySkeletonTests
 {
     private static Assembly ReactorSocketsAssembly => Assembly.Load(new AssemblyName("ReactorSockets"));
+
+    /// <summary>The directory holding <c>ReactorSockets.slnx</c>, found by walking up from the test output.</summary>
+    private static string RepositoryRoot()
+    {
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "ReactorSockets.slnx")))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName ?? throw new InvalidOperationException("ReactorSockets.slnx was not found above the test output directory.");
+    }
 
     [Fact]
     public void ReactorSocketsAssembly_Loaded_HasExpectedIdentity()
@@ -20,6 +33,40 @@ public class AssemblySkeletonTests
 
         // Assert
         assemblyName.Should().Be("ReactorSockets");
+    }
+
+    [Fact]
+    public void ReactorSocketsProject_Identity_PackageIdAssemblyNameRootNamespaceAndFolderAllReadReactorSockets()
+    {
+        // Arrange — ADR 0006: the four agree, so the name is claimed once and nothing collides with the
+        // simple name of another assembly in the same output folder.
+        string projectPath = Path.Combine(RepositoryRoot(), "src", "ReactorSockets", "ReactorSockets.csproj");
+
+        // Act
+        XElement[] properties = XDocument.Load(projectPath).Descendants("PropertyGroup").Elements().ToArray();
+        string[] names = ["PackageId", "AssemblyName", "RootNamespace"];
+        string?[] identity = names
+            .Select(name => properties.SingleOrDefault(property => property.Name.LocalName == name)?.Value)
+            .ToArray();
+
+        // Assert
+        identity.Should().Equal("ReactorSockets", "ReactorSockets", "ReactorSockets");
+    }
+
+    [Fact]
+    public void ReactorSocketsAssembly_Types_NoneIsNamedReactor()
+    {
+        // Arrange — ADR 0007 superseded ADR 0006's single Reactor type: the dispatcher is split into
+        // profiles, and the namespace segment is the only place the bare word stands alone.
+        Assembly assembly = ReactorSocketsAssembly;
+
+        // Act
+        IEnumerable<string> named = assembly.GetTypes()
+            .Where(type => type.Name == "Reactor")
+            .Select(type => type.FullName ?? type.Name);
+
+        // Assert
+        named.Should().BeEmpty();
     }
 
     [Fact]
