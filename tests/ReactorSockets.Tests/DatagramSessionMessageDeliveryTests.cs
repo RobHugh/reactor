@@ -94,4 +94,40 @@ public class DatagramSessionMessageDeliveryTests
             record => record.Id == DiagnosticId.ArenaExhausted,
             "an arena shortfall names itself, unlike a share's fair-split refusal");
     }
+
+    [Fact]
+    public void Pump_AReliableMessageTheArenaRefused_IsDeliveredOnALaterPump()
+    {
+        // Arrange — the same arena shortfall as the test above, in a reliable mode. The receiver leaves
+        // the refused record unacknowledged, so the sender's retransmission must deliver it on a later
+        // Pump.
+        const int maxMessageSize = 512;
+        using DatagramSessionReactorHarness sender = new(bindLoopback: false, capacity: 1, maxMessageSize: maxMessageSize);
+        using DatagramSessionReactorHarness receiver = new(capacity: 1, maxMessageSize: maxMessageSize, arenaSize: maxMessageSize);
+        PeerId peer = sender.Reactor.Connect(receiver.Endpoint);
+        (var _, var receiverEvents) = DatagramSessionReactorHarness.PumpBothUntilConnected(sender, receiver);
+        PeerId receiverPeer = receiverEvents.First(e => e.Kind == SessionEventKind.PeerConnected).Peer;
+
+        byte[] message = new byte[maxMessageSize - 64];
+        sender.Reactor.Send(peer, DeliveryMode.ReliableUnordered, message);
+        sender.Reactor.Send(peer, DeliveryMode.ReliableUnordered, message);
+        sender.Reactor.Pump();
+        receiver.PumpUntil(() => receiver.Reactor.CountersOf(receiverPeer).MessagesReceived > 0);
+
+        // Act — move only the sender's clock a whole Linger at a time, the ceiling on its retransmission
+        // timeout, so every round resends whatever is still unacknowledged.
+        for (int round = 0; round < 10 && receiver.Reactor.CountersOf(receiverPeer).MessagesReceived < 2; round++)
+        {
+            DatagramSessionReactorHarness.SettleThenAdvance(sender, sender.Options.Linger);
+            DatagramSessionReactorHarness.PumpBothUntil(
+                sender,
+                receiver,
+                () => receiver.Reactor.CountersOf(receiverPeer).MessagesReceived == 2,
+                TimeSpan.FromMilliseconds(200));
+        }
+
+        // Assert
+        receiver.Reactor.CountersOf(receiverPeer).MessagesReceived.Should().Be(
+            2UL, "a reliable Message is always delivered, even one the arena once had no room for");
+    }
 }
