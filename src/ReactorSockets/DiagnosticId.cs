@@ -192,6 +192,19 @@ public enum DiagnosticId
     UnreliableFragment = 206,
 
     /// <summary>
+    /// A completed Message, whole or reassembled from its Fragments, was larger than this Reactor's own
+    /// <see cref="DatagramSessionOptions.MaxMessageSize"/> and was discarded instead of delivered (issue
+    /// #425). Subject is the Peer. <c>Value0</c> is the Message's length in bytes; <c>Value1</c> is this
+    /// Reactor's <c>MaxMessageSize</c>. The Session stays open, and a discarded reliable Message stays
+    /// acknowledged, so the far end does not resend it and later Messages are unaffected.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>, for the same reason as <see cref="DatagramMalformed"/>: a
+    /// remote can produce this at will, and nothing is wrong with this Reactor.
+    /// </remarks>
+    OversizedMessage = 207,
+
+    /// <summary>
     /// A dialler was refused in-protocol during the stream handshake, either because it announced a
     /// different protocol version or because every capacity Slot was occupied. Subject is the claimed
     /// Source: at refusal time there is no Peer, only a claimed origin. For a capacity refusal,

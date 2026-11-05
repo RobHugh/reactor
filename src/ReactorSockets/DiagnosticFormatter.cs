@@ -89,6 +89,8 @@ public static class DiagnosticFormatter
                 $"a fragment set declared more fragments than the receive window can hold and the Session was closed (fragments declared {v0}, largest legal {v1})"),
             DiagnosticId.UnreliableFragment => Invariant(
                 $"a datagram fragmenting in an unreliable mode was discarded (mode {ModeName(v0)}, mode bits {v0})"),
+            DiagnosticId.OversizedMessage => Invariant(
+                $"a Message larger than MaxMessageSize was discarded (bytes {v0}, MaxMessageSize {v1})"),
 
             // A version refusal always carries the required version, which is never 0, so a zero
             // Value1 is the capacity shape (see DiagnosticRecord.ForPeerRefusedCapacity).

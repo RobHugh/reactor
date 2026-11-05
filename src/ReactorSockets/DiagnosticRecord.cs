@@ -162,6 +162,14 @@ public readonly record struct DiagnosticRecord
         new(DiagnosticId.UnreliableFragment, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, modeBits, 0);
 
     /// <summary>
+    /// Builds a <see cref="DiagnosticId.OversizedMessage"/> record for the Peer whose completed Message
+    /// was larger than this Reactor's own <c>MaxMessageSize</c> (issue #425), carrying the Message's
+    /// length and that limit.
+    /// </summary>
+    public static DiagnosticRecord ForOversizedMessage(PeerId peer, long messageLength, long maxMessageSize) =>
+        new(DiagnosticId.OversizedMessage, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, messageLength, maxMessageSize);
+
+    /// <summary>
     /// Builds a <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record for the Peer whose
     /// <see cref="RetransmissionTimer"/> just backed off (subtask 6.4.9, issue #199). <c>Value0</c> is
     /// the new RTO in milliseconds; <c>Value1</c> is the consecutive backoff count after this backoff.

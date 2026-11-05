@@ -91,7 +91,8 @@ delivered as one `MessageReceived` once all of them have arrived.
 - A Message is committed whole or not at all. If its mode's Space has fewer free retention slots
   than it has Fragments, `Send` returns `RetentionExhausted` and nothing is retained.
 - The unreliable modes are capped at one fragment, permanently. Fragmenting what cannot be
-  retransmitted multiplies the loss rate by the number of pieces.
+  retransmitted multiplies the loss rate by the number of pieces. `Send` does not check them against
+  the peer's `MaxMessageSize`, so one above it returns `Sent` and the peer discards it on arrival.
 
 Fragmentation lengthens `ReliableOrdered` head-of-line blocking: every later Message waits for the
 whole fragmented Message, not one Datagram. For bulk transfer, prefer `ReliableUnordered`.
@@ -145,14 +146,16 @@ Message.
 
 ## What a peer can do wrong
 
-None of these throw. A remote can produce them at will, so they cost that Session or that Datagram
-and leave the Reactor untouched.
+None of these throw. A remote can produce them at will, so they cost that Session, that Datagram or
+that Message and leave the Reactor untouched.
 
 | What arrived | Result |
 |---|---|
 | A Datagram that does not parse, or names no Session | Discarded. `DatagramMalformed` (200). |
 | A Fragment in an unreliable mode | Datagram discarded. `UnreliableFragment` (206) and `DatagramMalformed` (200). |
 | A Fragment set claiming more Fragments than your receive window holds | `PeerClosed` with `ProtocolViolation`. `OversizedFragmentSet` (205). |
+| A Message larger than your `MaxMessageSize`, whole or assembled | Discarded and still acknowledged. The Session stays open. `OversizedMessage` (207). |
 | Messages after the peer's own Goodbye | Acknowledged, not delivered. |
 
-One bad record discards the whole Datagram it came in, including any good records before it.
+A record that does not parse discards the whole Datagram it came in, including any good records before
+it. A Message over your `MaxMessageSize` costs only itself.

@@ -188,6 +188,7 @@ apart reads the diagnostics, which is what diagnostics are for.
 | 204 | `RetransmissionTimerBackedOff` | `Trace` | Peer | new RTO in ms / consecutive backoffs |
 | 205 | `OversizedFragmentSet` | `Warn` | Peer | declared count / largest legal count |
 | 206 | `UnreliableFragment` | `Warn` | Source | claimed mode bits / — |
+| 207 | `OversizedMessage` | `Warn` | Peer | Message length / `MaxMessageSize` |
 
 ### Stream session
 
@@ -210,6 +211,12 @@ Resume and re-dial four therefore shift to **304–307**, and slice 4.1's `Deliv
 tickets that implement them. Explicit values are not optional here precisely because this happens: a
 value published in a closed permanent enum cannot be moved later, so this table follows the code once
 the code has shipped a value, never the other way round.
+
+**Amended (issue #425).** `OversizedMessage` takes 207. Unlike 205 and 302 it does not close the
+Session, so it can recur, once per over-limit Message. It still passes the admission rule: loss and
+reordering never produce it, because it fires only when a sender ignores the announced limit, and no
+counter carries the Peer or the length against the limit. It stays at `Warn` for the reason
+`UnreliableFragment` does: it names a misconfiguration a consumer can act on.
 
 **Amended (slice 4.4.4).** `ResumeUnmatched` shipped with both value slots used, where this table had
 drafted neither. It carries the number of reserved Slots the claim was checked against and the wire
