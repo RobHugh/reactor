@@ -73,6 +73,9 @@ public class DiagnosticFormatterTests
             DiagnosticRecord.ForOversizedMessage(_peer, messageLength: 5000, maxMessageSize: 4096),
             $"Warn OversizedMessage (207), {PeerText}: a Message larger than MaxMessageSize was discarded (bytes 5000, MaxMessageSize 4096)"),
         new(
+            DiagnosticRecord.ForAddressPeerLimitReached(_source, limit: 2),
+            $"Warn AddressPeerLimitReached (208), {SourceText}: a handshake was refused because its address holds as many Peers as it may (MaxPeersPerAddress 2)"),
+        new(
             DiagnosticRecord.ForPeerRefusedCapacity(_source, capacity: 8),
             $"Info PeerRefused (300), {SourceText}: a dialler was refused because every capacity slot was occupied (capacity 8)"),
         new(

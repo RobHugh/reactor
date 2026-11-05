@@ -166,6 +166,28 @@ preallocation multiplier — the two things ADR 0011 separated when it made capa
 make the memory bill depend on how many addresses you listen on. A second knob for a Handle budget was
 rejected because its value is arrived at by counting binds the constructor can already see.
 
+**Amended (issue #427): one address may not hold every Slot.** Capacity and the admission cap bound
+the total, but each fresh nonce from one address could still take a Slot. The datagram profile gains a
+required `MaxPeersPerAddress`, on its own options because ADR 0012 keeps protocol knobs out of the shared
+value. It is required under ADR 0011's rule: how many Peers legitimately share an address depends on the
+NATs and proxies in front of the Reactor, and defaulting it to `Capacity` would leave the limit off for
+anyone who never read about it. `Capacity` or above is the explicit way to set no limit.
+
+- **The key is the address, not the `Source`.** `Source` equality includes the port, and a host can
+  answer a Cookie from as many ports as it can bind. Family and scope stay in the key, for the
+  reasons under *A Source carries its scope*. A host that can bind a whole IPv6 prefix still gets the
+  limit once per address, and grouping by prefix is left open.
+- **A Peer is charged to the address of its handshake until its Slot is released.** It does not move on
+  a Resume, or one address could fill its limit, move those Peers to a second address and fill it again.
+  The cost falls on other hosts behind the old address, such as a NAT, which have that much less room
+  for as long as the moved Session lasts.
+- **The refusal on the wire is ADR 0007's capacity refusal, unchanged.** The remote's next step is the
+  same, no wire format changes, and it cannot use the reason to learn whether Slots are free.
+- **A full Reactor is not a per-address refusal.** It reports `CapacityExhausted` as before, so a limit
+  of `Capacity` never fires.
+
+The stream profile has no such limit: this amendment covers the datagram profile only.
+
 ## Reading back what was bound
 
 Exclusive binding makes port zero the normal way to bind in a test, so the assigned address must be

@@ -170,6 +170,13 @@ public readonly record struct DiagnosticRecord
         new(DiagnosticId.OversizedMessage, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, messageLength, maxMessageSize);
 
     /// <summary>
+    /// Builds a <see cref="DiagnosticId.AddressPeerLimitReached"/> record for the claimed Source whose
+    /// handshake was refused (issue #427), carrying the per-address limit.
+    /// </summary>
+    public static DiagnosticRecord ForAddressPeerLimitReached(Source source, int limit) =>
+        new(DiagnosticId.AddressPeerLimitReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, limit, 0);
+
+    /// <summary>
     /// Builds a <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record for the Peer whose
     /// <see cref="RetransmissionTimer"/> just backed off (subtask 6.4.9, issue #199). <c>Value0</c> is
     /// the new RTO in milliseconds; <c>Value1</c> is the consecutive backoff count after this backoff.

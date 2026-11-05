@@ -197,6 +197,28 @@ public sealed class DatagramSessionOptions
     public required int RetentionBytes { get; init; }
 
     /// <summary>
+    /// The most accepted Peers one address may hold at once (issue #427), so one reachable address
+    /// cannot occupy every capacity Slot. Required: how many Peers legitimately share an address depends on
+    /// the NATs and proxies in front of this Reactor, which nothing here can derive. At least 1. A value of
+    /// <see cref="ReactorOptions.Capacity"/> or above sets no limit.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The count is by address, without the port: a host can answer a Cookie from as many ports as it can
+    /// bind, so a limit that counted ports would limit nothing. The address family and IPv6 scope stay in
+    /// the key, because they distinguish hosts (ADR 0014). An IPv6 host holding a whole prefix is as many
+    /// addresses as it can bind, and this limit does not group them.
+    /// </para>
+    /// <para>
+    /// A Peer is charged to the address its handshake came from for as long as it holds its Slot, including
+    /// while Interrupted or Closing and after a Resume moves it to another address. A dialled Peer is not
+    /// charged: this Reactor chose to make it. A handshake over the limit is refused the same way as one at
+    /// a full Reactor, and reported with <see cref="DiagnosticId.AddressPeerLimitReached"/>.
+    /// </para>
+    /// </remarks>
+    public required int MaxPeersPerAddress { get; init; }
+
+    /// <summary>
     /// How long a Session may go without sending before it sends a Ping instead (issue #340). Required:
     /// shorter costs bandwidth on an idle link, longer costs time to notice a dead Peer, and only the
     /// consumer knows which they would rather spend. There is no option to disable this: every
@@ -395,6 +417,14 @@ public sealed class DatagramSessionOptions
     internal void Validate()
     {
         Reactor.Validate();
+
+        if (MaxPeersPerAddress < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxPeersPerAddress),
+                MaxPeersPerAddress,
+                $"a per-address limit of {MaxPeersPerAddress} refuses every handshake, so nothing could ever connect to this Reactor — it must be at least 1.");
+        }
 
         if (MaxMessageSize < 1)
         {

@@ -3285,7 +3285,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// Admits, refuses or discards a Hello-with-cookie. The order is fixed and each step is a gate on
     /// the next: an invalid cookie is answered with silence, a valid cookie with the wrong version is
     /// refused whether or not there is capacity, and only a valid cookie carrying the right version
-    /// ever reaches the capacity check.
+    /// ever reaches the per-address limit and the capacity check.
     /// </summary>
     private void OnHelloWithCookie(UdpLink link, Source source, ReadOnlySpan<byte> datagram)
     {
@@ -3337,6 +3337,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
+        // A full Reactor skips this and reports CapacityExhausted, so a limit of Capacity never fires.
+        if (_peers.HasFreeSlot && AcceptedPeersAtAddressOf(source) >= _options.MaxPeersPerAddress)
+        {
+            _diagnostics.Log(DiagnosticRecord.ForAddressPeerLimitReached(source, _options.MaxPeersPerAddress));
+            RefuseForCapacity(link, source, clientNonce);
+            return;
+        }
+
         TimeSpan remoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
         TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
         TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
@@ -3344,10 +3352,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 source, link, remoteSessionId, remoteMaxMessageSize, remoteSendIdleInterval, remoteLinger, announcedLinger, remoteResumeSecret, clientNonce))
             is not SlotHandle handle)
         {
-            _counters.RecordAdmissionDiscard();
             _capacityDiscardsThisFrame++;
-            ControlDatagramCodec.WriteRefusal(_sendBuffer, clientNonce, RefusalReason.Capacity, 0, 0);
-            SendControl(link, source);
+            RefuseForCapacity(link, source, clientNonce);
             return;
         }
 
@@ -3371,6 +3377,37 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         SendAccept(link, slot, source);
+    }
+
+    /// <summary>
+    /// How many accepted Peers hold a Slot on a handshake from <paramref name="source"/>'s address
+    /// (issue #427). Counted from <see cref="_acceptedHandshakes"/> rather than kept as a separate tally,
+    /// so it cannot drift from the Peers it describes. It costs one walk of at most capacity entries,
+    /// after a cookie HMAC, on a path the admission cap already bounds per Pump.
+    /// </summary>
+    private int AcceptedPeersAtAddressOf(Source source)
+    {
+        int count = 0;
+        foreach ((Source handshakeSource, _) in _acceptedHandshakes.Keys)
+        {
+            if (handshakeSource.HasSameAddressAs(source))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Counts a Discard and answers a verified handshake with the capacity Refusal, whether the Reactor
+    /// is full or the handshake's address is at its limit. The remote end cannot tell which (ADR 0014).
+    /// </summary>
+    private void RefuseForCapacity(UdpLink link, Source source, ulong clientNonce)
+    {
+        _counters.RecordAdmissionDiscard();
+        ControlDatagramCodec.WriteRefusal(_sendBuffer, clientNonce, RefusalReason.Capacity, 0, 0);
+        SendControl(link, source);
     }
 
     /// <summary>

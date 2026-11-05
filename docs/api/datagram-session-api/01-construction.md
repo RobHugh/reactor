@@ -13,6 +13,7 @@ one would be guessing at your application.
 | `Reactor.Capacity` | How many Peers this Reactor admits. Multiplies every preallocation. |
 | `MaxMessageSize` | The largest Message you will send or accept, in bytes. |
 | `RetentionBytes` | Bytes each reliable Space retains per Peer until acknowledged. Your backpressure budget. |
+| `MaxPeersPerAddress` | The most accepted Peers one address may hold at once. `Reactor.Capacity` or above sets no limit. |
 | `SendIdleInterval` | How long a Session may go without sending before it sends a Ping. |
 | `Linger` | How long a closing or interrupted Session stays alive. |
 
@@ -75,6 +76,21 @@ A size larger than the path will carry ends the Session with `FragmentSizeUnviab
 Capacity is the number of Peers, but dialling, interrupted and closing Peers all hold their Slots.
 Size capacity for the peak Peer count *plus* the Peers you expect to be interrupted or closing at
 once, or fresh handshakes are refused while those Slots are still held.
+
+## Choosing the per-address limit
+
+`MaxPeersPerAddress` stops one reachable address holding every Slot. Set it above the number of Peers
+you expect behind one NAT or proxy, and below `Capacity` if strangers can reach this Reactor. If every
+Peer shares one address, for example behind one proxy, set it to `Capacity`.
+
+The limit counts addresses, not ports, because one host can use many ports. It does not group IPv6
+addresses by prefix, so a host that can bind a whole prefix gets the limit once per address. Peers
+this Reactor dialled do not count.
+
+A Peer counts against the address of its handshake until its Slot is released, so leave room for two
+cases. Interrupted and Closing Peers still count, so a client that restarts with a fresh handshake can
+be refused for up to Linger. A Peer that a Resume moved to another address also still counts, so other
+hosts behind its old address have that much less room for as long as the Session lasts.
 
 ## Choosing retention
 

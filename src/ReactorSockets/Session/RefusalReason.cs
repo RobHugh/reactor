@@ -15,7 +15,10 @@ internal enum RefusalReason : byte
     /// <summary>The offered version is not the one this Reactor speaks. The Refusal names both.</summary>
     Version = 1,
 
-    /// <summary>Every capacity Slot was occupied. Says nothing about versions.</summary>
+    /// <summary>
+    /// No capacity Slot was available to this handshake: every Slot was occupied, or its address held
+    /// <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> Peers. Says nothing about versions.
+    /// </summary>
     Capacity = 2,
 }
 
