@@ -179,6 +179,8 @@ anyone who never read about it. `Capacity` or above is the explicit way to set n
   limit once per address, and grouping by prefix is left open.
 - **A Peer is charged to the address of its handshake until its Slot is released.** It does not move on
   a Resume, or one address could fill its limit, move those Peers to a second address and fill it again.
+  The cost falls on other hosts behind the old address, such as a NAT, which have that much less room
+  for as long as the moved Session lasts.
 - **The refusal on the wire is ADR 0007's capacity refusal, unchanged.** The remote's next step is the
   same, no wire format changes, and it cannot use the reason to learn whether Slots are free.
 - **A full Reactor is not a per-address refusal.** It reports `CapacityExhausted` as before, so a limit

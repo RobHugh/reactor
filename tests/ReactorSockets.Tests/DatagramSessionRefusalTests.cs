@@ -159,12 +159,7 @@ public class DatagramSessionRefusalTests
     /// </summary>
     private static PeerId CompleteHandshake(DatagramSessionReactorHarness accepter, RawPeer peer, ulong clientNonce)
     {
-        (long epoch, byte[] cookie) = ObtainCookie(accepter, peer, clientNonce);
-        ulong sentBefore = accepter.Reactor.Counters.DatagramsSent;
-        peer.Send(accepter.Endpoint, BuildHelloWithCookie(
-            ProtocolVersion, clientNonce, epoch, cookie, sessionIdForMe: 1, maxMessageSize: 4096, resumeSecret: new byte[ResumeSecretLength]));
-        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsSent > sentBefore);
-        byte[] reply = peer.Receive(out _);
+        byte[] reply = ReplyToHandshake(accepter, peer, clientNonce);
         reply[4].Should().Be(AcceptType);
 
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
@@ -175,7 +170,7 @@ public class DatagramSessionRefusalTests
     /// Runs a handshake for <paramref name="clientNonce"/> and returns the reply to its
     /// Hello-with-cookie, for a test where that reply may be a Refusal.
     /// </summary>
-    private static byte[] CompleteHandshakeReply(DatagramSessionReactorHarness accepter, RawPeer peer, ulong clientNonce)
+    private static byte[] ReplyToHandshake(DatagramSessionReactorHarness accepter, RawPeer peer, ulong clientNonce)
     {
         (long epoch, byte[] cookie) = ObtainCookie(accepter, peer, clientNonce);
         ulong sentBefore = accepter.Reactor.Counters.DatagramsSent;
@@ -687,22 +682,37 @@ public class DatagramSessionRefusalTests
     // =========================================================================================
 
     [Fact]
-    public void OnHelloWithCookie_AddressAtItsPeerLimit_RefusesForCapacityAndLogsAddressPeerLimitReached()
+    public void OnHelloWithCookie_AddressAtItsPeerLimit_RefusesForCapacityAndAdmitsNoPeer()
     {
         // Arrange — the same socket offers a fresh nonce each time, the case the issue describes.
         using DatagramSessionReactorHarness accepter = new(capacity: 4, maxPeersPerAddress: 2);
         using RawPeer peer = new();
         CompleteHandshake(accepter, peer, 0x0000_0000_0000_0031UL);
         CompleteHandshake(accepter, peer, 0x0000_0000_0000_0032UL);
-        ulong discardsBefore = accepter.Reactor.Counters.AdmissionDiscards;
 
         // Act
-        byte[] reply = CompleteHandshakeReply(accepter, peer, 0x0000_0000_0000_0033UL);
+        byte[] reply = ReplyToHandshake(accepter, peer, 0x0000_0000_0000_0033UL);
 
         // Assert
         reply[4].Should().Be(RefusalType);
         ParseRefusal(reply).Reason.Should().Be(RefusalReasonCapacity);
         accepter.DrainToList().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void OnHelloWithCookie_AddressAtItsPeerLimit_CountsADiscardAndLogsAddressPeerLimitReached()
+    {
+        // Arrange
+        using DatagramSessionReactorHarness accepter = new(capacity: 4, maxPeersPerAddress: 2);
+        using RawPeer peer = new();
+        CompleteHandshake(accepter, peer, 0x0000_0000_0000_00A1UL);
+        CompleteHandshake(accepter, peer, 0x0000_0000_0000_00A2UL);
+        ulong discardsBefore = accepter.Reactor.Counters.AdmissionDiscards;
+
+        // Act
+        ReplyToHandshake(accepter, peer, 0x0000_0000_0000_00A3UL);
+
+        // Assert
         (accepter.Reactor.Counters.AdmissionDiscards - discardsBefore).Should().Be(1);
         DiagnosticRecord record = accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.AddressPeerLimitReached).Which;
         record.Level.Should().Be(DiagnosticLevel.Warn);
@@ -721,13 +731,13 @@ public class DatagramSessionRefusalTests
         using RawPeer other = new(IPAddress.Parse("127.0.0.2"));
         CompleteHandshake(accepter, greedy, 0x0000_0000_0000_0041UL);
         CompleteHandshake(accepter, greedy, 0x0000_0000_0000_0042UL);
-        CompleteHandshakeReply(accepter, greedy, 0x0000_0000_0000_0043UL)[4].Should().Be(RefusalType);
+        ReplyToHandshake(accepter, greedy, 0x0000_0000_0000_0043UL);
 
         // Act
-        byte[] reply = CompleteHandshakeReply(accepter, other, 0x0000_0000_0000_0044UL);
+        ReplyToHandshake(accepter, other, 0x0000_0000_0000_0044UL);
 
         // Assert
-        reply[4].Should().Be(AcceptType);
+        accepter.DrainToList().Should().ContainSingle(evt => evt.Kind == SessionEventKind.PeerConnected);
     }
 
     [Fact]
@@ -740,10 +750,75 @@ public class DatagramSessionRefusalTests
         CompleteHandshake(accepter, firstPort, 0x0000_0000_0000_0051UL);
 
         // Act
-        byte[] reply = CompleteHandshakeReply(accepter, secondPort, 0x0000_0000_0000_0052UL);
+        ReplyToHandshake(accepter, secondPort, 0x0000_0000_0000_0052UL);
 
         // Assert
-        reply[4].Should().Be(RefusalType);
+        accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.AddressPeerLimitReached)
+            .Which.Source.Should().Be(Source.FromIPEndPoint(secondPort.LocalEndPoint));
+    }
+
+    [Fact]
+    public void OnHelloWithCookie_AddressWhosePeerIsClosing_StaysCharged()
+    {
+        // Arrange — a Closing Peer still holds its Slot until Linger releases it.
+        using DatagramSessionReactorHarness accepter = new(capacity: 4, maxPeersPerAddress: 1);
+        using RawPeer closing = new();
+        using RawPeer sameAddress = new();
+        PeerId admitted = CompleteHandshake(accepter, closing, 0x0000_0000_0000_00B1UL);
+        accepter.Reactor.Close(admitted);
+
+        // Act
+        ReplyToHandshake(accepter, sameAddress, 0x0000_0000_0000_00B2UL);
+
+        // Assert
+        accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.AddressPeerLimitReached);
+    }
+
+    [Fact]
+    public void OnHelloWithCookie_AddressWhosePeerIsInterrupted_StaysCharged()
+    {
+        // Arrange — an Interrupted Peer still holds its Slot, reserved for a Resume. The Peer's announced
+        // send-idle interval is 60 seconds and the default tolerance is three missed heartbeats.
+        using DatagramSessionReactorHarness accepter = new(capacity: 4, maxPeersPerAddress: 1);
+        using RawPeer interrupted = new();
+        using RawPeer sameAddress = new();
+        PeerId admitted = CompleteHandshake(accepter, interrupted, 0x0000_0000_0000_00C1UL);
+        accepter.TimeProvider.Advance(TimeSpan.FromSeconds(181));
+        accepter.PumpUntilDrained(e => e.Any(x => x.Kind == SessionEventKind.PeerInterrupted && x.Peer == admitted));
+
+        // Act
+        ReplyToHandshake(accepter, sameAddress, 0x0000_0000_0000_00C2UL);
+
+        // Assert
+        accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.AddressPeerLimitReached);
+    }
+
+    [Fact]
+    public void Connect_ToASecondEndpointFromAnAddressAtItsPeerLimit_DrainsPeerClosedWithRemoteAtCapacity()
+    {
+        // Arrange — the count is per Reactor, so another bound endpoint is not more room for one address.
+        using DatagramSessionReactorHarness accepter = new(
+            capacity: 4,
+            maxPeersPerAddress: 1,
+            endpoints: [new IPEndPoint(IPAddress.Loopback, 0), new IPEndPoint(IPAddress.Parse("127.0.0.2"), 0)]);
+        using DatagramSessionReactorHarness dialler = new();
+        using RawPeer first = new();
+        CompleteHandshake(accepter, first, 0x0000_0000_0000_00D1UL);
+
+        // Act
+        PeerId dialled = dialler.Reactor.Connect(accepter.Reactor.BoundEndpoints[1]);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = [];
+        PumpDeadline deadline = PumpDeadline.Start();
+        while (!drained.Any(evt => evt.Kind == SessionEventKind.PeerClosed) && !deadline.Expired)
+        {
+            accepter.Reactor.Pump();
+            dialler.Reactor.Pump();
+            drained.AddRange(dialler.DrainToList());
+        }
+
+        // Assert
+        drained.Should().ContainSingle()
+            .Which.Should().BeEquivalentTo((SessionEventKind.PeerClosed, dialled, DisconnectReason.RemoteAtCapacity));
     }
 
     [Fact]
@@ -785,10 +860,10 @@ public class DatagramSessionRefusalTests
         accepter.PumpUntilDrained(e => e.Any(x => x.Kind == SessionEventKind.PeerClosed && x.Peer == admitted));
 
         // Act
-        byte[] reply = CompleteHandshakeReply(accepter, sameAddress, 0x0000_0000_0000_0072UL);
+        ReplyToHandshake(accepter, sameAddress, 0x0000_0000_0000_0072UL);
 
         // Assert
-        reply[4].Should().Be(AcceptType);
+        accepter.DrainToList().Should().ContainSingle(evt => evt.Kind == SessionEventKind.PeerConnected);
     }
 
     [Fact]
@@ -801,10 +876,10 @@ public class DatagramSessionRefusalTests
         accepter.Reactor.Connect(dialled.LocalEndPoint);
 
         // Act
-        byte[] reply = CompleteHandshakeReply(accepter, dialling, 0x0000_0000_0000_0081UL);
+        ReplyToHandshake(accepter, dialling, 0x0000_0000_0000_0081UL);
 
         // Assert
-        reply[4].Should().Be(AcceptType);
+        accepter.DrainToList().Should().ContainSingle(evt => evt.Kind == SessionEventKind.PeerConnected);
     }
 
     [Fact]
@@ -819,10 +894,10 @@ public class DatagramSessionRefusalTests
         using RawPeer sameAddressAsTheHandshake = new();
 
         // Act
-        byte[] reply = CompleteHandshakeReply(scenario.Accepter, sameAddressAsTheHandshake, 0x0000_0000_0000_0091UL);
+        ReplyToHandshake(scenario.Accepter, sameAddressAsTheHandshake, 0x0000_0000_0000_0091UL);
 
         // Assert
-        reply[4].Should().Be(RefusalType);
+        scenario.Accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.AddressPeerLimitReached);
     }
 
     /// <summary>

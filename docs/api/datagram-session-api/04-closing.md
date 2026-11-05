@@ -86,8 +86,8 @@ nothing else, so nothing about a Reactor's version or occupancy is learnable wit
 can receive at the address you claim.
 
 The refusing end logs `VersionRefused` (202), `CapacityExhausted` (3) or `AddressPeerLimitReached`
-(208), and counts the last two in `AdmissionDiscards`. A remote cannot tell a full Reactor from a
-per-address refusal, so a refusal says nothing about how many Slots are free.
+(208), and counts the last two in `AdmissionDiscards`. A dialler cannot tell a full Reactor from a
+per-address refusal, so a refusal does not say whether Slots are free.
 
 ## FragmentSizeUnviable
 

@@ -197,7 +197,7 @@ public sealed class DatagramSessionOptions
     public required int RetentionBytes { get; init; }
 
     /// <summary>
-    /// The most accepted Peers one remote address may hold at once (issue #427), so one reachable address
+    /// The most accepted Peers one address may hold at once (issue #427), so one reachable address
     /// cannot occupy every capacity Slot. Required: how many Peers legitimately share an address depends on
     /// the NATs and proxies in front of this Reactor, which nothing here can derive. At least 1. A value of
     /// <see cref="ReactorOptions.Capacity"/> or above sets no limit.
@@ -213,7 +213,7 @@ public sealed class DatagramSessionOptions
     /// A Peer is charged to the address its handshake came from for as long as it holds its Slot, including
     /// while Interrupted or Closing and after a Resume moves it to another address. A dialled Peer is not
     /// charged: this Reactor chose to make it. A handshake over the limit is refused the same way as one at
-    /// a full Reactor, and logged with <see cref="DiagnosticId.AddressPeerLimitReached"/>.
+    /// a full Reactor, and reported with <see cref="DiagnosticId.AddressPeerLimitReached"/>.
     /// </para>
     /// </remarks>
     public required int MaxPeersPerAddress { get; init; }

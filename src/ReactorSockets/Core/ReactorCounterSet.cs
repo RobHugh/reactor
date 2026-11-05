@@ -50,15 +50,11 @@ internal sealed class ReactorCounterSet
 
     /// <summary>
     /// Records one Discard: one piece of work the Reactor was holding and let go, because the
-    /// admission cap or capacity was spent and the transport gives it nowhere to wait. Always exact,
+    /// admission cap, capacity or a per-address limit was spent and the transport gives it nowhere to wait. Always exact,
     /// unlike <see cref="RecordAdmissionDeferral"/> — a Reactor can only Discard what it had in
     /// hand. Called only where declined work does not survive to a later Pump, which today means a
     /// datagram Session dropping a Hello.
     /// </summary>
-    /// <remarks>
-    /// A handshake refused by <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> also lands here, and
-    /// <see cref="DiagnosticId.AddressPeerLimitReached"/> tells it apart.
-    /// </remarks>
     public void RecordAdmissionDiscard() => _admissionDiscards++;
 
     /// <summary>

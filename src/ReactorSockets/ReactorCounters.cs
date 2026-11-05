@@ -47,7 +47,7 @@ namespace ReactorSockets;
 /// <param name="AdmissionDiscards">
 /// Admissions declined that let the work go, because the transport gave it nowhere to wait. Moves
 /// only on the datagram Session profile, which Discards the Hellos it cannot admit, whether the
-/// admission cap, capacity or <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> declined them; the
+/// admission cap, capacity or <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> declined them. The
 /// Diagnostics tell the three apart. Always an exact
 /// count of work turned away, which <paramref name="AdmissionDeferrals"/> is not, because a Reactor
 /// can only Discard what it had in hand. Kept apart from Deferrals because the two differ in the

@@ -3340,10 +3340,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // A full Reactor skips this and reports CapacityExhausted, so a limit of Capacity never fires.
         if (_peers.HasFreeSlot && AcceptedPeersAtAddressOf(source) >= _options.MaxPeersPerAddress)
         {
-            _counters.RecordAdmissionDiscard();
             _diagnostics.Log(DiagnosticRecord.ForAddressPeerLimitReached(source, _options.MaxPeersPerAddress));
-            ControlDatagramCodec.WriteRefusal(_sendBuffer, clientNonce, RefusalReason.Capacity, 0, 0);
-            SendControl(link, source);
+            RefuseForCapacity(link, source, clientNonce);
             return;
         }
 
@@ -3354,10 +3352,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 source, link, remoteSessionId, remoteMaxMessageSize, remoteSendIdleInterval, remoteLinger, announcedLinger, remoteResumeSecret, clientNonce))
             is not SlotHandle handle)
         {
-            _counters.RecordAdmissionDiscard();
             _capacityDiscardsThisFrame++;
-            ControlDatagramCodec.WriteRefusal(_sendBuffer, clientNonce, RefusalReason.Capacity, 0, 0);
-            SendControl(link, source);
+            RefuseForCapacity(link, source, clientNonce);
             return;
         }
 
@@ -3391,16 +3387,27 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private int AcceptedPeersAtAddressOf(Source source)
     {
-        int peers = 0;
+        int count = 0;
         foreach ((Source handshakeSource, _) in _acceptedHandshakes.Keys)
         {
             if (handshakeSource.HasSameAddressAs(source))
             {
-                peers++;
+                count++;
             }
         }
 
-        return peers;
+        return count;
+    }
+
+    /// <summary>
+    /// Counts a Discard and answers a verified handshake with the capacity Refusal, whether the Reactor
+    /// is full or the handshake's address is at its limit. The remote end cannot tell which (ADR 0014).
+    /// </summary>
+    private void RefuseForCapacity(UdpLink link, Source source, ulong clientNonce)
+    {
+        _counters.RecordAdmissionDiscard();
+        ControlDatagramCodec.WriteRefusal(_sendBuffer, clientNonce, RefusalReason.Capacity, 0, 0);
+        SendControl(link, source);
     }
 
     /// <summary>
