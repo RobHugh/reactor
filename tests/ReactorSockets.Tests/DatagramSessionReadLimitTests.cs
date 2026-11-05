@@ -108,7 +108,7 @@ public class DatagramSessionReadLimitTests
     }
 
     [Fact]
-    public void Pump_FloodQueuedAheadOfADial_StillCompletesTheHandshake()
+    public void Pump_MalformedFloodQueuedAheadOfADial_StillCompletesTheHandshake()
     {
         // Arrange
         using DatagramSessionReactorHarness accepter = new(maxDatagramsPerPump: 2);

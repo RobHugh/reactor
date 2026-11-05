@@ -68,6 +68,9 @@ Counter sees it. A Pump that reaches the limit logs `DatagramReadLimitReached`.
 Reads are first come, first served, so a live Peer's Datagrams wait behind a flood on the same socket.
 A long enough wait looks like silence to the receive-idle deadline, and the Peer is interrupted.
 
+A dial suffers most. A Hello read after `AdmissionCap` is spent is discarded, and a dial sends its Hello
+once, so a dial behind a backlog of Hellos can stay pending after the flood has stopped, until you close it.
+
 The default allows a full Reactor's worth of traffic, which grows with `Capacity` and the receive window
 and reaches hundreds of thousands of reads with a large `MaxMessageSize`. Set it lower if a Pump must
 return sooner, and accept that wait growing in exchange.
