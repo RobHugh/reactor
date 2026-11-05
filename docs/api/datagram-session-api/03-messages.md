@@ -146,8 +146,8 @@ Message.
 
 ## What a peer can do wrong
 
-None of these throw. A remote can produce them at will, so they cost that Session or that Datagram
-and leave the Reactor untouched.
+None of these throw. A remote can produce them at will, so they cost that Session, that Datagram or
+that Message and leave the Reactor untouched.
 
 | What arrived | Result |
 |---|---|
@@ -157,4 +157,5 @@ and leave the Reactor untouched.
 | A Message larger than your `MaxMessageSize`, whole or assembled | Discarded and still acknowledged. The Session stays open. `OversizedMessage` (207). |
 | Messages after the peer's own Goodbye | Acknowledged, not delivered. |
 
-One bad record discards the whole Datagram it came in, including any good records before it.
+A record that does not parse discards the whole Datagram it came in, including any good records before
+it. A Message over your `MaxMessageSize` costs only itself.

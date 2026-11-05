@@ -204,7 +204,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="DatagramSessionOptions.ReceiveWindowFragments"/> past the floor, a declared count
     /// between the floor and the window is admitted, so such a set can reassemble past
     /// <see cref="DatagramSessionOptions.MaxMessageSize"/>. That is the accepted trade for never closing
-    /// a conforming peer: this check bounds what is held, and <see cref="DiscardsOverLimit"/> refuses to
+    /// a conforming peer: this check bounds what is held, and <see cref="RefuseOverLimit"/> refuses to
     /// deliver the assembled Message (issue #425). Computed once
     /// here, at construction, rather than read from <see cref="_options"/> per datagram — the refusal
     /// path this bounds must allocate nothing and do no more arithmetic than a single comparison.
@@ -2780,7 +2780,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             totalLength += windows.GetFragmentLength(mode, ringSlot);
         }
 
-        if (DiscardsOverLimit(slot, totalLength))
+        if (RefuseOverLimit(slot, totalLength))
         {
             windows.ReleaseGroup(mode, groupFirstSequence, fragmentCount);
             return true;
@@ -2951,8 +2951,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <para>
     /// <b>A Message the arena had no room for is not counted as received.</b> The counter moves only
     /// where the bytes did, which is what makes a share exhaustion visible: a Frame in which records
-    /// plainly arrived but this figure did not move is a Message the arena refused, not one the network
-    /// lost. An unreliable record the arena refuses is gone. A reliable one is never refused here: one
+    /// plainly arrived but this figure did not move is a Message the arena refused or one over
+    /// <see cref="DatagramSessionOptions.MaxMessageSize"/> (<see cref="DiagnosticId.OversizedMessage"/>),
+    /// not one the network lost. An unreliable record the arena refuses is gone. A reliable one is never refused here: one
     /// delivered straight from its datagram was checked for room before it was admitted (see
     /// <see cref="RefusesForArenaRoom"/>) and is otherwise left unacknowledged for the far end to
     /// retransmit, and a <c>ReliableOrdered</c> record released from behind a gap stays held in its
@@ -3017,7 +3018,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             // Advanced before the delivery attempt, not after it: a record this Space has decided is
             // the newest stays the newest whether or not the arena had room for it. Advancing only on a
             // successful reservation would let a Message refused for room be superseded by an older one
-            // that happened to fit, which is the one thing the mode promises cannot happen.
+            // that happened to fit, which is the one thing the mode promises cannot happen. A record
+            // over MaxMessageSize advances it for the same reason.
             slot.HighestDeliveredUnreliableSequenced = sequence;
         }
 
@@ -3201,7 +3203,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </returns>
     private bool DeliverToConsumer(PeerSlot slot, ReadOnlySpan<byte> payload)
     {
-        if (DiscardsOverLimit(slot, payload.Length))
+        if (RefuseOverLimit(slot, payload.Length))
         {
             return true;
         }
@@ -3226,10 +3228,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Holds a completed Message to this Reactor's own <see cref="DatagramSessionOptions.MaxMessageSize"/>
-    /// (issue #425), reporting one over it with <see cref="DiagnosticId.OversizedMessage"/>. The receive
-    /// window bounds what is held, not what is assembled, and a whole record is bounded only by the
-    /// Datagram it came in, so this is what makes the announced limit true of what a consumer receives.
+    /// Applies this Reactor's own <see cref="DatagramSessionOptions.MaxMessageSize"/> to a completed
+    /// Message (issue #425), reporting one over it with <see cref="DiagnosticId.OversizedMessage"/>. The
+    /// receive window bounds what is held, not what is assembled, and a whole record is bounded only by
+    /// the Datagram it came in, so this is what makes the announced limit true of what a consumer receives.
     /// </summary>
     /// <remarks>
     /// The Session stays open. A reliable Send above the limit is refused at the sending end, so only a
@@ -3238,7 +3240,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// this with one of those, which is not a violation worth closing over.
     /// </remarks>
     /// <returns><see langword="true"/> when the Message is over the limit and must not be delivered.</returns>
-    private bool DiscardsOverLimit(PeerSlot slot, int messageLength)
+    private bool RefuseOverLimit(PeerSlot slot, int messageLength)
     {
         if (messageLength <= _options.MaxMessageSize)
         {

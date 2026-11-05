@@ -46,6 +46,7 @@ public class DatagramSessionInboundMessageLimitTests
     private const byte ModeReliableUnordered = 0b0000_0010;
     private const byte ModeReliableOrdered = 0b0000_0011;
     private const byte FragmentBit = 0b0000_0100;
+    private const byte ControlBit = 0b0000_1000;
 
     [Theory]
     [InlineData(ModeReliableOrdered)]
@@ -229,7 +230,7 @@ public class DatagramSessionInboundMessageLimitTests
     }
 
     [Fact]
-    public void Pump_DiscardingAMessage_LeavesTheSessionOpenAndDoesNotCountItAsReceived()
+    public void Pump_DiscardingAMessage_LeavesTheSessionOpen()
     {
         // Arrange
         using Fixture fixture = new();
@@ -240,7 +241,88 @@ public class DatagramSessionInboundMessageLimitTests
 
         // Assert
         events.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+    }
+
+    [Fact]
+    public void Pump_DiscardingAMessage_DoesNotCountItAsReceived()
+    {
+        // Arrange
+        using Fixture fixture = new();
+        byte[] oversizedSet = [.. fixture.Header(), .. BuildFragmentSet(ModeReliableOrdered, startSequence: 0, pieceLengths: [5, 5, 1])];
+
+        // Act
+        fixture.SendAndDrainPayloads(oversizedSet);
+
+        // Assert
         fixture.Accepter.Reactor.CountersOf(fixture.AccepterPeer).MessagesReceived.Should().Be(0);
+    }
+
+    [Fact]
+    public void Pump_DiscardedOrderedWholeRecordBehindAGap_KeepsItsTurnInSendOrder()
+    {
+        // Arrange
+        using Fixture fixture = new();
+        byte[] oversized = [.. fixture.Header(), .. BuildRecord(ModeReliableOrdered, sequence: 1, new byte[MaxMessageSize + 1])];
+        byte[] filler = [.. fixture.Header(), .. BuildRecord(ModeReliableOrdered, sequence: 0, [0xAA])];
+        byte[] next = [.. fixture.Header(), .. BuildRecord(ModeReliableOrdered, sequence: 2, [0xBB])];
+
+        // Act
+        fixture.SendAndDrainPayloads(oversized);
+        List<byte[]> firstDrain = fixture.SendAndDrainPayloads(filler);
+        List<byte[]> secondDrain = fixture.SendAndDrainPayloads(next);
+
+        // Assert
+        firstDrain.Should().ContainSingle().Which.Should().Equal(0xAA);
+        secondDrain.Should().ContainSingle().Which.Should().Equal(0xBB);
+    }
+
+    [Fact]
+    public void Pump_GoodbyeDirectlyBehindADiscardedMessage_ClosesThePeerWithPeerGoodbye()
+    {
+        // Arrange
+        using Fixture fixture = new();
+        byte[] oversized = [.. fixture.Header(), .. BuildRecord(ModeReliableOrdered, sequence: 0, new byte[MaxMessageSize + 1])];
+        byte[] goodbye = [.. fixture.Header(), .. BuildRecord(ModeReliableOrdered | ControlBit, sequence: 1, [])];
+
+        // Act
+        fixture.SendAndDrainPayloads(oversized);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = fixture.SendAndDrainEvents(goodbye);
+
+        // Assert
+        events.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.PeerGoodbye);
+    }
+
+    [Fact]
+    public void Pump_DiscardedFragmentSet_IsStillAcknowledged()
+    {
+        // Arrange
+        using Fixture fixture = new();
+        byte[] oversizedSet = [.. fixture.Header(), .. BuildFragmentSet(ModeReliableOrdered, startSequence: 0, pieceLengths: [5, 5, 1])];
+
+        // Act
+        fixture.SendAndDrainPayloads(oversizedSet);
+        DecodedDatagram reply = fixture.ReceiveNextReply();
+
+        // Assert
+        reply.ReliableOrderedAck.Should().Be(new AckBlock(3, 0));
+    }
+
+    [Fact]
+    public void Pump_OlderSequencedRecordAfterADiscardedNewerOne_IsNotDelivered()
+    {
+        // Arrange — a discarded record stays the newest the Space has decided on, as one the arena had no
+        // room for does, so the mode's promise holds whatever became of the newer record.
+        using Fixture fixture = new();
+        byte[] oversized = [.. fixture.Header(), .. BuildRecord(ModeUnreliableSequenced, sequence: 5, new byte[MaxMessageSize + 1])];
+        byte[] older = [.. fixture.Header(), .. BuildRecord(ModeUnreliableSequenced, sequence: 4, [0xAA])];
+
+        // Act
+        fixture.SendAndDrainPayloads(oversized);
+        List<byte[]> delivered = fixture.SendAndDrainPayloads(older);
+
+        // Assert
+        delivered.Should().BeEmpty();
     }
 
     /// <summary>
@@ -378,6 +460,15 @@ public class DatagramSessionInboundMessageLimitTests
         {
             SendAndPump(datagram);
             return Accepter.DrainToList();
+        }
+
+        /// <summary>Has the accepter Send a Message, which carries its ack blocks, and decodes the datagram the client receives.</summary>
+        public DecodedDatagram ReceiveNextReply()
+        {
+            Accepter.Reactor.Send(AccepterPeer, DeliveryMode.Unreliable, [0x01]).Should().Be(SendOutcome.Sent);
+            DatagramDecodeResult decoded = DatagramDecoder.TryDecode(ExchangeUntilReceived());
+            decoded.IsSuccess.Should().BeTrue(decoded.Error);
+            return decoded.Datagram!; // IsSuccess was just asserted, and Datagram is non-null whenever it holds.
         }
 
         public void Dispose()
