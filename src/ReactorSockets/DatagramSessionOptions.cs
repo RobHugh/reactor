@@ -290,6 +290,22 @@ public sealed class DatagramSessionOptions
     public int? MissedHeartbeats { get; init; }
 
     /// <summary>
+    /// The most reads one Pump makes on each bound socket (issue #428), so a flood cannot keep a
+    /// Pump from returning. Defaults to <see cref="ResolvedMaxDatagramsPerPump"/>. Provenance: derived from
+    /// a full Reactor's worth of traffic, as <see cref="ReactorOptions.AdmissionCap"/> is (ADR 0012). At
+    /// least 1.
+    /// </summary>
+    /// <remarks>
+    /// What this leaves unread waits in the socket's receive buffer for a later Pump. If that buffer
+    /// fills, the operating system drops what arrives next and no counter here sees it. A queued socket
+    /// error spends a read too. Reads are first come, first served, so a live Peer's datagrams wait behind
+    /// a flood from anyone else on that socket, and a long enough wait looks to the receive-idle deadline
+    /// like silence. Lower this to bound how long one Pump can take, at the cost of a longer wait. A Pump
+    /// that reaches it reports <see cref="DiagnosticId.DatagramReadLimitReached"/>.
+    /// </remarks>
+    public int? MaxDatagramsPerPump { get; init; }
+
+    /// <summary>
     /// The entropy the cookie secrets, session ids and resume secrets are drawn from. A construction
     /// knob in ADR 0012's sense — the consumer's own resource, and a consumer with a hardware source
     /// or a policy about which generator may be used is entitled to supply it. It carries a default
@@ -324,6 +340,15 @@ public sealed class DatagramSessionOptions
 
     /// <summary>The resolved receive window: <see cref="ReceiveWindowFragments"/> if set, otherwise <see cref="ReceiveWindowFloor"/>.</summary>
     public int ResolvedReceiveWindowFragments => ReceiveWindowFragments ?? ReceiveWindowFloor;
+
+    /// <summary>
+    /// The resolved per-socket read limit: <see cref="MaxDatagramsPerPump"/> if set, otherwise one receive
+    /// window for every Space of every Peer, plus every handshake the admission cap allows in one Pump.
+    /// </summary>
+    public int ResolvedMaxDatagramsPerPump =>
+        MaxDatagramsPerPump ?? (int)Math.Min(
+            ((long)Reactor.Capacity * ResolvedReceiveWindowFragments * SpaceCount) + Reactor.ResolvedAdmissionCap,
+            int.MaxValue);
 
     /// <summary>The resolved missed-heartbeat count: <see cref="MissedHeartbeats"/> if set, otherwise 3.</summary>
     public int ResolvedMissedHeartbeats => MissedHeartbeats ?? DefaultMissedHeartbeats;
@@ -465,6 +490,14 @@ public sealed class DatagramSessionOptions
                 $"advances and the sender can never send the rest (ADR 0004). Raise ReceiveWindowFragments to at least " +
                 $"{windowFloor}, or lower MaxMessageSize.",
                 nameof(ReceiveWindowFragments));
+        }
+
+        if (ResolvedMaxDatagramsPerPump < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxDatagramsPerPump),
+                ResolvedMaxDatagramsPerPump,
+                $"a limit of {ResolvedMaxDatagramsPerPump} datagrams per Pump reads nothing, so nothing could ever arrive — it must be at least 1.");
         }
 
         int missedHeartbeats = ResolvedMissedHeartbeats;

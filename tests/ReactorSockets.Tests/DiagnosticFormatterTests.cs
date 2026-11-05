@@ -76,6 +76,9 @@ public class DiagnosticFormatterTests
             DiagnosticRecord.ForAddressPeerLimitReached(_source, limit: 2),
             $"Warn AddressPeerLimitReached (208), {SourceText}: a handshake was refused because its address holds as many Peers as it may (MaxPeersPerAddress 2)"),
         new(
+            DiagnosticRecord.ForDatagramReadLimitReached(limit: 3, socketIndex: 1),
+            "Warn DatagramReadLimitReached (209): a Pump made as many reads on bound socket 1 as it may (MaxDatagramsPerPump 3)"),
+        new(
             DiagnosticRecord.ForPeerRefusedCapacity(_source, capacity: 8),
             $"Info PeerRefused (300), {SourceText}: a dialler was refused because every capacity slot was occupied (capacity 8)"),
         new(

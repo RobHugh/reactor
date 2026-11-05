@@ -24,6 +24,7 @@ public class DatagramSessionOptionsTests
         int maxMessageSize = 4096,
         int retentionBytes = 4096,
         int maxPeersPerAddress = 1,
+        int? maxDatagramsPerPump = null,
         int? fragmentSize = null,
         int? receiveWindowFragments = null,
         int? missedHeartbeats = null,
@@ -45,6 +46,7 @@ public class DatagramSessionOptionsTests
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
             MaxPeersPerAddress = maxPeersPerAddress,
+            MaxDatagramsPerPump = maxDatagramsPerPump,
             FragmentSize = fragmentSize,
             ReceiveWindowFragments = receiveWindowFragments,
             MissedHeartbeats = missedHeartbeats,
@@ -66,6 +68,47 @@ public class DatagramSessionOptionsTests
 
         // Assert
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(ReactorOptions.Capacity));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_MaxDatagramsPerPumpBelowOne_ThrowsArgumentOutOfRangeException(int maxDatagramsPerPump)
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(maxDatagramsPerPump: maxDatagramsPerPump);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(DatagramSessionOptions.MaxDatagramsPerPump));
+    }
+
+    [Fact]
+    public void ResolvedMaxDatagramsPerPump_Unset_IsOneWindowForEverySpaceOfEveryPeerPlusTheAdmissionCap()
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(capacity: 8, admissionCap: 5, receiveWindowFragments: 10);
+
+        // Act
+        int resolved = options.ResolvedMaxDatagramsPerPump;
+
+        // Assert
+        resolved.Should().Be((8 * 10 * 4) + 5);
+    }
+
+    [Fact]
+    public void ResolvedMaxDatagramsPerPump_Set_IsTheValueSet()
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(maxDatagramsPerPump: 7);
+
+        // Act
+        int resolved = options.ResolvedMaxDatagramsPerPump;
+
+        // Assert
+        resolved.Should().Be(7);
     }
 
     [Theory]

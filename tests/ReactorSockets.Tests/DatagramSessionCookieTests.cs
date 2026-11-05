@@ -236,10 +236,13 @@ public class DatagramSessionCookieTests
     public void OnHello_FloodOfBareHellosFromVariedSources_LeavesEveryCapacitySlotFree()
     {
         // Arrange
-        using DatagramSessionReactorHarness accepter = new(capacity: 4);
-        using HostilePeer flood = new();
         const int totalHellos = 3000;
         const int batchSize = 150;
+
+        // A limit below the batch size would leave Hellos queued ahead of the dial below. Its one Hello
+        // would then lose its admission to them and never be re-sent, which is not what this test is about.
+        using DatagramSessionReactorHarness accepter = new(capacity: 4, maxDatagramsPerPump: totalHellos);
+        using HostilePeer flood = new();
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> floodEvents = [];
 
         // Act — a flood of bare Hellos, each from a throwaway Link (HostilePeer binds and closes a

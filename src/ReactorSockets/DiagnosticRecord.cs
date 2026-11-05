@@ -177,6 +177,13 @@ public readonly record struct DiagnosticRecord
         new(DiagnosticId.AddressPeerLimitReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, limit, 0);
 
     /// <summary>
+    /// Builds a <see cref="DiagnosticId.DatagramReadLimitReached"/> record. No subject. Carries the per-socket
+    /// read limit and the socket's index in <see cref="DatagramSessionReactor.BoundEndpoints"/> (issue #428).
+    /// </summary>
+    public static DiagnosticRecord ForDatagramReadLimitReached(int limit, int socketIndex) =>
+        new(DiagnosticId.DatagramReadLimitReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, default, limit, socketIndex);
+
+    /// <summary>
     /// Builds a <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record for the Peer whose
     /// <see cref="RetransmissionTimer"/> just backed off (subtask 6.4.9, issue #199). <c>Value0</c> is
     /// the new RTO in milliseconds; <c>Value1</c> is the consecutive backoff count after this backoff.

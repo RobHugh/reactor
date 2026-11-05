@@ -218,6 +218,20 @@ public enum DiagnosticId
     AddressPeerLimitReached = 208,
 
     /// <summary>
+    /// A Pump made <see cref="DatagramSessionOptions.MaxDatagramsPerPump"/> reads on one bound socket and
+    /// stopped (issue #428). What was left, if anything, waits for a later Pump. No subject.
+    /// <c>Value0</c> is the limit; <c>Value1</c> is the socket's index in
+    /// <see cref="DatagramSessionReactor.BoundEndpoints"/>. At most one record per bound socket per Pump.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>: a remote can produce this at will, and it names a configured
+    /// bound a consumer can act on. A queued socket error spends a read, so not every read was a datagram.
+    /// The socket's queue depth cannot be read past queued errors, so a Pump that read exactly the last
+    /// queued datagram also reports this.
+    /// </remarks>
+    DatagramReadLimitReached = 209,
+
+    /// <summary>
     /// A dialler was refused in-protocol during the stream handshake, either because it announced a
     /// different protocol version or because every capacity Slot was occupied. Subject is the claimed
     /// Source: at refusal time there is no Peer, only a claimed origin. For a capacity refusal,

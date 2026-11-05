@@ -93,6 +93,8 @@ public static class DiagnosticFormatter
                 $"a Message larger than MaxMessageSize was discarded (bytes {v0}, MaxMessageSize {v1})"),
             DiagnosticId.AddressPeerLimitReached => Invariant(
                 $"a handshake was refused because its address holds as many Peers as it may (MaxPeersPerAddress {v0})"),
+            DiagnosticId.DatagramReadLimitReached => Invariant(
+                $"a Pump made as many reads on bound socket {v1} as it may (MaxDatagramsPerPump {v0})"),
 
             // A version refusal always carries the required version, which is never 0, so a zero
             // Value1 is the capacity shape (see DiagnosticRecord.ForPeerRefusedCapacity).

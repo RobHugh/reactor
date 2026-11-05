@@ -180,6 +180,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private readonly ulong[] _distinctGroupFirstSequenceAndCount = new ulong[MaxFragmentRecordsPerDatagram];
     private readonly int[] _distinctGroupSortKey = new int[MaxFragmentRecordsPerDatagram];
 
+    private readonly int _maxDatagramsPerPump;
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
     private int _capDiscardsThisFrame;
@@ -242,6 +243,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _entropy = options.Entropy;
         _cookies = new CookieMinter(options.Reactor.TimeProvider, _entropy);
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
+        _maxDatagramsPerPump = options.ResolvedMaxDatagramsPerPump;
         _maxLegalFragmentCount = options.ResolvedReceiveWindowFragments;
         _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
 
@@ -838,14 +840,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Reads everything queued on a ready socket, rather than the Raw profile's one read per Pump. The
-    /// difference is deliberate: work here is bounded by the admission cap, which counts the HMACs a
-    /// Pump will compute, and a datagram beyond that cap must still be taken from the queue so it can
-    /// be counted as a Discard. Leaving it in the OS buffer would make it a deferral, and a deferral
-    /// is a promise that a later Pump will find the work still there — a promise UDP cannot keep.
+    /// Reads a ready socket until it is empty or <see cref="DatagramSessionOptions.MaxDatagramsPerPump"/>
+    /// reads have been spent, rather than the Raw profile's one read per Pump. Everything read is
+    /// handled now, so a datagram beyond the admission cap is still counted as a Discard. Every read that
+    /// returned something spends the limit, queued errors included, because each is work a remote party
+    /// can cause. What the limit leaves waits in the socket's buffer, and the socket stays ready for a
+    /// later Pump. If that buffer fills, the operating system drops what arrives next, which is normal
+    /// for UDP (ADR 0012).
     /// </summary>
     /// <remarks>
-    /// The loop ends on the socket's own answer that nothing is left —
+    /// The loop ends early on the socket's own answer that nothing is left —
     /// <see cref="UdpLinkReceiveOutcome.WouldBlock"/> — rather than on <c>Socket.Available</c>, which
     /// counts queued datagrams and so reports zero while queued ICMP errors still stand in front of
     /// them. Terminating on it would abandon the read at the first error and starve every live Peer
@@ -853,7 +857,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </remarks>
     private void OnLinkReadable(UdpLink link)
     {
-        while (true)
+        for (int reads = 0; reads < _maxDatagramsPerPump; reads++)
         {
             UdpLinkReceiveResult result = link.Receive(_scratchBuffer);
             switch (result.Outcome)
@@ -886,6 +890,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                     return;
             }
         }
+
+        _diagnostics.Log(DiagnosticRecord.ForDatagramReadLimitReached(_maxDatagramsPerPump, _links.IndexOf(link)));
     }
 
     /// <summary>
@@ -3802,9 +3808,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Spends one unit of the per-Pump admission budget, or Discards. The cap bounds work rather than
     /// state — one HMAC minted or verified is one unit, and both halves of the handshake cost one —
-    /// while the cookie is what bounds state. Beyond the cap the datagram is gone, because UDP gives
-    /// it nowhere to wait: this profile Discards where the others defer, and the count is exact
-    /// because the Reactor had the work in hand when it let it go.
+    /// while the cookie is what bounds state. Beyond the cap a datagram already read is gone, because
+    /// nothing holds it for a later Pump: this profile Discards where the others defer, and the count is
+    /// exact because the Reactor had the work in hand when it let it go.
     /// </summary>
     private bool TryChargeAdmission()
     {

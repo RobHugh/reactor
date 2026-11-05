@@ -46,6 +46,7 @@ appears that is not in the audited list below.
 | `Reactor` | required | |
 | `MaxMessageSize` | required | A statement about your protocol. |
 | `RetentionBytes` | required | Your memory against your tolerance for stalling on loss. |
+| `MaxPeersPerAddress` | required | How many Peers one address may legitimately hold against how many Slots one reachable address may take. `Reactor.Capacity` or above sets no limit. At least 1. |
 | `SendIdleInterval` | required | Bandwidth on an idle link against time to notice a dead Peer. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Linger` | required | A prompt teardown against a clean one. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Endpoints` | empty | No declaration. The first dial binds a wildcard, port-zero socket. |
@@ -53,6 +54,7 @@ appears that is not in the audited list below.
 | `ReceiveWindowFragments` | fragments in one maximum Message | `MaxMessageSize` and `FragmentSize`. A narrower window deadlocks (ADR 0004). |
 | `MissedHeartbeats` | 3 | RFC 4271's hold time. At least 2. |
 | `Entropy` | the platform CSPRNG | The platform. |
+| `MaxDatagramsPerPump` | `Capacity × ReceiveWindowFragments × 4 + AdmissionCap` | A full Reactor's worth of reads per bound socket: one window for every Space of every Peer, plus every handshake one Pump may admit. Lower it for a shorter Pump. At least 1. |
 
 ### Stream Session (`StreamSessionOptions`)
 
