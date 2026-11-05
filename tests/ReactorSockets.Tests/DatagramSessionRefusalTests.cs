@@ -784,12 +784,14 @@ public class DatagramSessionRefusalTests
         using RawPeer sameAddress = new();
         PeerId admitted = CompleteHandshake(accepter, interrupted, 0x0000_0000_0000_00C1UL);
         accepter.TimeProvider.Advance(TimeSpan.FromSeconds(181));
-        accepter.PumpUntilDrained(e => e.Any(x => x.Kind == SessionEventKind.PeerInterrupted && x.Peer == admitted));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            accepter.PumpUntilDrained(e => e.Any(x => x.Kind == SessionEventKind.PeerInterrupted && x.Peer == admitted));
 
         // Act
         ReplyToHandshake(accepter, sameAddress, 0x0000_0000_0000_00C2UL);
 
         // Assert
+        drained.Should().Contain(x => x.Kind == SessionEventKind.PeerInterrupted && x.Peer == admitted);
         accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.AddressPeerLimitReached);
     }
 
@@ -857,12 +859,14 @@ public class DatagramSessionRefusalTests
         PeerId admitted = CompleteHandshake(accepter, closed, 0x0000_0000_0000_0071UL);
         accepter.Reactor.Close(admitted);
         accepter.TimeProvider.Advance(accepter.Options.Linger + TimeSpan.FromSeconds(1));
-        accepter.PumpUntilDrained(e => e.Any(x => x.Kind == SessionEventKind.PeerClosed && x.Peer == admitted));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            accepter.PumpUntilDrained(e => e.Any(x => x.Kind == SessionEventKind.PeerClosed && x.Peer == admitted));
 
         // Act
         ReplyToHandshake(accepter, sameAddress, 0x0000_0000_0000_0072UL);
 
         // Assert
+        drained.Should().Contain(x => x.Kind == SessionEventKind.PeerClosed && x.Peer == admitted);
         accepter.DrainToList().Should().ContainSingle(evt => evt.Kind == SessionEventKind.PeerConnected);
     }
 
