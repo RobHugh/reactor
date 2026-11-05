@@ -55,6 +55,10 @@ internal sealed class ReactorCounterSet
     /// hand. Called only where declined work does not survive to a later Pump, which today means a
     /// datagram Session dropping a Hello.
     /// </summary>
+    /// <remarks>
+    /// A handshake refused by <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> also lands here, and
+    /// <see cref="DiagnosticId.AddressPeerLimitReached"/> tells it apart.
+    /// </remarks>
     public void RecordAdmissionDiscard() => _admissionDiscards++;
 
     /// <summary>

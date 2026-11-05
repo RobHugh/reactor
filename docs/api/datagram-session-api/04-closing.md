@@ -65,7 +65,7 @@ and raises neither `PeerClosing` nor `PeerGoodbye`.
 | `LocalClose` | You called `Close`. |
 | `PeerGoodbye` | The peer closed on purpose. A clean ending on both sides. |
 | `VersionMismatch` | The two ends do not speak the same protocol version. The match is exact — no negotiation, no compatibility range. |
-| `RemoteAtCapacity` | The far end had no Slot free and said so. Distinct from silence: retry later. |
+| `RemoteAtCapacity` | The far end had no Slot free for you and said so, because it is full or your address is at its `MaxPeersPerAddress`. Distinct from silence: retry later. |
 | `ProtocolViolation` | The peer declared a Fragment set larger than your receive window could ever hold. |
 | `LingerExpired` | An interrupted Peer's Linger ran out before it was heard from, or a Closing Peer's Goodbye went unacknowledged for a whole Linger. |
 | `FragmentSizeUnviable` | Your `FragmentSize` is larger than the path will carry. |
@@ -85,8 +85,9 @@ A refusal only comes after the cookie round trip. A bare Hello is always answere
 nothing else, so nothing about a Reactor's version or occupancy is learnable without proving you
 can receive at the address you claim.
 
-The refusing end logs `VersionRefused` (202) or `CapacityExhausted` (3) and counts a capacity
-refusal in `AdmissionDiscards`.
+The refusing end logs `VersionRefused` (202), `CapacityExhausted` (3) or `AddressPeerLimitReached`
+(208), and counts the last two in `AdmissionDiscards`. A remote cannot tell a full Reactor from a
+per-address refusal, so a refusal says nothing about how many Slots are free.
 
 ## FragmentSizeUnviable
 

@@ -70,4 +70,11 @@ public readonly record struct Source(SourceFamily Family, UInt128 AddressBytes, 
 
         return new IPEndPoint(address, Port);
     }
+
+    /// <summary>
+    /// Whether <paramref name="other"/> names the same host address, whatever its port. Family and scope
+    /// count, for the reasons on this type's remarks.
+    /// </summary>
+    internal bool HasSameAddressAs(Source other) =>
+        Family == other.Family && AddressBytes == other.AddressBytes && ScopeId == other.ScopeId;
 }

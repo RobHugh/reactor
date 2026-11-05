@@ -189,6 +189,7 @@ public class DatagramSessionReceiveArenaAllocationTests
             FragmentSize = MeasurementFragmentSize,
             ReceiveWindowFragments = receiveWindowFragments,
             RetentionBytes = MeasurementFragmentSize,
+            MaxPeersPerAddress = MeasurementCapacity,
             SendIdleInterval = TimeSpan.FromSeconds(1),
             Linger = TimeSpan.FromSeconds(1),
         }.ReceiveBudgetBytes;

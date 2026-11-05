@@ -23,6 +23,7 @@ public class DatagramSessionOptionsTests
         int? admissionCap = null,
         int maxMessageSize = 4096,
         int retentionBytes = 4096,
+        int maxPeersPerAddress = 1,
         int? fragmentSize = null,
         int? receiveWindowFragments = null,
         int? missedHeartbeats = null,
@@ -43,6 +44,7 @@ public class DatagramSessionOptionsTests
             },
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
+            MaxPeersPerAddress = maxPeersPerAddress,
             FragmentSize = fragmentSize,
             ReceiveWindowFragments = receiveWindowFragments,
             MissedHeartbeats = missedHeartbeats,
@@ -64,6 +66,21 @@ public class DatagramSessionOptionsTests
 
         // Assert
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(ReactorOptions.Capacity));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_MaxPeersPerAddressBelowOne_ThrowsArgumentOutOfRangeException(int maxPeersPerAddress)
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(maxPeersPerAddress: maxPeersPerAddress);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(DatagramSessionOptions.MaxPeersPerAddress));
     }
 
     [Theory]

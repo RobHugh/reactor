@@ -67,6 +67,7 @@ using var reactor = new DatagramSessionReactor(new DatagramSessionOptions
     Reactor = new ReactorOptions { Capacity = 64 },
     MaxMessageSize = 64 * 1024,
     RetentionBytes = 256 * 1024,
+    MaxPeersPerAddress = 4,
     SendIdleInterval = TimeSpan.FromSeconds(5),
     Linger = TimeSpan.FromSeconds(30),
     Endpoints = [new IPEndPoint(IPAddress.Loopback, 9000)],

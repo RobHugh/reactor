@@ -169,6 +169,7 @@ public class MemoryBillTests
             FragmentSize = fragmentSize,
             ReceiveWindowFragments = windowFragments,
             RetentionBytes = retentionBytes,
+            MaxPeersPerAddress = MeasurementCapacity,
             SendIdleInterval = TimeSpan.FromSeconds(1),
             Linger = TimeSpan.FromSeconds(1),
         };

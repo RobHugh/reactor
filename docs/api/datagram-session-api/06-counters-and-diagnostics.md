@@ -22,7 +22,7 @@ Interrupted or Closing Peer, right up to the close.
 | `DatagramsSent` | Datagrams the transport accepted for sending, handshake control Datagrams included. |
 | `DatagramsReceived` | Datagrams taken from the transport. The denominator for the two discard figures below. |
 | `ArenaHighWaterBytes` | The most arena bytes any single Frame used. Approaching `ArenaSize` means Messages are being refused. |
-| `AdmissionDiscards` | Hellos turned away, by the admission cap or by a full Reactor. Exact: a discarded Hello never comes back. |
+| `AdmissionDiscards` | Hellos turned away, by the admission cap, by a full Reactor, or by `MaxPeersPerAddress`. Exact: a discarded Hello never comes back. |
 | `UnknownSourceDatagrams` | Datagrams that named no Peer: malformed control Datagrams, unknown session ids, forged cookies, stray replies, truncated Datagrams. |
 | `MalformedSessionDatagrams` | Data Datagrams that named a live Session and then failed to parse. Not charged to that Peer, because a body that did not parse proves nothing about who sent it. |
 | `SinkFaulted` | Times your Sink threw. Non-zero means diagnostics are off for the rest of this Reactor's life. |
@@ -101,6 +101,7 @@ Source or none) and two numeric slots whose meaning is documented per id.
 | `OversizedFragmentSet` (205) | Warn | Peer | A Fragment set claimed more Fragments than your window holds, closing the Session. `Value0` declared, `Value1` the largest legal count. |
 | `UnreliableFragment` (206) | Warn | Source | A Fragment arrived in an unreliable mode. `Value0` the mode (0 `Unreliable`, 1 `UnreliableSequenced`). |
 | `OversizedMessage` (207) | Warn | Peer | A completed Message was larger than your `MaxMessageSize` and was discarded. `Value0` its length, `Value1` your limit. |
+| `AddressPeerLimitReached` (208) | Warn | Source | A verified handshake was refused because its address holds `MaxPeersPerAddress` accepted Peers. `Value0` the limit. |
 | `LingerNegotiated` (301) | Info | Peer | A handshake completed. `Value0` your Linger in ms, `Value1` the effective one. |
 | `ResumeMatched` (304) | Info | Peer | A Resume matched, or the dialling end heard its Session again. `Value0` always 0 here. |
 | `ResumeUnmatched` (305) | Warn | Source | A Resume was refused. `Value0` 0 no such Peer, 1 wrong secret or closing. `Value1` 6, the Resume type. |

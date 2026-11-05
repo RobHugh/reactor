@@ -256,7 +256,8 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
         int? fragmentSize = null,
         int? arenaSize = null,
         int? receiveWindowFragments = null,
-        bool bindDialler = false)
+        bool bindDialler = false,
+        int? accepterMaxPeersPerAddress = null)
     {
         FakeTimeProvider clock = new();
         DatagramSessionReactorHarness dialler = new(
@@ -269,6 +270,7 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
             missedHeartbeats: MissedHeartbeats,
             timeProvider: clock);
         DatagramSessionReactorHarness accepter = new(
+            maxPeersPerAddress: accepterMaxPeersPerAddress,
             maxMessageSize: maxMessageSize,
             retentionBytes: retentionBytes,
             fragmentSize: fragmentSize,

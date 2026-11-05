@@ -205,6 +205,19 @@ public enum DiagnosticId
     OversizedMessage = 207,
 
     /// <summary>
+    /// A verified handshake was refused because its address already holds
+    /// <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> accepted Peers while other capacity Slots
+    /// were free (issue #427). Subject is the claimed Source. <c>Value0</c> is the limit; <c>Value1</c> is
+    /// unused. One record per refusal, because it names the address and the admission cap already bounds
+    /// how many refusals a Pump can make. A full Reactor reports <see cref="CapacityExhausted"/> instead.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>: a remote can produce this at will, and a consumer can act on it
+    /// by raising the limit if the address is a NAT or proxy, or by blocking it if it is not.
+    /// </remarks>
+    AddressPeerLimitReached = 208,
+
+    /// <summary>
     /// A dialler was refused in-protocol during the stream handshake, either because it announced a
     /// different protocol version or because every capacity Slot was occupied. Subject is the claimed
     /// Source: at refusal time there is no Peer, only a claimed origin. For a capacity refusal,
