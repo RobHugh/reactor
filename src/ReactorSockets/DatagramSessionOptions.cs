@@ -51,6 +51,11 @@ namespace ReactorSockets;
 /// shared across the whole Reactor rather than multiplied by capacity.
 /// </para>
 /// <para>
+/// One further cost is allocated only under traffic: ordinary <c>ReliableOrdered</c> records waiting
+/// behind a gap. It has a ceiling of its own, <see cref="HeldRecordBudgetBytes"/>, and reaching it refuses
+/// further records rather than growing.
+/// </para>
+/// <para>
 /// <see cref="MaxMessageSize"/> reaches three places at once: it is announced to the remote as a
 /// receive limit, it floors the receive window at the fragments one maximum Message occupies
 /// (<see cref="ReceiveWindowFloor"/>), and it floors the frame arena, because an arena that cannot
@@ -147,6 +152,13 @@ public sealed class DatagramSessionOptions
     /// cleared (issue #297).
     /// </summary>
     internal const int FragmentGroupEntryBytes = 6;
+
+    /// <summary>
+    /// The most one held ordinary record costs beside its payload on a 64-bit runtime (issue #424): an
+    /// 8-byte reference and a 4-byte length in the send-order ring, and a byte array's 24-byte object
+    /// header with up to 8 bytes of padding.
+    /// </summary>
+    internal const int HeldRecordSlotBookkeepingBytes = 8 + 4 + 24 + 8;
 
     /// <summary>
     /// The shared L0 budget: capacity, admission cap, arena size, time source and Diagnostic Sink.
@@ -311,9 +323,10 @@ public sealed class DatagramSessionOptions
     /// still lets an abandoned set's held and declared counts be read once that slot is reused. The
     /// six-byte waiting-group entry — <see cref="PendingGroupEntryBytes"/> — exists for the same two
     /// Spaces too, but only half a window's worth each (<see cref="PendingGroupsPerSpace"/>, issue
-    /// #259), since a completed-but-undelivered group holds at least two Fragments. Nothing on the
-    /// receive side is allocated outside this figure, so it is an exact statement of what a Reactor
-    /// takes, not a floor it sits above.
+    /// #259), since a completed-but-undelivered group holds at least two Fragments. This figure is an
+    /// exact statement of what the receive arena takes at construction. Ordinary records held behind a
+    /// gap are the one receive-side cost outside it, and they have their own ceiling,
+    /// <see cref="HeldRecordBudgetBytes"/>.
     /// </remarks>
     public long ReceiveBudgetBytes =>
         ((long)Reactor.Capacity * ResolvedReceiveWindowFragments
@@ -328,6 +341,30 @@ public sealed class DatagramSessionOptions
     /// </summary>
     internal int PendingGroupsPerSpace =>
         ResolvedReceiveWindowFragments / 2 < 1 ? 1 : ResolvedReceiveWindowFragments / 2;
+
+    /// <summary>
+    /// How many sequences from its send-order head one <c>ReliableOrdered</c> Space will hold ordinary
+    /// records for (issue #424): twice <see cref="ResolvedReceiveWindowFragments"/>. Honest traffic
+    /// reaches no further while a Fragment group holds the head, because a group spans at most one window
+    /// and the receive window then spans one more from the group's last admitted piece.
+    /// </summary>
+    internal int OrderedHoldSlots => 2 * ResolvedReceiveWindowFragments;
+
+    /// <summary>
+    /// The most heap, in bytes, a Reactor's <c>ReliableOrdered</c> Spaces can hold in ordinary records
+    /// waiting behind a gap, across all its Peers (issue #424): <c>Capacity × 2 × ReceiveWindowFragments
+    /// × FragmentSize</c>, with each slot's bookkeeping.
+    /// </summary>
+    /// <remarks>
+    /// This is a ceiling reached only under traffic, not a line allocated at construction, so
+    /// <see cref="ValidateMemoryBill"/> does not count it. It is over and above
+    /// <see cref="ReceiveBudgetBytes"/> and about the same size. A record past either limit is left
+    /// unacknowledged and counted on <see cref="PeerCounters.OutOfWindowPackets"/>, so the far end's
+    /// retransmission brings it back when the Space has moved. The figure counts what stays held, not
+    /// the short-lived arrays the ring leaves behind each time it grows.
+    /// </remarks>
+    public long HeldRecordBudgetBytes =>
+        (long)Reactor.Capacity * OrderedHoldSlots * (ResolvedFragmentSize + HeldRecordSlotBookkeepingBytes);
 
     /// <summary>
     /// The send line of the memory bill in bytes, reported the same way: <see cref="RetentionSlots"/>

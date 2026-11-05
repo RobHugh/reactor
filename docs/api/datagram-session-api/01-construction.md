@@ -113,6 +113,10 @@ long total = options.ReceiveBudgetBytes + options.SendBudgetBytes;
 The frame arena (`Reactor.ArenaSize`) is extra, and is shared across the whole Reactor rather than
 multiplied by capacity.
 
+Ordinary `ReliableOrdered` records waiting behind a gap are also extra. They are not preallocated, but
+`options.HeldRecordBudgetBytes` is their ceiling, about the size of the receive line. Records past it
+are refused and retransmitted rather than held.
+
 `MaxMessageSize` raises memory in two directions at once. It floors the receive window, which is per
 Peer and per Space, and it floors the arena. Raise it with care.
 
