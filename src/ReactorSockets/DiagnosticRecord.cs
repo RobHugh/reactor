@@ -177,11 +177,11 @@ public readonly record struct DiagnosticRecord
         new(DiagnosticId.AddressPeerLimitReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, limit, 0);
 
     /// <summary>
-    /// Builds a <see cref="DiagnosticId.DatagramBudgetReached"/> record. No subject. Carries the per-socket
-    /// read limit (issue #428).
+    /// Builds a <see cref="DiagnosticId.DatagramReadLimitReached"/> record. No subject. Carries the per-socket
+    /// read limit and the socket's index in <see cref="DatagramSessionReactor.BoundEndpoints"/> (issue #428).
     /// </summary>
-    public static DiagnosticRecord ForDatagramBudgetReached(int limit) =>
-        new(DiagnosticId.DatagramBudgetReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, default, limit, 0);
+    public static DiagnosticRecord ForDatagramReadLimitReached(int limit, int socketIndex) =>
+        new(DiagnosticId.DatagramReadLimitReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, default, limit, socketIndex);
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record for the Peer whose

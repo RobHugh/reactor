@@ -891,7 +891,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
         }
 
-        _diagnostics.Log(DiagnosticRecord.ForDatagramBudgetReached(_maxDatagramsPerPump));
+        _diagnostics.Log(DiagnosticRecord.ForDatagramReadLimitReached(_maxDatagramsPerPump, _links.IndexOf(link)));
     }
 
     /// <summary>
@@ -3808,9 +3808,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Spends one unit of the per-Pump admission budget, or Discards. The cap bounds work rather than
     /// state — one HMAC minted or verified is one unit, and both halves of the handshake cost one —
-    /// while the cookie is what bounds state. Beyond the cap the datagram is gone, because UDP gives
-    /// it nowhere to wait: this profile Discards where the others defer, and the count is exact
-    /// because the Reactor had the work in hand when it let it go.
+    /// while the cookie is what bounds state. Beyond the cap a datagram already read is gone, because
+    /// nothing holds it for a later Pump: this profile Discards where the others defer, and the count is
+    /// exact because the Reactor had the work in hand when it let it go.
     /// </summary>
     private bool TryChargeAdmission()
     {

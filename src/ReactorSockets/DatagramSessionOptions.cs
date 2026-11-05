@@ -290,16 +290,18 @@ public sealed class DatagramSessionOptions
     public int? MissedHeartbeats { get; init; }
 
     /// <summary>
-    /// The most datagrams one Pump reads from each bound socket (issue #428), so a flood cannot keep a
+    /// The most reads one Pump makes on each bound socket (issue #428), so a flood cannot keep a
     /// Pump from returning. Defaults to <see cref="ResolvedMaxDatagramsPerPump"/>. Provenance: derived from
     /// a full Reactor's worth of traffic, as <see cref="ReactorOptions.AdmissionCap"/> is (ADR 0012). At
     /// least 1.
     /// </summary>
     /// <remarks>
     /// What this leaves unread waits in the socket's receive buffer for a later Pump. If that buffer
-    /// fills, the operating system drops what arrives next and no counter here sees it. Lower this to
-    /// bound how long one Pump can take, at the cost of reading a flood more slowly. A Pump that reaches it
-    /// reports <see cref="DiagnosticId.DatagramBudgetReached"/>.
+    /// fills, the operating system drops what arrives next and no counter here sees it. A queued socket
+    /// error spends a read too. Reads are first come, first served, so a live Peer's datagrams wait behind
+    /// a flood from anyone else on that socket, and a long enough wait looks to the receive-idle deadline
+    /// like silence. Lower this to bound how long one Pump can take, at the cost of a longer wait. A Pump
+    /// that reaches it reports <see cref="DiagnosticId.DatagramReadLimitReached"/>.
     /// </remarks>
     public int? MaxDatagramsPerPump { get; init; }
 

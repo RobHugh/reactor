@@ -190,7 +190,7 @@ apart reads the diagnostics, which is what diagnostics are for.
 | 206 | `UnreliableFragment` | `Warn` | Source | claimed mode bits / — |
 | 207 | `OversizedMessage` | `Warn` | Peer | Message length / `MaxMessageSize` |
 | 208 | `AddressPeerLimitReached` | `Warn` | Source | `MaxPeersPerAddress` / — |
-| 209 | `DatagramBudgetReached` | `Warn` | none | `MaxDatagramsPerPump` / — |
+| 209 | `DatagramReadLimitReached` | `Warn` | none | `MaxDatagramsPerPump` / index in `BoundEndpoints` |
 
 ### Stream session
 
@@ -225,10 +225,13 @@ refusals, but no counter names the address, which is what a consumer needs in or
 or block the address. It emits one record per refusal rather than one per Frame like
 `CapacityExhausted`, because each record has its own subject, and the admission cap bounds the volume.
 
-**Amended (issue #428).** `DatagramBudgetReached` takes 209, under the configured-bound class. No counter
-shows that `MaxDatagramsPerPump` stopped a read, and it is the only sign a consumer has that the limit is
-what slows reading. It emits at most one record per bound socket per Pump. It means the limit was spent, not
-that datagrams remain, because the socket's queue depth cannot be read past queued errors.
+**Amended (issue #428).** `DatagramReadLimitReached` takes 209, under the configured-bound class. What a
+count cannot carry is the identity of the socket that spent `MaxDatagramsPerPump`, as an index in
+`BoundEndpoints`, which tells a consumer which address is flooded. It emits at most one record per bound
+socket per Pump. It means the limit was spent, not that datagrams remain, because the socket's queue depth
+cannot be read past queued errors. The Discard rule above still holds for a Hello the Reactor has read. A
+Hello this limit leaves unread waits in the socket buffer, and no counter sees it until it is read or the
+operating system drops it.
 
 **Amended (slice 4.4.4).** `ResumeUnmatched` shipped with both value slots used, where this table had
 drafted neither. It carries the number of reserved Slots the claim was checked against and the wire
