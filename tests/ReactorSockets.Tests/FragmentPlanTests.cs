@@ -145,6 +145,72 @@ public class FragmentPlanTests
         result.IsMessageTooLarge.Should().BeTrue();
     }
 
+    [Theory]
+    [MemberData(nameof(UnreliableModes))]
+    public void Resolve_UnreliableModeOverTheFragmentSizeOnly_DoesNotReportTheRemoteLimit(DeliveryMode mode)
+    {
+        // Arrange
+        // Act
+        FragmentPlanResult result = FragmentPlan.Resolve(FragmentSize + 1, FragmentSize, mode, maxMessageLength: FragmentSize * 2);
+
+        // Assert
+        result.IsMessageTooLarge.Should().BeTrue();
+        result.IsOverRemoteLimit.Should().BeFalse();
+    }
+
+    [Theory]
+    [MemberData(nameof(UnreliableModes))]
+    public void Resolve_UnreliableModeOverBothCaps_DoesNotReportTheRemoteLimit(DeliveryMode mode)
+    {
+        // Arrange
+        // Act
+        FragmentPlanResult result = FragmentPlan.Resolve(FragmentSize + 1, FragmentSize, mode, maxMessageLength: 10);
+
+        // Assert
+        result.IsMessageTooLarge.Should().BeTrue();
+        result.IsOverRemoteLimit.Should().BeFalse();
+    }
+
+    [Theory]
+    [MemberData(nameof(UnreliableModes))]
+    public void Resolve_UnreliableModeOneByteOverTheRemoteLimit_ReportsTheRemoteLimit(DeliveryMode mode)
+    {
+        // Arrange
+        // Act
+        FragmentPlanResult result = FragmentPlan.Resolve(11, FragmentSize, mode, maxMessageLength: 10);
+
+        // Assert
+        result.IsMessageTooLarge.Should().BeTrue();
+        result.IsOverRemoteLimit.Should().BeTrue();
+    }
+
+    [Theory]
+    [MemberData(nameof(UnreliableModes))]
+    public void Resolve_UnreliableModeAtTheRemoteLimit_ReturnsOneFragment(DeliveryMode mode)
+    {
+        // Arrange
+        // Act
+        FragmentPlanResult result = FragmentPlan.Resolve(10, FragmentSize, mode, maxMessageLength: 10);
+
+        // Assert
+        result.IsMessageTooLarge.Should().BeFalse();
+        result.IsOverRemoteLimit.Should().BeFalse();
+        result.FragmentCount.Should().Be(1);
+    }
+
+    [Theory]
+    [MemberData(nameof(ReliableModes))]
+    public void Resolve_ReliableModeOneByteOverTheRemoteLimit_ReportsTheRemoteLimit(DeliveryMode mode)
+    {
+        // Arrange
+        // Act
+        FragmentPlanResult result = FragmentPlan.Resolve((FragmentSize * 2) + 1, FragmentSize, mode, maxMessageLength: FragmentSize * 2);
+
+        // Assert
+        result.IsMessageTooLarge.Should().BeTrue();
+        result.IsOverRemoteLimit.Should().BeTrue();
+    }
+
     [Fact]
     public void Resolve_AnUndefinedDeliveryMode_ThrowsRatherThanGuessingAnAnswer()
     {

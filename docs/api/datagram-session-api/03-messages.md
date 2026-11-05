@@ -44,7 +44,7 @@ Message is legal and is delivered as an empty `Payload`.
 | `Closed` | The Peer is not open, or a Goodbye has passed in one direction or the other. | Stop sending to this Peer. |
 | `NotEstablished` | The handshake has not finished. Nothing was copied. | Wait for `PeerConnected`. |
 | `MessageTooLarge` | An unreliable Message is larger than one fragment. | Split it, or use a reliable mode. |
-| `RemoteMessageTooLarge` | A reliable Message is larger than the `MaxMessageSize` the peer announced. | Send something smaller. |
+| `RemoteMessageTooLarge` | A Message in any mode is larger than the `MaxMessageSize` the peer announced. | Send something smaller. |
 
 The checks run in this order: Peer not open or peer's Goodbye delivered (`Closed`), handshake
 unfinished (`NotEstablished`), your own `Close` in progress (`Closed`), size, then retention. A
@@ -86,13 +86,13 @@ Only the reliable modes fragment. A reliable Message larger than one fragment is
 `ceil(length / FragmentSize)` Fragments, each sequenced, retained and retransmitted on its own, and
 delivered as one `MessageReceived` once all of them have arrived.
 
-- The reliable cap is the **peer's** announced `MaxMessageSize`, not yours. The same payload can be
-  accepted for one Peer and refused for another.
+- Every mode is limited by the **peer's** announced `MaxMessageSize`, not yours. The same payload can
+  be accepted for one Peer and refused for another.
 - A Message is committed whole or not at all. If its mode's Space has fewer free retention slots
   than it has Fragments, `Send` returns `RetentionExhausted` and nothing is retained.
 - The unreliable modes are capped at one fragment, permanently. Fragmenting what cannot be
-  retransmitted multiplies the loss rate by the number of pieces. `Send` does not check them against
-  the peer's `MaxMessageSize`, so one above it returns `Sent` and the peer discards it on arrival.
+  retransmitted multiplies the loss rate by the number of pieces. An unreliable Message above both
+  one fragment and the peer's `MaxMessageSize` returns `MessageTooLarge`.
 
 Fragmentation lengthens `ReliableOrdered` head-of-line blocking: every later Message waits for the
 whole fragmented Message, not one Datagram. For bulk transfer, prefer `ReliableUnordered`.

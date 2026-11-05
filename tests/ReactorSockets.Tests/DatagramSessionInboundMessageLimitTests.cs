@@ -12,7 +12,7 @@ namespace ReactorSockets.Tests;
 /// sequences are finished with, so nothing behind it stalls.
 /// </summary>
 /// <remarks>
-/// A conforming sender checks a reliable Message against the limit at <c>Send</c>, so these tests drive a
+/// A conforming sender checks every Message against the limit at <c>Send</c>, so these tests drive a
 /// live Session by hand over a bare <see cref="RawReactor"/>. <see cref="MaxMessageSize"/> of 10 over the
 /// default 1200-byte fragment size floors the receive window at 1, so <see cref="ReceiveWindowFragments"/>
 /// widens it to leave room for a set that assembles past the limit.
