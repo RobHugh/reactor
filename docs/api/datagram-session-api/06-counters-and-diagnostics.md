@@ -102,6 +102,7 @@ Source or none) and two numeric slots whose meaning is documented per id.
 | `UnreliableFragment` (206) | Warn | Source | A Fragment arrived in an unreliable mode. `Value0` the mode (0 `Unreliable`, 1 `UnreliableSequenced`). |
 | `OversizedMessage` (207) | Warn | Peer | A completed Message was larger than your `MaxMessageSize` and was discarded. `Value0` its length, `Value1` your limit. |
 | `AddressPeerLimitReached` (208) | Warn | Source | A verified handshake was refused because its address holds `MaxPeersPerAddress` accepted Peers. `Value0` the limit. |
+| `DatagramBudgetReached` (209) | Warn | — | A Pump read `MaxDatagramsPerPump` datagrams from one bound socket and stopped, whether or not more were queued. At most one per bound socket per Pump. `Value0` the limit. |
 | `LingerNegotiated` (301) | Info | Peer | A handshake completed. `Value0` your Linger in ms, `Value1` the effective one. |
 | `ResumeMatched` (304) | Info | Peer | A Resume matched, or the dialling end heard its Session again. `Value0` always 0 here. |
 | `ResumeUnmatched` (305) | Warn | Source | A Resume was refused. `Value0` 0 no such Peer, 1 wrong secret or closing. `Value1` 6, the Resume type. |

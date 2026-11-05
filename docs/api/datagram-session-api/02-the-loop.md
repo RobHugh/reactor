@@ -57,6 +57,16 @@ error and throws.
 
 Several independent Reactors on several threads is fine. One Reactor across threads is not.
 
+## Reading is bounded per Pump
+
+One Pump reads at most `MaxDatagramsPerPump` datagrams from each bound socket, so a flood cannot keep
+a Pump from returning. What is left waits in the socket's receive buffer for a later Pump. If that
+buffer fills, the operating system drops what arrives next and no Counter sees it. A Pump that reaches the
+limit logs `DatagramBudgetReached`.
+
+The default allows a full Reactor's worth of traffic, which can be thousands of reads. Set it lower
+if a Pump must return sooner, and read a flood more slowly in exchange.
+
 ## Delivery is bounded per Frame
 
 Each Peer may deliver `ArenaSize / Capacity` bytes of Messages per Frame, with one escape: a Peer's

@@ -114,6 +114,18 @@ cap, handshakes by the same. Three mechanisms, one reason, and a checklist for a
 because the failure they prevent is the same failure each time and it is invisible until someone points
 a load generator at it.
 
+**Amended (issue #428).** The datagram receive loop broke this rule: it read until the socket was empty,
+and the arena share does not bound that, because control traffic and refused datagrams never reach the
+arena. `DatagramSessionOptions.MaxDatagramsPerPump` is the fourth mechanism. It limits the datagrams one
+Pump reads from each bound socket, so a Pump's read work is at most the limit times the bound sockets. It
+sits on the datagram options because it is protocol-specific: Raw already reads once per Pump and stream
+reads are bounded by the arena share. The default has the same provenance as the admission cap, a full
+Reactor's worth: one receive window for every Space of every Peer, plus the admission cap. The excess waits
+in the socket buffer, and its main cost is the one above: when that buffer fills, the kernel drops what
+arrives next and no Counter sees it, so a flood can now displace a Hello that would have been read and
+counted. The default is sized for traffic, not for latency, so a consumer that needs a shorter Pump sets
+it lower.
+
 ## Datagram retention: slots, not a ring
 
 **Retention is a byte bound, per Peer, per reliable Space.**

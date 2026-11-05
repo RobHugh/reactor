@@ -39,6 +39,7 @@ public class OptionsSurfaceTests
         "DatagramSessionOptions.MaxMessageSize",
         "DatagramSessionOptions.RetentionBytes",
         "DatagramSessionOptions.MaxPeersPerAddress",
+        "DatagramSessionOptions.MaxDatagramsPerPump",
         "DatagramSessionOptions.SendIdleInterval",
         "DatagramSessionOptions.Linger",
         "DatagramSessionOptions.Endpoints",

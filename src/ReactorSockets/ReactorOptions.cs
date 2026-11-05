@@ -23,7 +23,9 @@ namespace ReactorSockets;
 /// bounded by <see cref="AdmissionCap"/>. Three mechanisms with one reason, and the checklist for
 /// anything added later: a cost a remote party can raise inside one Pump, on the consumer's thread,
 /// needs a bound fixed here, because the failure is invisible until someone points a load generator
-/// at it.
+/// at it. The datagram profile adds a fourth on its own options,
+/// <see cref="DatagramSessionOptions.MaxDatagramsPerPump"/>, because the arena share does not see
+/// control traffic.
 /// </para>
 /// </remarks>
 public sealed class ReactorOptions

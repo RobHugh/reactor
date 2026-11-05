@@ -27,12 +27,13 @@ one would be guessing at your application.
 | `FragmentSize` | `1200` | QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000). |
 | `ReceiveWindowFragments` | Fragments in one maximum Message | A narrower window can never deliver one Message, so it deadlocks. |
 | `MissedHeartbeats` | `3` | RFC 4271's hold time. Minimum 2. |
+| `MaxDatagramsPerPump` | `Capacity × ReceiveWindowFragments × 4 + AdmissionCap` | A full Reactor's worth of reads per bound socket: one window for every Space of every Peer, plus every handshake one Pump may admit. Minimum 1. |
 | `Entropy` | `RandomNumberGenerator.Create()` | The platform CSPRNG. Never disposed by the Reactor. |
 | `Endpoints` | empty | An empty set is dial-only, a real configuration rather than a hole. |
 
 The resolved values are readable on the options object: `ResolvedFragmentSize`,
-`ResolvedReceiveWindowFragments`, `ReceiveWindowFloor`, `ResolvedMissedHeartbeats` and
-`RetentionSlots`.
+`ResolvedReceiveWindowFragments`, `ReceiveWindowFloor`, `ResolvedMissedHeartbeats`,
+`ResolvedMaxDatagramsPerPump` and `RetentionSlots`.
 
 Values fixed by the wire format are not options: the four sequence Spaces, the 32-bit ack width, the
 64-entry duplicate window, the 20-byte data header and the thirty-second cookie epoch. Changing one

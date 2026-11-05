@@ -31,6 +31,7 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
         int capacity = 4,
         int? admissionCap = null,
         int? maxPeersPerAddress = null,
+        int? maxDatagramsPerPump = null,
         int maxMessageSize = 4096,
         int retentionBytes = 4096,
         int? fragmentSize = null,
@@ -68,6 +69,7 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
             FragmentSize = fragmentSize,
             ReceiveWindowFragments = receiveWindowFragments,
             MissedHeartbeats = missedHeartbeats,
+            MaxDatagramsPerPump = maxDatagramsPerPump,
             // Defaults far out (issue #340): a test that never mentions the send-idle timer should
             // never see a Ping arrive uninvited mid-scenario and upset a wire-count assertion it wrote
             // long before the Ping existed. Tests exercising the timer itself pass their own short value.
