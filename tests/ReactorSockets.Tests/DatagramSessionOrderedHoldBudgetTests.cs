@@ -52,6 +52,11 @@ public class DatagramSessionOrderedHoldBudgetTests
     /// <summary>Five hold limits of ordinary records, so most of the flood arrives after the limit is reached.</summary>
     private const int FloodRecords = 5 * 2 * FloodWindowFragments;
 
+    private const int NarrowWindowFragments = 2;
+
+    /// <summary>Enough gaps to walk a held record across every position of any ring this window could use.</summary>
+    private const int NarrowWindowGaps = 32;
+
     private const int SamplesPerMeasurement = 3;
 
     [Fact]
@@ -102,15 +107,15 @@ public class DatagramSessionOrderedHoldBudgetTests
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
-        _ = FindAccepterPeer(accepter);
+        accepter.DrainAndDiscard();
         byte[] wide = new byte[FragmentSize + 1];
-        byte[] retransmission = Record(ModeReliableOrdered, 1, wide);
-        SendAndPump(accepter, client, clientLink, sessionId, retransmission);
+        byte[] wideRecord = Record(ModeReliableOrdered, 1, wide);
+        SendAndPump(accepter, client, clientLink, sessionId, wideRecord);
 
         // Act — the hole fills, then the far end's retransmission arrives at the head.
         SendAndPump(accepter, client, clientLink, sessionId, Record(ModeReliableOrdered, 0, [0xAA]));
         List<byte[]> delivered = accepter.DrainPayloads();
-        SendAndPump(accepter, client, clientLink, sessionId, retransmission);
+        SendAndPump(accepter, client, clientLink, sessionId, wideRecord);
         delivered.AddRange(accepter.DrainPayloads());
 
         // Assert
@@ -132,7 +137,7 @@ public class DatagramSessionOrderedHoldBudgetTests
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
-        _ = FindAccepterPeer(accepter);
+        accepter.DrainAndDiscard();
 
         List<byte> behindTheHole = [];
         for (byte sequence = 2; sequence < 8; sequence++)
@@ -198,8 +203,8 @@ public class DatagramSessionOrderedHoldBudgetTests
     public void Pump_AFloodBehindAStalledHead_AllocatesNoMoreThanOnePeersHeldRecordBudget()
     {
         // Arrange — the same records in the same datagrams, with the control's sequences all beyond its
-        // window so it refuses every one and holds nothing (ADR 0019's measurement). Their difference
-        // is what holding cost. Payloads stop short of a whole slot so the ring's own doubling, which
+        // window so it refuses every one and holds nothing (ADR 0019's comparison, taken after the
+        // handshake rather than from construction). Their difference is what holding cost. Payloads stop short of a whole slot so the ring's own doubling, which
         // the budget does not count because it is garbage rather than held, stays inside the margin.
         MeasureFlood(stalled: true);
         MeasureFlood(stalled: false);
@@ -215,9 +220,98 @@ public class DatagramSessionOrderedHoldBudgetTests
         controlCounters.OutOfWindowPackets.Should().Be((ulong)FloodRecords + 2);
 
         // Assert — holding stayed inside what the options state for one Peer.
-        long onePeersBudget = FloodOptions().HeldRecordBudgetBytes / FloodCapacity;
+        using DatagramSessionReactorHarness budgetSource = NewFloodAccepter();
+        long onePeersBudget = budgetSource.Options.HeldRecordBudgetBytes / FloodCapacity;
         (floodAllocated - controlAllocated).Should().BeLessThanOrEqualTo(onePeersBudget);
     }
+
+    [Fact]
+    public void Pump_GapsOpenedAndFilledUnderANarrowWindow_AllocatesNoMoreThanOnePeersHeldRecordBudget()
+    {
+        // Arrange — a slot keeps its buffer after release, so each gap can leave a whole-slot buffer on a
+        // new ring position. Nothing stalls here: every record is delivered, and the control sends the
+        // same records in order so it holds none of them.
+        MeasureGaps(openGaps: true);
+        MeasureGaps(openGaps: false);
+
+        // Act
+        (long gapsAllocated, ulong gapsDelivered) = MeasureGaps(openGaps: true);
+        (long controlAllocated, ulong controlDelivered) = MeasureGaps(openGaps: false);
+
+        // Assert — every record arrived in both runs, so the two differ only in what was held.
+        gapsDelivered.Should().Be(3 * NarrowWindowGaps);
+        controlDelivered.Should().Be(3 * NarrowWindowGaps);
+
+        // Assert — the kept buffers stayed inside what the options state for one Peer.
+        using DatagramSessionReactorHarness budgetSource = NewNarrowWindowAccepter();
+        long onePeersBudget = budgetSource.Options.HeldRecordBudgetBytes / budgetSource.Options.Reactor.Capacity;
+        (gapsAllocated - controlAllocated).Should().BeLessThanOrEqualTo(onePeersBudget);
+    }
+
+    /// <summary>
+    /// Runs the gap traffic from a live Session and returns what it alone allocated, the smallest of
+    /// <see cref="SamplesPerMeasurement"/> runs because noise only ever adds bytes (issue #415), and how
+    /// many Messages the last run delivered.
+    /// </summary>
+    private static (long Allocated, ulong Delivered) MeasureGaps(bool openGaps)
+    {
+        long smallest = long.MaxValue;
+        ulong delivered = 0;
+        for (int sample = 0; sample < SamplesPerMeasurement; sample++)
+        {
+            using DatagramSessionReactorHarness accepter = NewNarrowWindowAccepter();
+            using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+            LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+            uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+            PeerId peer = FindAccepterPeer(accepter);
+            byte[][] datagrams = BuildGapDatagrams(sessionId, openGaps);
+            Source destination = Source.FromIPEndPoint(accepter.Endpoint);
+
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            foreach (byte[] datagram in datagrams)
+            {
+                ulong received = accepter.Reactor.Counters.DatagramsReceived;
+                client.SendTo(clientLink, destination, datagram);
+                accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > received);
+                accepter.DrainAndDiscard();
+            }
+
+            smallest = Math.Min(smallest, GC.GetAllocatedBytesForCurrentThread() - before);
+            delivered = accepter.Reactor.CountersOf(peer).MessagesReceived;
+        }
+
+        return (smallest, delivered);
+    }
+
+    /// <summary>
+    /// Three whole-slot records per gap. With gaps open, the second arrives first and is held, then the
+    /// first releases it, then the third arrives in order. That moves the head three positions per gap,
+    /// which shares no factor with a power-of-two ring, so the held record lands on every position.
+    /// </summary>
+    private static byte[][] BuildGapDatagrams(uint sessionId, bool openGaps)
+    {
+        byte[] payload = new byte[FloodFragmentSize];
+        byte[][] datagrams = new byte[3 * NarrowWindowGaps][];
+        for (int gap = 0; gap < NarrowWindowGaps; gap++)
+        {
+            uint first = 3 * (uint)gap;
+            uint[] order = openGaps ? [first + 1, first, first + 2] : [first, first + 1, first + 2];
+            for (int i = 0; i < order.Length; i++)
+            {
+                datagrams[(3 * gap) + i] = [.. BuildHeader(sessionId), .. Record(ModeReliableOrdered, order[i], payload)];
+            }
+        }
+
+        return datagrams;
+    }
+
+    private static DatagramSessionReactorHarness NewNarrowWindowAccepter() => new(
+        capacity: 2,
+        maxMessageSize: FloodFragmentSize,
+        fragmentSize: FloodFragmentSize,
+        receiveWindowFragments: NarrowWindowFragments,
+        arenaSize: 8 * FloodFragmentSize,
+        withoutDiagnostics: true);
 
     /// <summary>
     /// Runs one flood from a live Session and returns what the flood alone allocated, the smallest of
@@ -229,12 +323,7 @@ public class DatagramSessionOrderedHoldBudgetTests
         PeerCounters counters = default;
         for (int sample = 0; sample < SamplesPerMeasurement; sample++)
         {
-            using DatagramSessionReactorHarness accepter = new(
-                capacity: FloodCapacity,
-                maxMessageSize: FloodFragmentSize,
-                fragmentSize: FloodFragmentSize,
-                receiveWindowFragments: FloodWindowFragments,
-                withoutDiagnostics: true);
+            using DatagramSessionReactorHarness accepter = NewFloodAccepter();
             using RawReactor client = new(new ReactorOptions { Capacity = 4 });
             LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
             uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
@@ -276,16 +365,12 @@ public class DatagramSessionOrderedHoldBudgetTests
         return datagrams;
     }
 
-    private static DatagramSessionOptions FloodOptions() => new()
-    {
-        Reactor = new ReactorOptions { Capacity = FloodCapacity },
-        MaxMessageSize = FloodFragmentSize,
-        FragmentSize = FloodFragmentSize,
-        ReceiveWindowFragments = FloodWindowFragments,
-        RetentionBytes = 4096,
-        SendIdleInterval = TimeSpan.FromSeconds(1),
-        Linger = TimeSpan.FromSeconds(1),
-    };
+    private static DatagramSessionReactorHarness NewFloodAccepter() => new(
+        capacity: FloodCapacity,
+        maxMessageSize: FloodFragmentSize,
+        fragmentSize: FloodFragmentSize,
+        receiveWindowFragments: FloodWindowFragments,
+        withoutDiagnostics: true);
 
     private static DatagramSessionReactorHarness NewAccepter() => new(
         capacity: 2,

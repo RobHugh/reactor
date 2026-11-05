@@ -74,8 +74,10 @@ public class MemoryBillTests
     {
         // Arrange
         const int fragmentSize = 1200;
-        DatagramSessionOptions small = DatagramOptions(fragmentSize, windowFragments: 2, retentionBytes: fragmentSize);
-        DatagramSessionOptions large = DatagramOptions(fragmentSize, windowFragments: 8, retentionBytes: 5 * fragmentSize);
+        // Both windows reach the send-order ring's initial 16 slots, so the ring, which the bill does not
+        // count, is the same size in both and cancels out of the difference (issue #424).
+        DatagramSessionOptions small = DatagramOptions(fragmentSize, windowFragments: 8, retentionBytes: fragmentSize);
+        DatagramSessionOptions large = DatagramOptions(fragmentSize, windowFragments: 32, retentionBytes: 5 * fragmentSize);
 
         // Act
         Measure(() => SampleDatagram(small));

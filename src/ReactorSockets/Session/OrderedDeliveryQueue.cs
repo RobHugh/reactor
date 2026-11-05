@@ -40,10 +40,10 @@ namespace ReactorSockets.Session;
 /// <b>Storage.</b> A sequence arriving ahead of a gap is held in a ring, indexed by its offset from
 /// <see cref="NextSequence"/>, mirroring the offset-from-base indexing <see cref="ReceiveWindow"/> and
 /// <see cref="OutstandingReliableSequences"/> both use. The ring grows by doubling — the same growth
-/// <see cref="OutstandingReliableSequences"/>'s ring uses — only when a held sequence's offset does not
-/// already fit, which happens only while a gap is open. A slot's payload buffer is kept and reused
-/// across releases rather than freed, so a path that repeatedly opens and fills gaps of a similar shape
-/// settles into allocating nothing at all.
+/// <see cref="OutstandingReliableSequences"/>'s ring uses — up to the limit below, and only when a held
+/// sequence's offset does not already fit, which happens only while a gap is open. A slot's payload
+/// buffer is kept and reused across releases rather than freed, so a path that repeatedly opens and
+/// fills gaps of a similar shape settles into allocating nothing at all.
 /// </para>
 /// <para>
 /// <b>Bound (issue #424).</b> The receive window does not bound this ring. A Fragment group that never
@@ -69,17 +69,21 @@ internal sealed class OrderedDeliveryQueue
     /// payload once holds a later one without allocating. Parallel to <see cref="_heldLengths"/>, whose
     /// entry says how much of the buffer is meaningful.
     /// </summary>
-    private byte[]?[] _held = new byte[InitialCapacity][];
+    private byte[]?[] _held;
 
     /// <summary>
     /// How many bytes of the parallel <see cref="_held"/> slot are a held payload, or <c>-1</c> when
     /// that slot holds nothing. Zero is a real length — a zero-byte Message is a Message — so
     /// occupancy cannot be read off the length alone.
     /// </summary>
-    private int[] _heldLengths = CreateEmptyLengths(InitialCapacity);
+    private int[] _heldLengths;
 
-    /// <summary>The number of slots <see cref="_held"/> and <see cref="_heldLengths"/> currently span.</summary>
-    private int _capacity = InitialCapacity;
+    /// <summary>
+    /// The number of slots <see cref="_held"/> and <see cref="_heldLengths"/> currently span. Never more
+    /// than <see cref="_maxHeldSlots"/>, because a slot keeps its buffer after release and the head walks
+    /// every slot, so the slot count is what limits the buffers kept (issue #424).
+    /// </summary>
+    private int _capacity;
 
     /// <summary>The ring position <see cref="NextSequence"/> currently occupies.</summary>
     private int _headSlot;
@@ -102,6 +106,9 @@ internal sealed class OrderedDeliveryQueue
     {
         _maxHeldSlots = maxHeldSlots;
         _maxHeldPayloadLength = maxHeldPayloadLength;
+        _capacity = Math.Min(InitialCapacity, maxHeldSlots);
+        _held = new byte[_capacity][];
+        _heldLengths = CreateEmptyLengths(_capacity);
         NextSequence = initialSequence;
     }
 
@@ -135,9 +142,9 @@ internal sealed class OrderedDeliveryQueue
     /// <returns>
     /// <see langword="true"/> when <paramref name="sequence"/> is the one the queue was waiting for and
     /// the caller should deliver <paramref name="payload"/> now, then drain the run behind it with
-    /// <see cref="TryPeekNext"/> and <see cref="ReleaseNext"/>. <see langword="false"/> when the payload was held behind a gap, or
-    /// dropped as a duplicate of a sequence already yielded or already held; either way the caller
-    /// delivers nothing for this call.
+    /// <see cref="TryPeekNext"/> and <see cref="ReleaseNext"/>. <see langword="false"/> when the payload was held behind a gap,
+    /// dropped as a duplicate of a sequence already yielded or already held, or dropped because
+    /// <see cref="CanTake"/> would have refused it; in each case the caller delivers nothing for this call.
     /// </returns>
     public bool Admit(uint sequence, ReadOnlySpan<byte> payload)
     {
@@ -263,8 +270,9 @@ internal sealed class OrderedDeliveryQueue
     private int SlotFor(uint offset) => (int)(((uint)_headSlot + offset) % (uint)_capacity);
 
     /// <summary>
-    /// Grows the ring, doubling its capacity until <paramref name="offset"/> fits, when a newly held
-    /// sequence would not otherwise have a slot. Growth unwraps the ring into a fresh zero-based array
+    /// Grows the ring, doubling its capacity up to <see cref="_maxHeldSlots"/> until
+    /// <paramref name="offset"/> fits, when a newly held sequence would not otherwise have a slot. The
+    /// caller has checked that <paramref name="offset"/> is below that limit. Growth unwraps the ring into a fresh zero-based array
     /// — <see cref="_headSlot"/> resets to zero — mirroring
     /// <see cref="OutstandingReliableSequences"/>'s own ring growth: a resize already touches every
     /// held slot, so unwrapping costs nothing further. Never called on the steady in-order path, since

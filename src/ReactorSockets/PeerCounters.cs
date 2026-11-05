@@ -50,7 +50,9 @@ namespace ReactorSockets;
 /// the parse loop's classification of each arriving record (issue #172); a freshly connected Peer
 /// reads zero. Note that only the two reliable Spaces raise this on a far-ahead arrival: the
 /// unreliable Spaces slide their window forward instead and count the retirement as loss (issue
-/// #173), so for those Spaces out-of-window means a sequence below the base alone. Moves only on the
+/// #173), so for those Spaces out-of-window means a sequence below the base alone. A <c>ReliableOrdered</c>
+/// record the window would admit but the Space will not hold behind a gap counts here too (issue #424),
+/// because it is refused the same way and comes back by retransmission. Moves only on the
 /// datagram profile. Not derivable: bytes received counts these records together with admitted ones,
 /// and no other figure separates reordering beyond the window from repeats.
 /// </param>

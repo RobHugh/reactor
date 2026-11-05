@@ -41,7 +41,7 @@ A rising `UnknownSourceDatagrams` on an otherwise healthy Reactor is a scan or a
 | `Resumes` | Times this end raised `PeerResumed` for this Peer. Never reset, so a flapping path shows itself here. |
 | `PacketsRetransmitted` | Packet records this end resent. Records, not Datagrams and not Messages. |
 | `DuplicatePackets` | Records the receive windows refused as already seen. Usually the far end retransmitting because an ack was lost. |
-| `OutOfWindowPackets` | Records too far from a Space's window base to be tracked. Sustained reordering or loss. |
+| `OutOfWindowPackets` | Records too far from a Space's window base to be tracked, or past what `ReliableOrdered` will hold behind a gap. Sustained reordering or loss. |
 | `UnreliableLossPackets` | Sequences the two unreliable Spaces slid past without ever receiving. Your unreliable loss rate. |
 | `HorizonDeferrals` | Reliable sequences whose retransmit timer was withheld because they sat beyond the 32-sequence ack horizon. A deferral, not a loss. Zero in ordinary operation. |
 | `SocketWrites` | Datagrams written for this Peer: one per data Datagram, plus each Resume. Handshake Datagrams are not counted. |

@@ -85,11 +85,12 @@ keep consistent with them.
 | Per-share-holder read cap | `ArenaSize ÷ Capacity` bytes per Pump, with one whole unit always allowed |
 | RTO floor and ceiling | The observed Pump interval and the effective Linger |
 | Dial-only socket's family and port | The destination's family and an OS-assigned port |
+| Ordered hold limit | 2 × `ReceiveWindowFragments` sequences, each no wider than `FragmentSize`. A Fragment group holding the head spans one window, and the receive window spans one more past it |
 
 ## Memory
 
 Every formula below has no traffic term. Each is fixed by your options before the first byte arrives,
-and `MemoryBillTests` checks each one against the bytes construction actually allocates.
+and `MemoryBillTests` checks each line construction allocates against the bytes it actually allocates.
 
 ### Stream
 
@@ -125,7 +126,8 @@ held:     Capacity × 2 × ReceiveWindowFragments × FragmentSize
 These are ordinary `ReliableOrdered` records waiting behind a gap, on the heap and only under traffic.
 The 2 is two windows of sequences in the one Space, not two Spaces. A record past that reach, or wider
 than `FragmentSize`, is refused unacknowledged and counted on `OutOfWindowPackets`, and retransmission
-brings it back. `HeldRecordBudgetBytes` reports this line, bookkeeping included.
+brings it back. `HeldRecordBudgetBytes` reports this line, bookkeeping included, and
+`DatagramSessionOrderedHoldBudgetTests` checks it against the bytes a flood allocates.
 
 ### Raw
 
