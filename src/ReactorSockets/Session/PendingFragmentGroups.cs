@@ -21,12 +21,17 @@ namespace ReactorSockets.Session;
 /// complete" true of every group rather than only of the most recent one.
 /// </para>
 /// <para>
-/// <b>The bound is proved by construction, not chosen.</b> A Fragment set declares at least two
-/// pieces — <see cref="PacketRecordCodec.TryRead"/> already refuses a count of zero or one — and a
-/// waiting group's pieces stay held in their receive-window slots until it is delivered. So a window
-/// of <c>n</c> slots can never have more than <c>n / 2</c> groups waiting at once, which is exactly
-/// <see cref="Core.ReceiveArena.PendingGroupsPerSpace"/>. <see cref="Add"/> asserts rather than grows,
-/// in the house style for an invariant designed away rather than defended (ADR 0015).
+/// <b>The bound is proved by construction, not chosen.</b> A window of <c>n</c> slots can never have
+/// more than <c>n / 2</c> groups waiting at once, which is exactly
+/// <see cref="Core.ReceiveArena.PendingGroupsPerSpace"/>, because three rules hold (issue #423). A group
+/// declares at least two pieces, since <see cref="PacketRecordCodec.TryRead"/> refuses a count of zero
+/// or one, and never more than the window has slots, since the datagram parse refuses that too. Two
+/// waiting groups never share a slot, since <see cref="FragmentGroupCompleteness.IsComplete"/> counts a
+/// piece only for the group it named on arrival. A waiting group keeps its slots until it is delivered,
+/// since <see cref="ReceiveWindowSpaces.WouldReuseWaitingGroupSlot"/> turns away any record that would
+/// overwrite one and no ack covers that record, so the far end's retransmission brings it back once
+/// the group has gone. <see cref="Add"/> asserts rather than grows, in the house style for an invariant
+/// designed away rather than defended (ADR 0015).
 /// </para>
 /// <para>
 /// <b>No allocation of its own, ever.</b> The only storage this type touches is the
@@ -91,10 +96,25 @@ internal sealed class PendingFragmentGroups
 
         Debug.Assert(
             Count < Capacity,
-            "A receive window of n slots cannot have more than n / 2 Fragment groups waiting, since a group is at least two Fragments wide.");
+            "A receive window of n slots cannot have more than n / 2 Fragment groups waiting: each holds at least two slots of its own until delivered.");
 
         Write(entries, Count, firstSequence, fragmentCount);
         Count++;
+    }
+
+    /// <summary>Whether exactly this group, first sequence and count both, is waiting.</summary>
+    internal bool Contains(uint firstSequence, ushort fragmentCount)
+    {
+        Span<byte> entries = _entries.Span;
+        for (int i = 0; i < Count; i++)
+        {
+            if (FirstSequenceAt(entries, i) == firstSequence && FragmentCountAt(entries, i) == fragmentCount)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

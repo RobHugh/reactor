@@ -122,6 +122,24 @@ internal sealed class ReceiveWindowSpaces
     };
 
     /// <summary>
+    /// Whether admitting <paramref name="sequence"/> would overwrite a piece of a group still waiting in
+    /// <paramref name="mode"/>'s <see cref="PendingFragmentGroups"/> (issue #423). Such a group can sit
+    /// behind the base waiting for arena room, so the ring can come back round to its slots. Changes
+    /// nothing. <paramref name="mode"/> must be <c>ReliableOrdered</c> or <c>ReliableUnordered</c>.
+    /// </summary>
+    /// <param name="mode">Which reliable Space to ask about.</param>
+    /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
+    public bool WouldReuseWaitingGroupSlot(PacketRecordMode mode, uint sequence)
+    {
+        PendingFragmentGroups waiting = PendingGroupsFor(mode);
+        ReceiveWindow window = ReliableWindow(mode);
+        return waiting.Count > 0
+            && window.WouldAdmit(sequence)
+            && window.TryGetHeldGroupAt(sequence, out uint groupFirstSequence, out ushort fragmentCount)
+            && waiting.Contains(groupFirstSequence, fragmentCount);
+    }
+
+    /// <summary>
     /// <see cref="Classify(PacketRecordMode, uint)"/>, additionally reporting the ring slot
     /// <paramref name="sequence"/> resolves to in <paramref name="mode"/>'s window — see
     /// <see cref="ReceiveWindow.Classify(uint, out int)"/>. A caller holding a Fragment's payload
