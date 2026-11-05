@@ -202,10 +202,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// set at exactly the announced limit is still admitted, and at default options — where the window
     /// resolves to the floor — nothing observable changes. Where an operator deliberately widens
     /// <see cref="DatagramSessionOptions.ReceiveWindowFragments"/> past the floor, a declared count
-    /// between the floor and the window is admitted even though nothing checks summed payload bytes at
-    /// delivery, so such a set could in principle reassemble past <see cref="DatagramSessionOptions.MaxMessageSize"/>;
-    /// that is the accepted trade for never closing a conforming peer, and this check remains the
-    /// defence that matters because it is the one that runs before anything is held. Computed once
+    /// between the floor and the window is admitted, so such a set can reassemble past
+    /// <see cref="DatagramSessionOptions.MaxMessageSize"/>. That is the accepted trade for never closing
+    /// a conforming peer: this check bounds what is held, and <see cref="DiscardsOverLimit"/> refuses to
+    /// deliver the assembled Message (issue #425). Computed once
     /// here, at construction, rather than read from <see cref="_options"/> per datagram — the refusal
     /// path this bounds must allocate nothing and do no more arithmetic than a single comparison.
     /// </summary>
@@ -2542,6 +2542,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="PeerSlot.OrderedDelivery"/> and retried there, and a Fragment set is retried through
     /// <see cref="PendingFragmentGroups"/>, so neither needs this end to refuse it. Nothing reserves arena
     /// room between this check and the delivery that follows it, so a record this passes is delivered.
+    /// A record over <see cref="DatagramSessionOptions.MaxMessageSize"/> is never refused here: it will
+    /// be discarded rather than reserved, and an arena at its floor could never make room for it, so
+    /// refusing it would stop its Space for good.
     /// </remarks>
     /// <returns><see langword="true"/> when the record was refused and must not be classified.</returns>
     private bool RefusesForArenaRoom(
@@ -2556,7 +2559,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         };
 
         if (!deliversOnAdmission || isFragment || isControl || slot.RemoteGoodbyeDelivered
-            || !windows.WouldAdmit(mode, sequence))
+            || payloadLength > _options.MaxMessageSize || !windows.WouldAdmit(mode, sequence))
         {
             return false;
         }
@@ -2745,8 +2748,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// can exceed this Peer's fair share of the frame arena and still be delivered whole, which is what
     /// makes such a Message reachable at all rather than permanently stuck behind a share bound sized
     /// for ordinary traffic.
+    /// <para>
+    /// A group that assembles past <see cref="DatagramSessionOptions.MaxMessageSize"/> is discarded here,
+    /// when its turn comes, rather than when it completes (issue #425). Its slots are released exactly as
+    /// a delivery releases them and its sequences are finished with, so a <c>ReliableOrdered</c> Space
+    /// moves past it in send order.
+    /// </para>
     /// </remarks>
-    /// <returns><see langword="true"/> if the group was delivered; <see langword="false"/> if the reservation failed.</returns>
+    /// <returns>
+    /// <see langword="true"/> if the group was delivered or discarded, so it is no longer waiting;
+    /// <see langword="false"/> if the reservation failed.
+    /// </returns>
     private bool TryDeliverFragmentGroup(PeerSlot slot, PacketRecordMode mode, uint groupFirstSequence, ushort fragmentCount)
     {
         ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
@@ -2766,6 +2778,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
 
             totalLength += windows.GetFragmentLength(mode, ringSlot);
+        }
+
+        if (DiscardsOverLimit(slot, totalLength))
+        {
+            windows.ReleaseGroup(mode, groupFirstSequence, fragmentCount);
+            return true;
         }
 
         int payloadOffset = _arena.BytesUsed;
@@ -3178,10 +3196,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </remarks>
     /// <returns>
     /// <see langword="false"/> when the arena refused the Message, so a caller still holding it can
-    /// keep it for a later Pump.
+    /// keep it for a later Pump. A Message discarded for being over the limit returns
+    /// <see langword="true"/>: no later Pump would change the answer.
     /// </returns>
     private bool DeliverToConsumer(PeerSlot slot, ReadOnlySpan<byte> payload)
     {
+        if (DiscardsOverLimit(slot, payload.Length))
+        {
+            return true;
+        }
+
         int payloadOffset = _arena.BytesUsed;
         ArenaReservation reservation = _arena.Reserve(slot.Handle.Index, payload);
         if (!AccountForReservation(slot, reservation))
@@ -3198,6 +3222,34 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         });
 
         slot.Counters.RecordMessageReceived();
+        return true;
+    }
+
+    /// <summary>
+    /// Holds a completed Message to this Reactor's own <see cref="DatagramSessionOptions.MaxMessageSize"/>
+    /// (issue #425), reporting one over it with <see cref="DiagnosticId.OversizedMessage"/>. The receive
+    /// window bounds what is held, not what is assembled, and a whole record is bounded only by the
+    /// Datagram it came in, so this is what makes the announced limit true of what a consumer receives.
+    /// </summary>
+    /// <remarks>
+    /// The Session stays open. A reliable Send above the limit is refused at the sending end, so only a
+    /// peer ignoring the announcement reaches this with a reliable Message. The unreliable modes are
+    /// capped by one Datagram at that end and not by the announcement, so a conforming peer can reach
+    /// this with one of those, which is not a violation worth closing over.
+    /// </remarks>
+    /// <returns><see langword="true"/> when the Message is over the limit and must not be delivered.</returns>
+    private bool DiscardsOverLimit(PeerSlot slot, int messageLength)
+    {
+        if (messageLength <= _options.MaxMessageSize)
+        {
+            return false;
+        }
+
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForOversizedMessage(ToPeerId(slot.Handle), messageLength, _options.MaxMessageSize));
+        }
+
         return true;
     }
 

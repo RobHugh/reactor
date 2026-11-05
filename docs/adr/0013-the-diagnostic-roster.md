@@ -188,6 +188,7 @@ apart reads the diagnostics, which is what diagnostics are for.
 | 204 | `RetransmissionTimerBackedOff` | `Trace` | Peer | new RTO in ms / consecutive backoffs |
 | 205 | `OversizedFragmentSet` | `Warn` | Peer | declared count / largest legal count |
 | 206 | `UnreliableFragment` | `Warn` | Source | claimed mode bits / — |
+| 207 | `OversizedMessage` | `Warn` | Peer | Message length / `MaxMessageSize` |
 
 ### Stream session
 

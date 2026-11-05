@@ -59,7 +59,9 @@ namespace ReactorSockets;
 /// <see cref="MaxMessageSize"/> reaches three places at once: it is announced to the remote as a
 /// receive limit, it floors the receive window at the fragments one maximum Message occupies
 /// (<see cref="ReceiveWindowFloor"/>), and it floors the frame arena, because an arena that cannot
-/// hold one maximum Message could never deliver one. Careless enlargement therefore grows memory in
+/// hold one maximum Message could never deliver one. The limit is enforced as well as announced: a
+/// completed Message above it is discarded rather than delivered, with
+/// <see cref="DiagnosticId.OversizedMessage"/>. Careless enlargement grows memory in
 /// two directions rather than one: the window floor is per Peer, so the receive line above rises
 /// with it multiplied by capacity and by the Spaces, and the shared arena is pushed up alongside.
 /// Retention is the exception this profile makes. <see cref="RetentionBytes"/> is floored by
