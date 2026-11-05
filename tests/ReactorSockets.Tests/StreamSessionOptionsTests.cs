@@ -288,6 +288,50 @@ public class StreamSessionOptionsTests
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.Linger));
     }
 
+    [Theory]
+    [InlineData(42_949_672_950_001L)] // one tick above uint.MaxValue milliseconds
+    [InlineData(long.MaxValue)]
+    public void Constructor_SendIdleIntervalAboveTheAnnounceableMaximum_ThrowsArgumentOutOfRangeException(long ticks)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(sendIdleInterval: TimeSpan.FromTicks(ticks));
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.SendIdleInterval));
+    }
+
+    [Theory]
+    [InlineData(42_949_672_950_001L)] // one tick above uint.MaxValue milliseconds
+    [InlineData(long.MaxValue)]
+    public void Constructor_LingerAboveTheAnnounceableMaximum_ThrowsArgumentOutOfRangeException(long ticks)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(linger: TimeSpan.FromTicks(ticks));
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.Linger));
+    }
+
+    [Fact]
+    public void Constructor_IntervalsAtTheAnnounceableMaximum_Constructs()
+    {
+        // Arrange
+        TimeSpan maximum = TimeSpan.FromTicks(42_949_672_950_000L); // exactly uint.MaxValue milliseconds
+        StreamSessionOptions options = CreateOptions(sendIdleInterval: maximum, linger: maximum);
+
+        // Act
+        Action act = () => new StreamSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
     [Fact]
     public void Constructor_SinkWithoutMinimumLevel_ThrowsArgumentException()
     {

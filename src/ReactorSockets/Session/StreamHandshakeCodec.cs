@@ -146,7 +146,11 @@ internal static class StreamHandshakeCodec
     /// Reads one Hello record's payload. Fails when <paramref name="record"/> is not exactly
     /// <see cref="RecordSize"/> bytes, its message type is not <see cref="StreamHandshakeMessageType.Hello"/>,
     /// or <paramref name="resumeSecret"/> is not exactly its wire length, since a caller that cannot
-    /// hold a full secret could not use one correctly regardless of what the record contains.
+    /// hold a full secret could not use one correctly regardless of what the record contains. Also fails
+    /// when a Hello of this end's <see cref="StreamSessionProtocol.Version"/> announces an interval that
+    /// is not <see cref="AnnouncedIntervalLegality.IsLegal">legal</see> (issue #422), the same rule
+    /// <see cref="ControlDatagramCodec"/> applies. A Hello of any other version is left for the version
+    /// Refusal, because this end cannot judge the fields of a version it does not speak.
     /// </summary>
     public static bool TryRead(
         ReadOnlySpan<byte> record,
@@ -176,6 +180,18 @@ internal static class StreamHandshakeCodec
         offset += sizeof(ulong);
         lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(record[offset..]);
         offset += sizeof(ulong);
+
+        if (version == StreamSessionProtocol.Version
+            && (!AnnouncedIntervalLegality.IsLegal(sendIdleIntervalMilliseconds)
+                || !AnnouncedIntervalLegality.IsLegal(lingerMilliseconds)))
+        {
+            version = default;
+            maxMessageSize = default;
+            sendIdleIntervalMilliseconds = default;
+            lingerMilliseconds = default;
+            return false;
+        }
+
         record.Slice(offset, StreamSessionProtocol.ResumeSecretLength).CopyTo(resumeSecret);
         return true;
     }

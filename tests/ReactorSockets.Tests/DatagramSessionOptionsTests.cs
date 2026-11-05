@@ -280,6 +280,50 @@ public class DatagramSessionOptionsTests
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(DatagramSessionOptions.Linger));
     }
 
+    [Theory]
+    [InlineData(42_949_672_950_001L)] // one tick above uint.MaxValue milliseconds
+    [InlineData(long.MaxValue)]
+    public void Constructor_SendIdleIntervalAboveTheAnnounceableMaximum_ThrowsArgumentOutOfRangeException(long ticks)
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(sendIdleInterval: TimeSpan.FromTicks(ticks));
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(DatagramSessionOptions.SendIdleInterval));
+    }
+
+    [Theory]
+    [InlineData(42_949_672_950_001L)] // one tick above uint.MaxValue milliseconds
+    [InlineData(long.MaxValue)]
+    public void Constructor_LingerAboveTheAnnounceableMaximum_ThrowsArgumentOutOfRangeException(long ticks)
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(linger: TimeSpan.FromTicks(ticks));
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(DatagramSessionOptions.Linger));
+    }
+
+    [Fact]
+    public void Constructor_IntervalsAtTheAnnounceableMaximum_Constructs()
+    {
+        // Arrange
+        TimeSpan maximum = TimeSpan.FromTicks(42_949_672_950_000L); // exactly uint.MaxValue milliseconds
+        DatagramSessionOptions options = CreateOptions(sendIdleInterval: maximum, linger: maximum);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
     [Fact]
     public void Constructor_DuplicateEndpoints_ThrowsArgumentExceptionNamingTheEndpoint()
     {

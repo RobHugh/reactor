@@ -1833,8 +1833,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// it, referred to in this codebase as <c>DatagramSessionLivenessToleranceTests</c>.
     /// </remarks>
     private bool HasExceededReceiveIdleDeadline(PeerSlot slot) =>
-        _options.Reactor.TimeProvider.GetElapsedTime(slot.LastReceiveTimestamp)
-            >= slot.RemoteSendIdleInterval * _options.ResolvedMissedHeartbeats;
+        // Divides instead of multiplying: a legal announced interval times a large MissedHeartbeats can
+        // exceed what a TimeSpan holds, and that overflow would throw out of every Pump (issue #422).
+        // Whole-tick division keeps the comparison exact, because the interval is a whole tick count.
+        _options.Reactor.TimeProvider.GetElapsedTime(slot.LastReceiveTimestamp).Ticks / _options.ResolvedMissedHeartbeats
+            >= slot.RemoteSendIdleInterval.Ticks;
 
     /// <summary>
     /// Moves every Established Peer that has exceeded <see cref="HasExceededReceiveIdleDeadline"/> to
