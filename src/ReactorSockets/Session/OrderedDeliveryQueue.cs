@@ -46,6 +46,13 @@ namespace ReactorSockets.Session;
 /// settles into allocating nothing at all.
 /// </para>
 /// <para>
+/// <b>Bound (issue #424).</b> The receive window does not bound this ring. A Fragment group that never
+/// completes holds <see cref="NextSequence"/> still while the window's base moves past it, so every
+/// later record would otherwise be held here, without limit, and acknowledged. <see cref="CanTake"/>
+/// therefore limits how far ahead a record is held and how wide it may be, and
+/// <see cref="DatagramSessionOptions.HeldRecordBudgetBytes"/> states what those limits cost.
+/// </para>
+/// <para>
 /// <b>Scope.</b> Internal, and reached only through <see cref="DatagramSessionReactor"/>'s
 /// <c>ReliableOrdered</c> Space (issue #220), never past the L2 seam (ADR 0015). Each Space that needs
 /// ordering gets its own instance, so head-of-line blocking is confined to that one queue by
@@ -77,14 +84,24 @@ internal sealed class OrderedDeliveryQueue
     /// <summary>The ring position <see cref="NextSequence"/> currently occupies.</summary>
     private int _headSlot;
 
+    /// <summary>How many sequences from <see cref="NextSequence"/> onward this queue will hold (issue #424).</summary>
+    private readonly int _maxHeldSlots;
+
+    /// <summary>The widest payload this queue will hold, in bytes (issue #424).</summary>
+    private readonly int _maxHeldPayloadLength;
+
     /// <summary>
     /// Builds a queue expecting <paramref name="initialSequence"/> next — zero by default, where every
     /// Space's numbering begins (ADR 0009). Allocates its initial ring once, up front; nothing after
     /// this grows it unless a gap opens wide enough to need more room.
     /// </summary>
+    /// <param name="maxHeldSlots">How many sequences from <see cref="NextSequence"/> onward this queue will hold.</param>
+    /// <param name="maxHeldPayloadLength">The widest payload this queue will hold, in bytes.</param>
     /// <param name="initialSequence">The first sequence this queue will release. Defaults to zero.</param>
-    public OrderedDeliveryQueue(uint initialSequence = 0)
+    public OrderedDeliveryQueue(int maxHeldSlots, int maxHeldPayloadLength, uint initialSequence = 0)
     {
+        _maxHeldSlots = maxHeldSlots;
+        _maxHeldPayloadLength = maxHeldPayloadLength;
         NextSequence = initialSequence;
     }
 
@@ -97,7 +114,21 @@ internal sealed class OrderedDeliveryQueue
     public uint NextSequence { get; private set; }
 
     /// <summary>
-    /// Admits one already-<see cref="ReceiveWindowOutcome.Admitted"/> sequence and its payload.
+    /// Whether <see cref="Admit"/> could take <paramref name="sequence"/> right now (issue #424). The
+    /// next sequence is always takeable at any width, because it is delivered rather than held, which is
+    /// also why a refusal can never stop a head from moving. An older one is a duplicate that holds
+    /// nothing. Changes nothing. A caller asks before its receive window admits the record, so a refused
+    /// record stays unacknowledged for the far end to retransmit.
+    /// </summary>
+    /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
+    /// <param name="payloadLength">The arriving record's payload length in bytes.</param>
+    public bool CanTake(uint sequence, int payloadLength) =>
+        !SequenceNumber.IsNewerThan(sequence, NextSequence)
+        || (unchecked(sequence - NextSequence) < (uint)_maxHeldSlots && payloadLength <= _maxHeldPayloadLength);
+
+    /// <summary>
+    /// Admits one already-<see cref="ReceiveWindowOutcome.Admitted"/> sequence and its payload. The
+    /// caller has already had <see cref="CanTake"/> answer <see langword="true"/> for it.
     /// </summary>
     /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
     /// <param name="payload">The arriving record's payload, on loan from the Datagram it arrived in.</param>
@@ -122,6 +153,13 @@ internal sealed class OrderedDeliveryQueue
         {
             // Older than what the queue is waiting for: already released by an earlier call, so this is
             // a duplicate of something already yielded and is never yielded twice.
+            return false;
+        }
+
+        // The caller asked CanTake first, so this never drops a record it admitted. It keeps the ring's
+        // bound true here however this method is reached.
+        if (!CanTake(sequence, payload.Length))
+        {
             return false;
         }
 
@@ -242,7 +280,7 @@ internal sealed class OrderedDeliveryQueue
         int newCapacity = _capacity;
         while (offset >= (uint)newCapacity)
         {
-            newCapacity *= 2;
+            newCapacity = (int)Math.Min(2L * newCapacity, _maxHeldSlots);
         }
 
         byte[]?[] newHeld = new byte[newCapacity][];

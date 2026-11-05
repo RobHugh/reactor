@@ -481,6 +481,25 @@ public class DatagramSessionOptionsTests
     }
 
     [Fact]
+    public void HeldRecordBudgetBytes_WorkedExample_CountsTwoWindowsOfSlotsWithTheirBookkeeping()
+    {
+        // Arrange — distinct numbers so a transposed factor in the formula is caught.
+        DatagramSessionOptions options = CreateOptions(
+            capacity: 3,
+            maxMessageSize: 4000,
+            fragmentSize: 1000,
+            receiveWindowFragments: 5);
+
+        // Act
+        long budget = options.HeldRecordBudgetBytes;
+
+        // Assert — one ReliableOrdered Space per Peer, two windows of held records, each a whole fragment
+        // slot plus 44 bytes: an 8-byte reference, a 4-byte length and a byte array's 32-byte ceiling of
+        // object header and padding (issue #424).
+        budget.Should().Be(3L * 2 * 5 * (1000 + 44));
+    }
+
+    [Fact]
     public void SendBudgetBytes_WorkedExample_EqualsCapacityTimesTwoTimesWholeRetentionSlotsWithTheirBookkeeping()
     {
         // Arrange — distinct numbers so a transposed factor in the formula is caught, and a retention

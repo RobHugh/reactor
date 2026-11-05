@@ -116,6 +116,17 @@ counts bytes. The 2 is the two reliable Spaces, the only ones that reassemble an
 also carries a few bytes of bookkeeping per fragment slot, under 2% at the default fragment size.
 `ReceiveBudgetBytes` and `SendBudgetBytes` report both lines exactly, bookkeeping included.
 
+One further cost is a ceiling rather than a preallocation, so nothing allocates it at construction:
+
+```
+held:     Capacity × 2 × ReceiveWindowFragments × FragmentSize
+```
+
+These are ordinary `ReliableOrdered` records waiting behind a gap, on the heap and only under traffic.
+The 2 is two windows of sequences in the one Space, not two Spaces. A record past that reach, or wider
+than `FragmentSize`, is refused unacknowledged and counted on `OutOfWindowPackets`, and retransmission
+brings it back. `HeldRecordBudgetBytes` reports this line, bookkeeping included.
+
 ### Raw
 
 ```

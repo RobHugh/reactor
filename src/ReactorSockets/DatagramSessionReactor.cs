@@ -426,6 +426,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
+            OrderedDelivery = new(_options.OrderedHoldSlots, _options.ResolvedFragmentSize),
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
@@ -2415,6 +2416,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
+        if (RefusesForHoldBudget(slot, windows, mode, sequence, isFragment, payload.Length))
+        {
+            slot.Counters.RecordOutOfWindowPacket();
+            return;
+        }
+
         if (RefusesForArenaRoom(slot, windows, mode, sequence, isFragment, isControl, payload.Length))
         {
             return;
@@ -2498,6 +2505,27 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             slot.Counters.RecordUnreliableLoss(windows.LastSlideLoss);
         }
     }
+
+    /// <summary>
+    /// Decides, before the receive window sees it, whether an ordinary <c>ReliableOrdered</c> record
+    /// would go past what <see cref="PeerSlot.OrderedDelivery"/> may hold (issue #424). A refused record
+    /// is left unadmitted, so no ack covers it and the far end's ordinary retransmission brings it back
+    /// once the send-order head has moved. A head that never moves stops this Space and no other.
+    /// </summary>
+    /// <remarks>
+    /// A Fragment is never held by the queue, so only the receive window bounds it. A Peer whose Goodbye
+    /// has been delivered holds nothing further, so what it sends is still admitted and acknowledged. A
+    /// sequence the window would not admit anyway is left for <see cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/>
+    /// to count as usual.
+    /// </remarks>
+    /// <returns><see langword="true"/> when the record was refused and must not be classified.</returns>
+    private static bool RefusesForHoldBudget(
+        PeerSlot slot, ReceiveWindowSpaces windows, PacketRecordMode mode, uint sequence, bool isFragment, int payloadLength) =>
+        mode == PacketRecordMode.ReliableOrdered
+        && !isFragment
+        && !slot.RemoteGoodbyeDelivered
+        && windows.WouldAdmit(mode, sequence)
+        && !slot.OrderedDelivery.CanTake(sequence, payloadLength);
 
     /// <summary>
     /// Decides, before the receive window sees it, whether a whole reliable Message that would be
@@ -3645,6 +3673,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
+            OrderedDelivery = new(_options.OrderedHoldSlots, _options.ResolvedFragmentSize),
             LastSendTimestamp = now,
             LastReceiveTimestamp = now,
         };
@@ -4496,7 +4525,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// with the Slot and released with it, so a Slot a later Peer occupies never inherits the
         /// previous occupant's held run or its next expected sequence.
         /// </summary>
-        public OrderedDeliveryQueue OrderedDelivery { get; } = new();
+        public required OrderedDeliveryQueue OrderedDelivery { get; init; }
 
         /// <summary>
         /// The lowest <c>ReliableOrdered</c> sequence a received Goodbye record (issue #400) has arrived
