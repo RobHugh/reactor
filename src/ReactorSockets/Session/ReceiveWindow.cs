@@ -627,8 +627,18 @@ internal sealed class ReceiveWindow
         }
 
         return FragmentGroupCompleteness.IsComplete(
-            _admitted.Span, _fragmentLengths.Span, Capacity, Base, _baseSlot, groupFirstSequence, fragmentCount);
+            _admitted.Span, _fragmentLengths.Span, _fragmentGroups.Span, Capacity, Base, _baseSlot, groupFirstSequence, fragmentCount);
     }
+
+    /// <summary>
+    /// Whether admitting <paramref name="sequence"/> would overwrite a Fragment this window still holds
+    /// (issue #423): the ring has come back round to a slot whose piece the base has already passed.
+    /// Changes nothing.
+    /// </summary>
+    /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
+    internal bool WouldOverwriteHeldFragment(uint sequence) =>
+        WouldAdmit(sequence)
+        && GetFragmentLength((int)((_baseSlot + unchecked(sequence - Base)) % (uint)Capacity)) != 0;
 
     /// <summary>
     /// Zeroes the Fragment-length and Fragment-group entries for every sequence of the group starting at

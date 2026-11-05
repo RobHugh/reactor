@@ -2407,6 +2407,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
+
+        // Left unadmitted, so no ack covers it and the far end's retransmission brings it back once the
+        // waiting groups have been delivered and the slot is free (issue #423).
+        if (IsReliable(mode) && windows.MustWaitForWaitingGroups(mode, sequence))
+        {
+            return;
+        }
+
         if (RefusesForArenaRoom(slot, windows, mode, sequence, isFragment, isControl, payload.Length))
         {
             return;

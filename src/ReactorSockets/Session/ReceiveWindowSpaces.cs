@@ -122,6 +122,19 @@ internal sealed class ReceiveWindowSpaces
     };
 
     /// <summary>
+    /// Whether <paramref name="sequence"/> must wait because admitting it would overwrite a held Fragment
+    /// while a group waits in <paramref name="mode"/>'s <see cref="PendingFragmentGroups"/> (issue #423).
+    /// The overwritten piece may be the waiting group's own. It may instead belong to a group that a
+    /// retransmission is about to complete, one a <c>ReliableOrdered</c> waiting group is queued behind, and
+    /// overwriting that one would leave the waiting group unable ever to take its turn. Changes nothing.
+    /// <paramref name="mode"/> must be <c>ReliableOrdered</c> or <c>ReliableUnordered</c>.
+    /// </summary>
+    /// <param name="mode">Which reliable Space to ask about.</param>
+    /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
+    public bool MustWaitForWaitingGroups(PacketRecordMode mode, uint sequence) =>
+        PendingGroupsFor(mode).Count > 0 && ReliableWindow(mode).WouldOverwriteHeldFragment(sequence);
+
+    /// <summary>
     /// <see cref="Classify(PacketRecordMode, uint)"/>, additionally reporting the ring slot
     /// <paramref name="sequence"/> resolves to in <paramref name="mode"/>'s window — see
     /// <see cref="ReceiveWindow.Classify(uint, out int)"/>. A caller holding a Fragment's payload

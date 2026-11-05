@@ -99,6 +99,10 @@ internal static class FragmentGroupCompleteness
     /// The window's Fragment-length run — see <see cref="Core.ReceiveArena.GetFragmentLengthRun"/> —
     /// two bytes per slot, <c>capacity * 2</c> bytes long.
     /// </param>
+    /// <param name="fragmentGroups">
+    /// The window's Fragment-group run — see <see cref="Core.ReceiveArena.GetFragmentGroupRun"/> — six
+    /// bytes per slot, <c>capacity * 6</c> bytes long.
+    /// </param>
     /// <param name="capacity">The window's capacity in slots.</param>
     /// <param name="windowBase">The window's current base sequence.</param>
     /// <param name="baseSlot">The ring position <paramref name="windowBase"/> currently occupies.</param>
@@ -108,11 +112,12 @@ internal static class FragmentGroupCompleteness
     /// <param name="fragmentCount">The group's declared Fragment count.</param>
     /// <returns>
     /// <see langword="true"/> if every one of the group's sequences resolves to a ring slot whose recorded
-    /// length is non-zero and, for a sequence at or ahead of <paramref name="windowBase"/>, whose admission
-    /// entry is also set; <see langword="false"/> otherwise, including when the group is wider than the
-    /// window can currently address.
+    /// length is non-zero, whose recorded group is this one and, for a sequence at or ahead of
+    /// <paramref name="windowBase"/>, whose admission entry is also set; <see langword="false"/> otherwise,
+    /// including when the group is wider than the window can currently address.
     /// </returns>
     /// <remarks>
+    /// <para>
     /// A piece already behind <paramref name="windowBase"/> is trusted on its length alone:
     /// <see cref="ReceiveWindow.AdvanceBase"/> clears a passed slot's admission entry, so the length run is
     /// what survives to answer this, and a length reused since is cleared at the next fresh admission of
@@ -120,10 +125,19 @@ internal static class FragmentGroupCompleteness
     /// sequence resolves to can still hold a non-zero length left by an earlier, abandoned occupant whose
     /// admission entry was cleared when the base swept past it. A live forward piece always has its entry
     /// set, so requiring it rejects exactly the stale case.
+    /// </para>
+    /// <para>
+    /// <b>A piece counts only for the group it named when it arrived (issue #423).</b> A datagram's own
+    /// well-formedness check cannot see across datagrams, so a peer can send overlapping claims one
+    /// Fragment at a time. Reading lengths alone would report each of them complete from the same pieces
+    /// and stitch a Message from another group's bytes. Comparing identity means two complete groups
+    /// never share a slot, which is half of what bounds <see cref="PendingFragmentGroups"/>.
+    /// </para>
     /// </remarks>
     internal static bool IsComplete(
         ReadOnlySpan<byte> admitted,
         ReadOnlySpan<byte> fragmentLengths,
+        ReadOnlySpan<byte> fragmentGroups,
         int capacity,
         uint windowBase,
         int baseSlot,
@@ -140,6 +154,13 @@ internal static class FragmentGroupCompleteness
 
             ushort length = BinaryPrimitives.ReadUInt16LittleEndian(fragmentLengths.Slice(ringSlot * 2, 2));
             if (length == 0)
+            {
+                return false;
+            }
+
+            ReadOnlySpan<byte> recordedGroup = fragmentGroups.Slice(ringSlot * 6, 6);
+            if (BinaryPrimitives.ReadUInt32LittleEndian(recordedGroup) != groupFirstSequence
+                || BinaryPrimitives.ReadUInt16LittleEndian(recordedGroup[4..]) != fragmentCount)
             {
                 return false;
             }
