@@ -26,6 +26,8 @@ public class DatagramSessionHostileAnnouncedIntervalTests
     private const byte CookieType = 2;
     private const byte HelloWithCookieType = 3;
     private const byte AcceptType = 4;
+    private const byte RefusalType = 5;
+    private const byte RefusalReasonVersion = 1;
 
     private const ulong LegalInterval = 60_000;
 
@@ -98,6 +100,26 @@ public class DatagramSessionHostileAnnouncedIntervalTests
         pump.Should().NotThrow();
         dialler.DrainToList().Should().NotContain(evt => evt.Kind == SessionEventKind.PeerConnected);
         dialler.Sink.Received.Should().Contain(record => record.Id == DiagnosticId.DatagramMalformed);
+    }
+
+    [Fact]
+    public void Pump_HelloWithCookieOfAnotherVersionAnnouncingAnIllegalInterval_IsStillRefusedForItsVersion()
+    {
+        // Arrange — this end cannot judge the fields of a version it does not speak, and the sender can
+        // act on a version Refusal.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawCounterparty counterparty = new();
+        const ulong clientNonce = 46;
+        (long epoch, byte[] cookie) = ObtainCookie(accepter, counterparty, clientNonce);
+
+        // Act
+        counterparty.SendTo(
+            Source.FromIPEndPoint(accepter.Endpoint),
+            BuildHelloWithCookie(clientNonce, epoch, cookie, ulong.MaxValue, ulong.MaxValue, version: ProtocolVersion + 1));
+        (_, byte[] refusal) = counterparty.PumpUntilReceived(accepter.Reactor.Pump, RefusalType);
+
+        // Assert — clientNonce(8) comes first in a Refusal's body, then the reason.
+        refusal[ControlBodyOffset + 8].Should().Be(RefusalReasonVersion);
     }
 
     [Fact]
@@ -253,11 +275,12 @@ public class DatagramSessionHostileAnnouncedIntervalTests
         long epoch,
         ReadOnlySpan<byte> cookie,
         ulong sendIdleIntervalMilliseconds,
-        ulong lingerMilliseconds)
+        ulong lingerMilliseconds,
+        uint version = ProtocolVersion)
     {
         byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + 8 + ResumeSecretLength];
         int offset = 0;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
+        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), version);
         offset += 4;
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), clientNonce);
         offset += 8;

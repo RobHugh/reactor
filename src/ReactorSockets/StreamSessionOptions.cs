@@ -95,14 +95,16 @@ public sealed class StreamSessionOptions
     /// <summary>
     /// How long a Session may go without sending before it sends a heartbeat instead. Required:
     /// shorter costs bandwidth on an idle link, longer costs time to notice a dead Peer, and only the
-    /// consumer knows which they would rather spend.
+    /// consumer knows which they would rather spend. At most 2^32 - 1 milliseconds (about 49.7 days), the
+    /// most a handshake may announce.
     /// </summary>
     public required TimeSpan SendIdleInterval { get; init; }
 
     /// <summary>
     /// How long a closing Session stays alive to retransmit its Goodbye and absorb what is still in
     /// flight. Required, for the same reason as <see cref="SendIdleInterval"/>: it trades a prompt
-    /// teardown against a clean one.
+    /// teardown against a clean one. At most 2^32 - 1 milliseconds (about 49.7 days), the most a handshake
+    /// may announce.
     /// </summary>
     public required TimeSpan Linger { get; init; }
 
@@ -282,7 +284,7 @@ public sealed class StreamSessionOptions
             throw new ArgumentOutOfRangeException(
                 nameof(SendIdleInterval),
                 SendIdleInterval,
-                $"a send-idle interval of {SendIdleInterval} is above the {Session.AnnouncedIntervalLegality.Maximum} a handshake may announce, so every peer would discard this end's handshake.");
+                $"a send-idle interval of {SendIdleInterval} is above the {Session.AnnouncedIntervalLegality.Maximum} a handshake may announce, so every Peer would discard this end's handshake.");
         }
 
         if (Linger > Session.AnnouncedIntervalLegality.Maximum)
@@ -290,7 +292,7 @@ public sealed class StreamSessionOptions
             throw new ArgumentOutOfRangeException(
                 nameof(Linger),
                 Linger,
-                $"a Linger of {Linger} is above the {Session.AnnouncedIntervalLegality.Maximum} a handshake may announce, so every peer would discard this end's handshake.");
+                $"a Linger of {Linger} is above the {Session.AnnouncedIntervalLegality.Maximum} a handshake may announce, so every Peer would discard this end's handshake.");
         }
 
         ValidateEndpoints();

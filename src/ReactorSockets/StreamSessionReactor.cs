@@ -704,7 +704,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// operator reads for that, and for the other refusal paths, is
     /// <see cref="DiagnosticId.ResumeUnmatched"/> (issue #124). A record naming no known type is dropped
     /// here too, ahead of the capacity check, so the discard arm still refuses rather than answering it
-    /// with a Refusal that implies it was understood. A Hello announcing a secret a reservation is
+    /// with a Refusal that implies it was understood. A Hello announcing an illegal interval is dropped
+    /// there for the same reason, before it can take a Slot (issue #422). A Hello announcing a secret a reservation is
     /// holding is refused ahead of the capacity check as well, since it is a claim on that reserved
     /// Session and not a request for a Slot (<see cref="IsHelloClaimingAReservedSession"/>). Everything
     /// else — an ordinary Hello, a Refusal, and how each is answered — reaches
@@ -728,6 +729,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
+        if (type == StreamHandshakeMessageType.Hello && IsHelloIllegal(pending))
+        {
+            DiscardPendingAdmission(pending);
+            return;
+        }
+
         if (type == StreamHandshakeMessageType.Hello
             && IsHelloClaimingAReservedSession(pending, out int reservationsChecked))
         {
@@ -743,6 +750,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
 
         AdmitPendingAdmission(pending);
+    }
+
+    /// <summary>
+    /// Whether a held connection's Hello fails <see cref="StreamHandshakeCodec.TryRead"/>, which is how
+    /// an illegal announced interval shows itself once the record's size and type are known good.
+    /// </summary>
+    private static bool IsHelloIllegal(PendingAdmission pending)
+    {
+        Span<byte> announcedSecret = stackalloc byte[StreamSessionProtocol.ResumeSecretLength];
+        return !StreamHandshakeCodec.TryRead(pending.Record, out _, out _, out _, out _, announcedSecret);
     }
 
     /// <summary>
