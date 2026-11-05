@@ -1644,8 +1644,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// of 3, is declared lost after 30 seconds of silence from it — three of its own heartbeats missed.
     /// </summary>
     private bool HasExceededReceiveIdleDeadline(PeerSlot slot) =>
-        _options.Reactor.TimeProvider.GetElapsedTime(slot.LastReceiveTimestamp)
-            >= slot.RemoteSendIdleInterval * _options.ResolvedMissedHeartbeats;
+        // Divides instead of multiplying, for the reason DatagramSessionReactor's copy of this deadline
+        // gives: the product can overflow a TimeSpan and throw out of every Pump (issue #422).
+        _options.Reactor.TimeProvider.GetElapsedTime(slot.LastReceiveTimestamp).Ticks / _options.ResolvedMissedHeartbeats
+            >= slot.RemoteSendIdleInterval.Ticks;
 
     /// <summary>
     /// Whether an <see cref="PeerSlot.IsInterrupted"/> Peer's effective Linger

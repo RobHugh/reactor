@@ -324,7 +324,8 @@ internal static class ControlDatagramCodec
     /// <paramref name="lingerMilliseconds"/> is zero — as meaningless off the wire as a local
     /// <see cref="DatagramSessionOptions.MaxMessageSize"/>, <see cref="DatagramSessionOptions.SendIdleInterval"/>
     /// or <see cref="DatagramSessionOptions.Linger"/> of zero is by
-    /// <see cref="DatagramSessionOptions.Validate"/> (issue #287, issue #347, issue #361).
+    /// <see cref="DatagramSessionOptions.Validate"/> (issue #287, issue #347, issue #361), or when either
+    /// interval is above <see cref="AnnouncedIntervalLegality.MaximumMilliseconds"/> (issue #422).
     /// </summary>
     public static bool TryReadHelloWithCookie(
         ReadOnlySpan<byte> datagram,
@@ -371,7 +372,9 @@ internal static class ControlDatagramCodec
         lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
         offset += sizeof(ulong);
 
-        if (maxMessageSize == 0 || sendIdleIntervalMilliseconds == 0 || lingerMilliseconds == 0)
+        if (maxMessageSize == 0
+            || !AnnouncedIntervalLegality.IsLegal(sendIdleIntervalMilliseconds)
+            || !AnnouncedIntervalLegality.IsLegal(lingerMilliseconds))
         {
             version = default;
             clientNonce = default;
@@ -393,7 +396,8 @@ internal static class ControlDatagramCodec
     /// <see cref="TryReadCookie"/> does for a cookie, and when the announced
     /// <paramref name="maxMessageSize"/>, <paramref name="sendIdleIntervalMilliseconds"/> or
     /// <paramref name="lingerMilliseconds"/> is zero, for the same reason
-    /// <see cref="TryReadHelloWithCookie"/> does (issue #363).
+    /// <see cref="TryReadHelloWithCookie"/> does (issue #363), or when either interval is above
+    /// <see cref="AnnouncedIntervalLegality.MaximumMilliseconds"/> (issue #422).
     /// </summary>
     public static bool TryReadAccept(
         ReadOnlySpan<byte> datagram,
@@ -428,7 +432,9 @@ internal static class ControlDatagramCodec
         lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
         offset += sizeof(ulong);
 
-        if (maxMessageSize == 0 || sendIdleIntervalMilliseconds == 0 || lingerMilliseconds == 0)
+        if (maxMessageSize == 0
+            || !AnnouncedIntervalLegality.IsLegal(sendIdleIntervalMilliseconds)
+            || !AnnouncedIntervalLegality.IsLegal(lingerMilliseconds))
         {
             clientNonce = default;
             sessionIdForMe = default;

@@ -421,6 +421,22 @@ public sealed class DatagramSessionOptions
                 $"a Linger of {Linger} closes a Session before it can retransmit its Goodbye — it must be greater than zero.");
         }
 
+        if (SendIdleInterval > Session.AnnouncedIntervalLegality.Maximum)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(SendIdleInterval),
+                SendIdleInterval,
+                $"a send-idle interval of {SendIdleInterval} is above the {Session.AnnouncedIntervalLegality.Maximum} a handshake may announce, so every peer would discard this end's handshake.");
+        }
+
+        if (Linger > Session.AnnouncedIntervalLegality.Maximum)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(Linger),
+                Linger,
+                $"a Linger of {Linger} is above the {Session.AnnouncedIntervalLegality.Maximum} a handshake may announce, so every peer would discard this end's handshake.");
+        }
+
         ValidateEndpoints();
         ValidateMemoryBill();
     }
