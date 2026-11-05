@@ -49,8 +49,9 @@ public enum SendOutcome
     MessageTooLarge = 3,
 
     /// <summary>
-    /// A reliable Message exceeds the <c>MaxMessageSize</c> the remote end announced during the
-    /// handshake. Nothing was copied, and the caller may retry immediately with a smaller payload.
+    /// A Message, in any delivery mode, exceeds the <c>MaxMessageSize</c> the remote end announced during
+    /// the handshake (issue #449). Nothing was copied, and the caller may retry immediately with a smaller
+    /// payload. An unreliable Message over both limits reports <see cref="MessageTooLarge"/> instead.
     /// Distinct from <see cref="MessageTooLarge"/> purely by whose limit was exceeded: that value means
     /// a local configuration fact the caller's own settings could have predicted (the single-Datagram
     /// cap an unreliable mode cannot exceed); this one means the far end's announced receive limit,
