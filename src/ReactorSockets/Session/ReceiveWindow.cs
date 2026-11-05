@@ -537,12 +537,9 @@ internal sealed class ReceiveWindow
     /// A set member's sequence that no longer resolves to any ring slot (<see cref="TryGetRingSlot"/>
     /// returns <see langword="false"/>) is skipped rather than counted: it is too far away, in either
     /// direction, for any slot to still be able to answer for it. A set member whose resolved slot's
-    /// recorded group differs, in first sequence or in count, is skipped too — that physical slot holds
-    /// something other than this set's own piece (a hole this set never filled, residue from a still
-    /// older, unrelated occupant, or a different group claiming the same first sequence), so it is
-    /// neither counted as held nor cleared as part of this set. A waiting group's pieces depend on that
-    /// (issue #423): clearing them here would leave <see cref="PendingFragmentGroups"/> naming a group
-    /// with nothing left to deliver.
+    /// recorded group names a different first sequence is skipped too — that physical slot holds
+    /// something other than this set's own piece (a hole this set never filled, or residue from a still
+    /// older, unrelated occupant), so it is neither counted as held nor cleared as part of this set.
     /// </remarks>
     private void HandleFragmentSetAbandonment(int ringSlot)
     {
@@ -557,8 +554,8 @@ internal sealed class ReceiveWindow
             }
 
             ushort length = BinaryPrimitives.ReadUInt16LittleEndian(_fragmentLengths.Span.Slice(memberSlot * 2, 2));
-            (uint memberFirstSequence, ushort memberCount) = ReadFragmentGroup(memberSlot);
-            if (length == 0 || memberFirstSequence != groupFirstSequence || memberCount != declaredCount)
+            (uint memberFirstSequence, _) = ReadFragmentGroup(memberSlot);
+            if (length == 0 || memberFirstSequence != groupFirstSequence)
             {
                 continue;
             }
@@ -634,26 +631,14 @@ internal sealed class ReceiveWindow
     }
 
     /// <summary>
-    /// The group whose held piece occupies the ring slot <paramref name="sequence"/> resolves to (issue
-    /// #423), so a caller can tell what admitting <paramref name="sequence"/> would overwrite. Changes
-    /// nothing.
+    /// Whether admitting <paramref name="sequence"/> would overwrite a Fragment this window still holds
+    /// (issue #423): the ring has come back round to a slot whose piece the base has already passed.
+    /// Changes nothing.
     /// </summary>
-    /// <param name="sequence">The sequence whose ring slot to read.</param>
-    /// <param name="groupFirstSequence">The held piece's group's first sequence, when one is held.</param>
-    /// <param name="fragmentCount">The held piece's group's declared Fragment count, when one is held.</param>
-    /// <returns><see langword="true"/> if that slot holds a Fragment.</returns>
-    internal bool TryGetHeldGroupAt(uint sequence, out uint groupFirstSequence, out ushort fragmentCount)
-    {
-        groupFirstSequence = 0;
-        fragmentCount = 0;
-        if (!TryGetRingSlot(sequence, out int ringSlot) || GetFragmentLength(ringSlot) == 0)
-        {
-            return false;
-        }
-
-        (groupFirstSequence, fragmentCount) = ReadFragmentGroup(ringSlot);
-        return true;
-    }
+    /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
+    internal bool WouldOverwriteHeldFragment(uint sequence) =>
+        WouldAdmit(sequence)
+        && GetFragmentLength((int)((_baseSlot + unchecked(sequence - Base)) % (uint)Capacity)) != 0;
 
     /// <summary>
     /// Zeroes the Fragment-length and Fragment-group entries for every sequence of the group starting at

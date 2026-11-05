@@ -122,22 +122,17 @@ internal sealed class ReceiveWindowSpaces
     };
 
     /// <summary>
-    /// Whether admitting <paramref name="sequence"/> would overwrite a piece of a group still waiting in
-    /// <paramref name="mode"/>'s <see cref="PendingFragmentGroups"/> (issue #423). Such a group can sit
-    /// behind the base waiting for arena room, so the ring can come back round to its slots. Changes
-    /// nothing. <paramref name="mode"/> must be <c>ReliableOrdered</c> or <c>ReliableUnordered</c>.
+    /// Whether <paramref name="sequence"/> must wait because admitting it would overwrite a held Fragment
+    /// while a group waits in <paramref name="mode"/>'s <see cref="PendingFragmentGroups"/> (issue #423).
+    /// The overwritten piece may be the waiting group's own. It may instead belong to a group that a
+    /// retransmission is about to complete, one a <c>ReliableOrdered</c> waiting group is queued behind, and
+    /// overwriting that one would leave the waiting group unable ever to take its turn. Changes nothing.
+    /// <paramref name="mode"/> must be <c>ReliableOrdered</c> or <c>ReliableUnordered</c>.
     /// </summary>
     /// <param name="mode">Which reliable Space to ask about.</param>
     /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
-    public bool WouldReuseWaitingGroupSlot(PacketRecordMode mode, uint sequence)
-    {
-        PendingFragmentGroups waiting = PendingGroupsFor(mode);
-        ReceiveWindow window = ReliableWindow(mode);
-        return waiting.Count > 0
-            && window.WouldAdmit(sequence)
-            && window.TryGetHeldGroupAt(sequence, out uint groupFirstSequence, out ushort fragmentCount)
-            && waiting.Contains(groupFirstSequence, fragmentCount);
-    }
+    public bool MustWaitForWaitingGroups(PacketRecordMode mode, uint sequence) =>
+        PendingGroupsFor(mode).Count > 0 && ReliableWindow(mode).WouldOverwriteHeldFragment(sequence);
 
     /// <summary>
     /// <see cref="Classify(PacketRecordMode, uint)"/>, additionally reporting the ring slot

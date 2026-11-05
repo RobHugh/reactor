@@ -28,10 +28,11 @@ namespace ReactorSockets.Session;
 /// or one, and never more than the window has slots, since the datagram parse refuses that too. Two
 /// waiting groups never share a slot, since <see cref="FragmentGroupCompleteness.IsComplete"/> counts a
 /// piece only for the group it named on arrival. A waiting group keeps its slots until it is delivered,
-/// since <see cref="ReceiveWindowSpaces.WouldReuseWaitingGroupSlot"/> turns away any record that would
+/// since <see cref="ReceiveWindowSpaces.MustWaitForWaitingGroups"/> turns away any record that would
 /// overwrite one and no ack covers that record, so the far end's retransmission brings it back once
-/// the group has gone. <see cref="Add"/> asserts rather than grows, in the house style for an invariant
-/// designed away rather than defended (ADR 0015).
+/// the group has gone. A group whose turn never comes keeps its slots for good, which stops only that
+/// Space of the Peer that sent it. <see cref="Add"/> asserts rather than grows, in the house style for
+/// an invariant designed away rather than defended (ADR 0015).
 /// </para>
 /// <para>
 /// <b>No allocation of its own, ever.</b> The only storage this type touches is the
@@ -100,21 +101,6 @@ internal sealed class PendingFragmentGroups
 
         Write(entries, Count, firstSequence, fragmentCount);
         Count++;
-    }
-
-    /// <summary>Whether exactly this group, first sequence and count both, is waiting.</summary>
-    internal bool Contains(uint firstSequence, ushort fragmentCount)
-    {
-        Span<byte> entries = _entries.Span;
-        for (int i = 0; i < Count; i++)
-        {
-            if (FirstSequenceAt(entries, i) == firstSequence && FragmentCountAt(entries, i) == fragmentCount)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /// <summary>

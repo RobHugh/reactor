@@ -47,7 +47,7 @@ public class DatagramSessionFragmentGroupCapacityTests
     private const int WidePieceLength = 200;
 
     [Fact]
-    public void Pump_OverlappingGroupsBehindAHole_DeliversOnlyTheRealGroupAndKeepsTheWindowMoving()
+    public void Pump_OverlappingGroupsBehindAHole_DeliversOnlyTheRealGroup()
     {
         // Arrange — a hole at sequence 0 holds the base still. Each later Fragment names a group whose
         // first piece is the previous group's last, so a completeness check reading lengths alone
@@ -56,24 +56,36 @@ public class DatagramSessionFragmentGroupCapacityTests
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
-        PeerId peer = FindAccepterPeer(accepter);
+        _ = FindAccepterPeer(accepter);
+        SendOverlappingGroupsBehindAHole(accepter, client, clientLink, sessionId);
 
         // Act
-        SendAndPump(accepter, client, clientLink, sessionId, Fragment(ModeReliableOrdered, 1, 0, 2, [0x11]));
-        for (uint sequence = 2; sequence < ReceiveWindowFragments; sequence++)
-        {
-            SendAndPump(accepter, client, clientLink, sessionId, Fragment(ModeReliableOrdered, sequence, 1, 2, [(byte)(0x10 + sequence)]));
-        }
-
-        accepter.DrainPayloads().Should().BeEmpty("every group is behind the hole at sequence 0");
         SendAndPump(accepter, client, clientLink, sessionId, Record(ModeReliableOrdered, 0, [0xAA]));
         List<string> delivered = accepter.DrainPayloads().ConvertAll(Convert.ToHexString);
 
         // Assert — the hole's own Message and the one honest group, and nothing built from a piece two
-        // groups both claimed. Sequence 8 is out of window until the base has moved past the hole.
+        // groups both claimed.
         delivered.Should().Equal("AA", "1112");
+    }
+
+    [Fact]
+    public void Pump_OverlappingGroupsBehindAHole_KeepsTheWindowMoving()
+    {
+        // Arrange — the same sequence, then the hole filled. Sequence 8 is out of window until the base
+        // has moved past the hole.
+        using DatagramSessionReactorHarness accepter = NewAccepter(arenaSize: null);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId peer = FindAccepterPeer(accepter);
+        SendOverlappingGroupsBehindAHole(accepter, client, clientLink, sessionId);
+        SendAndPump(accepter, client, clientLink, sessionId, Record(ModeReliableOrdered, 0, [0xAA]));
         ulong outOfWindowBefore = accepter.Reactor.CountersOf(peer).OutOfWindowPackets;
+
+        // Act
         SendAndPump(accepter, client, clientLink, sessionId, Record(ModeReliableOrdered, ReceiveWindowFragments, [0xBB]));
+
+        // Assert
         accepter.Reactor.CountersOf(peer).OutOfWindowPackets.Should().Be(outOfWindowBefore);
     }
 
@@ -119,7 +131,7 @@ public class DatagramSessionFragmentGroupCapacityTests
     }
 
     [Fact]
-    public void Pump_ALaterGroupWouldReuseAWaitingGroupsSlot_DeliversBothGroupsWhole()
+    public void Pump_ALaterGroupWouldReuseAWaitingGroupsSlot_DeliversEveryGroupWhole()
     {
         // Arrange — the waiting set is nowhere near full here, so only the slots are at stake. Group
         // 2..3 is deferred for arena room, and group 4..10 runs far enough round the eight-slot ring that
@@ -168,52 +180,85 @@ public class DatagramSessionFragmentGroupCapacityTests
     }
 
     [Fact]
-    public void Pump_AnAbandonedSetSharingAWaitingGroupsFirstSequence_LeavesTheWaitingGroupWhole()
+    public void Pump_ASenderRunsALapAheadOfALostFragment_DeliversEveryMessageWholeAndInOrder()
     {
-        // Arrange — group 2..3 is deferred for arena room. A later Fragment names a group of three that
-        // also starts at 2, so its only piece, sequence 4, carries the same first sequence with a
-        // different count. Sequence 12 reuses that piece's slot and abandons the set, which must clear
-        // that set's piece and leave group 2..3's alone.
-        using DatagramSessionReactorHarness accepter = NewAccepter(arenaSize: 2 * MaxMessageSize);
-        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
-        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
-        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
-        _ = FindAccepterPeer(accepter);
+        // Arrange — a real sender retaining twice the receive window, and one lost Fragment. Each
+        // Fragment fills a Datagram of its own, so the proxy can drop exactly sequence 1. The sender
+        // carries on until sequence 8 reaches the slot still holding sequence 0, the piece of Message 0
+        // that arrived. Overwriting it would leave Message 0 unable to complete and ReliableOrdered
+        // delivery unable ever to pass it.
+        const int fragmentSize = 32_750;
+        const int messageSize = 2 * fragmentSize;
+        const int retentionBytes = 2 * ReceiveWindowFragments * fragmentSize;
+        const int messages = 6;
+        TimeSpan linger = TimeSpan.FromSeconds(10);
+        using DatagramSessionReactorHarness sender = new(
+            capacity: 2, bindLoopback: false, maxMessageSize: messageSize, retentionBytes: retentionBytes,
+            fragmentSize: fragmentSize, linger: linger);
+        using DatagramSessionReactorHarness receiver = new(
+            capacity: 2, maxMessageSize: messageSize, retentionBytes: retentionBytes, fragmentSize: fragmentSize,
+            receiveWindowFragments: ReceiveWindowFragments, linger: linger, timeProvider: sender.TimeProvider);
+        using LossyProxy proxy = new(receiver.Endpoint, sender.TimeProvider);
+        PeerId peer = sender.Reactor.Connect(proxy.PublicEndPoint);
+        PeerId receiverPeer = DatagramSessionReactorHarness.PumpThroughProxyUntilConnected(sender, proxy, receiver);
 
-        byte[] takesTheShare0 = Enumerable.Repeat((byte)0xA0, WidePieceLength).ToArray();
-        byte[] takesTheShare1 = Enumerable.Repeat((byte)0xA1, WidePieceLength).ToArray();
-        byte[] waiting0 = Enumerable.Repeat((byte)0xB0, WidePieceLength).ToArray();
-        byte[] waiting1 = Enumerable.Repeat((byte)0xB1, WidePieceLength).ToArray();
+        // One clean round trip seeds the estimator. Unseeded, the RTO resolves to the Linger itself.
+        sender.Reactor.Send(peer, DeliveryMode.ReliableUnordered, [1]).Should().Be(SendOutcome.Sent);
+        DatagramSessionReactorHarness.PumpRoundThroughProxy(sender, proxy, receiver);
+        sender.TimeProvider.Advance(TimeSpan.FromMilliseconds(20));
+        receiver.Reactor.Send(receiverPeer, DeliveryMode.Unreliable, [9]).Should().Be(SendOutcome.Sent);
+        DatagramSessionReactorHarness.PumpRoundThroughProxy(sender, proxy, receiver);
+        sender.Reactor.Pump();
+        sender.DrainAndDiscard();
+        receiver.DrainAndDiscard();
 
-        SendAndPump(
-            accepter, client, clientLink, sessionId,
-            [
-                .. Fragment(ModeReliableUnordered, 0, 0, 2, takesTheShare0),
-                .. Fragment(ModeReliableUnordered, 1, 1, 2, takesTheShare1),
-                .. Fragment(ModeReliableUnordered, 2, 0, 2, waiting0),
-                .. Fragment(ModeReliableUnordered, 3, 1, 2, waiting1),
-            ]);
-        accepter.DrainPayloads().Should().ContainSingle("group 2..3 did not fit the read share in this Frame");
-
-        List<byte> records = [.. Fragment(ModeReliableUnordered, 4, 2, 3, [0xD0])];
-        for (ushort index = 0; index < 8; index++)
+        List<string> expected = [];
+        List<string> delivered = [];
+        void Round()
         {
-            records.AddRange(Fragment(ModeReliableUnordered, 5u + index, index, 8, [(byte)(0xE0 + index)]));
+            // Acks ride outgoing datagrams only (ADR 0017), so the receiver has to be sending something.
+            receiver.Reactor.Send(receiverPeer, DeliveryMode.Unreliable, [9]);
+            DatagramSessionReactorHarness.PumpRoundThroughProxy(sender, proxy, receiver);
+            sender.Reactor.Pump();
+            sender.DrainAndDiscard();
+            delivered.AddRange(receiver.DrainPayloads().ConvertAll(p => $"{p[0]:X2}{p[^1]:X2}"));
         }
 
-        // Act — one datagram, so sequence 12 arrives before this Frame's retry of the waiting group.
-        SendAndPump(accepter, client, clientLink, sessionId, [.. records]);
-        List<string> delivered = accepter.DrainPayloads().ConvertAll(Convert.ToHexString);
+        // Act — each sequence relayed alone, then time for the retransmissions to bring back the lost
+        // Fragment and whatever was refused while the groups behind it waited.
+        for (int sent = 0; sent < messages; sent++)
+        {
+            byte[] message = new byte[messageSize];
+            message.AsSpan(0, fragmentSize).Fill((byte)(0xA0 + sent));
+            message.AsSpan(fragmentSize).Fill((byte)(0xB0 + sent));
+            expected.Add($"{message[0]:X2}{message[^1]:X2}");
+            sender.Reactor.Send(peer, DeliveryMode.ReliableOrdered, message).Should().Be(SendOutcome.Sent);
+            for (int piece = 0; piece < 2; piece++)
+            {
+                if (sent == 0 && piece == 1)
+                {
+                    proxy.DropNext(RelayDirection.ClientToUpstream);
+                }
+
+                Round();
+            }
+        }
+
+        for (TimeSpan elapsed = TimeSpan.Zero; elapsed < 3 * linger && delivered.Count < messages; elapsed += TimeSpan.FromMilliseconds(100))
+        {
+            sender.TimeProvider.Advance(TimeSpan.FromMilliseconds(100));
+            Round();
+        }
 
         // Assert
-        delivered.Should().ContainSingle().Which.Should().Be(Convert.ToHexString([.. waiting0, .. waiting1]));
+        delivered.Should().Equal(expected);
     }
 
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(3)]
-    public void Pump_ArbitraryFragmentsUnderArenaPressure_NeverThrowsAndLeavesTheSessionUsable(int seed)
+    public void Pump_ArbitraryFragmentsUnderArenaPressure_NeverThrows(int seed)
     {
         // Arrange — every Fragment legal on its own and nothing else about them agreed: overlapping
         // groups, disagreeing counts and arrival in any order. Each round covers every sequence of one
@@ -224,7 +269,7 @@ public class DatagramSessionFragmentGroupCapacityTests
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
-        PeerId peer = FindAccepterPeer(accepter);
+        _ = FindAccepterPeer(accepter);
         Random random = new(seed);
         uint orderedCursor = 0;
         uint unorderedCursor = 0;
@@ -256,8 +301,16 @@ public class DatagramSessionFragmentGroupCapacityTests
 
         // Assert
         flood.Should().NotThrow();
-        Action stillResolves = () => accepter.Reactor.CountersOf(peer);
-        stillResolves.Should().NotThrow();
+    }
+
+    private static void SendOverlappingGroupsBehindAHole(
+        DatagramSessionReactorHarness accepter, RawReactor client, LinkId clientLink, uint sessionId)
+    {
+        SendAndPump(accepter, client, clientLink, sessionId, Fragment(ModeReliableOrdered, 1, 0, 2, [0x11]));
+        for (uint sequence = 2; sequence < ReceiveWindowFragments; sequence++)
+        {
+            SendAndPump(accepter, client, clientLink, sessionId, Fragment(ModeReliableOrdered, sequence, 1, 2, [(byte)(0x10 + sequence)]));
+        }
     }
 
     private static DatagramSessionReactorHarness NewAccepter(int? arenaSize) => new(
