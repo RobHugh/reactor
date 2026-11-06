@@ -121,11 +121,9 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
     }
 
     /// <summary>
-    /// <see cref="DiagnosticId.FragmentSetAbandoned"/> fires only when an incomplete Fragment set's
-    /// receive-window ring slot is clobbered by a later one before it completes (see
-    /// <c>DatagramSessionReactor.ClassifyRecord</c>'s own remarks) — it needs two Fragment sets
-    /// contending for the same slot, not merely a lossy path. This fixture's dialler sends exactly one
-    /// large Message, so there is never a second set to cause that collision and this run does not
+    /// <see cref="DiagnosticId.FragmentSetAbandoned"/> fires only when a later record reaches the
+    /// receive-window ring slot of a Fragment set that can never complete (issue #446) — one the base has
+    /// passed entirely without it completing, which a real sender's loss never leaves. This run does not
     /// observe the diagnostic fire. The assertions below hold regardless — they are written to catch a
     /// disturbance if the diagnostic ever does fire, per issue #306's own "may well fire" framing, not to
     /// force it to.
@@ -139,9 +137,8 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
         // Act
         RunBoundedScenario(fixture);
 
-        // Assert — FragmentSetAbandoned reports what ordinary loss took; it is expected here and is not
-        // itself a problem. What would be a problem is that emitting it ever closed or otherwise disturbed
-        // the Session — it never diagnoses why a set was lost, which is exactly why it cannot be the
+        // Assert — FragmentSetAbandoned reports what was lost and is not itself a problem. What would be
+        // a problem is that emitting it ever closed or otherwise disturbed the Session — it never diagnoses why a set was lost, which is exactly why it cannot be the
         // trigger for closing anything (issue #268's own framing).
         fixture.AccepterEvents.Should().NotContain(
             e => e.Kind == SessionEventKind.PeerClosed,

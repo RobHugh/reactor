@@ -111,8 +111,7 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     /// one outbound Datagram as the 65 507-byte UDP maximum has room for, so a Message any smaller than
     /// this crosses the wire as a single Datagram and a network that loses that Datagram loses the whole
     /// set — all or nothing, which is issue #271's black hole and leaves nothing held to report against.
-    /// A set spanning two Datagrams is the smallest shape a real path can leave partially held, which is
-    /// what <see cref="DiagnosticId.FragmentSetAbandoned"/>'s held-against-expected figures are for.
+    /// A set spanning two Datagrams is the smallest shape a real path can leave partially held.
     /// At <see cref="FragmentSize"/> this is 110 Fragments, of which the first Datagram carries the 107
     /// that fit and the second carries the rest.
     /// </summary>
@@ -153,7 +152,6 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     private readonly byte[] _spanningPayload = Enumerable.Range(0, SpanningMessageLength).Select(i => (byte)i).ToArray();
     private readonly byte[] _keepAlivePayload = [0];
     private readonly int _wireBaselineCount;
-    private readonly int _forwardedBaselineCount;
     private int _orderedSequencesSent;
 
     /// <summary>
@@ -220,7 +218,6 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
         // handshake's own fixed-size control Datagrams, captured above during Establish, are deliberately
         // excluded from AssertNoProbeWasObserved's walk (see the type remarks).
         _wireBaselineCount = Proxy.Captures.Count;
-        _forwardedBaselineCount = Proxy.Forwarded.Count;
 
         configureProxyRule(Proxy);
     }
@@ -325,10 +322,7 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     /// <remarks>
     /// Whole Datagrams, never individual records: a Datagram carrying several Fragments is dropped
     /// entire if any one of them names a listed sequence, because that is the only loss a real path can
-    /// inflict. That is why <see cref="ForwardedFragmentSequencesOf"/> exists and why a caller reads the
-    /// held figure from it rather than from this list — what a rule was asked to drop and what the far
-    /// end actually stopped seeing are two different facts, and only the second is what a Diagnostic's
-    /// held figure has to match.
+    /// inflict.
     /// </remarks>
     public void DropFragmentsAtSequences(params uint[] sequences)
     {
@@ -337,67 +331,6 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
         Proxy.SetPayloadDropRule(
             RelayDirection.ClientToUpstream,
             datagram => DecodeRecords(datagram).Any(record => record.IsFragment && dropped.Contains(record.Sequence)));
-    }
-
-    /// <summary>
-    /// The distinct sequences of the Fragment set beginning at <paramref name="firstSequence"/> that the
-    /// proxy actually put on the wire toward the accepter, read off <see cref="LossyProxy.Forwarded"/>
-    /// rather than assumed from whatever rule was installed. Distinct, because a retransmission forwards
-    /// a sequence the accepter already holds and cannot make it hold that piece twice — which is exactly
-    /// the figure a <see cref="DiagnosticId.FragmentSetAbandoned"/> record's held count has to equal.
-    /// </summary>
-    /// <param name="firstSequence">The set's first sequence — see <see cref="FirstSequenceOfLargeMessage"/>.</param>
-    /// <param name="count">How many sequences the set spans.</param>
-    public IReadOnlyCollection<uint> ForwardedFragmentSequencesOf(uint firstSequence, int count)
-    {
-        HashSet<uint> forwarded = [];
-        foreach (RelayCapture capture in Proxy.Forwarded.Skip(_forwardedBaselineCount))
-        {
-            if (capture.Direction != RelayDirection.ClientToUpstream)
-            {
-                continue;
-            }
-
-            foreach ((byte _, uint sequence, int _, bool isFragment, ushort _, ushort _) in DecodeRecords(capture.Payload))
-            {
-                if (isFragment && unchecked(sequence - firstSequence) < (uint)count)
-                {
-                    forwarded.Add(sequence);
-                }
-            }
-        }
-
-        return forwarded;
-    }
-
-    /// <summary>
-    /// The <c>fragmentCount</c> the Fragment set beginning at <paramref name="firstSequence"/> declared
-    /// on the wire, read off the first Fragment of that set the proxy observed — the count a
-    /// <see cref="DiagnosticId.FragmentSetAbandoned"/> record's expected figure has to equal, taken from
-    /// the set's own metadata rather than from what this fixture believes it sent. Read from
-    /// <see cref="LossyProxy.Captures"/>, not <see cref="LossyProxy.Forwarded"/>: the set declared its
-    /// count when it left the dialler, whether or not that particular Fragment was allowed through.
-    /// </summary>
-    /// <returns>The declared count, or <see langword="null"/> if no Fragment of that set was ever observed.</returns>
-    public ushort? DeclaredFragmentCountOf(uint firstSequence, int count)
-    {
-        foreach (RelayCapture capture in Proxy.Captures.Skip(_wireBaselineCount))
-        {
-            if (capture.Direction != RelayDirection.ClientToUpstream)
-            {
-                continue;
-            }
-
-            foreach ((byte _, uint sequence, int _, bool isFragment, ushort _, ushort fragmentCount) in DecodeRecords(capture.Payload))
-            {
-                if (isFragment && unchecked(sequence - firstSequence) < (uint)count)
-                {
-                    return fragmentCount;
-                }
-            }
-        }
-
-        return null;
     }
 
     /// <summary>

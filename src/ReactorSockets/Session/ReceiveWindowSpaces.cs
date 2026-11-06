@@ -123,16 +123,17 @@ internal sealed class ReceiveWindowSpaces
 
     /// <summary>
     /// Whether <paramref name="sequence"/> must wait because admitting it would overwrite a held Fragment
-    /// while a group waits in <paramref name="mode"/>'s <see cref="PendingFragmentGroups"/> (issue #423).
-    /// The overwritten piece may be the waiting group's own. It may instead belong to a group that a
-    /// retransmission is about to complete, one a <c>ReliableOrdered</c> waiting group is queued behind, and
-    /// overwriting that one would leave the waiting group unable ever to take its turn. Changes nothing.
+    /// whose group can still be delivered (issues #423, #446) — see
+    /// <see cref="ReceiveWindow.WouldOverwriteDeliverableFragment"/>. The overwritten piece may belong to a
+    /// group waiting in <paramref name="mode"/>'s <see cref="PendingFragmentGroups"/>, or to a group a
+    /// retransmission is about to complete. Overwriting either would leave that group unable ever to
+    /// complete, and a <c>ReliableOrdered</c> Space unable ever to deliver past it. Changes nothing.
     /// <paramref name="mode"/> must be <c>ReliableOrdered</c> or <c>ReliableUnordered</c>.
     /// </summary>
     /// <param name="mode">Which reliable Space to ask about.</param>
     /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
-    public bool MustWaitForWaitingGroups(PacketRecordMode mode, uint sequence) =>
-        PendingGroupsFor(mode).Count > 0 && ReliableWindow(mode).WouldOverwriteHeldFragment(sequence);
+    public bool MustWaitForHeldFragment(PacketRecordMode mode, uint sequence) =>
+        ReliableWindow(mode).WouldOverwriteDeliverableFragment(sequence);
 
     /// <summary>
     /// <see cref="Classify(PacketRecordMode, uint)"/>, additionally reporting the ring slot

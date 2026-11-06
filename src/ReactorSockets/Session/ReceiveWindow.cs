@@ -360,8 +360,8 @@ internal sealed class ReceiveWindow
             // A fresh admission at this ring slot is the last moment anyone can say how much of a
             // previous, never-completed occupant's Fragment set had arrived (issue #297): once the
             // length below is zeroed, that occupant's own residue is gone. A non-zero length here means
-            // exactly that — a live piece of a set that will now never complete, because the ring has
-            // just reused its slot and a sequence the base has already passed can never be re-admitted.
+            // a piece of a set that can never complete: the base has passed the whole set without it
+            // completing, since WouldOverwriteDeliverableFragment turns away a lap onto any other (#446).
             ushort residualLength = BinaryPrimitives.ReadUInt16LittleEndian(_fragmentLengths.Span.Slice(slot * 2, 2));
             if (residualLength != 0)
             {
@@ -631,14 +631,34 @@ internal sealed class ReceiveWindow
     }
 
     /// <summary>
-    /// Whether admitting <paramref name="sequence"/> would overwrite a Fragment this window still holds
-    /// (issue #423): the ring has come back round to a slot whose piece the base has already passed.
-    /// Changes nothing.
+    /// Whether admitting <paramref name="sequence"/> would overwrite a held Fragment whose group can
+    /// still be delivered (issues #423, #446): the ring has come back round to a slot whose piece the
+    /// base has already passed, and that piece's group is either complete and waiting, or still has a
+    /// sequence at or above the base that a retransmission can fill. A group the base has passed
+    /// entirely without it completing can never complete, so overwriting its piece is allowed, and
+    /// <see cref="Classify(uint, out int)"/> reports it in <see cref="LastAbandonedFragmentSet"/>. Only
+    /// a sender that admitted something other than that group's own pieces at its sequences can leave
+    /// one. Changes nothing.
     /// </summary>
     /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
-    internal bool WouldOverwriteHeldFragment(uint sequence) =>
-        WouldAdmit(sequence)
-        && GetFragmentLength((int)((_baseSlot + unchecked(sequence - Base)) % (uint)Capacity)) != 0;
+    internal bool WouldOverwriteDeliverableFragment(uint sequence)
+    {
+        if (!WouldAdmit(sequence))
+        {
+            return false;
+        }
+
+        int slot = (int)((_baseSlot + unchecked(sequence - Base)) % (uint)Capacity);
+        if (GetFragmentLength(slot) == 0)
+        {
+            return false;
+        }
+
+        (uint groupFirstSequence, ushort fragmentCount) = ReadFragmentGroup(slot);
+        uint groupLastSequence = unchecked(groupFirstSequence + fragmentCount - 1u);
+        bool basePassedTheGroup = SequenceNumber.IsNewerThan(Base, groupLastSequence);
+        return !basePassedTheGroup || IsGroupComplete(groupFirstSequence, fragmentCount);
+    }
 
     /// <summary>
     /// Zeroes the Fragment-length and Fragment-group entries for every sequence of the group starting at

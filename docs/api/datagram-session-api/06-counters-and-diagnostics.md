@@ -96,7 +96,7 @@ Source or none) and two numeric slots whose meaning is documented per id.
 | `DatagramMalformed` (200) | Warn | Source | A Datagram was discarded because it did not parse or named nobody. `Value0` bytes received. |
 | `CookieRejected` (201) | Warn | Source | A Hello carried a cookie this Reactor did not mint, or minted too long ago. `Value0` the cookie's epoch, `Value1` the current one. |
 | `VersionRefused` (202) | Warn | Source | A verified Hello offered the wrong version and was refused. `Value0` offered, `Value1` required. |
-| `FragmentSetAbandoned` (203) | Warn | Peer | A Fragment set was dropped before it completed. `Value0` Fragments held, `Value1` Fragments declared. |
+| `FragmentSetAbandoned` (203) | Warn | Peer | A Fragment set the sender can never complete was dropped. `Value0` Fragments held, `Value1` Fragments declared. |
 | `RetransmissionTimerBackedOff` (204) | Trace | Peer | Records expired and were resent. `Value0` the new timeout in ms, `Value1` consecutive backoffs. |
 | `OversizedFragmentSet` (205) | Warn | Peer | A Fragment set claimed more Fragments than your window holds, closing the Session. `Value0` declared, `Value1` the largest legal count. |
 | `UnreliableFragment` (206) | Warn | Source | A Fragment arrived in an unreliable mode. `Value0` the mode (0 `Unreliable`, 1 `UnreliableSequenced`). |
@@ -111,8 +111,10 @@ Source or none) and two numeric slots whose meaning is documented per id.
 each names one condition shared by both profiles. A Sink that range-checks 200-299 for this profile
 will miss them.
 
-`FragmentSetAbandoned` fires on ordinary loss and never closes anything. A low held count against a
-high declared count, repeated, is the early sign of a fragment size the path will not carry.
+`FragmentSetAbandoned` never closes anything, and ordinary loss never raises it. A Fragment set that
+loses a piece holds its receive-window slots until a retransmission completes it. Only a set the
+sender can never complete is dropped: one where it sent other records at the sequences the set's
+missing pieces needed.
 
 ## What to watch in production
 

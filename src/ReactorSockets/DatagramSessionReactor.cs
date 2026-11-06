@@ -2389,12 +2389,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <para>
     /// <b>An abandoned Fragment set is reported, never acted on</b> (issue #297). The
     /// <see cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/> call above may have
-    /// just clobbered the ring slot of an incomplete Fragment set that can now never complete — the
+    /// just clobbered the ring slot of an incomplete Fragment set that can never complete. Since issue
+    /// #446 that is only a set the base has passed entirely, because
+    /// <see cref="ReceiveWindowSpaces.MustWaitForHeldFragment"/> refuses to overwrite any other. The
     /// window itself has no <see cref="PeerId"/> to subject a Diagnostic to, so this method reads
     /// <see cref="ReceiveWindowSpaces.LastAbandonedFragmentSet"/> right after that call and logs
-    /// <see cref="DiagnosticRecord.ForFragmentSetAbandoned"/> from it. This is accounting only: it fires
-    /// on ordinary loss as readily as on anything more serious, so nothing here closes, disconnects, or
-    /// otherwise changes Session state — that is issue #270's job, off a different signal.
+    /// <see cref="DiagnosticRecord.ForFragmentSetAbandoned"/> from it. This is accounting only, so
+    /// nothing here closes, disconnects, or otherwise changes Session state — that is issue #270's job,
+    /// off a different signal.
     /// </para>
     /// <para>
     /// <b>An admitted control record — a Ping — is acknowledged and never delivered</b> (issue #339).
@@ -2425,8 +2427,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
 
         // Left unadmitted, so no ack covers it and the far end's retransmission brings it back once the
-        // waiting groups have been delivered and the slot is free (issue #423).
-        if (IsReliable(mode) && windows.MustWaitForWaitingGroups(mode, sequence))
+        // group holding its slot has been delivered and the slot is free (issues #423, #446).
+        if (IsReliable(mode) && windows.MustWaitForHeldFragment(mode, sequence))
         {
             return;
         }
@@ -2446,8 +2448,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         // The moment a Fragment set's slot is discarded is the last moment anyone can say how much of
         // it had arrived (issue #297): windows.Classify just clobbered such a slot if this is set. This
-        // is accounting only — it says what was lost and not why, and fires on ordinary loss too, which
-        // is exactly why it may never close, disconnect, or otherwise change Session state itself.
+        // is accounting only — it says what was lost and not why, which is exactly why it may never
+        // close, disconnect, or otherwise change Session state itself.
         if (windows.LastAbandonedFragmentSet.Occurred && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
         {
             _diagnostics.Log(DiagnosticRecord.ForFragmentSetAbandoned(
