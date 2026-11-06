@@ -2295,8 +2295,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// at the reliable Space <paramref name="pending"/>'s mode addresses, which is where <see cref="Send"/>
     /// recorded them and the only place a retransmit — <paramref name="pending"/> itself carries nothing
     /// of the shape — can recover them from. Fails — nothing to pack — only if a reliable sequence was
-    /// already released from retention between being queued and this flush: an ack read earlier the
-    /// same Pump is the live path that does this today.
+    /// already released from retention between being queued and this flush, for example by an ack read
+    /// earlier the same Pump. The caller consumes such a record unsent, whatever released it.
     /// </summary>
     /// <param name="slot">The Peer this record was queued against.</param>
     /// <param name="pending">The queued record whose bytes and shape are being resolved.</param>
