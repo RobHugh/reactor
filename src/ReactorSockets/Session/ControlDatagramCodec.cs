@@ -96,9 +96,9 @@ internal static class ControlDatagramCodec
     /// Writes a <see cref="DatagramControlType.HelloWithCookie"/>: the Hello repeated with the Cookie
     /// echoed, carrying everything a Session needs to exist now that the round trip is paid, including
     /// the dialler's own <paramref name="sendIdleIntervalMilliseconds"/> — the interval the accepting
-    /// end needs to compute its receive-idle deadline once it stores the value (issue #349) — and the
-    /// dialler's own <paramref name="lingerMilliseconds"/>, which the accepting end needs to negotiate
-    /// the effective (minimum) Linger once it stores the value (issue #363).
+    /// end needs to compute its receive-idle deadline once it stores the value — and the dialler's own
+    /// <paramref name="lingerMilliseconds"/>, which the accepting end needs to negotiate the effective
+    /// (minimum) Linger once it stores the value.
     /// </summary>
     public static void WriteHelloWithCookie(
         Span<byte> destination,
@@ -141,9 +141,9 @@ internal static class ControlDatagramCodec
     /// Writes a <see cref="DatagramControlType.Accept"/>: the accepting end's agreement, carrying the
     /// session id it wants stamped on datagrams sent to it, along with its own
     /// <paramref name="sendIdleIntervalMilliseconds"/> — the interval the dialling end needs to
-    /// compute its receive-idle deadline once it stores the value (issue #349) — and its own
+    /// compute its receive-idle deadline once it stores the value — and its own
     /// <paramref name="lingerMilliseconds"/> — the value the dialling end needs to negotiate the
-    /// effective (minimum) Linger once it stores the value (issue #363).
+    /// effective (minimum) Linger once it stores the value.
     /// </summary>
     public static void WriteAccept(
         Span<byte> destination,
@@ -346,11 +346,10 @@ internal static class ControlDatagramCodec
     /// <paramref name="lingerMilliseconds"/> is zero — as meaningless off the wire as a local
     /// <see cref="DatagramSessionOptions.MaxMessageSize"/>, <see cref="DatagramSessionOptions.SendIdleInterval"/>
     /// or <see cref="DatagramSessionOptions.Linger"/> of zero is by
-    /// <see cref="DatagramSessionOptions.Validate"/> (issue #287, issue #347, issue #361), or when either
-    /// interval is above <see cref="AnnouncedIntervalLegality.MaximumMilliseconds"/> (issue #422). The
-    /// interval rule applies only to this end's <see cref="DatagramSessionProtocol.Version"/>: any other
-    /// version is left for the version Refusal, because this end cannot judge the fields of a version it
-    /// does not speak.
+    /// <see cref="DatagramSessionOptions.Validate"/>, or when either interval is above
+    /// <see cref="AnnouncedIntervalLegality.MaximumMilliseconds"/>. The interval rule applies only to
+    /// this end's <see cref="DatagramSessionProtocol.Version"/>: any other version is left for the
+    /// version Refusal, because this end cannot judge the fields of a version it does not speak.
     /// </summary>
     public static bool TryReadHelloWithCookie(
         ReadOnlySpan<byte> datagram,
@@ -422,8 +421,8 @@ internal static class ControlDatagramCodec
     /// <see cref="TryReadCookie"/> does for a cookie, and when the announced
     /// <paramref name="maxMessageSize"/>, <paramref name="sendIdleIntervalMilliseconds"/> or
     /// <paramref name="lingerMilliseconds"/> is zero, for the same reason
-    /// <see cref="TryReadHelloWithCookie"/> does (issue #363), or when either interval is above
-    /// <see cref="AnnouncedIntervalLegality.MaximumMilliseconds"/> (issue #422).
+    /// <see cref="TryReadHelloWithCookie"/> does, or when either interval is above
+    /// <see cref="AnnouncedIntervalLegality.MaximumMilliseconds"/>.
     /// </summary>
     public static bool TryReadAccept(
         ReadOnlySpan<byte> datagram,

@@ -22,18 +22,17 @@ internal sealed class PeerCounterSet
     /// <see cref="Snapshot"/> exposes as <see cref="PeerCounters.MessagesReceived"/>, but read directly
     /// rather than through a snapshot that also demands an unrelated
     /// <see cref="RetentionArena.HighWaterBytes"/> lookup. <see cref="StreamSessionReactor"/>'s
-    /// per-Pump delivery-counter emission (issue #116, #25's second trigger) reads this to build the
-    /// <c>confirmedThroughMessage</c> body it sends the peer, once per Pump in which
-    /// <see cref="RecordMessageReceived"/> was called at least once — a plain property is what lets it
-    /// do that without constructing a throwaway <see cref="PeerCounters"/> just to discard the byte
-    /// figure.
+    /// per-Pump delivery-counter emission reads this to build the <c>confirmedThroughMessage</c> body
+    /// it sends the peer, once per Pump in which <see cref="RecordMessageReceived"/> was called at
+    /// least once — a plain property is what lets it do that without constructing a throwaway
+    /// <see cref="PeerCounters"/> just to discard the byte figure.
     /// </summary>
     public ulong MessagesReceived { get; private set; }
 
     /// <summary>
-    /// Records that this Peer's transport was successfully resumed after an Interruption (issue #128).
-    /// Called exactly once per <see cref="SessionEventKind.PeerResumed"/> raised — on the listening
-    /// side's <c>ResumeHeldPeer</c> once its rewind succeeds, and on the dialling side's
+    /// Records that this Peer's transport was successfully resumed after an Interruption. Called
+    /// exactly once per <see cref="SessionEventKind.PeerResumed"/> raised — on the listening side's
+    /// <c>ResumeHeldPeer</c> once its rewind succeeds, and on the dialling side's
     /// <c>DeliverCompleteMessages</c> once its own reciprocal rewind succeeds — never on a resume
     /// refused for a retention gap or any other reason. The datagram profile calls it when a matched
     /// Resume takes an Interrupted accepting-end Peer out of Interrupted, and when an Interrupted
@@ -54,10 +53,9 @@ internal sealed class PeerCounterSet
 
     /// <summary>
     /// Records that one packet record's sequence number fell outside the per-Space receive window
-    /// (subtask 6.2.1, issue #168; ADR 0013) — too far ahead of or behind that Space's
-    /// <see cref="Session.ReceiveWindow.Base"/> to correlate against it. Called from
-    /// <see cref="DatagramSessionReactor"/>'s data path once a record classifies as
-    /// <see cref="Session.ReceiveWindowOutcome.OutOfWindow"/> (issue #172).
+    /// (ADR 0013) — too far ahead of or behind that Space's <see cref="Session.ReceiveWindow.Base"/> to
+    /// correlate against it. Called from <see cref="DatagramSessionReactor"/>'s data path once a record
+    /// classifies as <see cref="Session.ReceiveWindowOutcome.OutOfWindow"/>.
     /// </summary>
     public void RecordOutOfWindowPacket() => OutOfWindowPackets++;
 
@@ -70,10 +68,9 @@ internal sealed class PeerCounterSet
 
     /// <summary>
     /// Records that one packet record's sequence number was already accounted for by the per-Space
-    /// receive window (subtask 6.2.1, issue #168; ADR 0013) — a duplicate, most often a retransmission
-    /// the far end sent because it never saw this end's acknowledgement. Called from
-    /// <see cref="DatagramSessionReactor"/>'s data path once a record classifies as
-    /// <see cref="Session.ReceiveWindowOutcome.Duplicate"/> (issue #172).
+    /// receive window (ADR 0013) — a duplicate, most often a retransmission the far end sent because it
+    /// never saw this end's acknowledgement. Called from <see cref="DatagramSessionReactor"/>'s data
+    /// path once a record classifies as <see cref="Session.ReceiveWindowOutcome.Duplicate"/>.
     /// </summary>
     public void RecordDuplicatePacket() => DuplicatePackets++;
 
@@ -86,15 +83,14 @@ internal sealed class PeerCounterSet
 
     /// <summary>
     /// Records <paramref name="count"/> sequences an unreliable Space's receive window retired
-    /// un-admitted by sliding its base forward (issues #173, #176; ADR 0013) — a gap the window has
-    /// passed by rather than one still reachable inside its span. Called from
-    /// <see cref="DatagramSessionReactor"/>'s data path once a record reports
-    /// <see cref="Session.ReceiveWindow.LastSlideLoss"/> greater than zero, whichever of the two
-    /// unreliable Spaces it was classified against — only those two slide. A single arrival can slide the
-    /// window past more than one gap at once, which is why this takes a count rather than being called
-    /// once per lost sequence: adding the whole figure in one op keeps the hot path a single add
-    /// regardless of how wide the jump was. No Diagnostic accompanies this — a lossy path must not
-    /// fill the Sink with volume (ADR 0013).
+    /// un-admitted by sliding its base forward (ADR 0013) — a gap the window has passed by rather than
+    /// one still reachable inside its span. Called from <see cref="DatagramSessionReactor"/>'s data
+    /// path once a record reports <see cref="Session.ReceiveWindow.LastSlideLoss"/> greater than zero,
+    /// whichever of the two unreliable Spaces it was classified against — only those two slide. A
+    /// single arrival can slide the window past more than one gap at once, which is why this takes a
+    /// count rather than being called once per lost sequence: adding the whole figure in one op keeps
+    /// the hot path a single add regardless of how wide the jump was. No Diagnostic accompanies this —
+    /// a lossy path must not fill the Sink with volume (ADR 0013).
     /// </summary>
     public void RecordUnreliableLoss(ulong count) => UnreliableLossPackets += count;
 
@@ -107,10 +103,10 @@ internal sealed class PeerCounterSet
 
     /// <summary>
     /// Records that one sequence arrived beyond a reliable Space's ack horizon, so its retransmit timer
-    /// was withheld rather than started (subtask 6.3, issue #41; ADR 0013). Called from the horizon
-    /// gate (issue #185) once a record classifies as beyond <c>[base, base + 32]</c> for the Space it
-    /// belongs to. No Diagnostic accompanies this — a deferral can recur every
-    /// Pump under sustained load, which is exactly why this is a Counter (ADR 0013).
+    /// was withheld rather than started (ADR 0013). Called from the horizon gate once a record
+    /// classifies as beyond <c>[base, base + 32]</c> for the Space it belongs to. No Diagnostic
+    /// accompanies this — a deferral can recur every Pump under sustained load, which is exactly why
+    /// this is a Counter (ADR 0013).
     /// </summary>
     public void RecordHorizonDeferral() => HorizonDeferrals++;
 
@@ -122,11 +118,11 @@ internal sealed class PeerCounterSet
     public ulong HorizonDeferrals { get; private set; }
 
     /// <summary>
-    /// Records <paramref name="count"/> packet records this Peer has resent (subtask 6.4.6, issue #196;
-    /// ADR 0013), from the expiry sweep (issue #198). Takes a count rather
-    /// than being called once per record for the same reason as <see cref="RecordUnreliableLoss"/>: one
-    /// Pump's sweep can report many expired sequences retransmitted at once, and adding the whole figure
-    /// in one op keeps the hot path a single add regardless of how many sequences it covered.
+    /// Records <paramref name="count"/> packet records this Peer has resent (ADR 0013), from the expiry
+    /// sweep. Takes a count rather than being called once per record for the same reason as
+    /// <see cref="RecordUnreliableLoss"/>: one Pump's sweep can report many expired sequences
+    /// retransmitted at once, and adding the whole figure in one op keeps the hot path a single add
+    /// regardless of how many sequences it covered.
     /// </summary>
     public void RecordPacketsRetransmitted(ulong count) => PacketsRetransmitted += count;
 
@@ -139,10 +135,9 @@ internal sealed class PeerCounterSet
 
     /// <summary>
     /// Records <paramref name="length"/> bytes of one Datagram a flush has handed the transport for
-    /// this Peer, header included (subtask 6.7.4, issue #231; ADR 0013). Called from
-    /// <see cref="DatagramSessionReactor"/>'s <c>FlushPeer</c> at the size the coalescing packer
-    /// actually wrote, regardless of whether the send call reports success — the bytes were handed to
-    /// the transport either way.
+    /// this Peer, header included (ADR 0013). Called from <see cref="DatagramSessionReactor"/>'s
+    /// <c>FlushPeer</c> at the size the coalescing packer actually wrote, regardless of whether the
+    /// send call reports success — the bytes were handed to the transport either way.
     /// </summary>
     public void RecordBytesSent(ulong length) => BytesSent += length;
 
@@ -155,10 +150,9 @@ internal sealed class PeerCounterSet
 
     /// <summary>
     /// Records <paramref name="length"/> bytes of one Datagram attributed to this Peer on arrival
-    /// (subtask 6.7.4, issue #231; ADR 0013). Called from <see cref="DatagramSessionReactor"/>'s
-    /// <c>ParseDataDatagram</c> once a Datagram both names this Peer's session id and proves
-    /// well-formed — the same proof that gates ack application and record classification — at the
-    /// whole Datagram's length, header included.
+    /// (ADR 0013). Called from <see cref="DatagramSessionReactor"/>'s <c>ParseDataDatagram</c> once a
+    /// Datagram both names this Peer's session id and proves well-formed — the same proof that gates
+    /// ack application and record classification — at the whole Datagram's length, header included.
     /// </summary>
     public void RecordBytesReceived(ulong length) => BytesReceived += length;
 
@@ -170,9 +164,9 @@ internal sealed class PeerCounterSet
     public ulong BytesReceived { get; private set; }
 
     /// <summary>
-    /// Records one socket send call made on this Peer's transport (issue #325; ADR 0013). Called
-    /// immediately after each send call, whatever its outcome — a short or failed write is still a call
-    /// the Reactor paid for.
+    /// Records one socket send call made on this Peer's transport (ADR 0013). Called immediately after
+    /// each send call, whatever its outcome — a short or failed write is still a call the Reactor paid
+    /// for.
     /// </summary>
     public void RecordSocketWrite() => SocketWrites++;
 
@@ -185,8 +179,8 @@ internal sealed class PeerCounterSet
 
     /// <summary>
     /// Records that this Peer had a whole Message ready and the frame arena refused it because the
-    /// Peer had already used its read share this Frame (issue #61). Called from both Session profiles'
-    /// arena reservation on <see cref="ArenaReservationOutcome.ShareExhausted"/>.
+    /// Peer had already used its read share this Frame. Called from both Session profiles' arena
+    /// reservation on <see cref="ArenaReservationOutcome.ShareExhausted"/>.
     /// </summary>
     public void RecordReadShareExhaustion() => ReadShareExhaustions++;
 

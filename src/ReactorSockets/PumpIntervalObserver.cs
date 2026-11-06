@@ -6,9 +6,9 @@ namespace ReactorSockets;
 /// <see cref="TimeProvider"/> timestamps. On the stream profile this is what makes the re-dial
 /// schedule's initial delay (<see cref="Session.RedialSchedule"/>) derived rather than invented: a
 /// retry sooner than the next Pump cannot happen, so the next Pump is the floor. On the datagram
-/// profile the same reading floors the adaptive RTO (issue #191, slice #42) for the same reason: a
-/// timeout shorter than the gap between Pumps cannot be acted on. Either way, the only way to know
-/// that floor is to watch how often Pump is actually called.
+/// profile the same reading floors the adaptive RTO for the same reason: a timeout shorter than the gap
+/// between Pumps cannot be acted on. Either way, the only way to know that floor is to watch how often
+/// Pump is actually called.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -51,11 +51,10 @@ public sealed class PumpIntervalObserver
     /// this value is for is flooring a caller's own first computed bound against its own ceiling
     /// instead of an invented cadence: on the stream profile that is
     /// <see cref="Session.RedialSchedule"/>'s first delay (<c>Math.Min(pumpInterval, linger)</c>), and
-    /// on the datagram profile it is the adaptive RTO's clamp against Linger (issue #191). Reporting
-    /// the largest possible interval defers entirely to that ceiling rather than inventing a cadence
-    /// that has never actually been observed. Zero would have done the opposite — floor every bound at
-    /// immediately, the one value <see cref="Session.RedialSchedule"/>'s own constructor already
-    /// refuses to accept.
+    /// on the datagram profile it is the adaptive RTO's clamp against Linger. Reporting the largest
+    /// possible interval defers entirely to that ceiling rather than inventing a cadence that has never
+    /// actually been observed. Zero would have done the opposite — floor every bound at immediately,
+    /// the one value <see cref="Session.RedialSchedule"/>'s own constructor already refuses to accept.
     /// </remarks>
     public TimeSpan Interval { get; private set; } = TimeSpan.MaxValue;
 

@@ -1,12 +1,12 @@
 namespace ReactorSockets.Session;
 
 /// <summary>
-/// The ordered delivery queue (issue #214, ADR 0009): the piece that makes <c>ReliableOrdered</c>
-/// deliver in send order. It accepts one already-<see cref="ReceiveWindowOutcome.Admitted"/> record's
-/// sequence and payload at a time and yields payloads only in unbroken sequence order — a sequence
-/// that arrives while an earlier one is still missing is held rather than yielded, and the whole
-/// contiguous run behind a gap is released together, immediately after the <see cref="Admit"/> call
-/// the missing sequence finally arrives on.
+/// The ordered delivery queue (ADR 0009): the piece that makes <c>ReliableOrdered</c> deliver in send
+/// order. It accepts one already-<see cref="ReceiveWindowOutcome.Admitted"/> record's sequence and
+/// payload at a time and yields payloads only in unbroken sequence order — a sequence that arrives
+/// while an earlier one is still missing is held rather than yielded, and the whole contiguous run
+/// behind a gap is released together, immediately after the <see cref="Admit"/> call the missing
+/// sequence finally arrives on.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -46,17 +46,17 @@ namespace ReactorSockets.Session;
 /// fills gaps of a similar shape settles into allocating nothing at all.
 /// </para>
 /// <para>
-/// <b>Bound (issue #424).</b> The receive window does not bound this ring. A Fragment group that never
-/// completes holds <see cref="NextSequence"/> still while the window's base moves past it, so every
-/// later record would otherwise be held here, without limit, and acknowledged. <see cref="CanTake"/>
-/// therefore limits how far ahead a record is held and how wide it may be, and
+/// <b>Bound.</b> The receive window does not bound this ring. A Fragment group that never completes
+/// holds <see cref="NextSequence"/> still while the window's base moves past it, so every later record
+/// would otherwise be held here, without limit, and acknowledged. <see cref="CanTake"/> therefore
+/// limits how far ahead a record is held and how wide it may be, and
 /// <see cref="DatagramSessionOptions.HeldRecordBudgetBytes"/> states what those limits cost.
 /// </para>
 /// <para>
 /// <b>Scope.</b> Internal, and reached only through <see cref="DatagramSessionReactor"/>'s
-/// <c>ReliableOrdered</c> Space (issue #220), never past the L2 seam (ADR 0015). Each Space that needs
-/// ordering gets its own instance, so head-of-line blocking is confined to that one queue by
-/// construction rather than by convention.
+/// <c>ReliableOrdered</c> Space, never past the L2 seam (ADR 0015). Each Space that needs ordering gets
+/// its own instance, so head-of-line blocking is confined to that one queue by construction rather than
+/// by convention.
 /// </para>
 /// </remarks>
 internal sealed class OrderedDeliveryQueue
@@ -81,17 +81,18 @@ internal sealed class OrderedDeliveryQueue
     /// <summary>
     /// The number of slots <see cref="_held"/> and <see cref="_heldLengths"/> currently span. Never more
     /// than <see cref="_maxHeldSlots"/>, because a slot keeps its buffer after release and the head walks
-    /// every slot, so the slot count is what limits the buffers kept (issue #424).
+    /// every slot, so the slot count is what limits the buffers kept.
     /// </summary>
     private int _capacity;
 
     /// <summary>The ring position <see cref="NextSequence"/> currently occupies.</summary>
     private int _headSlot;
 
-    /// <summary>How many sequences from <see cref="NextSequence"/> onward this queue will hold (issue #424).</summary>
+    /// <summary>How many sequences from <see cref="NextSequence"/> onward this queue will
+    /// hold.</summary>
     private readonly int _maxHeldSlots;
 
-    /// <summary>The widest payload this queue will hold, in bytes (issue #424).</summary>
+    /// <summary>The widest payload this queue will hold, in bytes.</summary>
     private readonly int _maxHeldPayloadLength;
 
     /// <summary>
@@ -121,11 +122,11 @@ internal sealed class OrderedDeliveryQueue
     public uint NextSequence { get; private set; }
 
     /// <summary>
-    /// Whether <see cref="Admit"/> could take <paramref name="sequence"/> right now (issue #424). The
-    /// next sequence is always takeable at any width, because it is delivered rather than held, which is
-    /// also why a refusal can never stop a head from moving. An older one is a duplicate that holds
-    /// nothing. Changes nothing. A caller asks before its receive window admits the record, so a refused
-    /// record stays unacknowledged for the far end to retransmit.
+    /// Whether <see cref="Admit"/> could take <paramref name="sequence"/> right now. The next sequence
+    /// is always takeable at any width, because it is delivered rather than held, which is also why a
+    /// refusal can never stop a head from moving. An older one is a duplicate that holds nothing.
+    /// Changes nothing. A caller asks before its receive window admits the record, so a refused record
+    /// stays unacknowledged for the far end to retransmit.
     /// </summary>
     /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
     /// <param name="payloadLength">The arriving record's payload length in bytes.</param>
@@ -234,14 +235,14 @@ internal sealed class OrderedDeliveryQueue
 
     /// <summary>
     /// Advances <see cref="NextSequence"/> straight to <paramref name="newNextSequence"/> without ever
-    /// calling <see cref="Admit"/> or <see cref="ReleaseNext"/> for the sequences in between (issue
-    /// #259): what a caller uses when a whole contiguous run of sequences — a Fragment group's own
-    /// span — is accounted for entirely outside this queue, because the receive window holds and
-    /// reassembles a Fragment's bytes itself rather than handing them to this queue one at a time. A
-    /// group's sequences are never individually admitted here, so nothing this call steps over can be
-    /// mistaken for a held payload later; this is what keeps <c>ReliableOrdered</c>'s send-order rule
-    /// applying to a reassembled Message exactly as it does to an unfragmented one, without this queue
-    /// ever holding a Fragment's payload twice over.
+    /// calling <see cref="Admit"/> or <see cref="ReleaseNext"/> for the sequences in between: what a
+    /// caller uses when a whole contiguous run of sequences — a Fragment group's own span — is
+    /// accounted for entirely outside this queue, because the receive window holds and reassembles a
+    /// Fragment's bytes itself rather than handing them to this queue one at a time. A group's
+    /// sequences are never individually admitted here, so nothing this call steps over can be mistaken
+    /// for a held payload later; this is what keeps <c>ReliableOrdered</c>'s send-order rule applying
+    /// to a reassembled Message exactly as it does to an unfragmented one, without this queue ever
+    /// holding a Fragment's payload twice over.
     /// </summary>
     /// <param name="newNextSequence">
     /// The sequence this queue should expect next. Must not be older than <see cref="NextSequence"/>.

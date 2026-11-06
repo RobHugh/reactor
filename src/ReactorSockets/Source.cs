@@ -12,8 +12,8 @@ namespace ReactorSockets;
 /// <remarks>
 /// Equality is total and exact over every field, including <see cref="ScopeId"/>: an IPv6
 /// link-local address is only meaningful with its zone index, and two hosts reachable at the same
-/// <c>fe80::/10</c> address on different interfaces must not compare equal — later slices key a
-/// cookie HMAC over this value. <see cref="Family"/> is an explicit tag rather than inferred from
+/// <c>fe80::/10</c> address on different interfaces must not compare equal — the datagram profile keys
+/// a cookie HMAC over this value. <see cref="Family"/> is an explicit tag rather than inferred from
 /// <see cref="AddressBytes"/>, because with <c>DualMode</c> never set there is nothing in a 16-byte
 /// field distinguishing a zero-padded IPv4 address from an IPv6 one.
 /// </remarks>

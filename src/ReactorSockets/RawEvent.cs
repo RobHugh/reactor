@@ -4,7 +4,7 @@ namespace ReactorSockets;
 /// One event drained from a <see cref="RawReactor"/>. A <see langword="ref struct"/> because
 /// <see cref="Payload"/> aliases the frame arena directly and must never outlive the Frame it was
 /// drained in (ADR 0008). <see cref="Kind"/> determines exactly which other fields are populated —
-/// this slice implements <see cref="RawEventKind.DatagramReceived"/>, <see cref="RawEventKind.Closed"/>,
+/// the kinds are <see cref="RawEventKind.DatagramReceived"/>, <see cref="RawEventKind.Closed"/>,
 /// <see cref="RawEventKind.Accepted"/>, <see cref="RawEventKind.Connected"/>,
 /// <see cref="RawEventKind.SegmentReceived"/>, <see cref="RawEventKind.EndOfStream"/> and
 /// <see cref="RawEventKind.Writable"/> — the complete Raw profile roster.

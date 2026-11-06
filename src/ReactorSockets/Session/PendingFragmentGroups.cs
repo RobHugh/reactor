@@ -5,10 +5,10 @@ namespace ReactorSockets.Session;
 
 /// <summary>
 /// The completed Fragment groups of one reliable Space of one Peer that have not yet reached the
-/// consumer (issue #259): each one waiting for its turn in that Space's send-order queue, for frame
-/// arena room, or both. A group is named by the pair every one of its Fragments already agrees on —
-/// its first sequence and its declared Fragment count (<see cref="FragmentGroup"/>) — so nothing here
-/// needs a message ID the wire does not carry.
+/// consumer: each one waiting for its turn in that Space's send-order queue, for frame arena room, or
+/// both. A group is named by the pair every one of its Fragments already agrees on — its first sequence
+/// and its declared Fragment count (<see cref="FragmentGroup"/>) — so nothing here needs a message ID
+/// the wire does not carry.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,16 +23,16 @@ namespace ReactorSockets.Session;
 /// <para>
 /// <b>The bound is proved by construction, not chosen.</b> A window of <c>n</c> slots can never have
 /// more than <c>n / 2</c> groups waiting at once, which is exactly
-/// <see cref="Core.ReceiveArena.PendingGroupsPerSpace"/>, because three rules hold (issue #423). A group
-/// declares at least two pieces, since <see cref="PacketRecordCodec.TryRead"/> refuses a count of zero
-/// or one, and never more than the window has slots, since the datagram parse refuses that too. Two
-/// waiting groups never share a slot, since <see cref="FragmentGroupCompleteness.IsComplete"/> counts a
-/// piece only for the group it named on arrival. A waiting group keeps its slots until it is delivered,
-/// since <see cref="ReceiveWindowSpaces.MustWaitForHeldFragment"/> turns away any record that would
-/// overwrite one and no ack covers that record, so the far end's retransmission brings it back once
-/// the group has gone. A group whose turn never comes keeps its slots for good, which stops only that
-/// Space of the Peer that sent it. <see cref="Add"/> asserts rather than grows, in the house style for
-/// an invariant designed away rather than defended (ADR 0015).
+/// <see cref="Core.ReceiveArena.PendingGroupsPerSpace"/>, because three rules hold. A group declares at
+/// least two pieces, since <see cref="PacketRecordCodec.TryRead"/> refuses a count of zero or one, and
+/// never more than the window has slots, since the datagram parse refuses that too. Two waiting groups
+/// never share a slot, since <see cref="FragmentGroupCompleteness.IsComplete"/> counts a piece only for
+/// the group it named on arrival. A waiting group keeps its slots until it is delivered, since
+/// <see cref="ReceiveWindowSpaces.MustWaitForHeldFragment"/> turns away any record that would overwrite
+/// one and no ack covers that record, so the far end's retransmission brings it back once the group has
+/// gone. A group whose turn never comes keeps its slots for good, which stops only that Space of the
+/// Peer that sent it. <see cref="Add"/> asserts rather than grows, in the house style for an invariant
+/// designed away rather than defended (ADR 0015).
 /// </para>
 /// <para>
 /// <b>No allocation of its own, ever.</b> The only storage this type touches is the
@@ -40,8 +40,8 @@ namespace ReactorSockets.Session;
 /// construction, six bytes per entry. It lives in the arena rather than in an array of its own
 /// because its size follows the receive window, and a window-proportional cost outside the arena
 /// would be a cost outside <see cref="DatagramSessionOptions.ReceiveBudgetBytes"/> — the figure the
-/// memory bill states and issue #261 measures. A hostile peer flooding groups is bounded by the same
-/// receive window that already bounds its Fragments, so nothing here grows under a flood.
+/// memory bill states. A hostile peer flooding groups is bounded by the same receive window that
+/// already bounds its Fragments, so nothing here grows under a flood.
 /// </para>
 /// </remarks>
 internal sealed class PendingFragmentGroups
@@ -159,8 +159,8 @@ internal sealed class PendingFragmentGroups
 
     /// <summary>
     /// Forgets every waiting group. The arena run this set is built over outlives the Peer that used
-    /// it (#179), so a Slot a later Peer occupies must not inherit the previous occupant's waiting
-    /// groups — the same reason <see cref="ReceiveWindow.Reset"/> exists.
+    /// it, so a Slot a later Peer occupies must not inherit the previous occupant's waiting groups —
+    /// the same reason <see cref="ReceiveWindow.Reset"/> exists.
     /// </summary>
     internal void Reset() => Count = 0;
 

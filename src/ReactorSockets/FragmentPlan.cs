@@ -6,9 +6,9 @@ namespace ReactorSockets;
 /// The outcome of <see cref="FragmentPlan.Resolve"/>: either the Fragment count a Message is cut
 /// into, or a permanent refusal — the caller maps a refusal to
 /// <see cref="SendOutcome.RemoteMessageTooLarge"/> when <see cref="IsOverRemoteLimit"/> is set and to
-/// <see cref="SendOutcome.MessageTooLarge"/> otherwise (issues #284, #449). Named-value pass/fail, the
-/// same shape <see cref="Result"/> uses for the public surface, extended with the count a success needs
-/// to hand back.
+/// <see cref="SendOutcome.MessageTooLarge"/> otherwise. Named-value pass/fail, the same shape
+/// <see cref="Result"/> uses for the public surface, extended with the count a success needs to hand
+/// back.
 /// </summary>
 public readonly record struct FragmentPlanResult
 {
@@ -22,7 +22,7 @@ public readonly record struct FragmentPlanResult
     /// <summary>
     /// Whether the Message cannot be carried at all: either an unreliable mode and the Message is wider
     /// than one Datagram, or any mode and the Message is wider than <c>maxMessageLength</c> — see
-    /// <see cref="FragmentPlan.Resolve"/>'s own parameter doc for what that cap is (issues #284, #449).
+    /// <see cref="FragmentPlan.Resolve"/>'s own parameter doc for what that cap is.
     /// <see cref="FragmentCount"/> is meaningless when this is <see langword="true"/>.
     /// </summary>
     public bool IsMessageTooLarge { get; }
@@ -30,7 +30,7 @@ public readonly record struct FragmentPlanResult
     /// <summary>
     /// Whether the refusal was for exceeding <c>maxMessageLength</c>, rather than an unreliable mode's
     /// one-Datagram cap. Always <see langword="false"/> when <see cref="IsMessageTooLarge"/> is
-    /// <see langword="false"/> (issue #449).
+    /// <see langword="false"/>.
     /// </summary>
     public bool IsOverRemoteLimit { get; }
 
@@ -38,7 +38,7 @@ public readonly record struct FragmentPlanResult
     /// The number of Fragments the Message is cut into. Valid only when
     /// <see cref="IsMessageTooLarge"/> is <see langword="false"/>. Always at least 1: a Message that
     /// fits in zero Fragments does not exist, because even an empty Message is one Message that needs
-    /// one record to carry it (issue #242).
+    /// one record to carry it.
     /// </summary>
     public int FragmentCount { get; }
 
@@ -53,17 +53,17 @@ public readonly record struct FragmentPlanResult
     /// <summary>The refusal: the Message is wider than one Datagram and its mode cannot fragment it.</summary>
     public static FragmentPlanResult MessageTooLarge { get; } = new(true, false, 0);
 
-    /// <summary>The refusal: the Message is wider than <c>maxMessageLength</c>, the limit the peer announced (issue #449).</summary>
+    /// <summary>The refusal: the Message is wider than <c>maxMessageLength</c>, the limit the peer
+    /// announced.</summary>
     public static FragmentPlanResult RemoteMessageTooLarge { get; } = new(true, true, 0);
 }
 
 /// <summary>
-/// The arithmetic that decides how a Message is cut into Fragments, extracted as a pure function
-/// (issue #242, part of #48's slice-7 fragmentation work) so the boundary conditions — one byte,
-/// exactly one Fragment, one byte over, an exact multiple, the cap — are fast unit tests rather than
-/// something only a live Session and a live Peer could exercise. <see cref="Resolve"/> needs no
-/// Session, no Peer and no reactor: it is total over its four inputs and never throws for a
-/// <see cref="DeliveryMode"/> a caller could actually construct.
+/// The arithmetic that decides how a Message is cut into Fragments, extracted as a pure function so the
+/// boundary conditions — one byte, exactly one Fragment, one byte over, an exact multiple, the cap —
+/// are fast unit tests rather than something only a live Session and a live Peer could exercise.
+/// <see cref="Resolve"/> needs no Session, no Peer and no reactor: it is total over its four inputs and
+/// never throws for a <see cref="DeliveryMode"/> a caller could actually construct.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -85,8 +85,8 @@ public readonly record struct FragmentPlanResult
 /// unreliable Fragment if it is lost — you may only fragment what you can retransmit. A Message within
 /// that cap is exactly one Fragment, unless it is wider than <c>maxMessageLength</c>, which is refused
 /// with <see cref="FragmentPlanResult.RemoteMessageTooLarge"/> because the peer is certain to discard it
-/// on arrival (issue #449). The one-Datagram cap is checked first: it holds for every peer, so a Message
-/// over both caps is reported against the one no peer's limit could lift.
+/// on arrival. The one-Datagram cap is checked first: it holds for every peer, so a Message over both
+/// caps is reported against the one no peer's limit could lift.
 /// </para>
 /// <para>
 /// <b>A zero-length Message answers 1 Fragment in every mode.</b> An empty payload is still one
@@ -115,10 +115,9 @@ public static class FragmentPlan
     /// <param name="mode">The delivery mode the Message is sent under.</param>
     /// <param name="maxMessageLength">
     /// The receive limit a Message is checked against in every mode: the peer's own announced
-    /// <c>MaxMessageSize</c>, not this Reactor's own <see cref="DatagramSessionOptions.MaxMessageSize"/>
-    /// (issues #284, #449). Defaults to <see cref="int.MaxValue"/> — effectively no cap — so a caller
-    /// with no limit to enforce (every existing caller of this overload before issue #242's too-large
-    /// rule moved here) does not have to invent one.
+    /// <c>MaxMessageSize</c>, not this Reactor's own
+    /// <see cref="DatagramSessionOptions.MaxMessageSize"/>. Defaults to <see cref="int.MaxValue"/> —
+    /// effectively no cap — so a caller with no limit to enforce does not have to invent one.
     /// </param>
     /// <returns>
     /// A <see cref="FragmentPlanResult"/> carrying the Fragment count, or a refusal:

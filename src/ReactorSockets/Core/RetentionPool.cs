@@ -1,23 +1,23 @@
 namespace ReactorSockets.Core;
 
 /// <summary>
-/// The send side's uniform-slot preallocation (issue #43, 6.5): one buffer, sliced into
-/// fixed-size fragment slots, one run of slots per reliable Space per share-holder.
-/// <see cref="TryAcquire"/> is the only way a slot becomes occupied; <see cref="Release"/> is
-/// the only way one is freed; <see cref="TryRead"/> reads one back for retransmission.
+/// The send side's uniform-slot preallocation: one buffer, sliced into fixed-size fragment slots, one
+/// run of slots per reliable Space per share-holder. <see cref="TryAcquire"/> is the only way a slot
+/// becomes occupied; <see cref="Release"/> is the only way one is freed; <see cref="TryRead"/> reads
+/// one back for retransmission.
 /// </summary>
 /// <remarks>
 /// <see cref="RetentionArena"/>'s ring does not port here. Its head pointer works because the
 /// stream Session profile's acknowledgement is a single cumulative count released strictly in
 /// order. The datagram Session profile's reliable Spaces acknowledge with a base plus a bitfield
-/// and <c>ReliableUnordered</c> releases out of order by design (issue #43), so a head pointer
-/// would either stall behind a hole still outstanding or release bytes a peer has not actually
-/// confirmed. What the datagram profile has instead is that everything a reliable Space retains is
-/// at most one fragment — never a multi-fragment Message's worth of contiguous bytes — so a slot
-/// per outstanding fragment, addressed directly rather than walked, is enough. That is the same
-/// shape <see cref="ReceiveArena"/> already uses for the receive side, so this type mirrors its
-/// addressing convention — a zero-based share-holder index, a zero-based Space index, a zero-based
-/// slot index — rather than inventing a second one.
+/// and <c>ReliableUnordered</c> releases out of order by design, so a head pointer would either stall
+/// behind a hole still outstanding or release bytes a peer has not actually confirmed. What the
+/// datagram profile has instead is that everything a reliable Space retains is at most one fragment —
+/// never a multi-fragment Message's worth of contiguous bytes — so a slot per outstanding fragment,
+/// addressed directly rather than walked, is enough. That is the same shape <see cref="ReceiveArena"/>
+/// already uses for the receive side, so this type mirrors its addressing convention — a zero-based
+/// share-holder index, a zero-based Space index, a zero-based slot index — rather than inventing a
+/// second one.
 /// </remarks>
 internal sealed class RetentionPool
 {
@@ -25,8 +25,8 @@ internal sealed class RetentionPool
     /// The bytes one slot's bookkeeping occupies beside its payload, summed across the seven per-slot
     /// arrays: <see cref="_occupied"/>, <see cref="_slotSequence"/>, <see cref="_slotLength"/>,
     /// <see cref="_slotIsFragment"/>, <see cref="_slotFragmentIndex"/>, <see cref="_slotFragmentCount"/>
-    /// and <see cref="_slotIsControl"/> (issue #63). <see cref="DatagramSessionOptions.SendBudgetBytes"/>
-    /// prices a slot against this constant, so a new per-slot array must raise it.
+    /// and <see cref="_slotIsControl"/>. <see cref="DatagramSessionOptions.SendBudgetBytes"/> prices a
+    /// slot against this constant, so a new per-slot array must raise it.
     /// </summary>
     internal const int SlotBookkeepingBytes =
         sizeof(bool) + sizeof(uint) + sizeof(int) + sizeof(bool) + sizeof(ushort) + sizeof(ushort) + sizeof(bool);
@@ -48,13 +48,12 @@ internal sealed class RetentionPool
     private readonly int[] _slotLength;
 
     /// <summary>
-    /// Whether the slot at a given per-slot index holds one piece of a Message cut into Fragments
-    /// (issue #245), rather than a whole Message retained as a single record — the shape
-    /// <see cref="TryAcquire"/> was given, valid only where <see cref="_occupied"/> is set. A
-    /// retransmit reads this back through <see cref="TryRead"/> instead of recomputing it, so a
-    /// resend packs the same record shape — fragmented or not — as the original transmission
-    /// (issue #250): the shape was decided once, at <see cref="TryAcquire"/>, and this pool is its
-    /// only home from then on.
+    /// Whether the slot at a given per-slot index holds one piece of a Message cut into Fragments,
+    /// rather than a whole Message retained as a single record — the shape <see cref="TryAcquire"/> was
+    /// given, valid only where <see cref="_occupied"/> is set. A retransmit reads this back through
+    /// <see cref="TryRead"/> instead of recomputing it, so a resend packs the same record shape —
+    /// fragmented or not — as the original transmission: the shape was decided once, at
+    /// <see cref="TryAcquire"/>, and this pool is its only home from then on.
     /// </summary>
     private readonly bool[] _slotIsFragment;
 
@@ -69,22 +68,22 @@ internal sealed class RetentionPool
     private readonly ushort[] _slotFragmentCount;
 
     /// <summary>
-    /// Whether the slot at a given per-slot index holds a control record — an idle-triggered Ping
-    /// (issue #340), never a Message a consumer Sent — rather than an ordinary payload-carrying record.
-    /// Parallel to <see cref="_slotIsFragment"/> and set the same way: recorded once by
-    /// <see cref="TryAcquire"/> and read back by <see cref="TryRead"/> so a resend packs the same
-    /// control shape the original transmission did, exactly as a Fragment's shape is never recomputed
-    /// (issue #250) — a control record is retained and retransmitted through the same path as any other
-    /// reliable record, and this flag is the only thing that tells <see cref="DatagramSessionReactor"/>'s
-    /// flush to pack it as one rather than as an ordinary empty payload.
+    /// Whether the slot at a given per-slot index holds a control record — an idle-triggered Ping,
+    /// never a Message a consumer Sent — rather than an ordinary payload-carrying record. Parallel to
+    /// <see cref="_slotIsFragment"/> and set the same way: recorded once by <see cref="TryAcquire"/>
+    /// and read back by <see cref="TryRead"/> so a resend packs the same control shape the original
+    /// transmission did, exactly as a Fragment's shape is never recomputed — a control record is
+    /// retained and retransmitted through the same path as any other reliable record, and this flag is
+    /// the only thing that tells <see cref="DatagramSessionReactor"/>'s flush to pack it as one rather
+    /// than as an ordinary empty payload.
     /// </summary>
     private readonly bool[] _slotIsControl;
 
     /// <summary>
     /// The bytes a share-holder currently has retained, summed across both reliable Spaces — one entry
     /// per share-holder, not per Space, since <see cref="HighWaterBytes"/> answers a question about one
-    /// share-holder's memory (issue #43) rather than one Space's bound. Kept as a running total rather
-    /// than resummed from <see cref="_slotLength"/> on every <see cref="TryAcquire"/>/<see cref="Release"/>,
+    /// share-holder's memory rather than one Space's bound. Kept as a running total rather than
+    /// resummed from <see cref="_slotLength"/> on every <see cref="TryAcquire"/>/<see cref="Release"/>,
     /// so both stay a single add or subtract regardless of <see cref="SlotsPerSpace"/>.
     /// </summary>
     private readonly int[] _retainedBytes;
@@ -201,8 +200,8 @@ internal sealed class RetentionPool
 
     /// <summary>
     /// The most bytes <paramref name="shareHolderId"/> has ever had retained at once, summed across
-    /// both reliable Spaces, since this pool was constructed (issue #205, subtask 6.5.6). Rises only on
-    /// <see cref="TryAcquire"/>; <see cref="Release"/> never lowers it, matching
+    /// both reliable Spaces, since this pool was constructed. Rises only on <see cref="TryAcquire"/>;
+    /// <see cref="Release"/> never lowers it, matching
     /// <see cref="RetentionArena.HighWaterBytes(int)"/>'s monotonic contract on the stream profile's
     /// ring.
     /// </summary>
@@ -219,10 +218,10 @@ internal sealed class RetentionPool
     /// clears both its retained-byte total and its <see cref="HighWaterBytes"/> figure, so a
     /// share-holder region admitting a new occupant starts empty. Called when a capacity Slot is
     /// admitted into rather than when one is vacated, matching how the receive windows are reset —
-    /// the pool is owned by the Slot and outlives whichever Peer occupies it (issue #206), so without
-    /// this a new Peer would inherit its predecessor's occupied slots and could be refused with
+    /// the pool is owned by the Slot and outlives whichever Peer occupies it, so without this a new
+    /// Peer would inherit its predecessor's occupied slots and could be refused with
     /// <see cref="RetentionSlotOutcome.Exhausted"/> before it ever sent anything, and would read its
-    /// predecessor's high-water rather than zero (issue #205).
+    /// predecessor's high-water rather than zero.
     /// </summary>
     /// <remarks>
     /// Like <see cref="RetentionArena.ResetShareHolder"/>, this resets the bookkeeping and not the
@@ -272,10 +271,10 @@ internal sealed class RetentionPool
     /// The number of unoccupied slots in <paramref name="shareHolderId"/>'s <paramref name="spaceIndex"/>th
     /// reliable Space run right now — how many further <see cref="TryAcquire"/> calls that Space could
     /// commit before one returns <see cref="RetentionSlotOutcome.Exhausted"/>. A caller that must commit
-    /// several slots as one unit (issue #247: a Message cut into more Fragments than fit is refused
-    /// whole rather than partially retained) checks this first and commits nothing when it falls short,
-    /// rather than committing some and rolling the rest back — this pool has no rollback, and the
-    /// outbound sequence Space it is paired with has none either (issue #244).
+    /// several slots as one unit (a Message cut into more Fragments than fit is refused whole rather
+    /// than partially retained) checks this first and commits nothing when it falls short, rather than
+    /// committing some and rolling the rest back — this pool has no rollback, and the outbound sequence
+    /// Space it is paired with has none either.
     /// </summary>
     /// <remarks>
     /// A linear scan over <see cref="SlotsPerSpace"/> entries, for the same reason <see cref="TryAcquire"/>'s
@@ -309,8 +308,8 @@ internal sealed class RetentionPool
     /// <remarks>
     /// Sequence-to-slot lookup — here, a free-slot search — is a linear scan over
     /// <see cref="SlotsPerSpace"/> entries rather than a dictionary keyed by sequence number.
-    /// <see cref="SlotsPerSpace"/> is small and bounded (issue #200 derives it from a byte budget), so
-    /// the scan costs less than a hash lookup and allocates nothing on the hot path.
+    /// <see cref="SlotsPerSpace"/> is small and bounded, so the scan costs less than a hash lookup and
+    /// allocates nothing on the hot path.
     /// </remarks>
     /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
     /// <param name="spaceIndex">A zero-based index below <see cref="ReliableSpaceCount"/>.</param>
@@ -321,17 +320,17 @@ internal sealed class RetentionPool
     /// this throws rather than truncating or overflowing into the neighbouring slot.
     /// </param>
     /// <param name="isFragment">
-    /// Whether <paramref name="payload"/> is one piece of a Message cut into Fragments (issue #245),
-    /// rather than a whole Message retained as a single record. <see langword="false"/> by default —
-    /// every unreliable record and every single-Fragment reliable Message. Recorded against the slot
-    /// so <see cref="TryRead"/> can hand a retransmit the same shape back (issue #250): a Fragment's
-    /// shape is decided once, here, and never recomputed.
+    /// Whether <paramref name="payload"/> is one piece of a Message cut into Fragments, rather than a
+    /// whole Message retained as a single record. <see langword="false"/> by default — every unreliable
+    /// record and every single-Fragment reliable Message. Recorded against the slot so
+    /// <see cref="TryRead"/> can hand a retransmit the same shape back: a Fragment's shape is decided
+    /// once, here, and never recomputed.
     /// </param>
     /// <param name="fragmentIndex">This piece's position within its Message, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
     /// <param name="fragmentCount">The Message's total piece count, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>.</param>
     /// <param name="isControl">
-    /// Whether this slot holds a control record — an idle-triggered Ping (issue #340) — rather than a
-    /// Message a consumer Sent. <see langword="false"/> by default. Recorded against the slot so
+    /// Whether this slot holds a control record — an idle-triggered Ping — rather than a Message a
+    /// consumer Sent. <see langword="false"/> by default. Recorded against the slot so
     /// <see cref="TryRead"/> can hand a retransmit the same shape back, exactly as <paramref name="isFragment"/>
     /// already does for a cut Message.
     /// </param>
@@ -449,15 +448,15 @@ internal sealed class RetentionPool
     /// On success, whether this record was retained as one piece of a Message cut into Fragments
     /// (the shape <see cref="TryAcquire"/> was given for this slot). On a miss, <see langword="false"/>.
     /// A retransmit reads this back rather than recomputing it, so it packs the same shape the
-    /// original transmission did (issue #250).
+    /// original transmission did.
     /// </param>
     /// <param name="fragmentIndex">On success, this piece's position within its Message, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>. On a miss, 0.</param>
     /// <param name="fragmentCount">On success, the Message's total piece count, meaningful only when <paramref name="isFragment"/> is <see langword="true"/>. On a miss, 0.</param>
     /// <param name="isControl">
-    /// On success, whether this record was retained as a control record — an idle-triggered Ping
-    /// (issue #340) — rather than a Message a consumer Sent (the shape <see cref="TryAcquire"/> was
-    /// given for this slot). On a miss, <see langword="false"/>. A retransmit reads this back rather
-    /// than recomputing it, so a resent Ping packs the same control shape the original did.
+    /// On success, whether this record was retained as a control record — an idle-triggered Ping —
+    /// rather than a Message a consumer Sent (the shape <see cref="TryAcquire"/> was given for this
+    /// slot). On a miss, <see langword="false"/>. A retransmit reads this back rather than recomputing
+    /// it, so a resent Ping packs the same control shape the original did.
     /// </param>
     public bool TryRead(
         int shareHolderId,

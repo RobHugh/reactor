@@ -3,10 +3,9 @@ using System.Buffers.Binary;
 namespace ReactorSockets.Session;
 
 /// <summary>
-/// The classification a <see cref="ReceiveWindow"/> reports for one arriving sequence (#40, #170):
-/// whether it is being seen for the first time, has already been seen, or falls outside the span the
-/// window currently covers. The window only classifies — a caller such as #172/#173 is the one that
-/// counts each outcome.
+/// The classification a <see cref="ReceiveWindow"/> reports for one arriving sequence: whether it is
+/// being seen for the first time, has already been seen, or falls outside the span the window currently
+/// covers. The window only classifies — its caller counts each outcome.
 /// </summary>
 internal enum ReceiveWindowOutcome
 {
@@ -25,71 +24,70 @@ internal enum ReceiveWindowOutcome
 
     /// <summary>
     /// The sequence lay outside the window: below <see cref="ReceiveWindow.Base"/> (already retired),
-    /// or — for a window built with <c>slides: false</c> (#40, #170) — at or beyond the far edge
-    /// (not yet reachable), in which case the window is unchanged and a far-ahead sequence never
-    /// advances the base past data that has not arrived. A window built with <c>slides: true</c>
-    /// (#173) never reports this for a far-ahead sequence: it slides instead, so for such a window
-    /// this outcome means only "below the base".
+    /// or — for a window built with <c>slides: false</c> — at or beyond the far edge (not yet
+    /// reachable), in which case the window is unchanged and a far-ahead sequence never advances the
+    /// base past data that has not arrived. A window built with <c>slides: true</c> never reports this
+    /// for a far-ahead sequence: it slides instead, so for such a window this outcome means only "below
+    /// the base".
     /// </summary>
     OutOfWindow,
 }
 
 /// <summary>
-/// The receive window for one Space of one Peer (#40, #170, ADR 0009): a fixed span of sequence
-/// numbers, starting at <see cref="Base"/>, over which it tracks what has already been admitted and
-/// classifies each arriving sequence as new, a duplicate, or outside the span. Sharing one window
-/// across Spaces would reintroduce, through shared memory, the head-of-line blocking that separate
-/// Spaces exist to remove, so each Space owns one of these. Ordering is decided exclusively by
+/// The receive window for one Space of one Peer (ADR 0009): a fixed span of sequence numbers, starting
+/// at <see cref="Base"/>, over which it tracks what has already been admitted and classifies each
+/// arriving sequence as new, a duplicate, or outside the span. Sharing one window across Spaces would
+/// reintroduce, through shared memory, the head-of-line blocking that separate Spaces exist to remove,
+/// so each Space owns one of these. Ordering is decided exclusively by
 /// <see cref="SequenceNumber.IsNewerThan"/>, so the wrap-aware comparison exists in one place.
 /// </summary>
 /// <remarks>
 /// <para>
 /// The type is internal, so the consumer's surface stays as small as ADR 0003 leaves it — nothing
 /// past <see cref="DatagramSessionReactor"/> and <see cref="DatagramSessionReactor.CountersOf"/> is a
-/// permanent commitment. Wired into the data path by #172 and into loss counting by #173, both
-/// reachable through that seam, with no <c>InternalsVisibleTo</c> and no interface invented for the
-/// purpose (ADR 0015).
+/// permanent commitment. Its data-path and loss-counting uses are both reachable through that seam,
+/// with no <c>InternalsVisibleTo</c> and no interface invented for the purpose (ADR 0015).
 /// </para>
 /// <para>
 /// <b>Fixed at construction.</b> The window's size — in practice
 /// <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>, already validated against its
 /// floor by <see cref="DatagramSessionOptions.Validate"/> — never changes after construction. Whether
-/// the window slides is fixed at construction too (#173): a <c>slides: false</c> window treats a
-/// sequence it cannot currently hold as nothing to resolve — <see cref="Classify(uint)"/> reports
+/// the window slides is fixed at construction too: a <c>slides: false</c> window treats a sequence it
+/// cannot currently hold as nothing to resolve — <see cref="Classify(uint)"/> reports
 /// <see cref="ReceiveWindowOutcome.OutOfWindow"/> and leaves <see cref="Base"/> exactly where it was,
 /// so a far-ahead packet can never drag the base forward past a hole that has not been filled. A
 /// <c>slides: true</c> window instead slides its base forward to make room, retiring whatever the
 /// slide passes by un-admitted; see <see cref="LastSlideLoss"/>.
 /// </para>
 /// <para>
-/// <b>No allocation of its own, ever (#179).</b> The only storage this type touches is the
+/// <b>No allocation of its own, ever.</b> The only storage this type touches is the
 /// <see cref="Memory{T}"/> run <see cref="Core.ReceiveArena.GetAdmissionRun"/> hands it at
 /// construction — one byte per slot, zero for not-admitted and non-zero for admitted — plus, for a
 /// window built over a retaining Space, the length run <see cref="Core.ReceiveArena.GetFragmentLengthRun"/>
-/// hands it (#257). <see cref="Classify(uint)"/> only reads and writes those runs and a handful of
-/// value-typed fields, so no sequence of arrivals ever allocates. A slide walks at most
-/// <see cref="Capacity"/> slots — the same bound <see cref="AdvanceBase"/> already has — so it stays
-/// allocation-free and its cost is bounded by construction, not by how far ahead the arriving sequence
-/// is. Because the arena's storage outlives any one Peer, a Slot reused by a later Peer must not
-/// inherit the previous occupant's admissions — that is what <see cref="Reset"/> is for.
+/// hands it. <see cref="Classify(uint)"/> only reads and writes those runs and a handful of value-typed
+/// fields, so no sequence of arrivals ever allocates. A slide walks at most <see cref="Capacity"/>
+/// slots — the same bound <see cref="AdvanceBase"/> already has — so it stays allocation-free and its
+/// cost is bounded by construction, not by how far ahead the arriving sequence is. Because the arena's
+/// storage outlives any one Peer, a Slot reused by a later Peer must not inherit the previous
+/// occupant's admissions — that is what <see cref="Reset"/> is for.
 /// </para>
 /// <para>
-/// <b>This window is the reassembly storage for a Fragment (issue #257, ADR 0004).</b> A separate
-/// reassembly buffer is refused by design, not merely left unbuilt: it would be new attack surface
-/// rather than a defence against one, since a sender flooding partial Fragment sets would fill memory
-/// this Reactor took on their behalf instead of the receive window it already bounds and already
-/// polices. Holding a Fragment's payload in the same slot its own admission already occupies means a
-/// hostile peer can never hold more Fragments than an honest one already could — the window's own
-/// capacity is the only bound either ever meets. <see cref="RecordFragmentLength"/> and
-/// <see cref="GetFragmentLength"/> are the narrow surface that makes this possible: a slot's admission
-/// byte is cleared the instant <see cref="AdvanceBase"/> passes it, so it cannot by itself say whether
-/// a slot still holds an unfinished Fragment — the length run is what a caller reads instead, and it
-/// stays whatever it was last set to until the slot is reused or the Fragment set completes (#258).
+/// <b>This window is the reassembly storage for a Fragment (ADR 0004).</b> A separate reassembly buffer
+/// is refused by design, not merely left unbuilt: it would be new attack surface rather than a defence
+/// against one, since a sender flooding partial Fragment sets would fill memory this Reactor took on
+/// their behalf instead of the receive window it already bounds and already polices. Holding a
+/// Fragment's payload in the same slot its own admission already occupies means a hostile peer can
+/// never hold more Fragments than an honest one already could — the window's own capacity is the only
+/// bound either ever meets. <see cref="RecordFragmentLength"/> and <see cref="GetFragmentLength"/> are
+/// the narrow surface that makes this possible: a slot's admission byte is cleared the instant
+/// <see cref="AdvanceBase"/> passes it, so it cannot by itself say whether a slot still holds an
+/// unfinished Fragment — the length run is what a caller reads instead, and it stays whatever it was
+/// last set to until the slot is reused or the Fragment set completes.
 /// </para>
 /// <para>
-/// <b>No expiry timer for an incomplete group, ever (issue #261).</b> A held Fragment's length entry is
-/// cleared only by <see cref="ReleaseGroup"/> — its own group completing — or by a fresh admission
-/// reusing the same physical ring slot for an unrelated, later sequence (see the admission path in
+/// <b>No expiry timer for an incomplete group, ever.</b> A held Fragment's length entry is cleared only
+/// by <see cref="ReleaseGroup"/> — its own group completing — or by a fresh admission reusing the same
+/// physical ring slot for an unrelated, later sequence (see the admission path in
 /// <see cref="Classify(uint, out int)"/>). No clock, per-group timestamp, or expiry constant exists to
 /// clear it any other way, because none is needed: the window's own <see cref="Capacity"/> already
 /// bounds how many groups a sender flooding partial sets can hold open at once — the same bound an
@@ -108,16 +106,15 @@ internal sealed class ReceiveWindow
     /// Whether the sequence at each slot has been admitted: zero for not-admitted, non-zero for
     /// admitted. Indexed by ring position, not by offset from <see cref="Base"/>:
     /// <see cref="_baseSlot"/> is the ring position <see cref="Base"/> currently occupies, and a slot
-    /// is reused once the base advances past it. Backed by the receive arena (#179), not owned by this
-    /// type.
+    /// is reused once the base advances past it. Backed by the receive arena, not owned by this type.
     /// </summary>
     private readonly Memory<byte> _admitted;
 
     /// <summary>
     /// The Fragment-length run for this window's Space, two bytes per slot, ring-indexed exactly as
-    /// <see cref="_admitted"/> is — <see cref="Core.ReceiveArena.GetFragmentLengthRun"/> (#257). Empty
-    /// for a window built over a Space that never retains a Fragment (today, the two unreliable
-    /// Spaces, which ADR 0004 never routes a Fragment into): <see cref="RecordFragmentLength"/> and
+    /// <see cref="_admitted"/> is — <see cref="Core.ReceiveArena.GetFragmentLengthRun"/>. Empty for a
+    /// window built over a Space that never retains a Fragment (today, the two unreliable Spaces, which
+    /// ADR 0004 never routes a Fragment into): <see cref="RecordFragmentLength"/> and
     /// <see cref="GetFragmentLength"/> both throw for such a window rather than silently accepting a
     /// call that could never be meaningful.
     /// </summary>
@@ -125,19 +122,19 @@ internal sealed class ReceiveWindow
 
     /// <summary>
     /// The Fragment-group run for this window's Space, six bytes per slot, ring-indexed exactly as
-    /// <see cref="_fragmentLengths"/> is — <see cref="Core.ReceiveArena.GetFragmentGroupRun"/> (issue
-    /// #297): a <c>u32</c> first sequence and a <c>u16</c> declared Fragment count naming the group the
-    /// slot's held Fragment belongs to. Empty exactly when <see cref="_fragmentLengths"/> is, for the
-    /// same reason: a Space that never retains a Fragment never needs to say which set one belonged to.
-    /// This is what lets <see cref="Classify(uint, out int)"/> answer how much of an abandoned set was
-    /// held and how much it declared at the moment its slot is reused — the length region alone says a
-    /// piece was held, not which set it was a piece of or how large that set claimed to be.
+    /// <see cref="_fragmentLengths"/> is — <see cref="Core.ReceiveArena.GetFragmentGroupRun"/>: a
+    /// <c>u32</c> first sequence and a <c>u16</c> declared Fragment count naming the group the slot's
+    /// held Fragment belongs to. Empty exactly when <see cref="_fragmentLengths"/> is, for the same
+    /// reason: a Space that never retains a Fragment never needs to say which set one belonged to. This
+    /// is what lets <see cref="Classify(uint, out int)"/> answer how much of an abandoned set was held
+    /// and how much it declared at the moment its slot is reused — the length region alone says a piece
+    /// was held, not which set it was a piece of or how large that set claimed to be.
     /// </summary>
     private readonly Memory<byte> _fragmentGroups;
 
     /// <summary>
     /// Whether this window slides its base forward to admit a far-ahead arrival instead of refusing
-    /// it (#173). Fixed at construction; see
+    /// it. Fixed at construction; see
     /// <see cref="ReceiveWindow(Memory{byte}, bool, Memory{byte}, Memory{byte})"/>.
     /// </summary>
     private readonly bool _slides;
@@ -157,8 +154,8 @@ internal sealed class ReceiveWindow
     /// </param>
     /// <param name="slides">
     /// Whether a sequence at or beyond the window's far edge slides the base forward to admit it,
-    /// rather than being refused (#173). Defaults to <see langword="false"/> — today's behaviour for
-    /// every window built before this parameter existed, and the one <c>ReliableOrdered</c> and
+    /// rather than being refused. Defaults to <see langword="false"/> — today's behaviour for every
+    /// window built before this parameter existed, and the one <c>ReliableOrdered</c> and
     /// <c>ReliableUnordered</c> keep: retransmission fills their holes, so sliding would retire data
     /// that was about to arrive. <c>Unreliable</c> and <c>UnreliableSequenced</c> pass
     /// <see langword="true"/>, because nothing retransmits into them and a window that never advances
@@ -173,7 +170,7 @@ internal sealed class ReceiveWindow
     /// </param>
     /// <param name="fragmentGroups">
     /// The Fragment-group run this window records a held Fragment's group identity into, six bytes per
-    /// sequence slot — see <see cref="Core.ReceiveArena.GetFragmentGroupRun"/> (issue #297). Defaults to
+    /// sequence slot — see <see cref="Core.ReceiveArena.GetFragmentGroupRun"/>. Defaults to
     /// <see langword="default"/> (empty) for a window built over a Space that never retains a Fragment
     /// (ADR 0004), the same condition <paramref name="fragmentLengths"/> is empty under. When supplied,
     /// its length must be exactly six times <paramref name="admitted"/>'s.
@@ -235,8 +232,8 @@ internal sealed class ReceiveWindow
 
     /// <summary>
     /// How many sequences the most recent <see cref="Classify(uint)"/> call retired un-admitted by sliding
-    /// the base forward (#173) — zero unless that call both slid the window and this window was built
-    /// with <c>slides: true</c>. Read after <see cref="Classify(uint)"/> returns; a caller that wants to
+    /// the base forward — zero unless that call both slid the window and this window was built with
+    /// <c>slides: true</c>. Read after <see cref="Classify(uint)"/> returns; a caller that wants to
     /// raise a loss figure by the right amount reads this once per call rather than assuming a slide
     /// only ever loses one sequence, since a jump can retire several holes at once. Reset to zero at
     /// the start of every <see cref="Classify(uint)"/> call, so a call that does not slide reports zero even
@@ -246,9 +243,9 @@ internal sealed class ReceiveWindow
 
     /// <summary>
     /// Whether the most recent <see cref="Classify(uint, out int)"/> call discovered an incomplete
-    /// Fragment set abandoned (issue #297) — a fresh admission clobbered a physical ring slot that still
-    /// carried a live, never-completed occupant's Fragment-length residue — and if so, how many of that
-    /// set's sequences were actually held at that instant (<c>Held</c>) versus how many it declared
+    /// Fragment set abandoned — a fresh admission clobbered a physical ring slot that still carried a
+    /// live, never-completed occupant's Fragment-length residue — and if so, how many of that set's
+    /// sequences were actually held at that instant (<c>Held</c>) versus how many it declared
     /// (<c>Expected</c>). <c>Occurred</c> is <see langword="false"/> and <c>Held</c>/<c>Expected</c> are
     /// both zero unless that call's admission clobbered such residue. Reset to that default at the start
     /// of every <see cref="Classify(uint, out int)"/> call, so a call that abandons nothing reports it
@@ -263,10 +260,9 @@ internal sealed class ReceiveWindow
     /// Classifies <paramref name="sequence"/> against the window's current span. When it is new and
     /// within the span, it is admitted: recorded, and then <see cref="Base"/> is advanced across it
     /// and every already-admitted sequence contiguous above it, stopping at the first hole. For a
-    /// window built with <c>slides: true</c> (#173), a sequence at or beyond the far edge instead
-    /// slides the base forward until the sequence fits, retiring whatever the slide passes by
-    /// un-admitted — see <see cref="LastSlideLoss"/> — and then admits it. Nothing else changes the
-    /// window's state.
+    /// window built with <c>slides: true</c>, a sequence at or beyond the far edge instead slides the
+    /// base forward until the sequence fits, retiring whatever the slide passes by un-admitted — see
+    /// <see cref="LastSlideLoss"/> — and then admits it. Nothing else changes the window's state.
     /// </summary>
     /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
     /// <returns>
@@ -300,8 +296,8 @@ internal sealed class ReceiveWindow
     /// <summary>
     /// <see cref="Classify(uint)"/>, additionally reporting the ring slot <paramref name="sequence"/>
     /// resolves to — the same slot a caller holding a Fragment's bytes passes to
-    /// <see cref="RecordFragmentLength"/> and a <see cref="Core.ReceiveArena.GetFragmentSlot"/> call
-    /// (#257). Keeping the ring arithmetic here, rather than letting a caller re-derive it from
+    /// <see cref="RecordFragmentLength"/> and a <see cref="Core.ReceiveArena.GetFragmentSlot"/> call.
+    /// Keeping the ring arithmetic here, rather than letting a caller re-derive it from
     /// <see cref="Base"/>, matters because <see cref="Classify(uint)"/> itself moves <see cref="Base"/>
     /// before returning: a caller cannot recompute the slot afterward from the window's new state.
     /// </summary>
@@ -388,10 +384,10 @@ internal sealed class ReceiveWindow
     /// <summary>
     /// Records that the Fragment occupying ring slot <paramref name="ringSlot"/> — as reported by
     /// <see cref="Classify(uint, out int)"/> for the sequence it was admitted at — is
-    /// <paramref name="byteLength"/> bytes long (#257). This is the write half of the reassembly
-    /// bookkeeping this window's class doc describes: the length run outlives
-    /// <see cref="AdvanceBase"/> clearing that same slot's admission byte, so it is what later tells a
-    /// held Fragment apart from an empty slot.
+    /// <paramref name="byteLength"/> bytes long. This is the write half of the reassembly bookkeeping
+    /// this window's class doc describes: the length run outlives <see cref="AdvanceBase"/> clearing
+    /// that same slot's admission byte, so it is what later tells a held Fragment apart from an empty
+    /// slot.
     /// </summary>
     /// <param name="ringSlot">A ring position below <see cref="Capacity"/>, from <see cref="Classify(uint, out int)"/>.</param>
     /// <param name="byteLength">The Fragment's payload length in bytes.</param>
@@ -410,7 +406,7 @@ internal sealed class ReceiveWindow
     /// <summary>
     /// Reads back what <see cref="RecordFragmentLength"/> most recently recorded for ring slot
     /// <paramref name="ringSlot"/> — zero if nothing has, which is exactly what a slot never written to
-    /// (or cleared by <see cref="Reset"/>) reads as (#257, #258).
+    /// (or cleared by <see cref="Reset"/>) reads as.
     /// </summary>
     /// <param name="ringSlot">A ring position below <see cref="Capacity"/>.</param>
     /// <exception cref="InvalidOperationException">
@@ -453,7 +449,7 @@ internal sealed class ReceiveWindow
     /// <summary>
     /// Records that the Fragment occupying ring slot <paramref name="ringSlot"/> belongs to the group
     /// starting at <paramref name="groupFirstSequence"/> and declaring <paramref name="fragmentCount"/>
-    /// pieces (issue #297). Written alongside <see cref="RecordFragmentLength"/> at the same point
+    /// pieces. Written alongside <see cref="RecordFragmentLength"/> at the same point
     /// <see cref="DatagramSessionReactor.HoldFragment"/> holds a piece, so the two runs never disagree
     /// about which slots currently hold a piece of which set.
     /// </summary>
@@ -524,10 +520,10 @@ internal sealed class ReceiveWindow
     /// <summary>
     /// Reports how much of the incomplete Fragment set occupying ring slot <paramref name="ringSlot"/>
     /// was actually held at the instant its physical slot is about to be reused for an unrelated, later
-    /// sequence (issue #297) — the last moment anyone can still answer that, since the caller is about to
-    /// zero the very residue this reads. Sets <see cref="LastAbandonedFragmentSet"/> and clears every one
-    /// of the set's own still-addressable slots whose recorded group still names it, so that no later
-    /// clobber of a sibling slot can ever report the same set abandoned a second time.
+    /// sequence — the last moment anyone can still answer that, since the caller is about to zero the
+    /// very residue this reads. Sets <see cref="LastAbandonedFragmentSet"/> and clears every one of the
+    /// set's own still-addressable slots whose recorded group still names it, so that no later clobber
+    /// of a sibling slot can ever report the same set abandoned a second time.
     /// </summary>
     /// <param name="ringSlot">
     /// The ring slot a fresh admission is about to clobber, whose Fragment-length residue was found
@@ -569,8 +565,8 @@ internal sealed class ReceiveWindow
     }
 
     /// <summary>
-    /// Resolves <paramref name="sequence"/> to the ring slot it occupies in this window right now
-    /// (issue #258): <see cref="FragmentGroupCompleteness.TryGetRingSlot"/> given this window's own
+    /// Resolves <paramref name="sequence"/> to the ring slot it occupies in this window right now:
+    /// <see cref="FragmentGroupCompleteness.TryGetRingSlot"/> given this window's own
     /// <see cref="Capacity"/>, <see cref="Base"/> and ring position. Unlike
     /// <see cref="Classify(uint, out int)"/>, this never admits, moves <see cref="Base"/>, or writes
     /// to any run — it only answers where a sequence <em>would</em> be, addressing both a sequence
@@ -594,9 +590,9 @@ internal sealed class ReceiveWindow
 
     /// <summary>
     /// Whether every Fragment of the group starting at <paramref name="groupFirstSequence"/> and
-    /// declaring <paramref name="fragmentCount"/> pieces is currently held in this window (issue #258)
-    /// — delegates entirely to <see cref="FragmentGroupCompleteness.IsComplete"/> over this window's
-    /// own <see cref="_fragmentLengths"/> run, <see cref="Capacity"/>, <see cref="Base"/> and ring
+    /// declaring <paramref name="fragmentCount"/> pieces is currently held in this window — delegates
+    /// entirely to <see cref="FragmentGroupCompleteness.IsComplete"/> over this window's own
+    /// <see cref="_fragmentLengths"/> run, <see cref="Capacity"/>, <see cref="Base"/> and ring
     /// position. Reads window state and nothing else: no ack, retransmission or retention state is
     /// consulted, which is what keeps a lost Fragment costing exactly one Datagram to repair — that
     /// machinery repairs by sequence number alone and does not know a Fragment exists, so nothing
@@ -632,10 +628,10 @@ internal sealed class ReceiveWindow
 
     /// <summary>
     /// Whether admitting <paramref name="sequence"/> would overwrite a held Fragment whose group can
-    /// still be delivered (issues #423, #446): the ring has come back round to a slot whose Fragment the
-    /// base has already passed, and that Fragment's group is either complete and waiting, or still has a
-    /// sequence at or above the base that a retransmission can fill. A group the base has passed
-    /// entirely without it completing can never complete, so overwriting its Fragment is allowed, and
+    /// still be delivered: the ring has come back round to a slot whose Fragment the base has already
+    /// passed, and that Fragment's group is either complete and waiting, or still has a sequence at or
+    /// above the base that a retransmission can fill. A group the base has passed entirely without it
+    /// completing can never complete, so overwriting its Fragment is allowed, and
     /// <see cref="Classify(uint, out int)"/> reports it in <see cref="LastAbandonedFragmentSet"/>. Only
     /// a sender that sent other records at the group's missing sequences, or a Fragment too large for
     /// its slot (see <see cref="DatagramSessionReactor.HoldFragment"/>), can leave one. Changes nothing.
@@ -662,16 +658,16 @@ internal sealed class ReceiveWindow
 
     /// <summary>
     /// Zeroes the Fragment-length and Fragment-group entries for every sequence of the group starting at
-    /// <paramref name="groupFirstSequence"/> (issue #259, extended by #297) — the release half of the
-    /// reassembly bookkeeping this window's class doc describes, called once a completed group's pieces
-    /// have all been copied out into a delivered Message. Releasing is what keeps a later Fragment that
-    /// reuses one of these ring slots from ever being mistaken for a leftover of the group just
-    /// delivered: without it, <see cref="IsGroupComplete"/> could read a stale non-zero length left over
-    /// from this group and report a future, different group complete before every one of its own pieces
-    /// had actually arrived, and a later abandonment could misreport this already-delivered set's residue
-    /// as still abandoned. A sequence too far away to resolve to a ring slot — already fully retired, or
-    /// never reachable — is simply skipped rather than throwing, since there is then nothing left in
-    /// this window that still needs releasing for it.
+    /// <paramref name="groupFirstSequence"/> — the release half of the reassembly bookkeeping this
+    /// window's class doc describes, called once a completed group's pieces have all been copied out
+    /// into a delivered Message. Releasing is what keeps a later Fragment that reuses one of these ring
+    /// slots from ever being mistaken for a leftover of the group just delivered: without it,
+    /// <see cref="IsGroupComplete"/> could read a stale non-zero length left over from this group and
+    /// report a future, different group complete before every one of its own pieces had actually
+    /// arrived, and a later abandonment could misreport this already-delivered set's residue as still
+    /// abandoned. A sequence too far away to resolve to a ring slot — already fully retired, or never
+    /// reachable — is simply skipped rather than throwing, since there is then nothing left in this
+    /// window that still needs releasing for it.
     /// </summary>
     /// <param name="groupFirstSequence">
     /// The group's first sequence — see <see cref="FragmentGroup.FirstSequenceOf"/>.
@@ -703,12 +699,12 @@ internal sealed class ReceiveWindow
     }
 
     /// <summary>
-    /// Describes this window's current state as an ack block (issue #183, ADR 0009): the cumulative
-    /// base it has reached, plus a 32-bit field describing the 32 sequences above that base — bit 0
-    /// for the first sequence above the base (<c>Base + 1</c>), up to bit 31 for the thirty-second
-    /// (<c>Base + 32</c>). A sequence more than 32 above the base has no bit to hold it and is simply
-    /// not described; the horizon rule that governs what a caller does with that fact (issue #41) is
-    /// not this method's concern.
+    /// Describes this window's current state as an ack block (ADR 0009): the cumulative base it has
+    /// reached, plus a 32-bit field describing the 32 sequences above that base — bit 0 for the first
+    /// sequence above the base (<c>Base + 1</c>), up to bit 31 for the thirty-second (<c>Base +
+    /// 32</c>). A sequence more than 32 above the base has no bit to hold it and is simply not
+    /// described; the horizon rule that governs what a caller does with that fact is not this method's
+    /// concern.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -758,8 +754,8 @@ internal sealed class ReceiveWindow
     /// <summary>
     /// Clears this window's admission run and its Fragment-length and Fragment-group runs, if it has
     /// them, and resets <see cref="Base"/>, its ring position and <see cref="LastSlideLoss"/> to their
-    /// construction-time values. The arena storage a window is built over outlives the Peer that used it
-    /// (#179): a Slot a new Peer reuses must classify from a clean window, not inherit whatever the
+    /// construction-time values. The arena storage a window is built over outlives the Peer that used
+    /// it: a Slot a new Peer reuses must classify from a clean window, not inherit whatever the
     /// previous occupant had admitted or held. Mirrors the division
     /// <see cref="Core.ReceiveArena.GetFragmentSlot"/> already draws — the arena keeps the bytes, the
     /// occupant clears them. Does not emit — the Session is over and there is no Peer left to subject a

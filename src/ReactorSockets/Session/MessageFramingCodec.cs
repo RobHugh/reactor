@@ -15,7 +15,7 @@ internal static class MessageFramingCodec
 
     /// <summary>
     /// The reserved length-prefix value announcing a Goodbye control record rather than a Message
-    /// (ADR 0010/issue #23) — no legal Message length can ever equal it, because
+    /// (ADR 0010) — no legal Message length can ever equal it, because
     /// <see cref="StreamSessionOptions.MaxMessageSize"/> is a signed <c>int</c> and so is always below
     /// the value this sets, whatever it is configured to. Reusing the same four-byte length-prefix
     /// slot rather than a new tagged record keeps the data plane's wire shape exactly what ADR 0010
@@ -27,8 +27,8 @@ internal static class MessageFramingCodec
 
     /// <summary>
     /// The reserved length-prefix value announcing a delivery-counter control record rather than a
-    /// Message (ADR 0010, issue #109) — the cumulative <c>u64</c> count of Messages this end has fully
-    /// received, sent so the peer can advance retention. Distinct from <see cref="GoodbyeSentinel"/> by
+    /// Message (ADR 0010) — the cumulative <c>u64</c> count of Messages this end has fully received,
+    /// sent so the peer can advance retention. Distinct from <see cref="GoodbyeSentinel"/> by
     /// construction (each is its own literal), and, exactly like it, unreachable by any legal Message
     /// length because <see cref="StreamSessionOptions.MaxMessageSize"/> is a signed <c>int</c> and so is
     /// always below the value this sets, whatever it is configured to. Reusing the same four-byte

@@ -1,10 +1,10 @@
 namespace ReactorSockets.Session;
 
 /// <summary>
-/// Serial comparison for the datagram data path's <c>u32</c> sequence numbers (ADR 0009, issue #39):
-/// the one place the receive path asks "is this sequence newer than that one." Every "newer than"
-/// decision in the datagram data path goes through <see cref="IsNewerThan"/> so the wrap-aware
-/// arithmetic exists exactly once.
+/// Serial comparison for the datagram data path's <c>u32</c> sequence numbers (ADR 0009): the one place
+/// the receive path asks "is this sequence newer than that one." Every "newer than" decision in the
+/// datagram data path goes through <see cref="IsNewerThan"/> so the wrap-aware arithmetic exists
+/// exactly once.
 /// </summary>
 /// <remarks>
 /// A sequence counter wraps in every fixed width; <c>u32</c> does not remove that, it only makes the
@@ -13,9 +13,9 @@ namespace ReactorSockets.Session;
 /// values: <c>a</c> is newer than <c>b</c> exactly when <c>unchecked((int)(a - b))</c> is positive.
 /// This is the same rule TCP uses for its 32-bit sequence space (RFC 1982), and it only gives a
 /// wrong answer when the two sequences are more than half the space (2^31) apart — a distance a
-/// receive window bounded at construction, per #40, never lets the two sides reach. A <c>u16</c>
-/// would put that same guarantee in the consumer's hands, since it would depend on the send rate
-/// staying below one wrap per window; <c>u32</c> makes it structural instead.
+/// receive window bounded at construction never lets the two sides reach. A <c>u16</c> would put that
+/// same guarantee in the consumer's hands, since it would depend on the send rate staying below one
+/// wrap per window; <c>u32</c> makes it structural instead.
 /// </remarks>
 internal static class SequenceNumber
 {
