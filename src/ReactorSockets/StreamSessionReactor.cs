@@ -754,7 +754,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Whether a held connection's Hello fails <see cref="StreamHandshakeCodec.TryRead"/>, which is how
-    /// an illegal announced interval shows itself once the record's size and type are known good.
+    /// an illegal announced interval or a zero <c>MaxMessageSize</c> shows itself once the record's size
+    /// and type are known good.
     /// </summary>
     private static bool IsHelloIllegal(PendingAdmission pending)
     {
