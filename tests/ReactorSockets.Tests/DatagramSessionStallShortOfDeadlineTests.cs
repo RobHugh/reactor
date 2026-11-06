@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #356 (parent #54): the receive-idle count (#352) guards against lateness, not a single missed
+/// The receive-idle count (#352) guards against lateness, not a single missed
 /// interval. A peer that stalls for a little over one <c>RemoteSendIdleInterval</c> — and then resumes —
 /// must not be declared dead at the default <c>MissedHeartbeats</c> of 3, because the deadline is
 /// <c>RemoteSendIdleInterval × MissedHeartbeats</c> from the peer's <em>last</em> received datagram, not

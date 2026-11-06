@@ -6,7 +6,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #382 (parent #56): while a dialled datagram Peer is Interrupted it sends a Resume control
+/// While a dialled datagram Peer is Interrupted it sends a Resume control
 /// datagram to the accepting end's address once per send-idle interval, carrying the accepting end's
 /// session id and the secret the accepting end issued. Only the dialling end sends Resume, and only
 /// while Interrupted.

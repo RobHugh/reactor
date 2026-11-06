@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #289: a Peer that has Resumed still validates a reliable <see cref="DatagramSessionReactor.Send"/>
+/// A Peer that has Resumed still validates a reliable <see cref="DatagramSessionReactor.Send"/>
 /// against the peer's own announced <c>MaxMessageSize</c> — captured on the Peer's <c>Slot</c> at
 /// handshake (issue #284) — rather than losing it and falling back to zero or to this Reactor's own
 /// setting. The Datagram profile has a wire-level Resume that carries no

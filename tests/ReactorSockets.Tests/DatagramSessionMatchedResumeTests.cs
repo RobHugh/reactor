@@ -6,7 +6,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issues #378 to #381 (parent #56): what a matched Resume does to the accepting end's Peer. Each test
+/// What a matched Resume does to the accepting end's Peer. Each test
 /// drains after every Pump, because <see cref="DatagramSessionReactor.Pump"/> clears undrained events
 /// and a "no event" assertion over undrained Pumps proves nothing.
 /// </summary>

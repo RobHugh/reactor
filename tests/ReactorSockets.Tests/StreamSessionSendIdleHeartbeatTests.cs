@@ -36,7 +36,7 @@ public class StreamSessionSendIdleHeartbeatTests
     }
 
     // =========================================================================================
-    // AC1 — a Session sending nothing emits the record once SendIdleInterval has elapsed
+    // A Session sending nothing emits the record once SendIdleInterval has elapsed
     // =========================================================================================
 
     [Fact]
@@ -66,7 +66,7 @@ public class StreamSessionSendIdleHeartbeatTests
     }
 
     // =========================================================================================
-    // AC2 — a Session with continuous outbound traffic never emits a heartbeat
+    // A Session with continuous outbound traffic never emits a heartbeat
     // =========================================================================================
 
     [Fact]
@@ -103,7 +103,7 @@ public class StreamSessionSendIdleHeartbeatTests
     }
 
     // =========================================================================================
-    // AC3 — sending a Message resets the timer to one interval after that Message, not after
+    // Sending a Message resets the timer to one interval after that Message, not after
     // connection (or any earlier heartbeat)
     // =========================================================================================
 
@@ -147,7 +147,7 @@ public class StreamSessionSendIdleHeartbeatTests
     }
 
     // =========================================================================================
-    // AC4 — the emitted record carries this end's current received-Message count, and the peer's
+    // The emitted record carries this end's current received-Message count, and the peer's
     // retention releases against it exactly as any delivery-counter record does
     // =========================================================================================
 
@@ -221,7 +221,7 @@ public class StreamSessionSendIdleHeartbeatTests
     }
 
     // =========================================================================================
-    // AC5 — no option to disable the heartbeat exists on StreamSessionOptions
+    // No option to disable the heartbeat exists on StreamSessionOptions
     // =========================================================================================
 
     [Fact]

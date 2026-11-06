@@ -84,7 +84,7 @@ public class PumpIntervalObserverTests
     [Fact]
     public void Interval_WallClockJumpedForwardAndBackBetweenTwoObserveCalls_ReadsTheMonotonicGapAndNothingElse()
     {
-        // Arrange — the criterion issue #191 states for the datagram Reactor's own cadence reading:
+        // Arrange — the datagram Reactor's own cadence reading consults
         // only monotonic timestamps are consulted, so moving the wall clock changes nothing. A
         // FakeTimeProvider cannot prove it, because advancing it moves its timestamp and its UtcNow
         // together; this provider moves them apart, which is exactly the divergence a machine's clock

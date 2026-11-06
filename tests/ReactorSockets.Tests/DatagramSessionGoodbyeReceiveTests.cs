@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issues #400 and #401: the receive side of Goodbye (#57). A Goodbye is a zero-length control record in
+/// The receive side of Goodbye (#57). A Goodbye is a zero-length control record in
 /// the <c>ReliableOrdered</c> Space. It takes its turn in send order like a Message and acts only when
 /// delivered: with no Message left undelivered the Peer closes directly with
 /// <see cref="DisconnectReason.PeerGoodbye"/>, otherwise it raises

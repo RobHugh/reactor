@@ -19,7 +19,7 @@ namespace ReactorSockets.Tests;
 public class StreamSessionIdleTimerIndependenceTests
 {
     // =========================================================================================
-    // AC1 (mandatory) — two quiet Sessions, both real Reactors, both pumping: neither ever
+    // Two quiet Sessions, both real Reactors, both pumping: neither ever
     // declares the other dead, because each side's send-idle heartbeat reaches the other
     // unconditionally on what that side itself received.
     // =========================================================================================
@@ -106,7 +106,7 @@ public class StreamSessionIdleTimerIndependenceTests
     }
 
     // =========================================================================================
-    // AC2/AC3 — the lateness tolerance: a peer whose own loop stalls (scheduling jitter, or in
+    // The lateness tolerance: a peer whose own loop stalls (scheduling jitter, or in
     // .NET a collection pause) is not declared dead for a stall slightly longer than one
     // send-idle interval, but is declared dead once the stall passes peerSendIdle x
     // MissedHeartbeats — so the tolerance is real, not merely an unreachable deadline.

@@ -5,12 +5,12 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #131 (4.6.5, part of #30): the cross-Reactor proof that Linger negotiation (ADR 0011) is not
+/// The cross-Reactor proof that Linger negotiation (ADR 0011) is not
 /// merely computed and reported (<c>LingerNegotiated</c>) but actually governs both ends' clocks in
-/// lockstep. #121 already makes an Interrupted Peer's own <see cref="Core.PeerSlot.EffectiveLinger"/> —
-/// the negotiated minimum, never either side's own configured value in isolation — what closes it; #122
-/// already ties a listening-side capacity reservation to that same Peer's lifetime; #125 already makes a
-/// dialling-side Peer re-dial on the same schedule, ceilinged at the same figure. Every test here builds
+/// lockstep. An Interrupted Peer's own <see cref="Core.PeerSlot.EffectiveLinger"/> (the negotiated
+/// minimum, never either side's own configured value in isolation) is what closes it, a
+/// listening-side capacity reservation lasts that same Peer's lifetime, and a dialling-side Peer
+/// re-dials on the same schedule, ceilinged at the same figure. Every test here builds
 /// one real <see cref="StreamSessionReactor"/> whose own configured <c>Linger</c> deliberately
 /// disagrees with a raw counterparty's announced one (tests/CLAUDE.md, ADR 0015 — the seam is a real
 /// Reactor against a hand-built wire counterparty, never two managed Reactors wired to each other:
@@ -37,7 +37,7 @@ public class StreamSessionNegotiatedLingerTests
     private const byte RefusalReasonCapacity = 2;
 
     // =========================================================================================
-    // AC1-3 — both roles hold an Interrupted Peer just inside the negotiated minimum and have
+    // Both roles hold an Interrupted Peer just inside the negotiated minimum and have
     // closed it just outside, on one shared clock, whichever side the shorter value belongs to
     // =========================================================================================
 
@@ -60,7 +60,7 @@ public class StreamSessionNegotiatedLingerTests
 
         // Dialling role — this Reactor's own configured Linger is the shorter figure; the raw listener
         // standing in for the listening side announces the longer one, so the negotiated minimum is
-        // this Reactor's own value this time — the mirror image of the listening role above (AC3).
+        // this Reactor's own value this time — the mirror image of the listening role above.
         using StreamSessionReactorHarness dialling = new(linger: shorter, timeProvider: clock);
         using RawStreamListener listener = new();
         (PeerId diallingInterrupted, RawStreamListener.Accepted far) = EstablishAndInterruptDiallingSide(
@@ -160,7 +160,7 @@ public class StreamSessionNegotiatedLingerTests
     }
 
     // =========================================================================================
-    // AC4 — the listening side's slot reservation (#122) ends at the same negotiated instant: a
+    // The listening side's slot reservation (#122) ends at the same negotiated instant: a
     // fresh dial is refused for capacity just before it and admitted just after, whichever side
     // the shorter value belongs to
     // =========================================================================================
@@ -205,7 +205,7 @@ public class StreamSessionNegotiatedLingerTests
     }
 
     // =========================================================================================
-    // AC5 (first half) — a Resume presenting the held secret just inside the negotiated minimum
+    // A Resume presenting the held secret just inside the negotiated minimum
     // still resumes, whichever side the shorter value belongs to
     // =========================================================================================
 
@@ -236,7 +236,7 @@ public class StreamSessionNegotiatedLingerTests
     }
 
     // =========================================================================================
-    // AC5 (second half) — the once-held secret arriving just outside the negotiated minimum finds
+    // The once-held secret arriving just outside the negotiated minimum finds
     // no reservation left: it is admitted as an ordinary new Peer, not a resume, whichever side the
     // shorter value belonged to
     // =========================================================================================

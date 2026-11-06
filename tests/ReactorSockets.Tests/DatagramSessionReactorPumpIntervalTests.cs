@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #191: <see cref="DatagramSessionReactor"/> now owns a <see cref="PumpIntervalObserver"/>,
+/// <see cref="DatagramSessionReactor"/> now owns a <see cref="PumpIntervalObserver"/>,
 /// observed exactly once per <see cref="DatagramSessionReactor.Pump"/>, mirroring
 /// <see cref="StreamSessionReactor"/>'s own use of the same type. The reading itself —
 /// unseeded <c>TimeSpan.MaxValue</c>, most-recent-cadence tracking, wall-clock independence — is

@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #422: a send-idle interval or Linger announced in a handshake is a <c>ulong</c> off the wire,
+/// A send-idle interval or Linger announced in a handshake is a <c>ulong</c> off the wire,
 /// and an out-of-range one used to throw out of <see cref="DatagramSessionReactor.Pump"/>, either on
 /// receipt or on every later Pump once the value had survived the handshake. Every assertion is made
 /// from outside the L2 seam (tests/CLAUDE.md): a <see cref="RawReactor"/> plays the hostile counterparty

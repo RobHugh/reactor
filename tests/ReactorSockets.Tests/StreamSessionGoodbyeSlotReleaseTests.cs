@@ -21,7 +21,7 @@ public class StreamSessionGoodbyeSlotReleaseTests
     private static byte[] BuildGoodbye() => StreamSessionTestRecords.BuildPrefix(GoodbyeSentinel);
 
     // =========================================================================================
-    // Slot release: a Goodbye close frees its Slot at once, with no time ever advanced (AC1, AC2)
+    // Slot release: a Goodbye close frees its Slot at once, with no time ever advanced
     // =========================================================================================
 
     [Fact]
@@ -84,7 +84,7 @@ public class StreamSessionGoodbyeSlotReleaseTests
     }
 
     // =========================================================================================
-    // No Linger deadline ever follows a Peer that left by Goodbye (AC3)
+    // No Linger deadline ever follows a Peer that left by Goodbye
     // =========================================================================================
 
     [Fact]

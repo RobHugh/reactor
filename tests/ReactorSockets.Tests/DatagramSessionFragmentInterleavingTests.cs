@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #260: reassembly (#257, #258, #259) stays correct while other traffic moves through the same
+/// Reassembly (#257, #258, #259) stays correct while other traffic moves through the same
 /// Peer. Fragment sets can progress in both reliable Spaces at once, unfragmented Messages can arrive
 /// interleaved with — even inside the same datagram as — Fragments, a set's pieces can arrive out of
 /// order, and a set can span several datagrams with its completing piece landing anywhere within one.

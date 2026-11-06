@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #370 (parent #55): per-Peer counters keep running across an Interruption — a counter's
+/// Per-Peer counters keep running across an Interruption — a counter's
 /// lifetime is the Peer's, not the transport's (ADR 0013), so <see cref="PeerCounters"/> read through
 /// <see cref="DatagramSessionReactor.CountersOf"/> must neither reset at
 /// <see cref="SessionEventKind.PeerInterrupted"/> nor stop moving afterwards. Drives a real
@@ -51,7 +51,7 @@ public class DatagramSessionInterruptedCountersTests
 
         SeedEstimator(dialler, proxy, accepter, peer, accepterPeer);
 
-        // Act — produce a genuine retransmission while the path is still relaying, so AC1's
+        // Act — produce a genuine retransmission while the path is still relaying, so the
         // PacketsRetransmitted check below is meaningful rather than an unmoved zero: drop one
         // ReliableOrdered record with the proxy's one-shot loss rule, then let its retransmit timer
         // (seeded at 60ms by SeedEstimator's round trip) expire with a comfortable margin.
@@ -125,7 +125,7 @@ public class DatagramSessionInterruptedCountersTests
 
         PeerCounters afterInterruption = dialler.Reactor.CountersOf(peer);
 
-        // Assert — AC1: every counter read through CountersOf before the transition is at least what it
+        // Assert — every counter read through CountersOf before the transition is at least what it
         // was; PeerInterrupted resets none of them. Resumes stays at zero because no Resume happens
         // in this scenario (see the comment above) — read here too so a reset of it would still be caught.
         afterInterruption.MessagesReceived.Should().BeGreaterThanOrEqualTo(beforeInterruption.MessagesReceived);
@@ -153,7 +153,7 @@ public class DatagramSessionInterruptedCountersTests
 
         PeerCounters afterRetransmissionWindow = dialler.Reactor.CountersOf(peer);
 
-        // Assert — AC2: a strict rise, measured over a window entirely after PeerInterrupted, proves the
+        // Assert — a strict rise, measured over a window entirely after PeerInterrupted, proves the
         // retained record keeps being resent while Interrupted rather than only up to the transition.
         afterRetransmissionWindow.PacketsRetransmitted.Should().BeGreaterThan(
             afterInterruption.PacketsRetransmitted,

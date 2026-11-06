@@ -6,16 +6,16 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #163: the datagram parse loop on the Reactor's data path. A datagram naming a live Session is
-/// parsed header-first, then packet records until the datagram is exhausted, exactly as the parent
-/// slice spec (#39) fixes the wire. Every malformed shape here — a short header, a spare bit set, a
+/// The datagram parse loop on the Reactor's data path. A datagram naming a live Session is
+/// parsed header-first, then packet records until the datagram is exhausted, exactly as ADR 0009
+/// fixes the wire. Every malformed shape here — a short header, a spare bit set, a
 /// record whose length runs past the end, or truncation inside a record — must discard the
 /// <em>whole</em> datagram and log <see cref="DiagnosticId.DatagramMalformed"/>, the same treatment
 /// <see cref="DatagramSessionMalformedInputTests"/> already proves for the control path. Most of this
 /// file ends at "the datagram parsed, or it did not", asserting the drain stays empty whatever the
-/// input; issue #252 adds the fragment shape as a second thing a record can legally be, so the tests
-/// for it also drain and check that an unfragmented record's payload still reaches the consumer
-/// alongside a well-formed Fragment — held rather than delivered since issue #257.
+/// input. A record can also legally be a Fragment, so the tests for that shape also drain and check
+/// that an unfragmented record's payload still reaches the consumer alongside a well-formed Fragment,
+/// which is held rather than delivered.
 /// </summary>
 /// <remarks>
 /// A live Session id is not exposed by the public surface — <see cref="PeerId"/> is an opaque handle,
@@ -238,9 +238,8 @@ public class DatagramSessionDataDatagramParseTests
     [Fact]
     public void Pump_DatagramOfOnlyFragmentRecords_ParsesAndDeliversTheAssembledMessage()
     {
-        // Arrange — one datagram carrying nothing but Fragments, the second case the acceptance
-        // criteria names alongside "only unfragmented" and "mixed". Since issue #259, a completed set
-        // is delivered as one assembled Message, concatenated in fragment-index order.
+        // Arrange — one datagram carrying nothing but Fragments, the case between "only
+        // unfragmented" and "mixed". A completed set is delivered as one assembled Message, concatenated in fragment-index order.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -270,7 +269,7 @@ public class DatagramSessionDataDatagramParseTests
     [Fact]
     public void Pump_DatagramMixingUnfragmentedAndFragmentRecords_ParsesEveryRecordAndDeliversOnlyTheUnfragmentedOnes()
     {
-        // Arrange — the mixed case the acceptance criteria calls out as the one a naive parser gets
+        // Arrange — the mixed case, the one a naive parser gets
         // wrong: unfragmented records and Fragments interleaved, each carrying a payload distinct enough
         // that a record misattributed to the wrong shape's byte count would show up as a missing,
         // duplicated or corrupted payload rather than a passing test. Every Fragment here is reliable

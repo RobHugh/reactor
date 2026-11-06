@@ -11,7 +11,7 @@ namespace ReactorSockets.Tests;
 /// <see cref="RetentionArena"/> is L0 and untested-through (tests/CLAUDE.md, ADR 0015), so this is
 /// proven entirely through the public L2 surface: a real <see cref="StreamSessionReactor"/> Sending framed
 /// Messages, a hand-built raw counterparty peer replying with delivery-counter records, and room
-/// recovering (or not) exactly as byte-precise as each criterion demands. The counterparty is
+/// recovering (or not) exactly as byte-precise as each test demands. The counterparty is
 /// <see cref="ReleasePeer"/>, mirroring <see cref="StreamSessionRetentionFlushTests"/>'s <c>FlushPeer</c>
 /// plus the ability to send a delivery-counter record back.
 /// </summary>
@@ -36,7 +36,7 @@ public class StreamSessionDeliveryCounterReleaseTests
     }
 
     // =========================================================================================
-    // #110 AC1 — releasing through Message 2 of 3 frees exactly Messages 1 and 2, and no more
+    // Releasing through Message 2 of 3 frees exactly Messages 1 and 2, and no more
     // =========================================================================================
 
     [Fact]
@@ -79,14 +79,14 @@ public class StreamSessionDeliveryCounterReleaseTests
     }
 
     // =========================================================================================
-    // #110 AC2 — a repeated or lower count frees nothing further and never moves the released
+    // A repeated or lower count frees nothing further and never moves the released
     // total backwards
     // =========================================================================================
 
     [Fact]
     public void ReleaseThroughMessageCount_ARepeatedOrLowerCount_FreesNothingFurtherAndNeverUnReleasesWhatWasFreed()
     {
-        // Arrange — same 60-byte/three-Message setup as the AC1 test above.
+        // Arrange — same 60-byte/three-Message setup as the first test above.
         const int maxMessageSize = 16;
         const int retentionBytes = 3 * (maxMessageSize + 4);
         using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: retentionBytes);
@@ -142,8 +142,8 @@ public class StreamSessionDeliveryCounterReleaseTests
     }
 
     // =========================================================================================
-    // #110 AC3 — a count above what this end has appended is refused, distinguishably, and the
-    // Session ends with ProtocolViolation (#113's own acceptance criterion)
+    // A count above what this end has appended is refused, distinguishably, and the
+    // Session ends with ProtocolViolation
     // =========================================================================================
 
     [Fact]
@@ -175,7 +175,7 @@ public class StreamSessionDeliveryCounterReleaseTests
     }
 
     // =========================================================================================
-    // #110 AC4 — boundary bookkeeping survives a write that wraps the region's end
+    // Boundary bookkeeping survives a write that wraps the region's end
     // =========================================================================================
 
     [Fact]
@@ -232,7 +232,7 @@ public class StreamSessionDeliveryCounterReleaseTests
     }
 
     // =========================================================================================
-    // #110 AC5 — releasing through every appended Message leaves retained bytes at zero and the
+    // Releasing through every appended Message leaves retained bytes at zero and the
     // region wholly reusable
     // =========================================================================================
 
@@ -319,13 +319,13 @@ public class StreamSessionDeliveryCounterReleaseTests
     }
 
     // =========================================================================================
-    // #110 AC6 — the high-water mark is unchanged by any release
+    // The high-water mark is unchanged by any release
     // =========================================================================================
 
     [Fact]
     public void ReleaseThroughMessageCount_ConfirmingEveryAppendedMessage_DoesNotChangeRetentionHighWaterBytes()
     {
-        // Arrange — same three-Message burst as the AC5 test above, sent before any Pump so the ring
+        // Arrange — same three-Message burst as the release-everything test above, sent before any Pump so the ring
         // peaks at exactly its bound.
         const int maxMessageSize = 16;
         const int retentionBytes = 3 * (maxMessageSize + 4);

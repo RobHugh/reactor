@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #262: a half-arrived Fragment set survives an interruption of its Peer's transport at no
+/// A half-arrived Fragment set survives an interruption of its Peer's transport at no
 /// cost, because the pieces already held live in the ordinary per-Peer receive window
 /// (<see cref="DatagramSessionReactor.HoldFragment"/>'s own remarks) — state a lost and rebuilt
 /// transport never touches. The Datagram profile has a wire-level Resume:
@@ -143,7 +143,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
     }
 
     /// <summary>
-    /// The dual-Space acceptance criterion is about receive-side survival, not the send side's single
+    /// The dual-Space case is about receive-side survival, not the send side's single
     /// per-Peer queue (<see cref="DatagramSessionReactor.FlushPeer"/> packs one Peer's records strictly
     /// in Send order regardless of Space, so two independent live <c>Send</c> calls can never be made to
     /// progress "at once" — the second Space's own first Fragment would not even reach the wire until
@@ -362,7 +362,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
     /// <summary>
     /// The one-Space fixture every test above but the last shares: a dialler and an accepter connected
     /// through a <see cref="WireTap"/> chained ahead of a <see cref="LossyProxy"/>, plus the send/interrupt/resume
-    /// choreography every acceptance criterion needs a variant of.
+    /// choreography every test here needs a variant of.
     /// </summary>
     private sealed class Fixture : IDisposable
     {

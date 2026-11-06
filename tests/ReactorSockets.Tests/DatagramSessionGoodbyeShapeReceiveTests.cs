@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #394: the receive half of Goodbye's wire shape (#57). A Goodbye is a zero-length,
+/// The receive half of Goodbye's wire shape (#57). A Goodbye is a zero-length,
 /// unfragmented control record in the <c>ReliableOrdered</c> Space, so the control bit is now legal
 /// under that mode as well as under <c>ReliableUnordered</c> (a Ping, see
 /// <see cref="DatagramSessionPingReceiveTests"/>). This file proves through the seam

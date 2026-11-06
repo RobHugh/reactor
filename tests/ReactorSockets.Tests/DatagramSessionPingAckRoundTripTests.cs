@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #344 (parent #53): the Ping's round trip between two real <see cref="DatagramSessionReactor"/>s.
+/// The Ping's round trip between two real <see cref="DatagramSessionReactor"/>s.
 /// A Ping is admitted by the ordinary <c>ReliableUnordered</c> ack path (#339) exactly as any other
 /// reliable record is — no special-case ack exists or is needed — so once the far end's ack for it
 /// reaches the sender, the sender's own retransmission bookkeeping treats the Ping's sequence as

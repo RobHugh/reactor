@@ -7,7 +7,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #261: the central claim behind reassembly inside the receive window (#257-#260) is a memory
+/// The central claim behind reassembly inside the receive window (#257-#260) is a memory
 /// property, not a code-shape one — flooding partial Fragment sets fills only the flooding Peer's own
 /// receive window, because there is no separate reassembly buffer for a hostile sender to grow. Asserted
 /// here by measurement, the same way <see cref="DatagramSessionReceiveArenaAllocationTests"/> measures
@@ -73,8 +73,8 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
     private static readonly byte[] _floodPayload = [0xFF];
 
     /// <summary>
-    /// Closes #261's first two acceptance criteria, as #279 tightened them. The flood sends single-piece
-    /// "index 0 of 2" Fragment records at odd sequences and never sends sequence 0. That hole pins the
+    /// Holding a window full of partial sets costs no more than holding nothing. The flood sends
+    /// single-piece "index 0 of 2" Fragment records at odd sequences and never sends sequence 0. That hole pins the
     /// base (<c>ReliableOrdered</c> never slides), so every in-window piece is held as its own open group
     /// at once, and the window ends up full of partial sets. The flood then sends as many again beyond
     /// the window's far edge, all refused. The control Reactor receives the same records, same count
@@ -113,7 +113,7 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
     }
 
     /// <summary>
-    /// Closes #261's third acceptance criterion: the flooded Peer's own receive window bounds the
+    /// The flooded Peer's own receive window bounds the
     /// damage, and an arrival beyond it is refused and counted by the existing
     /// <see cref="PeerCounters.OutOfWindowPackets"/> and <see cref="PeerCounters.DuplicatePackets"/>
     /// figures rather than a new one invented for this case. As in the memory test above, every group
@@ -178,7 +178,7 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
     }
 
     /// <summary>
-    /// Closes #261's fourth acceptance criterion: a hostile Peer flooding never-completing Fragment
+    /// A hostile Peer flooding never-completing Fragment
     /// groups does not disturb another, ordinary Peer sharing the same Reactor. The ordinary Peer here
     /// is a full <see cref="DatagramSessionReactorHarness"/> dialer, sending and receiving one Message
     /// every round through the normal <c>Send</c>/Drain surface — interleaved with one flood datagram
@@ -265,7 +265,7 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
     }
 
     /// <summary>
-    /// Closes #261's fifth acceptance criterion: no timer ever expires an incomplete Fragment set. Proved
+    /// No timer ever expires an incomplete Fragment set. Proved
     /// as a consequence rather than an absence — a held group's slot is still exactly where the flood
     /// left it after the clock advances far past any RTO, ack-horizon or retransmit interval this design
     /// actually has, the flooded Peer keeps classifying arrivals by its window's ordinary rules

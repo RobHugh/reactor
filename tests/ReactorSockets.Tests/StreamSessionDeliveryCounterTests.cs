@@ -11,8 +11,7 @@ namespace ReactorSockets.Tests;
 /// never merely because its bytes have all arrived. The held-back case reuses #81's read-share
 /// exhaustion mechanism (a capacity/arena small enough that a second whole Message in one Frame
 /// cannot be reserved) to make that distinction observable through the public counter surface
-/// across two <see cref="StreamSessionReactor.Pump"/> calls, exactly as the issue's negative
-/// acceptance criterion requires.
+/// across two <see cref="StreamSessionReactor.Pump"/> calls, which is the negative case.
 /// </summary>
 public class StreamSessionDeliveryCounterTests
 {

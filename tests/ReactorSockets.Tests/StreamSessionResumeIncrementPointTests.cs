@@ -4,12 +4,11 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #129 (4.6.3), the deliverable of issue #30: the increment-point test. #82 fixed the delivery
-/// counter's increment point — a Message advances <see cref="PeerCounters.MessagesReceived"/> only when
-/// it is handed to the frame arena, never merely because its bytes have all arrived — but never proved
-/// what happens to those in-between bytes across a real interruption and Resume. That is this file's
-/// job: put a Message in the peer's receive buffer, fully arrived but not yet handed to the arena
-/// (#81's read-share exhaustion mechanism, exactly as <see cref="StreamSessionDeliveryCounterTests"/>
+/// The increment-point test. A Message advances <see cref="PeerCounters.MessagesReceived"/> only when
+/// it is handed to the frame arena, never merely because its bytes have all arrived. This file proves
+/// what happens to those in-between bytes across a real interruption and Resume: put a Message in the
+/// peer's receive buffer, fully arrived but not yet handed to the arena (read-share exhaustion, exactly
+/// as <see cref="StreamSessionDeliveryCounterTests"/>
 /// builds it), kill the transport with it still sitting there, resume, and assert every Message the far
 /// end sent is delivered exactly once and this end's own report of what it received is always exactly
 /// what it actually delivered — never inflated by a Message whose bytes were merely read. Getting the

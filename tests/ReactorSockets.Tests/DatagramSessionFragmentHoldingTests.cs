@@ -6,10 +6,10 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #257: an admitted Fragment is diverted into its Space's receive-window slot instead of being
+/// An admitted Fragment is diverted into its Space's receive-window slot instead of being
 /// delivered — no frame-arena reservation, no pending <see cref="SessionEventKind.MessageReceived"/>,
 /// no rise in <see cref="PeerCounters.MessagesReceived"/>. Recognising a complete Fragment set is
-/// issue #258's concern, not this one's: these tests only prove a held Fragment is invisible to a
+/// proven elsewhere. These tests only prove a held Fragment is invisible to a
 /// consumer and that an ordinary record alongside it is unaffected. Built the same way
 /// <see cref="DatagramSessionHostileFragmentDiscardTests"/> is — a live Session driven by hand from a
 /// bare <see cref="RawReactor"/>, since establishing a Session and then addressing it needs the

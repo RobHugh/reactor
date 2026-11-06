@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #403 (parent #57): a Goodbye lost in transit is resent by the ordinary retransmission-timeout
+/// A Goodbye lost in transit is resent by the ordinary retransmission-timeout
 /// path and delivered. The datagram carrying the first Goodbye transmission is dropped by a
 /// <see cref="LossyProxy"/>, time then advances in steps that stay inside the Linger, and the receiver still
 /// raises <see cref="DisconnectReason.PeerGoodbye"/> while the sender raises

@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #367 (parent #55): an Interrupted datagram Peer whose effective Linger
+/// An Interrupted datagram Peer whose effective Linger
 /// (<c>PeerSlot.EffectiveLinger</c>, issue #363's negotiated minimum) has elapsed since
 /// <c>PeerSlot.InterruptedTimestamp</c> (issue #366) closes with <see cref="DisconnectReason.LingerExpired"/>.
 /// </summary>

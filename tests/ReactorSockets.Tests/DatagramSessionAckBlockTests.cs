@@ -191,8 +191,8 @@ public class DatagramSessionAckBlockTests
     public void Pump_AckBaseAtUInt32MaxValueWithEveryBitSet_SurvivesTheWrappingAdditionWithoutThrowing()
     {
         // Arrange — a base of uint.MaxValue makes every bit's described sequence
-        // (ackBase + n + 1) wrap past zero. This is the arithmetic edge the untrusted-ack criterion asks
-        // for: a hostile base placed exactly where unchecked addition wraps.
+        // (ackBase + n + 1) wrap past zero. This is the arithmetic edge an untrusted ack must survive:
+        // a hostile base placed exactly where unchecked addition wraps.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -256,8 +256,8 @@ public class DatagramSessionAckBlockTests
         // Arrange — a long run of arrivals whose ack bases and bits flip wildly
         // between one datagram and the next — forward jumps, backward jumps landing on now-stale bases,
         // the two wrap edges, all-zero and all-one bitfields, and ordinary small values — driven from a
-        // fixed seed so a failure is reproducible. Nothing here was ever legitimately sent, so this is
-        // squarely the untrusted-ack criterion: the Peer must survive every shape without throwing,
+        // fixed seed so a failure is reproducible. Nothing here was ever legitimately sent, so every ack
+        // here is untrusted: the Peer must survive every shape without throwing,
         // without gaining a deferral that has nothing behind it, and without the Session itself being
         // torn down.
         const int seed = 20260821;

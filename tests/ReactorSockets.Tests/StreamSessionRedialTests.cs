@@ -91,7 +91,7 @@ public class StreamSessionRedialTests
     }
 
     // =========================================================================================
-    // AC1 / AC6 — an Interrupted dialling-side Peer re-dials without being asked, targeting the
+    // An Interrupted dialling-side Peer re-dials without being asked, targeting the
     // endpoint originally dialled, during ordinary Pump calls with FakeTimeProvider advanced
     // =========================================================================================
 

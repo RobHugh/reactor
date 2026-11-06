@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #300: the held-against-expected figures are the whole value of
+/// The held-against-expected figures are the whole value of
 /// <see cref="DiagnosticId.FragmentSetAbandoned"/>, so this file proves them at both ends of the range
 /// a consumer acts on differently — one fragment held and one fragment short — rather than once in the
 /// middle, where a bug that swapped or off-by-oned held and expected would be invisible. It also proves

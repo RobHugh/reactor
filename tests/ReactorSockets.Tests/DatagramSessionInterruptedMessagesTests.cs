@@ -5,7 +5,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #386 (parent #56): Messages each end sends in a reliable mode while its Peer is Interrupted
+/// Messages each end sends in a reliable mode while its Peer is Interrupted
 /// reach the other end after the Resume through a new port, exactly once, and none before it.
 /// ReliableOrdered Messages also arrive in send order.
 /// </summary>

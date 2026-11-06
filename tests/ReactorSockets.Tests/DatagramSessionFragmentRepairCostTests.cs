@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #249, the test that justifies the whole fragmentation design (ADR 0004): each Fragment is an
+/// The test that justifies the whole fragmentation design (ADR 0004): each Fragment is an
 /// ordinary reliable packet carrying its own sequence number, so the ack and retransmit machinery
 /// repairs a lost Fragment by exactly the path that repairs a lost small Message — one Datagram, not
 /// the whole Message. A 57-Fragment <see cref="DeliveryMode.ReliableOrdered"/> Message is Sent, exactly

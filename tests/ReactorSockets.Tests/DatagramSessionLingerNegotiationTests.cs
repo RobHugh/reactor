@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #363: both establishing paths — the dialler's <c>OnAccept</c> and the accepter's path reached
+/// Both establishing paths — the dialler's <c>OnAccept</c> and the accepter's path reached
 /// from <c>OnHelloWithCookie</c> — store the peer's announced Linger and compute the effective
 /// (minimum) Linger. This file proves that two Reactors configured with different Lingers still
 /// establish, in both dialling directions. What the effective Linger governs is asserted where it is

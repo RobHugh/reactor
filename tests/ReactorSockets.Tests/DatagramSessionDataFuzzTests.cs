@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #166: a fuzzed hostile-input corpus for the data path — the parse loop
+/// A fuzzed hostile-input corpus for the data path — the parse loop
 /// <see cref="DatagramSessionDataDatagramParseTests"/> proves the shape of, aimed here at a live
 /// Session with random noise, boundary truncations, mutated flag bytes, overrunning lengths, and a
 /// zero-length body naming a live Session. Every one of them either parses or produces

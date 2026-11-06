@@ -7,7 +7,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #333: a delivery-counter record must never land inside a Message frame that a short retention
+/// A delivery-counter record must never land inside a Message frame that a short retention
 /// write left half-sent, on any path that emits one: the standalone send and the ride on a retention
 /// write (issue #132) when the received count advances, and the send-idle heartbeat (issue #114).
 /// </summary>

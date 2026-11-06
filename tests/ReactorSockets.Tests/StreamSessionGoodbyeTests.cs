@@ -40,7 +40,7 @@ public class StreamSessionGoodbyeTests
     }
 
     // =========================================================================================
-    // Local Close: ordering, Send-after-Close, and the flush-then-close sequence (AC1, AC2)
+    // Local Close: ordering, Send-after-Close, and the flush-then-close sequence
     // =========================================================================================
 
     [Fact]
@@ -149,7 +149,7 @@ public class StreamSessionGoodbyeTests
     }
 
     // =========================================================================================
-    // Goodbye received with nothing outstanding: closes directly (AC3, AC5 — PeerGoodbye)
+    // Goodbye received with nothing outstanding: closes directly (PeerGoodbye)
     // =========================================================================================
 
     [Fact]
@@ -176,7 +176,7 @@ public class StreamSessionGoodbyeTests
 
     // =========================================================================================
     // Goodbye received while this end's own retention still has bytes to deliver: Closing, then
-    // Closed once that retention drains (AC1)
+    // Closed once that retention drains
     // =========================================================================================
 
     [Fact]

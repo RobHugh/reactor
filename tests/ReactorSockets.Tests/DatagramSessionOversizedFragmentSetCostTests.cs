@@ -7,10 +7,10 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #286's two cost-shaped acceptance criteria for the oversized-Fragment-set refusal
-/// <see cref="DatagramSessionReactor.ParseDataDatagram"/> applies (issue #282): the refusal itself
+/// The two costs of the oversized-Fragment-set refusal
+/// <see cref="DatagramSessionReactor.ParseDataDatagram"/> applies: the refusal itself
 /// allocates nothing on the receive path, and closing the offending Peer never touches any other Peer
-/// this Reactor holds open. Issue #285 owns the refusal's own behaviour — the close reason and the
+/// this Reactor holds open. The refusal's own behaviour — the close reason and the
 /// inclusive boundary of <c>_maxLegalFragmentCount</c> — and is proved in
 /// <c>DatagramSessionOversizedFragmentSetTests</c>; this file does not restate either.
 /// </summary>
@@ -50,7 +50,7 @@ public class DatagramSessionOversizedFragmentSetCostTests
     private const int MeasuredIterationsPerPhase = 60;
 
     /// <summary>
-    /// Closes issue #286's "allocates nothing" criterion. A thousand-plus repeated oversized claims
+    /// The refusal allocates nothing. A thousand-plus repeated oversized claims
     /// cannot be fed down one Session, because the very first one closes it (issue #282) — so each
     /// iteration here re-establishes a fresh Session over the same accepter and client sockets before
     /// sending its claim, and the measured cost is therefore handshake-plus-refusal together, not the
@@ -67,7 +67,7 @@ public class DatagramSessionOversizedFragmentSetCostTests
     /// it has nothing left to grow — an accumulating dictionary, list or cache anywhere on this path
     /// would instead show up here as phase two costing more than phase one. It would not isolate the
     /// refusal's bytes to an exact figure — the handshake's own allocation dominates the total — but
-    /// that is not this criterion: the criterion is that the refusal adds no growing cost of its own.
+    /// that is not the claim. The claim is that the refusal adds no growing cost of its own.
     /// Diagnostics are disabled on the harness so the Warn-level log the refusal emits
     /// (<see cref="DatagramSessionReactor"/>'s own doc references <c>ForOversizedFragmentSet</c>) does
     /// not itself grow a recording Sink's list and mask the thing being measured.
@@ -114,7 +114,7 @@ public class DatagramSessionOversizedFragmentSetCostTests
     /// Runs <paramref name="cycles"/> cycles of "establish a Session, then send one oversized Fragment
     /// claim on it", each cycle re-using <paramref name="accepter"/>'s freed capacity Slot and
     /// <paramref name="client"/>'s one bound socket rather than allocating a new Reactor or socket per
-    /// iteration — that allocation would swamp the measurement with something this criterion is not
+    /// iteration — that allocation would swamp the measurement with something this test is not
     /// about. Non-inlined so neither phase's call frame is folded into its caller by the JIT.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -140,7 +140,7 @@ public class DatagramSessionOversizedFragmentSetCostTests
     }
 
     /// <summary>
-    /// Closes issue #286's "closes one Session only" criterion: three Peers live on one accepter
+    /// The refusal closes one Session only: three Peers live on one accepter
     /// Reactor, one of them — built on a bare <see cref="RawReactor"/>, per this file's own scope note
     /// — sends a Fragment claim declaring more Fragments than this accepter's floor allows. The other
     /// two keep sending and are still delivered, both before and after the violation, across the same
@@ -186,7 +186,7 @@ public class DatagramSessionOversizedFragmentSetCostTests
         SendReliableRecordAndAssertDelivered(accepter, clientB, linkB, destination, peerB.SessionId, sequence: 1, payload: [0xB1]);
 
         // Assert — exactly one Session closed this whole test, and it is PeerC's. Which reason it
-        // closed with is DatagramSessionOversizedFragmentSetTests' own criterion, not restated here.
+        // closed with is asserted in DatagramSessionOversizedFragmentSetTests, not restated here.
         events.Where(e => e.Kind == SessionEventKind.PeerClosed)
             .Should().ContainSingle()
             .Which.Peer.Should().Be(peerC.Peer);

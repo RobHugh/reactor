@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #259: a completed Fragment set (issue #258's <c>IsGroupComplete</c>) is delivered as one
+/// A completed Fragment set (issue #258's <c>IsGroupComplete</c>) is delivered as one
 /// contiguous Message and its receive-window slots are released. Built the same way
 /// <see cref="DatagramSessionFragmentHoldingTests"/> is — a live Session driven by hand from a bare
 /// <see cref="RawReactor"/> — since these tests need to construct exact Fragment sequences and byte

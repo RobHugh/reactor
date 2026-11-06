@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #368 (parent #55): under the negotiated-minimum rule (#363), two Reactors whose own configured
+/// Under the negotiated-minimum rule (#363), two Reactors whose own configured
 /// Lingers disagree do not merely each individually close on their own effective value — they abandon the
 /// Session at the <em>same instant</em>, so a Resume can no longer fail because the peer had a different
 /// idea of how long the Session existed. Both harnesses here and the <see cref="LossyProxy"/> between them

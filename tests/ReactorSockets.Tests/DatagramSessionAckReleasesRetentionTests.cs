@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #345 (parent #53, found by the #53 code review's finding P1): an acknowledgement frees the
+/// An acknowledgement frees the
 /// retention slot of every reliable record it releases, on both reliable Spaces, on the datagram
 /// Session profile. Without that release a Peer's retention slots — every idle-triggered Ping's and
 /// every reliable Send's — would never come back once acknowledged, so a quiet Session's Pings would
@@ -30,7 +30,7 @@ public class DatagramSessionAckReleasesRetentionTests
     private const int FragmentSize = 600;
 
     // =========================================================================================
-    // Criterion 1 — a quiet Session with retention sized to few slots keeps emitting exactly one
+    // A quiet Session with retention sized to few slots keeps emitting exactly one
     // Ping per send-idle interval across at least 10 intervals while the far end acks them, and a
     // ReliableUnordered Send at the end still returns Sent.
     // =========================================================================================
@@ -75,7 +75,7 @@ public class DatagramSessionAckReleasesRetentionTests
     }
 
     // =========================================================================================
-    // Criterion 2 (#344 criterion 1) — after a Ping is sent and the far end's ack is read, a Send
+    // After a Ping is sent and the far end's ack is read, a Send
     // that would otherwise return RetentionExhausted succeeds.
     // =========================================================================================
 
@@ -111,7 +111,7 @@ public class DatagramSessionAckReleasesRetentionTests
     }
 
     // =========================================================================================
-    // Criterion 3 (#340 criterion 4) — with every slot held by an un-acked Ping, the Ping is
+    // With every slot held by an un-acked Ping, the Ping is
     // refused for want of a slot, and it is emitted on the first Pump after an ack frees one, on
     // the same Peer.
     // =========================================================================================
@@ -120,7 +120,7 @@ public class DatagramSessionAckReleasesRetentionTests
     public void Pump_ReliableUnorderedRetentionFullOnEstablishedPeer_RefusesThePingAndEmitsItOnTheSamePeersFirstPumpAfterAnAckFreesASlot()
     {
         // Arrange — one ReliableUnordered slot, filled by an ordinary reliable Send rather than by
-        // the Ping itself, so the Ping is what is refused for want of a slot — the scenario AC4 names.
+        // the Ping itself, so the Ping is what is refused for want of a slot.
         // Linger is pushed far out on both ends so no RTO ever fires mid-run: the RTO ceiling is the
         // negotiated minimum of the two (issue #365), so an accepter left at the harness's short default
         // would drag the dialler's own effective ceiling back down with it.
@@ -169,7 +169,7 @@ public class DatagramSessionAckReleasesRetentionTests
     }
 
     // =========================================================================================
-    // Criterion 4 — a reliable data record (ReliableOrdered and ReliableUnordered) acked by the
+    // A reliable data record (ReliableOrdered and ReliableUnordered) acked by the
     // far end frees its slot: with retention sized to N slots, more than N acked Sends in sequence
     // all return Sent.
     // =========================================================================================
@@ -216,7 +216,7 @@ public class DatagramSessionAckReleasesRetentionTests
     }
 
     // =========================================================================================
-    // Criterion 5 — an un-acked record is still resent after the ack frees a different slot, and
+    // An un-acked record is still resent after the ack frees a different slot, and
     // a released record is never resent.
     // =========================================================================================
 
@@ -318,7 +318,7 @@ public class DatagramSessionAckReleasesRetentionTests
     }
 
     // =========================================================================================
-    // Criterion 6 — fragments: a fragmented reliable Message's slots are freed once its fragments
+    // Fragments: a fragmented reliable Message's slots are freed once its fragments
     // are acked.
     // =========================================================================================
 

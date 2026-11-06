@@ -7,7 +7,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #171: the receive arena — the datagram Session profile's receive side of the memory bill,
+/// The receive arena — the datagram Session profile's receive side of the memory bill,
 /// <c>Capacity × 2 reliable Spaces × ReceiveWindowFragments × FragmentSize</c> — is preallocated once
 /// at <see cref="DatagramSessionReactor"/> construction, regardless of whether any Peer has connected,
 /// and released when the Reactor is disposed. Mirrors the allocation-measurement pattern in
@@ -226,9 +226,7 @@ public class DatagramSessionReceiveArenaAllocationTests
     }
 
     /// <summary>
-    /// Closes issue #171's outstanding acceptance criterion — "memory does not grow across a sustained
-    /// run of inbound datagrams" — left unticked when the arena landed because nothing wrote into the
-    /// receive path yet; #172 and #173 wired that up. Each cycle sends every odd offset in the window
+    /// Memory does not grow across a sustained run of inbound datagrams. Each cycle sends every odd offset in the window
     /// in one datagram, then every even offset in another — the same out-of-order, hole-filling pattern
     /// a direct <c>ReceiveWindow</c> test would use — over
     /// the <c>Unreliable</c> Space, which classifies without retaining any payload, so this measures the
@@ -274,7 +272,7 @@ public class DatagramSessionReceiveArenaAllocationTests
     }
 
     /// <summary>
-    /// Closes #174's fifth and last criterion (#181): the sustained-run test above only shows the cost
+    /// The sustained-run test above only shows the cost
     /// does not climb, and only for one arrival pattern. This drives two phases of identical datagram
     /// count and per-datagram shape — same header, same single unfragmented Unreliable-Space record —
     /// through the same live Session, differing only in the sequences the records carry: one phase
@@ -328,23 +326,22 @@ public class DatagramSessionReceiveArenaAllocationTests
         (afterMixedCounters.UnreliableLossPackets - beforeMixedCounters.UnreliableLossPackets).Should().BeGreaterThan(0);
 
         // Assert — same datagram count, same per-datagram shape, so the two deltas differ only by
-        // whichever Classify branch each phase's sequences took. Exact equality, not a tolerance
-        // (#181's third criterion): the measurement is warmed up above, so nothing but that branch
+        // whichever Classify branch each phase's sequences took. Exact equality, not a tolerance:
+        // the measurement is warmed up above, so nothing but that branch
         // choice is left to explain a difference.
         mixedDelta.Should().Be(inOrderDelta);
     }
 
     /// <summary>
-    /// Closes issue #257's allocation-free acceptance criterion: holding a Fragment (copying its
+    /// Holding a Fragment (copying its
     /// payload into the receive arena's preallocated slot, recording its length) must not allocate any
     /// more than an ordinary admitted record does. Two phases of identical shape — a sustained run of
     /// two-piece <c>ReliableOrdered</c> Fragment sets, each piece its own datagram — run back to back;
     /// since every sequence admits in order (ADR 0004: a Fragment rides an ordinary sequence, so
     /// <c>AdvanceBase</c> keeps sliding the base forward exactly as it would for unfragmented traffic),
     /// the window never fills and the second phase must cost no more than the first. Every set here
-    /// completes the moment its second piece lands (issue #258's <c>IsGroupComplete</c> runs on every
-    /// held Fragment), so this also closes #258's allocation-free criterion for the completeness path —
-    /// see also the dedicated reverse-order test below.
+    /// completes the moment its second piece lands (<c>IsGroupComplete</c> runs on every held
+    /// Fragment), so this also proves the completeness path allocation-free. See also the dedicated reverse-order test below.
     /// </summary>
     [Fact]
     public void Pump_ASustainedRunOfReliableOrderedFragments_DoesNotGrowAllocationAsTheRunContinues()
@@ -382,7 +379,7 @@ public class DatagramSessionReceiveArenaAllocationTests
     }
 
     /// <summary>
-    /// Closes issue #258's allocation-free acceptance criterion directly: a sustained run of two-piece
+    /// The completeness path is allocation-free when pieces arrive out of order: a sustained run of two-piece
     /// <c>ReliableOrdered</c> Fragment sets whose pieces arrive in <em>reverse</em> order — index 1
     /// before index 0 — so every set is held incomplete by its first datagram and only completes on
     /// its second. Two phases of identical shape run back to

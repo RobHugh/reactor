@@ -172,8 +172,8 @@ public class StreamSessionSlotReservationHeldPeerTests
     // =========================================================================================
 
     /// <summary>
-    /// Issue #140's criterion is that the held Peer "is still Interrupted" across a capacity refusal,
-    /// not merely that it has not yet been closed. A held Peer that stayed open (established or
+    /// The held Peer must still be Interrupted across a capacity refusal,
+    /// not merely not yet closed. A held Peer that stayed open (established or
     /// resumed) or one whose Slot leaked forever would both still pass a bare "no PeerClosed drained"
     /// assertion. Advancing time past its effective Linger and Pumping is the proof that distinguishes
     /// them: only a Peer genuinely still Interrupted closes at that instant, naming

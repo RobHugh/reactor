@@ -9,7 +9,7 @@ namespace ReactorSockets.Tests;
 /// A delivery-counter record is emitted once
 /// per <see cref="StreamSessionReactor.Pump"/> in which a Peer's received count actually advanced,
 /// riding the Pump boundary the consumer already chose rather than a new timer or a trigger tied to a
-/// count of Messages. The mandatory acceptance criterion — a one-way sender at high rate into a
+/// count of Messages. The central claim — a one-way sender at high rate into a
 /// receiver that never Sends application data must not exhaust retention over many Pumps — is
 /// <see cref="Send_OneWayTrafficAtHighRateIntoAReceiverThatNeverSendsApplicationData_NeverExhaustsRetentionOverManyPumps"/>,
 /// the only test in this file that needs two real <see cref="StreamSessionReactor"/> instances rather

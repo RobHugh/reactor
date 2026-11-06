@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #251: the evidence behind the head-of-line amplification paragraph in
+/// The evidence behind the head-of-line amplification paragraph in
 /// <c>docs/delivery-modes.md</c> — the one beside the delivery-mode table, which says that a large
 /// fragmented <see cref="DeliveryMode.ReliableOrdered"/> Message blocks every later Message in its
 /// ordering domain until all of its Fragments arrive, and names

@@ -4,9 +4,9 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #317 (parent #51, under slice-7 spec #46), revised by issue #446: what a real two-Reactor path
-/// through a <see cref="LossyProxy"/> does when part of a Fragment set is lost. Since #446 a ring lap
-/// never overwrites a held Fragment whose set can still complete, and a real sender only ever leaves sets
+/// What a real two-Reactor path
+/// through a <see cref="LossyProxy"/> does when part of a Fragment set is lost. A ring lap never
+/// overwrites a held Fragment whose set can still complete, and a real sender only ever leaves sets
 /// like that, so <see cref="DiagnosticId.FragmentSetAbandoned"/> never fires here.
 /// <see cref="DatagramSessionFragmentSetAbandonedTests"/> proves its held-against-expected figures with a
 /// hand-built client, the only kind that can leave a set uncompletable.
@@ -16,8 +16,8 @@ namespace ReactorSockets.Tests;
 /// <b>Why a Message this wide.</b> A Reactor packs as many of a Message's Fragments into one outbound
 /// Datagram as the 65 507-byte UDP maximum has room for, so an ordinary
 /// <see cref="FragmentSizeDiagnosisFixture.SendLargeMessage"/> crosses as a single Datagram and a path
-/// that loses it loses the entire set — issue #271's black hole, which leaves the receiving window
-/// nothing held and no set to report against, and is exactly why that issue's criterion went unticked.
+/// that loses it loses the entire set. That black hole leaves the receiving window nothing held and no
+/// set to report against.
 /// The case a consumer actually cares about is the one in between: a path that carries part of a set and
 /// loses the rest. Reaching it through a real path needs a set that spans more than one Datagram, which
 /// is what <see cref="FragmentSizeDiagnosisFixture.SendSpanningMessage"/> sends. Every loss here is then

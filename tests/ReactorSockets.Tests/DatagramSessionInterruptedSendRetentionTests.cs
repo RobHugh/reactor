@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #369 (parent #55): once a Peer is <see cref="SessionEventKind.PeerInterrupted"/>, reliable
+/// Once a Peer is <see cref="SessionEventKind.PeerInterrupted"/>, reliable
 /// <see cref="DatagramSessionReactor.Send"/> keeps succeeding — the same rule the stream profile applies
 /// (<see cref="StreamSessionInterruptedRetentionTests"/>) — until the Peer's reliable Space has no free
 /// retention slot left, at which point <c>Send</c> returns <see cref="SendOutcome.RetentionExhausted"/>

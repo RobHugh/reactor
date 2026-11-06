@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #371 (parent #55): once a datagram Peer transitions to
+/// Once a datagram Peer transitions to
 /// <see cref="SessionEventKind.PeerInterrupted"/>, the Interrupted end keeps sending Pings — the
 /// seven-byte <c>ReliableUnordered</c> control record <see cref="DatagramSessionSendIdlePingTests"/>
 /// proves the shape of — at the send-idle interval or as the adaptive retransmission of one still

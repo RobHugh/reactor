@@ -6,10 +6,10 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #178: the <c>u32</c> sequence wrap, exercised through the public seam. Ordering in the
+/// The <c>u32</c> sequence wrap, exercised through the public seam. Ordering in the
 /// datagram data path is decided in exactly one place — <c>SequenceNumber.IsNewerThan</c>, which
 /// reinterprets an unsigned difference as signed so a sequence just above the wrap is newer than one
-/// just below it — and until now nothing drove a receive window across that boundary.
+/// just below it. These tests drive a receive window across that boundary.
 /// </summary>
 /// <remarks>
 /// <para>

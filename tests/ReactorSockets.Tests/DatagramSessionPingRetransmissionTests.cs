@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #343 (parent #53): a Ping (issue #340) is not a special-cased timer of its own — it is an
+/// A Ping (issue #340) is not a special-cased timer of its own — it is an
 /// ordinary <c>ReliableUnordered</c> sequence that took retention's <c>isControl</c> path at
 /// <c>QueuePing</c>, and every test here proves it inherits the adaptive timer, backoff and
 /// retransmission machinery <see cref="DatagramSessionRetransmitResendTests"/> and
@@ -29,13 +29,13 @@ public class DatagramSessionPingRetransmissionTests
 
     /// <summary>
     /// A send-idle interval far longer than any RTO this file's estimator ever produces (the ceiling is
-    /// the harness's own one-second Linger): AC2 needs a interval this large so a Ping's resend can only
+    /// the harness's own one-second Linger): an interval this large means a Ping's resend can only
     /// be explained by the RTO, never by a second send-idle interval quietly having elapsed too.
     /// </summary>
     private static readonly TimeSpan _sendIdleInterval = TimeSpan.FromHours(2);
 
     // =========================================================================================
-    // AC1 — a dropped Ping is resent with the same sequence, the control bit still set, length 0
+    // A dropped Ping is resent with the same sequence, the control bit still set, length 0
     // =========================================================================================
 
     [Fact]
@@ -80,7 +80,7 @@ public class DatagramSessionPingRetransmissionTests
     }
 
     // =========================================================================================
-    // AC2 — the resend happens at the effective RTO, not at SendIdleInterval
+    // The resend happens at the effective RTO, not at SendIdleInterval
     // =========================================================================================
 
     [Fact]
@@ -118,7 +118,7 @@ public class DatagramSessionPingRetransmissionTests
     }
 
     // =========================================================================================
-    // AC3 — two different RTT histories give the Ping different resend deadlines, while
+    // Two different RTT histories give the Ping different resend deadlines, while
     // SendIdleInterval stays identical in both
     // =========================================================================================
 
@@ -177,7 +177,7 @@ public class DatagramSessionPingRetransmissionTests
     }
 
     // =========================================================================================
-    // AC4 — a Ping dropped repeatedly backs off the same way a dropped data record does
+    // A Ping dropped repeatedly backs off the same way a dropped data record does
     // =========================================================================================
 
     [Fact]

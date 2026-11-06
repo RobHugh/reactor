@@ -465,7 +465,7 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     }
 
     /// <summary>
-    /// Issue #307's first shared assertion: across every datagram this fixture's proxy has observed
+    /// The first shared assertion: across every datagram this fixture's proxy has observed
     /// since the handshake completed, every record decodes as one of the three shapes this fixture's own
     /// scenario ever produces, travelling only the one direction that shape can legitimately come from —
     /// a Fragment of the large Message or the small Message's own record
@@ -540,7 +540,7 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     }
 
     /// <summary>
-    /// Issue #307's second shared assertion: both ends' configured fragment size, read back off the same
+    /// The second shared assertion: both ends' configured fragment size, read back off the same
     /// <see cref="DatagramSessionOptions"/> instance each harness was constructed with
     /// (<see cref="DatagramSessionOptions.ResolvedFragmentSize"/> via
     /// <see cref="DatagramSessionReactorHarness.Options"/>), is exactly <paramref name="expectedFragmentSize"/>

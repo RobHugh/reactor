@@ -269,7 +269,7 @@ public class StreamSessionResumeDiagnosticsTests
     {
         // Arrange — the same expired reservation. This is the reconfiguration path and the correct
         // one: the Session that secret named is gone, so what comes back negotiates fresh. The dial
-        // carries the once-valid secret, which is what makes this the criterion's own case rather
+        // carries the once-valid secret, which is what makes this the expired-secret case rather
         // than an unrelated fresh dial that happens to arrive afterwards.
         using StreamSessionReactorHarness accepter = new(capacity: 1);
         List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();

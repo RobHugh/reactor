@@ -5,7 +5,7 @@ using Harness = ReactorSockets.Tests.StreamSessionReactorHarness;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #61: the Counter surface audited on the stream Session profile. Every field rises where
+/// The Counter surface audited on the stream Session profile. Every field rises where
 /// expected and nowhere else, <see cref="ReactorCounters.AdmissionDiscards"/> stays at zero for a whole
 /// exchange, <see cref="ReactorCounters.AdmissionDeferrals"/> counts declinings rather than
 /// connections, a Resume lowers nothing, and a snapshot is a value.

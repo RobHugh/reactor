@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #127 (4.6.1): the rewind. After a Resume, the sender writes from the peer's reported delivery
+/// The rewind. After a Resume, the sender writes from the peer's reported delivery
 /// counter — the bytes it writes are exactly the ones already framed and sitting in the retention ring,
 /// nothing re-framed and nothing reconstructed (<see cref="RetentionArena.RewindSentToMessageCount"/>,
 /// L0). Two directions, because a Resume record is one-way (issue #115): the listening side reads the
@@ -197,7 +197,7 @@ public class StreamSessionResumeRewindTests
         // Arrange — a ring sized to fit exactly one maximum-size frame. The first Message fills it,
         // is actually read and confirmed by the counterparty, and is released — the head now sits at
         // Message count 1. While Interrupted, a second Message re-fills the freed room, and then
-        // RetentionExhausted (issue #120) is what a third Send returns, exactly the AC1 setup: the ring
+        // RetentionExhausted is what a third Send returns: the ring
         // has genuinely overflowed during the outage before the peer ever resumes.
         using StreamSessionReactorHarness accepter =
             new(capacity: 1, maxMessageSize: RetentionGapMaxMessageSize, retentionBytes: RetentionGapRetentionBytes);
