@@ -7,8 +7,9 @@ namespace ReactorSockets.Tests;
 /// Issue #352 (parent #54): the datagram profile's second liveness timer. A Peer that hears nothing
 /// from its remote for <c>RemoteSendIdleInterval × ResolvedMissedHeartbeats</c> moves to
 /// <see cref="SessionEventKind.PeerInterrupted"/>, mirroring <c>StreamSessionReactor</c>'s own
-/// receive-idle deadline (issue #117) at the datagram profile's own shape: no socket to unregister, no
-/// Linger to start counting down yet (#55), just the Event.
+/// receive-idle deadline (issue #117) at the datagram profile's own shape: no socket to unregister,
+/// just the Event. The Linger countdown that starts from the interruption is
+/// <see cref="DatagramSessionLingerExpiryTests"/>' subject.
 /// </summary>
 /// <remarks>
 /// Every test drives two real <see cref="DatagramSessionReactor"/>s through a <see cref="LossyProxy"/>

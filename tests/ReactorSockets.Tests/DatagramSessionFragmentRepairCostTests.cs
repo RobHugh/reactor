@@ -25,17 +25,16 @@ namespace ReactorSockets.Tests;
 /// can then target one Fragment precisely.
 /// </para>
 /// <para>
-/// <b>What "completes" means here.</b> Receive-side reassembly into a delivered Message is issue #49
-/// and is not implemented — none of its six sub-issues are done — so a
-/// <see cref="SessionEventKind.MessageReceived"/> Event can never be asserted for a fragmented Message
-/// today. The strongest honest equivalent this test can reach is wire-level: a
+/// <b>What "completes" means here.</b> This test asserts completion at the wire, not as a
+/// <see cref="SessionEventKind.MessageReceived"/> Event: delivery of a completed Fragment set is
+/// <see cref="DatagramSessionFragmentDeliveryTests"/>' subject. A
 /// <see cref="WireTap"/> chained behind the <see cref="LossyProxy"/> (dialler -&gt; proxy -&gt; tap -&gt;
 /// accepter) captures only what the proxy actually let through, so it proves every one of the 57
 /// Fragment sequences — including the one originally dropped, carried instead by its retransmission —
 /// genuinely reached the accepter exactly once. The accepter is also made to Send a reply once the
 /// transfer is done, and every reply Datagram carries both reliable Spaces' ack blocks unconditionally
 /// (<c>DatagramAssembler.WriteHeader</c>), so that reply's mere existence is the far end acknowledging
-/// what it received. This is not a delivered-Message assertion and does not claim to be one.
+/// what it received.
 /// </para>
 /// </remarks>
 public class DatagramSessionFragmentRepairCostTests
@@ -140,10 +139,9 @@ public class DatagramSessionFragmentRepairCostTests
         (dialler.Reactor.CountersOf(diallerPeer).PacketsRetransmitted - retransmittedBefore).Should().Be(
             1UL, $"repair costs exactly one Datagram, not one Message — only the {position} Fragment (index {dropIndex}) was ever missing");
 
-        // Wire-level completion evidence. Issue #49's reassembly is not implemented, so a delivered
-        // Message cannot be asserted; this is the strongest equivalent the current code honestly
-        // supports — every one of the 57 Fragment sequences reached the accepter, each exactly once,
-        // whether on its original transmission or (for the dropped one) its retransmission.
+        // Wire-level completion evidence: every one of the 57 Fragment sequences reached the accepter,
+        // each exactly once, whether on its original transmission or (for the dropped one) its
+        // retransmission.
         List<uint> arrivedSequences = DecodeRecordSequences(tap, TapDirection.DiallerToAccepter);
         arrivedSequences.Should().HaveCount(FragmentCount, "every Fragment reached the accepter exactly once, across its original send and any retransmission");
         arrivedSequences.Distinct().Should().HaveCount(FragmentCount, "no Fragment sequence arrived twice — the retransmission is what filled the one gap the drop left");

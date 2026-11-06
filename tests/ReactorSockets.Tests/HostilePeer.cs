@@ -12,9 +12,9 @@ namespace ReactorSockets.Tests;
 /// </summary>
 /// <remarks>
 /// A hostile peer's whole point is that it never validates its own output — every method here takes
-/// a caller-supplied <see cref="ReadOnlySpan{T}"/> of bytes and puts it on the wire unexamined. If a
-/// future caller wants to send something structurally invalid, they build the bytes themselves; this
-/// type supplies no framing to be structurally invalid <em>with</em>.
+/// a caller-supplied <see cref="ReadOnlySpan{T}"/> of bytes and puts it on the wire unexamined. A
+/// caller that wants to send something structurally invalid builds the bytes itself. This type
+/// supplies no framing to be structurally invalid <em>with</em>.
 /// </remarks>
 internal sealed class HostilePeer : IDisposable
 {

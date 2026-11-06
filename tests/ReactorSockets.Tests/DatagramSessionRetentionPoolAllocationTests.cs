@@ -75,10 +75,8 @@ public class DatagramSessionRetentionPoolAllocationTests
     }
 
     /// <summary>
-    /// Closes this ticket's construction-driven claim from the issue body: "Admitting a Peer,
-    /// disconnecting it, and admitting another into the same Slot allocates nothing and leaves the new
-    /// Peer's retention empty." Nothing in this ticket writes into the retention pool yet — that is a
-    /// later slice's — so this measures the admission path alone: a second phase of connect/disconnect
+    /// Admitting a Peer, disconnecting it, and admitting another into the same Slot allocates nothing.
+    /// No Peer here Sends, so this measures the admission path alone: a second phase of connect/disconnect
     /// cycles, identical in shape to the first and reusing the same capacity Slots, must not allocate
     /// visibly more than the first, which is what a pool growing under traffic would show up as.
     /// </summary>

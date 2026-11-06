@@ -6,12 +6,10 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #345 (parent #53, found by the #53 code review's finding P1): an acknowledgement frees the
 /// retention slot of every reliable record it releases, on both reliable Spaces, on the datagram
-/// Session profile. Before this ticket, <c>RetentionPool.Release</c> had no production caller anywhere
-/// in <see cref="DatagramSessionReactor"/>: <see cref="OutstandingReliableSequences.ApplyAck"/> updated
-/// its own bookkeeping only, so a Peer's retention slots — every idle-triggered Ping's and every
-/// reliable Send's — never came back once acknowledged, and a quiet Session's Pings eventually stopped
-/// while a busy Session's further reliable Sends eventually saw <see cref="RetentionSlotOutcome.Exhausted"/>
-/// however much the far end had actually acknowledged.
+/// Session profile. Without that release a Peer's retention slots — every idle-triggered Ping's and
+/// every reliable Send's — would never come back once acknowledged, so a quiet Session's Pings would
+/// stop and a busy Session's further reliable Sends would see <see cref="RetentionSlotOutcome.Exhausted"/>
+/// however much the far end had acknowledged.
 /// </summary>
 /// <remarks>
 /// Every test here drives two real <see cref="DatagramSessionReactor"/>s on the public L2 surface (ADR

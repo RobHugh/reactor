@@ -32,21 +32,6 @@ namespace ReactorSockets.Tests;
 /// same test's own sizing note), so each dropped or interrupted Fragment's transmission is isolated to
 /// its own captured Datagram.
 /// </remarks>
-/// <remarks>
-/// <b>Finding, not this ticket's scope:</b> nothing in the current ack-application path
-/// (<see cref="DatagramSessionReactor.ParseDataDatagram"/>'s two <c>ApplyAck</c> calls) ever calls
-/// <see cref="RetentionPool.Release"/> for a Datagram Peer's send-side retention. <c>ApplyAck</c> only
-/// releases a sequence from the retransmit-deadline tracker (<see cref="OutstandingReliableSequences"/>)
-/// — a different "release" than freeing its <see cref="RetentionPool"/> slot. The only place
-/// <see cref="RetentionPool.Release"/> is ever called is nowhere in production code: a Peer's outbound
-/// retention slots for a reliable Space, once filled, stay filled for that Peer's whole life; they are
-/// only reset in bulk when a vacated capacity Slot is reused by a new Peer
-/// (<see cref="RetentionPool.ResetShareHolder"/>, exercised by
-/// <see cref="DatagramSessionRetentionSlotRecycleTests"/>). This is unrelated to receive-side Fragment
-/// survival — the subject of this file — and is left unfixed here, per this ticket's test-only scope;
-/// <see cref="RetentionBytes"/> below is sized generously so this file's own further Sends are never
-/// incidentally blocked by it.
-/// </remarks>
 public class DatagramSessionFragmentSurvivesInterruptionTests
 {
     private const int DatagramHeaderSize = 20;
@@ -74,13 +59,11 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
     private const int MessageSize = (FragmentSize * (FragmentCount - 1)) + LastFragmentRemainder;
 
     /// <summary>
-    /// Retention sized to hold every Fragment one Send retains, plus one further slot. Datagram
-    /// retention slots are freed only when a Peer's Slot is reused by a new occupant
-    /// (<see cref="RetentionPool.ResetShareHolder"/>) — nothing in the ack path calls
-    /// <see cref="RetentionPool.Release"/> today (see the class remarks) — so the one extra slot is
-    /// what <see cref="Pump_AfterCompletionFollowingTheInterruption_TheGroupsSlotsAreReleasedSoFurtherMessagesStillFitTheWindow"/>
-    /// needs room for its own further Send, on top of the original set's four Fragments that stay
-    /// retained for this Fixture's whole life.
+    /// Retention sized to hold every Fragment one Send retains, plus one further slot, so the further
+    /// Send in
+    /// <see cref="Pump_AfterCompletionFollowingTheInterruption_TheGroupsSlotsAreReleasedSoFurtherMessagesStillFitTheWindow"/>
+    /// fits whether or not an ack has yet freed the original set's four Fragments
+    /// (<see cref="RetentionPool.Release"/>).
     /// </summary>
     private const int RetentionBytes = FragmentSize * (FragmentCount + 1);
 
@@ -147,10 +130,9 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
         fixture.ResumeAndCollectDeliveredPayloads().Should().ContainSingle();
 
         // Act — an ordinary further Message. This is deliberately about the accepter's receive window,
-        // not the dialler's own send-side retention (see the class remarks on RetentionPool.Release
-        // never being called): RetentionBytes already gives the dialler's retention pool one spare slot
-        // for exactly this Send, so nothing about this Act depends on the completed group's Fragments
-        // ever being released from the dialler's own retention.
+        // not the dialler's own send-side retention: RetentionBytes gives the dialler's retention pool
+        // one spare slot for exactly this Send, so nothing about this Act depends on when an ack frees
+        // the completed group's Fragments from the dialler's own retention.
         byte[] further = [9, 9, 9];
         fixture.Dialler.Reactor.Send(fixture.DiallerPeer, DeliveryMode.ReliableOrdered, further).Should().Be(SendOutcome.Sent);
         List<byte[]> delivered = fixture.PumpRoundsCollectingPayloads(rounds: 6);

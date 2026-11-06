@@ -9,7 +9,7 @@ namespace ReactorSockets.Tests;
 /// <see cref="DatagramSessionReactor"/> dialogue (#233-#235 gave this the Session id proof, the
 /// coalescing proof and the ack-block proof off the same kind of capture). A record's flags byte
 /// (ADR 0009) carries two mode bits identifying which of the four delivery modes Sent it, a fragment
-/// bit this library never sets, and five spare bits that mean nothing today — which holds only if
+/// bit set only on a Fragment, and five spare bits that carry no meaning, which holds only while
 /// nothing sets one. <see cref="DatagramDecoder"/> exposes the raw <see cref="DecodedPacketRecord.Flags"/>
 /// byte precisely so a test can check the fragment and spare bits directly, rather than only through
 /// <see cref="DecodedPacketRecord.Mode"/>, which the decoder derives by masking those same bits away.

@@ -6,12 +6,11 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #363: both establishing paths — the dialler's <c>OnAccept</c> and the accepter's path reached
 /// from <c>OnHelloWithCookie</c> — store the peer's announced Linger and compute the effective
-/// (minimum) Linger. Nothing reads <c>EffectiveLinger</c> yet (issue #364 adds the Diagnostic, issue
-/// #365 the RTO ceiling, issue #367 expiry), so this file proves only the acceptance criterion that is
-/// observable through the public L2 seam today: two Reactors configured with different Lingers still
-/// establish, in both dialling directions. That "both paths set EffectiveLinger to the minimum" is met
-/// by construction is not asserted here — see the sibling XML docs on
-/// <c>DatagramSessionReactor.PeerSlot.EffectiveLinger</c>.
+/// (minimum) Linger. This file proves that two Reactors configured with different Lingers still
+/// establish, in both dialling directions. What the effective Linger governs is asserted where it is
+/// observed: the negotiated-Linger Diagnostic in <see cref="DatagramSessionLingerNegotiatedDiagnosticTests"/>,
+/// the RTO ceiling in <see cref="DatagramSessionRtoCeilingEffectiveLingerTests"/>, and expiry in
+/// <see cref="DatagramSessionLingerExpiryTests"/>.
 /// </summary>
 public class DatagramSessionLingerNegotiationTests
 {

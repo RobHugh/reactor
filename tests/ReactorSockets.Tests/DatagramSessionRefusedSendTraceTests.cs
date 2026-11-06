@@ -12,16 +12,13 @@ namespace ReactorSockets.Tests;
 /// the sequence is read with <c>Peek</c> and only claimed once retention has committed.
 /// </summary>
 /// <remarks>
-/// The no-sequence-burned half is asserted here as far as the public seam reaches, which is not all
-/// the way. A burned sequence only becomes visible when a <em>later</em> record in the same Space
-/// reaches the wire carrying a number one too high, and no later record can: nothing on any live path
-/// calls <c>Core.RetentionPool.Release</c> yet (issue #187), so a Space that has refused once stays
-/// exhausted for the rest of that Peer's life and never sends again. What is reachable is asserted
-/// below — the refusal puts nothing on the wire, and every other Space still bases at zero — and the
-/// unreachable half was answered the way ADR 0015 prescribes for an invariant the seam cannot reach:
-/// the code was changed until it is trivially true, rather than the seam being opened to observe it.
-/// When #187 lands, the direct assertion belongs here: exhaust a Space, refuse, let an ack free a
-/// slot, and read the next record's sequence off the wire.
+/// The no-sequence-burned half is asserted indirectly. A burned sequence becomes visible only when a
+/// <em>later</em> record in the same Space reaches the wire carrying a number one too high, which
+/// needs an ack to free a retention slot after the refusal. This file asserts that the refusal puts
+/// nothing on the wire and that every other Space still bases at zero. The code makes the rest true by
+/// construction: the sequence is read with <c>Peek</c> and claimed only once retention has committed.
+/// The direct assertion — exhaust a Space, refuse, let an ack free a slot, and read the next record's
+/// sequence off the wire — is not made here.
 /// </remarks>
 public class DatagramSessionRefusedSendTraceTests
 {
