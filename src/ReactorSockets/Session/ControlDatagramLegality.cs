@@ -57,6 +57,11 @@ internal static class ControlDatagramLegality
         // and authorises it by resumeSecret.
         DatagramControlType.Resume => new ControlDatagramShape(true, 20),
 
+        // targetSessionId(4) + nonce(16), both directions (ADR 0021). The challenge is routed by the
+        // dialling end's session id and the response by the accepting end's.
+        DatagramControlType.PathChallenge => new ControlDatagramShape(true, 20),
+        DatagramControlType.PathResponse => new ControlDatagramShape(true, 20),
+
         // The discard arm refuses. An unknown control type is a protocol violation, not an extension
         // point: this profile has no forward-compatibility rule that would let it skip a body of
         // unknown length, so there is nothing it could do but throw the datagram away.

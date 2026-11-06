@@ -58,6 +58,12 @@ internal static class DatagramSessionProtocol
     /// <summary>The length in bytes of the secret established for a later Resume, exchanged during the handshake.</summary>
     public const int ResumeSecretLength = 16;
 
+    /// <summary>
+    /// The length in bytes of the random nonce a <see cref="DatagramControlType.PathChallenge"/> carries
+    /// and a <see cref="DatagramControlType.PathResponse"/> echoes (ADR 0021).
+    /// </summary>
+    public const int PathNonceLength = 16;
+
     /// <summary>The length in bytes of the per-Reactor secret the cookie HMAC is keyed with.</summary>
     public const int EpochSecretLength = 32;
 
