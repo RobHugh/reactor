@@ -55,8 +55,8 @@ internal sealed class ShareHolderTable<T>
     /// </param>
     /// <param name="origin">
     /// The Origin of the Reactor that owns this table, from <see cref="ReactorOrigin.Next"/>. The
-    /// table does not draw its own: a Reactor holds exactly one table today, but the Origin means
-    /// "which Reactor issued this identity", and only the Reactor can say that.
+    /// table does not draw its own, because the Origin means "which Reactor issued this identity",
+    /// and only the Reactor can say that.
     /// </param>
     public ShareHolderTable(int capacity, uint origin)
     {

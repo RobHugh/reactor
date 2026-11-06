@@ -55,8 +55,8 @@ internal sealed class ReceiveWindowSpaces
     {
         // Unreliable and UnreliableSequenced slide (#173): nothing retransmits into either, so a
         // window that only ever refused a far-ahead arrival would stall forever after the first real
-        // loss. ReliableUnordered and ReliableOrdered keep today's behaviour — retransmission (6.4/6.5)
-        // is what fills their holes, so sliding would retire data that was about to arrive.
+        // loss. ReliableUnordered and ReliableOrdered do not slide: retransmission fills their holes,
+        // so sliding would retire data that was about to arrive.
         _unreliable = new ReceiveWindow(
             arena.GetAdmissionRun(shareHolderId, (int)PacketRecordMode.Unreliable), slides: true);
         _unreliableSequenced = new ReceiveWindow(
@@ -78,8 +78,8 @@ internal sealed class ReceiveWindowSpaces
 
     /// <summary>
     /// How many sequences <see cref="Classify(PacketRecordMode, uint)"/>'s most recent call retired un-admitted by sliding the
-    /// touched Space's window forward — zero unless that call touched a sliding Space (today,
-    /// <c>Unreliable</c> or <c>UnreliableSequenced</c>) and that Space's window slid. Mirrors
+    /// touched Space's window forward — zero unless that call touched a sliding Space
+    /// (<c>Unreliable</c> or <c>UnreliableSequenced</c>) and that Space's window slid. Mirrors
     /// <see cref="ReceiveWindow.LastSlideLoss"/> one level up, since a caller here does not hold a
     /// reference to whichever of the four windows <see cref="Classify(PacketRecordMode, uint)"/> touched.
     /// </summary>
