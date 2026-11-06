@@ -31,8 +31,23 @@ internal enum DatagramControlType : byte
     /// <summary>
     /// A request to re-establish a previous Session from a new address, proving entitlement with the
     /// secret that Session established. Sent by the dialling end at the send-idle cadence while its Peer
-    /// is Interrupted. The accepting end routes it by the target session id, authorises it by the
-    /// secret, and sends to the Resume's source from then on.
+    /// is Interrupted. The accepting end routes it by the target session id and authorises it by the
+    /// secret. It sends to the Resume's source from then on if that source has the IP address the Peer
+    /// is already sent to, and otherwise answers with a <see cref="PathChallenge"/> first (ADR 0021).
     /// </summary>
     Resume = 6,
+
+    /// <summary>
+    /// The accepting end's answer to a matched <see cref="Resume"/> from a new IP address: a random nonce
+    /// sent to that address, which must come back in a <see cref="PathResponse"/> from it before the
+    /// Peer's sends move there (ADR 0021). Routed by the dialling end's own session id.
+    /// </summary>
+    PathChallenge = 7,
+
+    /// <summary>
+    /// The dialling end's echo of a <see cref="PathChallenge"/>'s nonce, sent to the address it already
+    /// sends its Peer's datagrams to, never to the challenge's source. Routed by the accepting end's
+    /// own session id (ADR 0021).
+    /// </summary>
+    PathResponse = 8,
 }

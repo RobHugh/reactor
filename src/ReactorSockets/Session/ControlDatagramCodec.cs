@@ -192,6 +192,28 @@ internal static class ControlDatagramCodec
     }
 
     /// <summary>
+    /// Writes a <see cref="DatagramControlType.PathChallenge"/> or a <see cref="DatagramControlType.PathResponse"/>
+    /// (ADR 0021). The two share a body: <paramref name="targetSessionId"/>, the receiver's own local
+    /// session id, which routes the datagram, then <paramref name="nonce"/>.
+    /// </summary>
+    public static void WritePathProbe(Span<byte> destination, DatagramControlType type, uint targetSessionId, ReadOnlySpan<byte> nonce)
+    {
+        ValidateDestinationSize(destination);
+        ValidateFixedLength(nonce, DatagramSessionProtocol.PathNonceLength, nameof(nonce));
+        if (type is not (DatagramControlType.PathChallenge or DatagramControlType.PathResponse))
+        {
+            throw new ArgumentOutOfRangeException(nameof(type), type, "Only a PathChallenge or a PathResponse carries a path nonce.");
+        }
+
+        WriteHeader(destination, type);
+
+        int offset = DatagramSessionProtocol.ControlBodyOffset;
+        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], targetSessionId);
+        offset += sizeof(uint);
+        nonce.CopyTo(destination.Slice(offset, DatagramSessionProtocol.PathNonceLength));
+    }
+
+    /// <summary>
     /// Writes a <see cref="DatagramControlType.Refusal"/>: the reply to a cookie-validated
     /// <see cref="DatagramControlType.HelloWithCookie"/> this Reactor will not answer with a Session.
     /// The version fields are meaningful only for a <see cref="RefusalReason.Version"/> refusal — the
@@ -476,6 +498,30 @@ internal static class ControlDatagramCodec
         targetSessionId = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
         offset += sizeof(uint);
         datagram.Slice(offset, DatagramSessionProtocol.ResumeSecretLength).CopyTo(resumeSecret);
+        return true;
+    }
+
+    /// <summary>
+    /// Reads the body of a <see cref="DatagramControlType.PathChallenge"/> or a
+    /// <see cref="DatagramControlType.PathResponse"/>, whichever <paramref name="type"/> names (ADR 0021).
+    /// Fails on a datagram of any other type, and when <paramref name="nonce"/> is not exactly
+    /// <see cref="DatagramSessionProtocol.PathNonceLength"/> bytes.
+    /// </summary>
+    public static bool TryReadPathProbe(ReadOnlySpan<byte> datagram, DatagramControlType type, out uint targetSessionId, Span<byte> nonce)
+    {
+        if (type is not (DatagramControlType.PathChallenge or DatagramControlType.PathResponse)
+            || nonce.Length != DatagramSessionProtocol.PathNonceLength
+            || !TryReadControlType(datagram, out DatagramControlType read)
+            || read != type)
+        {
+            targetSessionId = default;
+            return false;
+        }
+
+        int offset = DatagramSessionProtocol.ControlBodyOffset;
+        targetSessionId = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
+        offset += sizeof(uint);
+        datagram.Slice(offset, DatagramSessionProtocol.PathNonceLength).CopyTo(nonce);
         return true;
     }
 

@@ -192,4 +192,7 @@ measurement measures your Pump cadence, not TCP's acknowledgement clock. To batc
   it inside your Messages.
 
 Resume is authorised by a separate secret exchanged during the handshake, never by the session field
-([ADR 0009](adr/0009-the-datagram-session-wire-format.md)).
+([ADR 0009](adr/0009-the-datagram-session-wire-format.md)). The secret does not prove the Resume's
+source address receives, so a Resume from a new IP address moves sends there only after that address
+echoes a path challenge. A Resume from the same IP address on a new port moves at once
+([ADR 0021](adr/0021-a-resume-from-a-new-ip-address-is-proven-by-a-path-challenge.md)).

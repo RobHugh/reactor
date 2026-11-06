@@ -198,3 +198,10 @@ absence. The five spare bits stay genuinely spare, and a version bump unlocks th
   mechanism, not just the outcome.
 - The `DiagnosticId` members this ADR implies — a horizon deferral, an RTO backoff, a cookie rejection, a
   version refusal — join the open diagnostic-roster gap.
+
+## Amendment 2026-11-06: a Resume from a new IP address is challenged
+
+ADR 0021 adds `PathChallenge` (7) and `PathResponse` (8) to the pre-Session roster. A matched Resume from
+the IP address the Peer is already sent to still moves the send address at once. One from any other IP
+address moves it only after that address echoes a random nonce, because the secret proves who sent the
+Resume but not that its source receives.

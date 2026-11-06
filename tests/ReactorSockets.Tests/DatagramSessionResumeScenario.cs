@@ -320,6 +320,44 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
         return datagram;
     }
 
+    /// <summary>The control type byte of a PathChallenge.</summary>
+    public const byte PathChallengeType = 7;
+
+    /// <summary>The control type byte of a PathResponse.</summary>
+    public const byte PathResponseType = 8;
+
+    /// <summary>The length of a path challenge's nonce.</summary>
+    public const int PathNonceLength = 16;
+
+    /// <summary>A UDP socket on its own port at <paramref name="address"/>: a resuming party whose source address, not just its port, differs from the Peer's.</summary>
+    public static UdpClient NewResumer(IPAddress address) => new(new IPEndPoint(address, 0));
+
+    /// <summary>Builds a 256-byte, zero-padded PathResponse by hand: header, target session id, then the echoed nonce.</summary>
+    public static byte[] BuildPathResponse(uint targetSessionId, ReadOnlySpan<byte> nonce) =>
+        BuildSessionAndNonce(PathResponseType, targetSessionId, nonce);
+
+    /// <summary>Builds a 256-byte, zero-padded PathChallenge by hand: header, target session id, then the nonce.</summary>
+    public static byte[] BuildPathChallenge(uint targetSessionId, ReadOnlySpan<byte> nonce) =>
+        BuildSessionAndNonce(PathChallengeType, targetSessionId, nonce);
+
+    /// <summary>Whether <paramref name="payload"/> is a control datagram of <paramref name="type"/>.</summary>
+    public static bool IsControlOfType(byte[] payload, byte type) => IsControl(payload) && payload[ControlTypeOffset] == type;
+
+    /// <summary>The target session id a PathChallenge or PathResponse carries.</summary>
+    public static uint PathTargetSessionId(byte[] payload) => BinaryPrimitives.ReadUInt32BigEndian(payload.AsSpan(ControlBodyOffset));
+
+    /// <summary>The nonce a PathChallenge or PathResponse carries.</summary>
+    public static byte[] PathNonce(byte[] payload) => payload.AsSpan(ControlBodyOffset + sizeof(uint), PathNonceLength).ToArray();
+
+    private static byte[] BuildSessionAndNonce(byte type, uint targetSessionId, ReadOnlySpan<byte> nonce)
+    {
+        byte[] datagram = new byte[ControlDatagramSize];
+        datagram[ControlTypeOffset] = type;
+        BinaryPrimitives.WriteUInt32BigEndian(datagram.AsSpan(ControlBodyOffset), targetSessionId);
+        nonce.CopyTo(datagram.AsSpan(ControlBodyOffset + sizeof(uint)));
+        return datagram;
+    }
+
     /// <summary>Whether <paramref name="payload"/> is a control datagram: zero in its session field and exactly <see cref="ControlDatagramSize"/> bytes.</summary>
     public static bool IsControl(byte[] payload) =>
         payload.Length == ControlDatagramSize && !payload.AsSpan(0, sizeof(uint)).ContainsAnyExcept((byte)0);

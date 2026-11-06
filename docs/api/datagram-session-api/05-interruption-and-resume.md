@@ -92,12 +92,24 @@ presents the resume secret exchanged at handshake. The dialling end resumes its 
 receives a well-formed data Datagram for the Session.
 
 **The accepting end** never sends Resume, because it cannot know the dialler's new address. When a
-Resume arrives with the right session id and secret, it points every later Datagram at the address
-the Resume came from, and resumes its Peer if it was interrupted.
+Resume arrives with the right session id and secret, what happens depends on the IP address it came
+from:
+
+- **The same IP address the Peer is already sent to, on any port.** The accepting end points every
+  later Datagram at the address the Resume came from, and resumes its Peer if it was interrupted.
+- **A different IP address.** The accepting end first sends a PathChallenge control Datagram there,
+  carrying a random nonce. The dialling end echoes the nonce in a PathResponse. Only when that echo
+  arrives from the exact address the challenge went to does the accepting end move its send address and
+  resume its Peer. Until then the Peer is sent to its old address.
 
 That address move is what lets a Session survive a NAT rebinding or a change of network on the
-dialling side. The accepting end moves its send address only on a matched Resume, never on a data
-Datagram from a new address.
+dialling side. A rebinding that changes only the port costs nothing extra. A change of IP address
+costs one extra round trip. The accepting end moves its send address only on a matched Resume, never
+on a data Datagram from a new address.
+
+The challenge exists because the secret proves who sent a Resume, not that its source address will
+receive. Without it, any host that completed a handshake could name another host's address and have
+the accepting end's traffic sent there ([ADR 0021](../../adr/0021-a-resume-from-a-new-ip-address-is-proven-by-a-path-challenge.md)).
 
 `PeerResumed` carries the same `PeerId`, generation included. No `PeerClosed` is ever observed in
 between, and `PeerCounters.Resumes` increments on each end that raised it.
@@ -131,3 +143,7 @@ told nothing.
 | The secret matched, but a Goodbye has passed in either direction | `Value0` = 1, `Value1` = 6 |
 
 The secret is compared in constant time.
+
+A PathResponse that names no pending challenge, comes from any address other than the one challenged,
+or echoes the wrong nonce is discarded as `DatagramMalformed` and changes nothing. A correct echo for a
+Peer that has passed a Goodbye in either direction since is refused as the last row above.
