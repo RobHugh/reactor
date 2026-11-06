@@ -8,25 +8,27 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #429: a stream handshake record is held to the same legality rules the datagram profile's
 /// control codec applies, so both transports reject the same malformed inputs. A Hello announcing a
-/// zero <c>MaxMessageSize</c> and a Refusal naming no known reason are both malformed. Driven from
-/// outside the L2 seam (tests/CLAUDE.md) by plain sockets writing a hand-built record. The announced
-/// intervals are covered by <see cref="StreamSessionHostileAnnouncedIntervalTests"/>.
+/// zero <c>MaxMessageSize</c>, a Refusal naming no known reason, and a Refusal or Resume whose padding
+/// is not zero are all malformed. Driven from outside the L2 seam (tests/CLAUDE.md) by plain sockets
+/// writing a hand-built record. The announced intervals are covered by
+/// <see cref="StreamSessionHostileAnnouncedIntervalTests"/>.
 /// </summary>
 public class StreamSessionHandshakeLegalityTests
 {
-    private const byte RefusalRecordType = 2;
+    private const byte RefusalReasonCapacity = 2;
 
     /// <summary>
     /// A zero <c>MaxMessageSize</c> is malformed whatever version the Hello offers, as it is in the
     /// datagram profile's HelloWithCookie.
     /// </summary>
-    public static TheoryData<uint> Versions => new() { StreamSessionTestRecords.ProtocolVersion, 2 };
+    public static TheoryData<uint> VersionsAZeroMaxMessageSizeIsMalformedFor =>
+        new() { StreamSessionTestRecords.ProtocolVersion, 2 };
 
     /// <summary>Reason bytes no member of the wire roster names: below, just above and far above it.</summary>
     public static TheoryData<byte> UnknownReasons => new() { 0, 3, byte.MaxValue };
 
     [Theory]
-    [MemberData(nameof(Versions))]
+    [MemberData(nameof(VersionsAZeroMaxMessageSizeIsMalformedFor))]
     public void Pump_HelloAnnouncingAZeroMaxMessageSize_DiscardsItUnansweredAndKeepsPumping(uint version)
     {
         // Arrange
@@ -70,9 +72,26 @@ public class StreamSessionHandshakeLegalityTests
         using StreamSessionReactorHarness dialler = new(bindLoopback: false);
         using Socket listener = Listen();
         using Socket hostile = AcceptDialFrom(dialler, listener);
-        byte[] refusal = new byte[StreamSessionTestRecords.HandshakeRecordSize];
-        refusal[0] = RefusalRecordType;
-        refusal[1] = reason;
+
+        // Act
+        hostile.Send(StreamSessionTestRecords.BuildRefusal(reason));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events =
+            dialler.PumpUntilDrained(drained => drained.Any(evt => evt.Kind == SessionEventKind.PeerClosed));
+
+        // Assert
+        events.Should().ContainSingle(evt => evt.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.TransportFailed);
+    }
+
+    [Fact]
+    public void Pump_RefusalWithNonZeroPadding_ClosesThePeerAsTransportFailedRatherThanForItsReason()
+    {
+        // Arrange — a well-formed capacity Refusal in every byte but the last.
+        using StreamSessionReactorHarness dialler = new(bindLoopback: false);
+        using Socket listener = Listen();
+        using Socket hostile = AcceptDialFrom(dialler, listener);
+        byte[] refusal = StreamSessionTestRecords.BuildRefusal(RefusalReasonCapacity);
+        refusal[^1] = 1;
 
         // Act
         hostile.Send(refusal);
@@ -82,6 +101,28 @@ public class StreamSessionHandshakeLegalityTests
         // Assert
         events.Should().ContainSingle(evt => evt.Kind == SessionEventKind.PeerClosed)
             .Which.Reason.Should().Be(DisconnectReason.TransportFailed);
+    }
+
+    [Fact]
+    public void Pump_ResumeWithNonZeroPadding_IsNotMatchedOntoTheHeldPeerItsSecretNames()
+    {
+        // Arrange — a Resume presenting the held Peer's genuine secret, well-formed in every byte but
+        // the last.
+        using StreamSessionReactorHarness accepter = new(capacity: 2);
+        List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();
+        accepter.InterruptHeldPeer(held[0]);
+        using Socket hostile = ConnectTo(accepter.Endpoint);
+        byte[] resume = StreamSessionTestRecords.BuildResume(held[0].ResumeSecret);
+        resume[^1] = 1;
+
+        // Act
+        hostile.Send(resume);
+        PumpUntilClosedBy(accepter, hostile);
+
+        // Assert
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.ResumeMatched);
+
+        held[1].Counterparty.Dispose();
     }
 
     private static Socket ConnectTo(IPEndPoint destination)
