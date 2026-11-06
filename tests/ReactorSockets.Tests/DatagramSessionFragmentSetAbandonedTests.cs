@@ -13,15 +13,15 @@ namespace ReactorSockets.Tests;
 /// each abandonment fires exactly once, subjected to the Peer by both kind and id, and that a set which
 /// completes and is delivered normally emits nothing at all: a Diagnostic here marks a loss, and one
 /// firing on a success would teach a consumer to ignore it. Issue #297's own emit-fires-at-all proof
-/// lives on as <see cref="Pump_RingLapClobbersAnIncompleteFragmentSetsSlot_EmitsFragmentSetAbandonedOnceWithHeldAndDeclaredCounts"/>.
+/// lives on as <see cref="Pump_RingLapReachesAnUncompletableFragmentSetsSlot_EmitsFragmentSetAbandonedOnceWithHeldAndDeclaredCounts"/>.
 /// </summary>
 /// <remarks>
-/// Uses the reachability shape the issue's own remarks describe: a 4-slot <c>ReliableOrdered</c>
-/// receive window built <c>slides: false</c>, so the base can never advance past a hole, and a 3-piece
-/// Fragment set at sequences 0, 1 and 2. Held-one-of-three sends only sequence 0 (held, base advances to
-/// 1); held-two-of-three additionally sends sequence 2 (held, base stays pinned at 1 behind the hole at
-/// sequence 1). Either way, sequence 4 then lands on the exact physical ring slot sequence 0's Fragment
-/// still occupies — the window is only 4 slots wide — and abandons the set.
+/// A 4-slot <c>ReliableOrdered</c> receive window and a 3-Fragment set at sequences 0, 1 and 2.
+/// Since issue #446 a lap never overwrites a held Fragment whose set can still complete, so each case here
+/// makes the set uncompletable: ordinary records take the sequences the set's missing Fragments needed, and
+/// the base passes the whole set. Held-one-of-three sends only sequence 0 as a Fragment; held-two-of-three
+/// also sends sequence 2. Either way, sequence 4 then lands on the exact physical ring slot sequence 0's
+/// Fragment still occupies — the window is only 4 slots wide — and abandons the set.
 /// </remarks>
 public class DatagramSessionFragmentSetAbandonedTests
 {
@@ -48,22 +48,23 @@ public class DatagramSessionFragmentSetAbandonedTests
     private const byte FragmentBit = 0b0000_0100;
 
     [Fact]
-    public void Pump_RingLapClobbersAnIncompleteFragmentSetsSlot_EmitsFragmentSetAbandonedOnceWithHeldAndDeclaredCounts()
+    public void Pump_RingLapReachesAnUncompletableFragmentSetsSlot_EmitsFragmentSetAbandonedOnceWithHeldAndDeclaredCounts()
     {
         // Arrange — a window narrow enough (4 fragments) that a single far-ahead arrival laps the ring
-        // back onto a still-held, never-completed Fragment's own slot. Only the set's first piece (of
-        // three) ever arrives.
+        // back onto a still-held Fragment's own slot. Only the set's first Fragment (of three) ever arrives.
         using DatagramSessionReactorHarness accepter = NewNarrowWindowAccepter();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        // Act — the set's first piece, held with two more still to come.
+        // Act — the set's first Fragment, then ordinary records at the set's other two sequences, so the
+        // base passes the whole set and it can never complete.
         SendFragment(accepter, client, clientLink, sessionId, sequence: 0, fragmentIndex: 0, fragmentCount: 3, payload: [0xAA]);
+        SendRecord(accepter, client, clientLink, sessionId, sequence: 1, payload: [0x11]);
+        SendRecord(accepter, client, clientLink, sessionId, sequence: 2, payload: [0x22]);
 
-        // Act — sequence 1 (the set's own second piece) never arrives; sequence 4 does, and its ring
-        // slot is the same physical slot sequence 0's held piece still occupies.
+        // Act — sequence 4's ring slot is the same physical slot sequence 0's held Fragment still occupies.
         SendRecord(accepter, client, clientLink, sessionId, sequence: 4, payload: [0xBB]);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
 
@@ -78,19 +79,20 @@ public class DatagramSessionFragmentSetAbandonedTests
     }
 
     [Fact]
-    public void Pump_RingLapClobbersASetHeldOneFragmentShortOfComplete_ReportsHeldOneBelowDeclared()
+    public void Pump_RingLapReachesAnUncompletableSetHeldOneFragmentShortOfComplete_ReportsHeldOneBelowDeclared()
     {
         // Arrange — the same 3-piece set and 4-slot window, but this time two of its three declared
-        // pieces arrive before the clobber: sequence 0 (which advances the base to 1) and sequence 2
-        // (which is held behind the hole sequence 1 leaves, since the window never slides past it).
+        // Fragments arrive before the lap: sequences 0 and 2. Sequence 1 is an ordinary record, so the base
+        // passes the whole set and it can never complete.
         using DatagramSessionReactorHarness accepter = NewNarrowWindowAccepter();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        // Act — two of the set's three declared pieces arrive; sequence 1 never does.
+        // Act — two of the set's three declared Fragments arrive, with an ordinary record between them.
         SendFragment(accepter, client, clientLink, sessionId, sequence: 0, fragmentIndex: 0, fragmentCount: 3, payload: [0xAA]);
+        SendRecord(accepter, client, clientLink, sessionId, sequence: 1, payload: [0x11]);
         SendFragment(accepter, client, clientLink, sessionId, sequence: 2, fragmentIndex: 2, fragmentCount: 3, payload: [0xCC]);
 
         // Act — sequence 4 laps the ring onto sequence 0's still-held slot.

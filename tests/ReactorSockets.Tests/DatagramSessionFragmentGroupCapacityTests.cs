@@ -254,6 +254,81 @@ public class DatagramSessionFragmentGroupCapacityTests
         delivered.Should().Equal(expected);
     }
 
+    [Fact]
+    public void Pump_AWindowWideMessageLosesAFragment_DeliversEveryMessageWholeAndInOrderWithNoAbandonment()
+    {
+        // Arrange — issue #446. Each Message is as wide as the receive window, so no group has completed
+        // and nothing waits when the next Message's first Fragment reaches the slot still holding Message
+        // 0's first Fragment. A real sender retains four times the window, and one Fragment is lost.
+        const int fragmentSize = 32_750;
+        const int messageSize = ReceiveWindowFragments * fragmentSize;
+        const int retentionBytes = 4 * ReceiveWindowFragments * fragmentSize;
+        const int messages = 3;
+        TimeSpan linger = TimeSpan.FromSeconds(10);
+        using DatagramSessionReactorHarness sender = new(
+            capacity: 2, bindLoopback: false, maxMessageSize: messageSize, retentionBytes: retentionBytes,
+            fragmentSize: fragmentSize, linger: linger);
+        using DatagramSessionReactorHarness receiver = new(
+            capacity: 2, maxMessageSize: messageSize, retentionBytes: retentionBytes, fragmentSize: fragmentSize,
+            receiveWindowFragments: ReceiveWindowFragments, linger: linger, timeProvider: sender.TimeProvider);
+        using LossyProxy proxy = new(receiver.Endpoint, sender.TimeProvider);
+        PeerId peer = sender.Reactor.Connect(proxy.PublicEndPoint);
+        PeerId receiverPeer = DatagramSessionReactorHarness.PumpThroughProxyUntilConnected(sender, proxy, receiver);
+
+        // One clean round trip seeds the estimator. Unseeded, the RTO resolves to the Linger itself.
+        sender.Reactor.Send(peer, DeliveryMode.ReliableUnordered, [1]).Should().Be(SendOutcome.Sent);
+        DatagramSessionReactorHarness.PumpRoundThroughProxy(sender, proxy, receiver);
+        sender.TimeProvider.Advance(TimeSpan.FromMilliseconds(20));
+        receiver.Reactor.Send(receiverPeer, DeliveryMode.Unreliable, [9]).Should().Be(SendOutcome.Sent);
+        DatagramSessionReactorHarness.PumpRoundThroughProxy(sender, proxy, receiver);
+        sender.Reactor.Pump();
+        sender.DrainAndDiscard();
+        receiver.DrainAndDiscard();
+
+        List<string> expected = [];
+        List<string> delivered = [];
+        void Round()
+        {
+            // Acks ride outgoing datagrams only (ADR 0017), so the receiver has to be sending something.
+            receiver.Reactor.Send(receiverPeer, DeliveryMode.Unreliable, [9]);
+            DatagramSessionReactorHarness.PumpRoundThroughProxy(sender, proxy, receiver);
+            sender.Reactor.Pump();
+            sender.DrainAndDiscard();
+            delivered.AddRange(receiver.DrainPayloads().ConvertAll(p => $"{p[0]:X2}{p[^1]:X2}"));
+        }
+
+        // Act — each sequence relayed alone, the second Fragment of Message 0 dropped, then time for the
+        // retransmissions to bring back the lost Fragment and whatever was refused behind it.
+        for (int sent = 0; sent < messages; sent++)
+        {
+            byte[] message = new byte[messageSize];
+            message.AsSpan(0, fragmentSize).Fill((byte)(0xA0 + sent));
+            message.AsSpan(messageSize - fragmentSize).Fill((byte)(0xB0 + sent));
+            expected.Add($"{message[0]:X2}{message[^1]:X2}");
+            sender.Reactor.Send(peer, DeliveryMode.ReliableOrdered, message).Should().Be(SendOutcome.Sent);
+            for (int fragment = 0; fragment < ReceiveWindowFragments; fragment++)
+            {
+                if (sent == 0 && fragment == 1)
+                {
+                    proxy.DropNext(RelayDirection.ClientToUpstream);
+                }
+
+                Round();
+            }
+        }
+
+        for (TimeSpan elapsed = TimeSpan.Zero; elapsed < 3 * linger && delivered.Count < messages; elapsed += TimeSpan.FromMilliseconds(100))
+        {
+            sender.TimeProvider.Advance(TimeSpan.FromMilliseconds(100));
+            Round();
+        }
+
+        // Assert
+        (proxy.Captures.Count - proxy.Forwarded.Count).Should().Be(1, "the run must isolate the one dropped datagram");
+        delivered.Should().Equal(expected);
+        receiver.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.FragmentSetAbandoned);
+    }
+
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
