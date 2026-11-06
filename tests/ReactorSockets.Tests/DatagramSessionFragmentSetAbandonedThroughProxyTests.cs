@@ -6,7 +6,7 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #317 (parent #51, under slice-7 spec #46), revised by issue #446: what a real two-Reactor path
 /// through a <see cref="LossyProxy"/> does when part of a Fragment set is lost. Since #446 a ring lap
-/// never overwrites a held piece whose set can still complete, and a real sender only ever leaves sets
+/// never overwrites a held Fragment whose set can still complete, and a real sender only ever leaves sets
 /// like that, so <see cref="DiagnosticId.FragmentSetAbandoned"/> never fires here.
 /// <see cref="DatagramSessionFragmentSetAbandonedTests"/> proves its held-against-expected figures with a
 /// hand-built client, the only kind that can leave a set uncompletable.
@@ -78,10 +78,20 @@ public class DatagramSessionFragmentSetAbandonedThroughProxyTests
         // Act
         fixture.PumpRounds(FirstSetRounds + OverlapRounds);
 
-        // Assert — an incomplete set nothing has clobbered is still live, not abandoned: this is what
-        // makes the sibling runs' Diagnostic a report of the overlap rather than of the loss alone.
+        // Assert — an incomplete set is still live, not abandoned.
         fixture.AccepterDiagnostics.Should().NotContain(r => r.Id == DiagnosticId.FragmentSetAbandoned,
-            "a set that is merely missing a piece may still be completed by a retransmission, so reporting it abandoned would teach a consumer to act on ordinary in-flight loss");
+            "a set that is merely missing a Fragment may still be completed by a retransmission, so reporting it abandoned would teach a consumer to act on ordinary in-flight loss");
+    }
+
+    [Fact]
+    public void Pump_ASecondFragmentSetLapsTheRingOntoAnIncompleteFirstSet_EmitsNoFragmentSetAbandoned()
+    {
+        // Arrange & Act
+        using FragmentSizeDiagnosisFixture fixture = DriveTwoOverlappingSets();
+
+        // Assert — the first set can still complete, so the lap is refused rather than overwriting it.
+        fixture.AccepterDiagnostics.Should().NotContain(r => r.Id == DiagnosticId.FragmentSetAbandoned,
+            "a real sender's loss never leaves a set that cannot complete, so a later set reaching its slots must wait rather than abandon it (issue #446)");
     }
 
     [Fact]

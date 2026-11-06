@@ -16,9 +16,9 @@ namespace ReactorSockets.Tests;
 /// lives on as <see cref="Pump_RingLapReachesAnUncompletableFragmentSetsSlot_EmitsFragmentSetAbandonedOnceWithHeldAndDeclaredCounts"/>.
 /// </summary>
 /// <remarks>
-/// A 4-slot <c>ReliableOrdered</c> receive window and a 3-piece Fragment set at sequences 0, 1 and 2.
-/// Since issue #446 a lap never overwrites a held piece whose set can still complete, so each case here
-/// makes the set uncompletable: ordinary records take the sequences the set's missing pieces needed, and
+/// A 4-slot <c>ReliableOrdered</c> receive window and a 3-Fragment set at sequences 0, 1 and 2.
+/// Since issue #446 a lap never overwrites a held Fragment whose set can still complete, so each case here
+/// makes the set uncompletable: ordinary records take the sequences the set's missing Fragments needed, and
 /// the base passes the whole set. Held-one-of-three sends only sequence 0 as a Fragment; held-two-of-three
 /// also sends sequence 2. Either way, sequence 4 then lands on the exact physical ring slot sequence 0's
 /// Fragment still occupies — the window is only 4 slots wide — and abandons the set.
@@ -51,20 +51,20 @@ public class DatagramSessionFragmentSetAbandonedTests
     public void Pump_RingLapReachesAnUncompletableFragmentSetsSlot_EmitsFragmentSetAbandonedOnceWithHeldAndDeclaredCounts()
     {
         // Arrange — a window narrow enough (4 fragments) that a single far-ahead arrival laps the ring
-        // back onto a still-held Fragment's own slot. Only the set's first piece (of three) ever arrives.
+        // back onto a still-held Fragment's own slot. Only the set's first Fragment (of three) ever arrives.
         using DatagramSessionReactorHarness accepter = NewNarrowWindowAccepter();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        // Act — the set's first piece, then ordinary records at the set's other two sequences, so the
+        // Act — the set's first Fragment, then ordinary records at the set's other two sequences, so the
         // base passes the whole set and it can never complete.
         SendFragment(accepter, client, clientLink, sessionId, sequence: 0, fragmentIndex: 0, fragmentCount: 3, payload: [0xAA]);
         SendRecord(accepter, client, clientLink, sessionId, sequence: 1, payload: [0x11]);
         SendRecord(accepter, client, clientLink, sessionId, sequence: 2, payload: [0x22]);
 
-        // Act — sequence 4's ring slot is the same physical slot sequence 0's held piece still occupies.
+        // Act — sequence 4's ring slot is the same physical slot sequence 0's held Fragment still occupies.
         SendRecord(accepter, client, clientLink, sessionId, sequence: 4, payload: [0xBB]);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
 
@@ -82,7 +82,7 @@ public class DatagramSessionFragmentSetAbandonedTests
     public void Pump_RingLapReachesAnUncompletableSetHeldOneFragmentShortOfComplete_ReportsHeldOneBelowDeclared()
     {
         // Arrange — the same 3-piece set and 4-slot window, but this time two of its three declared
-        // pieces arrive before the lap: sequences 0 and 2. Sequence 1 is an ordinary record, so the base
+        // Fragments arrive before the lap: sequences 0 and 2. Sequence 1 is an ordinary record, so the base
         // passes the whole set and it can never complete.
         using DatagramSessionReactorHarness accepter = NewNarrowWindowAccepter();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
@@ -90,7 +90,7 @@ public class DatagramSessionFragmentSetAbandonedTests
         uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
         PeerId accepterPeer = FindAccepterPeer(accepter);
 
-        // Act — two of the set's three declared pieces arrive, with an ordinary record between them.
+        // Act — two of the set's three declared Fragments arrive, with an ordinary record between them.
         SendFragment(accepter, client, clientLink, sessionId, sequence: 0, fragmentIndex: 0, fragmentCount: 3, payload: [0xAA]);
         SendRecord(accepter, client, clientLink, sessionId, sequence: 1, payload: [0x11]);
         SendFragment(accepter, client, clientLink, sessionId, sequence: 2, fragmentIndex: 2, fragmentCount: 3, payload: [0xCC]);

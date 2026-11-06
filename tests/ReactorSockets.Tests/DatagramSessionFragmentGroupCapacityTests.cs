@@ -258,8 +258,8 @@ public class DatagramSessionFragmentGroupCapacityTests
     public void Pump_AWindowWideMessageLosesAFragment_DeliversEveryMessageWholeAndInOrderWithNoAbandonment()
     {
         // Arrange — issue #446. Each Message is as wide as the receive window, so no group has completed
-        // and nothing waits when the next Message's first piece reaches the slot still holding Message
-        // 0's first piece. A real sender retains four times the window, and one Fragment is lost.
+        // and nothing waits when the next Message's first Fragment reaches the slot still holding Message
+        // 0's first Fragment. A real sender retains four times the window, and one Fragment is lost.
         const int fragmentSize = 32_750;
         const int messageSize = ReceiveWindowFragments * fragmentSize;
         const int retentionBytes = 4 * ReceiveWindowFragments * fragmentSize;
@@ -306,9 +306,9 @@ public class DatagramSessionFragmentGroupCapacityTests
             message.AsSpan(messageSize - fragmentSize).Fill((byte)(0xB0 + sent));
             expected.Add($"{message[0]:X2}{message[^1]:X2}");
             sender.Reactor.Send(peer, DeliveryMode.ReliableOrdered, message).Should().Be(SendOutcome.Sent);
-            for (int piece = 0; piece < ReceiveWindowFragments; piece++)
+            for (int fragment = 0; fragment < ReceiveWindowFragments; fragment++)
             {
-                if (sent == 0 && piece == 1)
+                if (sent == 0 && fragment == 1)
                 {
                     proxy.DropNext(RelayDirection.ClientToUpstream);
                 }
@@ -324,6 +324,7 @@ public class DatagramSessionFragmentGroupCapacityTests
         }
 
         // Assert
+        (proxy.Captures.Count - proxy.Forwarded.Count).Should().Be(1, "the run must isolate the one dropped datagram");
         delivered.Should().Equal(expected);
         receiver.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.FragmentSetAbandoned);
     }

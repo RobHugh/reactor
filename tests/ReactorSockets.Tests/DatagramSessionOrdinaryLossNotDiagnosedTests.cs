@@ -123,10 +123,10 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
     /// <summary>
     /// <see cref="DiagnosticId.FragmentSetAbandoned"/> fires only when a later record reaches the
     /// receive-window ring slot of a Fragment set that can never complete (issue #446) — one the base has
-    /// passed entirely without it completing, which a real sender's loss never leaves. This run does not
-    /// observe the diagnostic fire. The assertions below hold regardless — they are written to catch a
-    /// disturbance if the diagnostic ever does fire, per issue #306's own "may well fire" framing, not to
-    /// force it to.
+    /// passed entirely without it completing. Loss never leaves one; a sender's other records at the
+    /// set's sequences or a Fragment larger than this end's slot can. This run does not
+    /// observe the diagnostic fire. The assertions below are written to catch a disturbance if a
+    /// regression ever makes it fire here, not to force it to.
     /// </summary>
     [Fact]
     public void Run_WithOrdinaryEveryNthLossOnBothDirections_AnyFragmentSetAbandonedDoesNotDisturbTheSession()
@@ -138,8 +138,9 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
         RunBoundedScenario(fixture);
 
         // Assert — FragmentSetAbandoned reports what was lost and is not itself a problem. What would be
-        // a problem is that emitting it ever closed or otherwise disturbed the Session — it never diagnoses why a set was lost, which is exactly why it cannot be the
-        // trigger for closing anything (issue #268's own framing).
+        // a problem is that emitting it ever closed or otherwise disturbed the Session — it never
+        // diagnoses why a set was lost, which is exactly why it cannot be the trigger for closing
+        // anything (issue #268's own framing).
         fixture.AccepterEvents.Should().NotContain(
             e => e.Kind == SessionEventKind.PeerClosed,
             "FragmentSetAbandoned reports loss, it never diagnoses cause, so it must never be the reason a Session closes");

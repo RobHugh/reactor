@@ -112,9 +112,10 @@ each names one condition shared by both profiles. A Sink that range-checks 200-2
 will miss them.
 
 `FragmentSetAbandoned` never closes anything, and ordinary loss never raises it. A Fragment set that
-loses a piece holds its receive-window slots until a retransmission completes it. Only a set the
-sender can never complete is dropped: one where it sent other records at the sequences the set's
-missing pieces needed.
+loses a Fragment holds its receive-window slots until a retransmission completes it. Only a set the
+sender can never complete is dropped. Either it sent other records at the sequences the set's
+missing Fragments needed, or it sent a Fragment larger than your `FragmentSize`, which is admitted
+but cannot be held.
 
 ## What to watch in production
 

@@ -360,7 +360,7 @@ internal sealed class ReceiveWindow
             // A fresh admission at this ring slot is the last moment anyone can say how much of a
             // previous, never-completed occupant's Fragment set had arrived (issue #297): once the
             // length below is zeroed, that occupant's own residue is gone. A non-zero length here means
-            // a piece of a set that can never complete: the base has passed the whole set without it
+            // a Fragment of a set that can never complete: the base has passed the whole set without it
             // completing, since WouldOverwriteDeliverableFragment turns away a lap onto any other (#446).
             ushort residualLength = BinaryPrimitives.ReadUInt16LittleEndian(_fragmentLengths.Span.Slice(slot * 2, 2));
             if (residualLength != 0)
@@ -632,13 +632,13 @@ internal sealed class ReceiveWindow
 
     /// <summary>
     /// Whether admitting <paramref name="sequence"/> would overwrite a held Fragment whose group can
-    /// still be delivered (issues #423, #446): the ring has come back round to a slot whose piece the
-    /// base has already passed, and that piece's group is either complete and waiting, or still has a
+    /// still be delivered (issues #423, #446): the ring has come back round to a slot whose Fragment the
+    /// base has already passed, and that Fragment's group is either complete and waiting, or still has a
     /// sequence at or above the base that a retransmission can fill. A group the base has passed
-    /// entirely without it completing can never complete, so overwriting its piece is allowed, and
+    /// entirely without it completing can never complete, so overwriting its Fragment is allowed, and
     /// <see cref="Classify(uint, out int)"/> reports it in <see cref="LastAbandonedFragmentSet"/>. Only
-    /// a sender that admitted something other than that group's own pieces at its sequences can leave
-    /// one. Changes nothing.
+    /// a sender that sent other records at the group's missing sequences, or a Fragment too large for
+    /// its slot (see <see cref="DatagramSessionReactor.HoldFragment"/>), can leave one. Changes nothing.
     /// </summary>
     /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
     internal bool WouldOverwriteDeliverableFragment(uint sequence)

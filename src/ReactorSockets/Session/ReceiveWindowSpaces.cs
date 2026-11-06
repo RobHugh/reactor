@@ -124,7 +124,7 @@ internal sealed class ReceiveWindowSpaces
     /// <summary>
     /// Whether <paramref name="sequence"/> must wait because admitting it would overwrite a held Fragment
     /// whose group can still be delivered (issues #423, #446) — see
-    /// <see cref="ReceiveWindow.WouldOverwriteDeliverableFragment"/>. The overwritten piece may belong to a
+    /// <see cref="ReceiveWindow.WouldOverwriteDeliverableFragment"/>. The overwritten Fragment may belong to a
     /// group waiting in <paramref name="mode"/>'s <see cref="PendingFragmentGroups"/>, or to a group a
     /// retransmission is about to complete. Overwriting either would leave that group unable ever to
     /// complete, and a <c>ReliableOrdered</c> Space unable ever to deliver past it. Changes nothing.
