@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.4.1e (issue #142): the negative case that gives Interrupted's Slot reservation (issue #122)
+/// The negative case that gives Interrupted's Slot reservation (issue #122)
 /// its shape. Goodbye is the one thing permitted to forbid a Resume (ADR 0010), so a Peer that leaves
 /// by Goodbye holds no state and reserves nothing — its Slot is free the moment it closes, whether the
 /// Goodbye was this end's own <see cref="StreamSessionReactor.Close"/> or one that arrived from the

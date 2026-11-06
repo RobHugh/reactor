@@ -29,8 +29,7 @@ internal readonly record struct RelayCapture(RelayDirection Direction, byte[] Pa
 
 /// <summary>
 /// A <see cref="RawReactor"/> relaying UDP datagrams between a client-facing address and a fixed
-/// upstream endpoint, dropping, duplicating, reordering and delaying under explicit test control — the
-/// third instrument the parent slice spec's Further Notes calls for. Built entirely from the public
+/// upstream endpoint, dropping, duplicating, reordering and delaying under explicit test control. Built entirely from the public
 /// Raw surface, and driven by the same <see cref="TimeProvider"/> as everything else under test, so a
 /// delayed relay's release is a deterministic function of <see cref="TimeProvider.GetUtcNow"/> rather
 /// than a wall-clock sleep.
@@ -45,7 +44,7 @@ internal readonly record struct RelayCapture(RelayDirection Direction, byte[] Pa
 /// </para>
 /// <para>
 /// This proxy tracks exactly one client at a time — whichever address last sent it a datagram — which
-/// is what every use in slices 3 through 8 needs: one Session under test, dialogued through the proxy
+/// is what each test using it needs: one Session under test, dialogued through the proxy
 /// to a counterparty. A test wanting several simultaneous clients needs several proxies.
 /// </para>
 /// </remarks>

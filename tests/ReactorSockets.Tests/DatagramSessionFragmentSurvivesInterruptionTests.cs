@@ -9,7 +9,7 @@ namespace ReactorSockets.Tests;
 /// Issue #262: a half-arrived Fragment set survives an interruption of its Peer's transport at no
 /// cost, because the pieces already held live in the ordinary per-Peer receive window
 /// (<see cref="DatagramSessionReactor.HoldFragment"/>'s own remarks) — state a lost and rebuilt
-/// transport never touches. The Datagram profile now has a wire-level Resume (issue #52, slice 8.4):
+/// transport never touches. The Datagram profile has a wire-level Resume:
 /// the dialling end sends one at the send-idle cadence while Interrupted, and the accepting end
 /// authorises it by secret, routes it by session id and moves its send address. The end-to-end test
 /// that a half-arrived Fragment set survives that Resume lives in the Fragment-set Resume test class
@@ -105,7 +105,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
         // Assert — every Datagram the dialler has transmitted since the pre-interruption ack, captured
         // by the tap ahead of the proxy so a dropped attempt would show up too, is decoded by hand; the
         // sequences of the two Fragments already acked before the interruption never reappear among
-        // them. This is the assertion the ticket turns on: the sender's own retransmission is selective
+        // them. This is the assertion the test turns on: the sender's own retransmission is selective
         // per unacked sequence, not a wholesale resend of the buffered set it happens to belong to.
         List<uint> sequencesSentSinceTheAck = fixture.Tap.PayloadsInDirection(TapDirection.DiallerToAccepter)
             .Skip(captureCountAtAck)

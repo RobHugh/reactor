@@ -518,7 +518,7 @@ public class DatagramSessionPartialFragmentFloodMemoryTests
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
         offset += 8;
         // The remaining ResumeSecretLength bytes are the dialler's resume secret; an all-zero one is
-        // fine, since nothing in this ticket's path ever reads it.
+        // fine, since only a Resume reads it and these tests send none.
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 

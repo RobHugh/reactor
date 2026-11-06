@@ -6,10 +6,10 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 3.6.2 (issue #90): writes to a Peer's socket happen once per <see cref="StreamSessionReactor.Pump"/>
+/// Writes to a Peer's socket happen once per <see cref="StreamSessionReactor.Pump"/>
 /// call, with everything currently queued in it — never once per <see cref="StreamSessionReactor.Send"/>,
 /// and never off the back of readiness alone in a way that could produce more than one write per Pump
-/// for the same Peer. Both acceptance criteria are proven the same way the parent ticket asks for: a
+/// for the same Peer. Both behaviours are proven the same way: a
 /// <see cref="WireObserver"/> wrapping a real <see cref="RawReactor"/> around the receiving end, so what
 /// is asserted is Segments actually arriving on the wire rather than the Reactor's own call count. This
 /// is the first stream-profile use of <see cref="WireObserver"/> — every earlier use is a datagram or
@@ -31,7 +31,7 @@ public class StreamSessionWriteBatchingTests
     /// both sides until the dialler's own Hello record has arrived as a Segment, then replies with a raw
     /// Hello of the observer's own so the Session establishes. Returns the established Peer id, with
     /// both sides' handshake traffic already drained out of <paramref name="observer"/>'s Segment list
-    /// — every assertion a caller makes afterwards is about bytes this ticket's flush step put on the
+    /// — every assertion a caller makes afterwards is about bytes the flush step put on the
     /// wire, not about the handshake that preceded it.
     /// </summary>
     private static PeerId EstablishSession(StreamSessionReactorHarness dialler, WireObserver observer, TimeSpan? budget = null)
@@ -56,7 +56,7 @@ public class StreamSessionWriteBatchingTests
         observer.AcceptedLinks.Should().HaveCount(1, "the dialler's Connect should have reached the observer's listener");
         observer.ReceivedSegments.Should().HaveCount(1, "the dialler's own Hello record should have arrived as a single Segment");
         // The content itself is not asserted here — it carries a random resume secret and the
-        // dialler's own configured MaxMessageSize, neither of which this ticket's flush step touches.
+        // dialler's own configured MaxMessageSize, neither of which the flush step touches.
         // Only its length matters: that the whole record arrived as one Segment.
         observer.ReceivedSegments[0].Should().HaveCount(RecordSize);
 
@@ -105,7 +105,7 @@ public class StreamSessionWriteBatchingTests
         PeerId peer = EstablishSession(dialler, observer);
 
         // The observer's Segment list is never reset — it already holds the dialler's own handshake
-        // Hello from EstablishSession above — so what this ticket's flush step contributes is measured
+        // Hello from EstablishSession above — so what the flush step contributes is measured
         // from this baseline, not from an assumed-empty list.
         int baseline = observer.ReceivedSegments.Count;
 
@@ -192,7 +192,7 @@ public class StreamSessionWriteBatchingTests
         // hold every queued Message at once. Three maximum Messages queued back-to-back before a single
         // Pump exceed what one write can offer a 1024-byte-window peer that has not read anything yet,
         // so FlushRetention's first attempt inside that Pump's FlushPendingRetentionWrites step is a
-        // short write: the pending-write marker this ticket introduces must survive that short write
+        // short write: the pending-write marker must survive that short write
         // (re-armed from OnPeerWritable, per StreamSessionReactor's own remarks) and get flushed again on
         // a later Pump once the peer starts reading, rather than losing or duplicating any bytes.
         const int maxMessageSize = 8192;

@@ -4,12 +4,12 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.7.5 (issue #232): the wire-observed proof that coalescing to one Peer per Pump is real,
+/// The wire-observed proof that coalescing to one Peer per Pump is real,
 /// not merely what <see cref="DatagramSessionReactor.Counters"/> reports about itself. A
-/// <see cref="WireTap"/> (#228) counts arrivals the way a consumer's syscalls actually would, and
-/// <see cref="DatagramDecoder"/> (#229) reads the records inside the one arrival independently of the
-/// production codec that wrote them. <see cref="DatagramSessionPumpFlushTests"/> already proved the
-/// same facts from the sender's own counters; this ticket proves them from outside.
+/// <see cref="WireTap"/> counts arrivals the way a consumer's syscalls actually would, and
+/// <see cref="DatagramDecoder"/> reads the records inside the one arrival independently of the
+/// production codec that wrote them. <see cref="DatagramSessionPumpFlushTests"/> proves the same facts
+/// from the sender's own counters. This file proves them from outside.
 /// </summary>
 public class DatagramSessionCoalescingTests
 {

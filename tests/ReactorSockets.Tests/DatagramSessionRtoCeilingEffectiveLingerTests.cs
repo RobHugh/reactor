@@ -4,9 +4,8 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #365 (parent #55): Linger is the RTO's ceiling (subtask 6.4), and the ceiling must read the
-/// same <em>effective</em> (negotiated, minimum-of-both-ends) Linger that Linger expiry (#367) will read
-/// — never this end's own locally configured <see cref="DatagramSessionOptions.Linger"/>. This end is
+/// Linger is the RTO's ceiling, and the ceiling must read the same <em>effective</em> (negotiated,
+/// minimum-of-both-ends) Linger that Linger expiry reads — never this end's own locally configured <see cref="DatagramSessionOptions.Linger"/>. This end is
 /// given the longer Linger of the pair (30s) and the peer the shorter one (3s, itself well above the RTO
 /// floor), so the negotiated minimum — 3s — differs from this end's own configured value. Sustained
 /// backoff, driven exactly as <see cref="DatagramSessionAdaptiveRtoTests"/> and

@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.2.3 (issue #118, #26's third and last idle-timer sub-issue): pins the reason
+/// Pins the reason
 /// <see cref="StreamSessionReactor.EnforceIdleTimers"/> runs two independent checks per Peer rather than
 /// one. A heartbeat triggered by receive idleness alone deadlocks two quiet peers: A's probe resets B's
 /// receive-idle deadline, so B — judging its own need to send off what it has received — stays silent,

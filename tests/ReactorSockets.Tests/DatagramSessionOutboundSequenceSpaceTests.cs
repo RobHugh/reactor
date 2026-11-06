@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.7.10 (issue #237): the four outbound sequence Spaces per Peer
+/// The four outbound sequence Spaces per Peer
 /// (<see cref="ReactorSockets.Session.OutboundSequenceSpaces"/>), proved through the public seam for
 /// the first time — the test obligation #169 left behind when it shipped the type with no tests at
 /// all, because the type is internal (ADR 0015 forbids <c>InternalsVisibleTo</c>) and the datagram

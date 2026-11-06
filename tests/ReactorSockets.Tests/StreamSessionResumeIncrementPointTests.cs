@@ -145,7 +145,7 @@ public class StreamSessionResumeIncrementPointTests
     [Fact]
     public void Resume_WithNothingBufferedAtTheMomentOfInterruption_StillDeliversEveryMessageExactlyOnce()
     {
-        // Arrange — the happy path this ticket also covers, but is not the assertion it rests on: no
+        // Arrange — the happy path, which this file also covers but does not rest on: no
         // read-share exhaustion, nothing left buffered when the transport dies.
         using StreamSessionReactorHarness accepter = new(maxMessageSize: 64, retentionBytes: 68);
         StreamSessionReactorHarness.HeldPeer held = accepter.EstablishOnePeer();

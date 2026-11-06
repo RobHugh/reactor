@@ -4,12 +4,11 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #305 (parent #271, subtask 7.5.5.2): the positive half of the stall-signature proof — a proxy
+/// The positive half of the stall-signature proof — a proxy
 /// standing rule that black-holes every Fragment while an unfragmented Message keeps crossing closes the
 /// stalled Peer by name, <see cref="DisconnectReason.FragmentSizeUnviable"/>, rather than by a generic
-/// timeout or not at all. This is the deliverable subtask #269's whole design chain exists for: a
-/// misconfigured fragment size is invisible in normal operation, so this file is what keeps the diagnosis
-/// honest against drift.
+/// timeout or not at all. A misconfigured fragment size is invisible in normal operation, so this
+/// file is what keeps the diagnosis honest against drift.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -85,7 +84,7 @@ public class DatagramSessionFragmentSizeStallDiagnosisTests
     private const int SmallSendRounds = 30;
 
     /// <summary>
-    /// Proves the acceptance criterion that is the whole point of this subtask: with every Fragment
+    /// Proves the property this file exists for: with every Fragment
     /// black-holed and the small Message still crossing and being acked, the stalled Peer closes named by
     /// <see cref="DisconnectReason.FragmentSizeUnviable"/> — never a generic timeout, and never a Session
     /// that simply stalls without closing at all.

@@ -7,9 +7,8 @@ using Xunit;
 // first. Dispose_WithAnOpenLink_ReleasesItsSocketSoThePortCanBeReboundElsewhere failed exactly this
 // way with AddressAlreadyInUse, roughly one run in two.
 //
-// Serialising the assembly is the cheap fix rather than the careful one: the whole suite runs in well
-// under a second, so the parallelism was buying nothing measurable, and the alternatives (retry loops,
-// or a port allocator shared across test classes) add machinery to the tests to work around a property
-// of the operating system. The stream Links in slice 2 bind considerably more sockets than the
-// datagram ones did, which widens the window rather than narrowing it.
+// Serialising the assembly is the cheap fix rather than the careful one: the alternatives (retry
+// loops, or a port allocator shared across test classes) add machinery to the tests to work around a
+// property of the operating system. Stream Links bind considerably more sockets than datagram ones,
+// which widens the window rather than narrowing it.
 [assembly: CollectionBehavior(DisableTestParallelization = true)]

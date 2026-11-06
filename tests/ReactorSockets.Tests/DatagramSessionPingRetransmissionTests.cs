@@ -255,7 +255,7 @@ public class DatagramSessionPingRetransmissionTests
     /// <see cref="RetransmissionTimer"/> takes its one clean first sample and the Ping this same slot
     /// queues afterwards inherits that estimate. Matches
     /// <see cref="DatagramSessionAdaptiveRtoTests.SeedTheEstimator"/>'s shape, at the full two-Reactor
-    /// protocol level this ticket's acceptance criteria call for rather than a hand-crafted client.
+    /// protocol level rather than through a hand-crafted client.
     /// </summary>
     private static void SeedEstimator(
         DatagramSessionReactorHarness dialler,

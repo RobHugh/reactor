@@ -335,9 +335,8 @@ public class RawReactorTests
     /// handed that exact port in the window before the datagram arrives. The datagram is then
     /// delivered rather than refused, no ICMP is generated, and the pump loop spends its whole budget
     /// on a port that was never closed. That is what failed on the Windows CI runner, where the
-    /// parallel test load and the two cores make the window far wider than on a developer machine
-    /// (observed on <c>dev</c> in run 33607402844 before this change, on a commit that touched none of
-    /// this). A retry is sound rather than a papered-over flake because a taken port generates nothing
+    /// parallel test load and the two cores make the window far wider than on a developer machine.
+    /// A retry is sound rather than a papered-over flake because a taken port generates nothing
     /// that can arrive late: loopback ICMP comes back in microseconds, so an attempt that recorded
     /// nothing in two seconds recorded nothing at all, and the next attempt starts from an empty Sink.
     /// </remarks>

@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.1.4 (issue #116, #25's second emission trigger): a delivery-counter record is emitted once
+/// A delivery-counter record is emitted once
 /// per <see cref="StreamSessionReactor.Pump"/> in which a Peer's received count actually advanced,
 /// riding the Pump boundary the consumer already chose rather than a new timer or a trigger tied to a
 /// count of Messages. The mandatory acceptance criterion — a one-way sender at high rate into a
@@ -39,8 +39,7 @@ public class StreamSessionDeliveryCounterEmissionTests
     }
 
     // =========================================================================================
-    // The mandatory acceptance criterion: one-way traffic must not exhaust retention (the bug
-    // this ticket exists to fix — issue #25's motivating scenario)
+    // One-way traffic must not exhaust retention
     // =========================================================================================
 
     [Fact]
@@ -142,7 +141,7 @@ public class StreamSessionDeliveryCounterEmissionTests
         // the same idiom StreamSessionDeliveryCounterTests uses around Nagle-sensitive timing — is what
         // makes "one Pump delivers all three" true of the read side deterministically: without it, the
         // OS is free to hand the reactor's very first read only part of what was written, which would
-        // split this Frame's delivery (and, correctly per this ticket's own rule, its counter emission)
+        // split this Frame's delivery (and, correctly, its counter emission)
         // across more than one Pump.
         peer.Send([.. BuildFrame(first), .. BuildFrame(second), .. BuildFrame(third)]);
         Thread.Sleep(20);

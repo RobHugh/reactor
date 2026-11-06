@@ -50,7 +50,7 @@ public class DatagramSessionReactorPumpIntervalTests
     {
         // Arrange — mirrors RawReactorPumpTests.Pump_SteadyStateAfterWarmupWithNothingReady_AllocatesNothingOnTheManagedHeap:
         // an idle Reactor's dispatch loop must reuse its scan buffers rather than reallocate every
-        // Frame, and the interval observer this ticket adds must not be the thing that breaks that.
+        // Frame, and the interval observer must not be the thing that breaks that.
         using DatagramSessionReactorHarness harness = new();
 
         for (int warmup = 0; warmup < 10; warmup++)

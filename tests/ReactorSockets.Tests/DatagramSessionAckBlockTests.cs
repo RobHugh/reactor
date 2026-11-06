@@ -94,8 +94,8 @@ public class DatagramSessionAckBlockTests
     public void Pump_HeaderTruncatedInsideAnAckBlock_IsDiscardedWithDatagramMalformedExactlyAsBefore()
     {
         // Arrange — 16 of the header's 20 bytes: past the session id and the whole ReliableOrdered
-        // block, but short of the ReliableUnordered block. This proves the ack-block read this ticket
-        // added does not change what already made a short header fail to parse.
+        // block, but short of the ReliableUnordered block. This proves the ack-block read does not
+        // change what makes a short header fail to parse.
         using DatagramSessionReactorHarness accepter = new();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -119,7 +119,7 @@ public class DatagramSessionAckBlockTests
     [Fact]
     public void Pump_ASustainedRunOfArrivalsCarryingChangingAckBlocks_DoesNotGrowAllocationAsTheRunContinues()
     {
-        // Arrange — the two ack blocks this ticket wires into the receive path are read off every
+        // Arrange — the receive path reads the two ack blocks off every
         // arrival, whether or not they carry anything new; this proves that reading them and applying
         // them to the Peer's tracker costs no allocation, matching the receive path's existing
         // allocation-free discipline (issue #171 and its neighbours).
@@ -158,7 +158,7 @@ public class DatagramSessionAckBlockTests
     [Fact]
     public void Pump_AckBlocksWithEveryBitSetInBothReliableSpaces_SurvivesWithoutMalformedOrThrowingAndLeavesHorizonDeferralsAtZero()
     {
-        // Arrange — subtask 6.3.8 (#190): an ack block describing sequences the sender never sent is
+        // Arrange — an ack block describing sequences the sender never sent is
         // untrusted input. All 32 bits set claims every one of the 32 sequences above the base is
         // outstanding and now acknowledged, none of which this raw client ever sent.
         using DatagramSessionReactorHarness accepter = new();
@@ -190,7 +190,7 @@ public class DatagramSessionAckBlockTests
     [Fact]
     public void Pump_AckBaseAtUInt32MaxValueWithEveryBitSet_SurvivesTheWrappingAdditionWithoutThrowing()
     {
-        // Arrange — subtask 6.3.8 (#190): a base of uint.MaxValue makes every bit's described sequence
+        // Arrange — a base of uint.MaxValue makes every bit's described sequence
         // (ackBase + n + 1) wrap past zero. This is the arithmetic edge the untrusted-ack criterion asks
         // for: a hostile base placed exactly where unchecked addition wraps.
         using DatagramSessionReactorHarness accepter = new();
@@ -221,7 +221,7 @@ public class DatagramSessionAckBlockTests
     [Fact]
     public void Pump_AckBaseFarAheadOfAnythingEverSent_SurvivesAndAppliesWithoutThrowing()
     {
-        // Arrange — subtask 6.3.8 (#190): a base far ahead of anything this Session's Peer could ever
+        // Arrange — a base far ahead of anything this Session's Peer could ever
         // legitimately have sent (nothing has been sent at all — no outbound data send exists yet on
         // this profile). The receiving Peer has no way to know that, so it must accept the claim without
         // misbehaving.
@@ -253,7 +253,7 @@ public class DatagramSessionAckBlockTests
     [Fact]
     public void Pump_ASustainedRunOfWildlyFlippingHostileAckBlocks_NeverThrowsKeepsHorizonDeferralsAtZeroAndLeavesThePeerConnected()
     {
-        // Arrange — subtask 6.3.8 (#190): a long run of arrivals whose ack bases and bits flip wildly
+        // Arrange — a long run of arrivals whose ack bases and bits flip wildly
         // between one datagram and the next — forward jumps, backward jumps landing on now-stale bases,
         // the two wrap edges, all-zero and all-one bitfields, and ordinary small values — driven from a
         // fixed seed so a failure is reproducible. Nothing here was ever legitimately sent, so this is
@@ -309,8 +309,8 @@ public class DatagramSessionAckBlockTests
     [Fact]
     public void ParseDataDatagram_ArrivalsSeparatedByVaryingPumpCadences_StillDeriveTheEffectiveRtoWithoutMalformedOrWarnDiagnostic()
     {
-        // Arrange — subtask 6.4.7 (#197): every arrival's two ApplyAck calls now take an effective RTO
-        // read fresh from ObservedPumpInterval and Linger, in place of the constant #197 deletes. This
+        // Arrange — every arrival's two ApplyAck calls take an effective RTO read fresh from
+        // ObservedPumpInterval and Linger. This
         // varies the gap between Pumps under the harness's FakeTimeProvider — no advance at all (the
         // unseeded TimeSpan.MaxValue case), a very fast cadence, then a very slow one — so the value fed
         // into ApplyAck actually changes across the run, exercising the new computation rather than

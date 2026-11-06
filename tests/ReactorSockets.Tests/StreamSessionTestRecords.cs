@@ -5,8 +5,7 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// The stream Session profile's wire-record builders and handshake-pumping loop, shared by every test
 /// file that hand-builds a Hello/Refusal record or frames a Message over a raw counterparty socket
-/// (issue #102). Copy-pasted near-verbatim across 11 files before this existed — this is the one place
-/// that shape is stated, mirroring how <see cref="MessageFramingLegality"/> states the framing table
+/// This is the one place that shape is stated, mirroring how <see cref="MessageFramingLegality"/> states the framing table
 /// once in production code rather than a branch at a time. Deliberately not shared with the datagram
 /// profile's own <c>BuildHello</c>-shaped helpers: the two profiles' Hello records are a different wire
 /// format entirely (ADR 0008), so a file testing the datagram profile keeps its own.

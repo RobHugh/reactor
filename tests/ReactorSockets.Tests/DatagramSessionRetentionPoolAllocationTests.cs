@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #206 (subtask 6.5.7): the send-side retention pool — <c>Capacity × 2 reliable Spaces ×
+/// The send-side retention pool — <c>Capacity × 2 reliable Spaces ×
 /// RetentionBytes</c>, the send line of <see cref="DatagramSessionOptions"/>'s memory bill — is
 /// preallocated once at <see cref="DatagramSessionReactor"/> construction, regardless of whether any
 /// Peer has connected, and does not grow as Peers connect, disconnect and reconnect into the same

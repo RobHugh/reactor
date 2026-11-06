@@ -7,7 +7,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 3.3 (issue #19): the stream handshake's version and capacity guards, Linger negotiation, the
+/// The stream handshake's version and capacity guards, Linger negotiation, the
 /// admission cap, and robustness against a hostile counterparty. Mirrors
 /// <see cref="DatagramSessionRefusalTests"/>, the house pattern for this shape of test — a hand-built
 /// raw TCP peer plays the role a well-behaved <see cref="StreamSessionReactor"/> could never take,
@@ -436,7 +436,7 @@ public class StreamSessionHandshakeGuardTests
 
     /// <summary>
     /// A plain BCL TCP socket connected to a Reactor's bound endpoint, standing in for a counterparty
-    /// this Reactor has never seen — the instrument the parent slice spec's Further Notes call for.
+    /// this Reactor has never seen.
     /// Unlike <see cref="HostilePeer"/>, this type can also read raw bytes back, which the version and
     /// capacity refusal tests need in order to parse the Refusal record off the wire.
     /// </summary>

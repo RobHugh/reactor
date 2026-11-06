@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.6.12 (issue #222; ADR 0017): plain <see cref="DeliveryMode.Unreliable"/> suppresses a
+/// Plain <see cref="DeliveryMode.Unreliable"/> suppresses a
 /// duplicate within a bounded sliding window of 64 sequences and delivers one delayed past it, so
 /// suppression is bounded rather than absolute. Both directions of that boundary matter, which is why
 /// the two tests below sit either side of it.

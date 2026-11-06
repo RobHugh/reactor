@@ -6,16 +6,12 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 3.5.4 (issue #86): retained bytes appended by <see cref="StreamSessionReactor.Send"/>
-/// actually reach the socket. Originally also covered released space becoming available for reuse
-/// purely from a local flush; issue #113 replaced that release-on-write policy with release-on-peer-
-/// confirmation (the delivery-counter mechanism #25 describes), so every test here that used to rely
-/// on a flush alone freeing room now has its <see cref="FlushPeer"/> send back a hand-built
-/// delivery-counter record confirming what it read, exactly as a real counterparty would. What every
-/// assertion here still checks is what a raw counterparty socket actually receives, and — now,
-/// genuinely — a Peer regaining room only once its peer has said so.
-/// Also carries slice 3.5.5 (issue #87), which reuses this file's real-socket <see cref="FlushPeer"/>
-/// for two acceptance criteria #21 left untested: that
+/// Retained bytes appended by <see cref="StreamSessionReactor.Send"/>
+/// actually reach the socket. Retention is released only on peer confirmation (the delivery-counter
+/// mechanism), so every test here that needs room freed has its <see cref="FlushPeer"/> send back a
+/// hand-built delivery-counter record confirming what it read, exactly as a real counterparty would.
+/// The assertions check what a raw counterparty socket actually receives, and a Peer regaining room
+/// only once its peer has said so. The real-socket <see cref="FlushPeer"/> also proves that
 /// <see cref="PeerCounters.RetentionHighWaterBytes"/> reads the true peak after a burst and never
 /// decreases as the ring drains, and that <see cref="SendOutcome.RetentionExhausted"/> is reachable
 /// over a real stalled connection, not only by direct ring-capacity calls.
@@ -31,7 +27,7 @@ public class StreamSessionRetentionFlushTests
     /// <summary>
     /// Pumps <paramref name="accepter"/> until it has drained a <see cref="SessionEventKind.PeerConnected"/>
     /// event, returning the established Peer's id. Also reads the accepter's own Hello record off
-    /// <paramref name="peer"/>'s socket, so the bytes this ticket's flush later writes are the only
+    /// <paramref name="peer"/>'s socket, so the bytes the flush later writes are the only
     /// thing left for <see cref="FlushPeer.Receive"/> to see.
     /// </summary>
     private static PeerId EstablishSession(StreamSessionReactorHarness accepter, FlushPeer peer, TimeSpan? budget = null)
@@ -47,7 +43,7 @@ public class StreamSessionRetentionFlushTests
         // Arrange — a 16-byte max Message frames to 20 bytes (4-byte prefix + payload). A 50-byte
         // retention bound holds two whole framed Messages with 10 bytes to spare, so the third Send —
         // landing at write position 40 with only 10 bytes left before the region's end — wraps into
-        // two segments both inside RetentionArena.TryAppend and, on this ticket's flush, inside
+        // two segments both inside RetentionArena.TryAppend and, on the flush, inside
         // RetentionArena.GetUnsent. Each Send is followed by its own Pump and the peer confirming what
         // it just read before the next Send lands, which is what walks the write position all the way
         // to the wrap boundary using only whole, uncontended Sends — retention is released only by that

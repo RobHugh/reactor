@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.6.8 (issue #218): a reliable sequence whose retransmit deadline has passed is resent —
+/// A reliable sequence whose retransmit deadline has passed is resent —
 /// its bytes read back out of retention and repacked into the next Pump's Datagram — so a dropped
 /// reliable Message arrives after all. Driven by <see cref="LossyProxy"/> with the loss scripted, never
 /// probabilistic, so a failure here is reproducible.
@@ -104,8 +104,8 @@ public class DatagramSessionRetransmitResendTests
             .Should().ContainSingle("the Message arrived on its first transmission");
 
         // An ack block rides a Datagram and a Datagram is only sent for a Peer with records queued, so
-        // the acknowledgement needs traffic in the reverse direction to travel on. A reply is the
-        // ordinary way a Session has some; until slice 8's Ping, a wholly silent receiver has none.
+        // the acknowledgement needs traffic in the reverse direction to travel on. A reply provides it
+        // here without waiting for the receiver's send-idle Ping.
         receiver.Reactor.Send(receiverPeer, DeliveryMode.Unreliable, [1]);
         PumpRoundsCollectingPayloads(sender, proxy, receiver, rounds: 4);
 

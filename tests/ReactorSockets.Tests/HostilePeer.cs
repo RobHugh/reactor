@@ -4,11 +4,10 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// A counterparty that puts exactly the bytes it is handed on the wire, with no framing, validation
-/// or interpretation of its own — the instrument slices 3 through 8 use to feed a Session Reactor
+/// or interpretation of its own — the instrument tests use to feed a Session Reactor
 /// malformed datagrams, wrong versions, invalid cookies, unknown flag bits and oversized length
-/// prefixes (parent slice spec's Further Notes). Built entirely from the public Raw surface: this
-/// type is an ordinary <see cref="RawReactor"/> consumer, exactly like the code it will be used to
-/// test, so nothing it does exercises a capability that code would not also have.
+/// prefixes. Built entirely from the public Raw surface: this type is an ordinary
+/// <see cref="RawReactor"/> consumer, exactly like the code it is used to test, so nothing it does exercises a capability that code would not also have.
 /// </summary>
 /// <remarks>
 /// A hostile peer's whole point is that it never validates its own output — every method here takes

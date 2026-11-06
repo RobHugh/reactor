@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.3.2 (issue #120): <see cref="StreamSessionReactor.Send(PeerId, ReadOnlySpan{byte})"/> against
+/// <see cref="StreamSessionReactor.Send(PeerId, ReadOnlySpan{byte})"/> against
 /// an <see cref="SessionEventKind.PeerInterrupted"/> Peer (issue #119). ADR 0010's backpressure rule is
 /// the point under test — <c>Send</c> keeps succeeding and retaining while the ring has room, and once
 /// it fills, <c>Send</c> returns <see cref="SendOutcome.RetentionExhausted"/> and the Peer stays

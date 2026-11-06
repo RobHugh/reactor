@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.6.11 (issue #221): <see cref="DeliveryMode.UnreliableSequenced"/> delivers a Message only
+/// <see cref="DeliveryMode.UnreliableSequenced"/> delivers a Message only
 /// if it is strictly newer than the highest already delivered in its Space. The promise is a sentence
 /// with no exceptions — you never receive an older update after a newer one — so these tests assert
 /// that sentence rather than the mechanism behind it.

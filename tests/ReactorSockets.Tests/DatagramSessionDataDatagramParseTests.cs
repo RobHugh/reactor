@@ -82,7 +82,7 @@ public class DatagramSessionDataDatagramParseTests
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> further = accepter.PumpAndDrainAll(3);
 
         // Assert — the datagram was taken from the transport, never logged as malformed, and no event
-        // ever appears: this ticket ends at "the datagram parsed", not at admission.
+        // ever appears: this test ends at "the datagram parsed", not at admission.
         accepter.Reactor.Counters.DatagramsReceived.Should().BeGreaterThan(receivedBefore);
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
         further.Should().BeEmpty();
@@ -783,7 +783,7 @@ public class DatagramSessionDataDatagramParseTests
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
         offset += 8;
         // The remaining ResumeSecretLength bytes are the dialler's resume secret; an all-zero one is
-        // fine, since nothing in this ticket's path ever reads it.
+        // fine, since only a Resume reads it and these tests send none.
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 

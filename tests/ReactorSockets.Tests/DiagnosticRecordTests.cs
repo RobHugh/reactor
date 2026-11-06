@@ -156,7 +156,7 @@ public class DiagnosticRecordTests
     [Fact]
     public void ForRetransmissionTimerBackedOff_PeerRtoAndCount_CarriesPeerSubjectAndTraceLevel()
     {
-        // Arrange — subtask 6.4.9, issue #199: the roster's Trace-level, Peer-subject entry at 204.
+        // Arrange — the roster's Trace-level, Peer-subject entry at 204.
         PeerId peer = new(Origin: 1, Index: 0, Generation: 1);
 
         // Act

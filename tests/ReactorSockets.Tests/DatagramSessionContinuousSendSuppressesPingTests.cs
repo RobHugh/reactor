@@ -12,7 +12,7 @@ namespace ReactorSockets.Tests;
 /// <see cref="WireTap"/>, reading the exact bytes the tap captured off the wire, exactly as
 /// <see cref="DatagramSessionSendIdlePingTests"/> does. Traffic here is <c>Unreliable</c>: continuous
 /// reliable traffic would either exhaust the default 4096-byte retention budget or need the far end to
-/// keep acking it, neither of which this ticket's timer question needs (#340's own known traps).
+/// keep acking it, neither of which the timer question here needs.
 /// </summary>
 public class DatagramSessionContinuousSendSuppressesPingTests
 {

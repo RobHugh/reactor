@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.6.16 (issue #226): the property the four-Space decision exists for. With a
+/// The property the four-Space decision exists for. With a
 /// <c>ReliableOrdered</c> packet dropped, so that Space is stalled behind a hole, the other three modes
 /// keep delivering across many Pumps — a bulk transfer and a latency-sensitive stream to the same Peer
 /// are genuinely independent — and the stalled Space recovers with nothing lost once its retransmission

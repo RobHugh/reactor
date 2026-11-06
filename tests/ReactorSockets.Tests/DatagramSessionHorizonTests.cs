@@ -6,11 +6,9 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.3.7 (issue #189), the headline deliverable of issue #41: the horizon rule, proved by the
-/// retransmit timer <em>not starting</em> rather than by delivery eventually succeeding (ADR 0009).
-/// Subtask 6.3.5 (issue #187) — what applying a received ack block releases, and how a slide arms what
-/// it newly covers — is asserted here too rather than beside it, since it is the same instrument and
-/// the same horizon.
+/// The horizon rule, proved by the retransmit timer <em>not starting</em> rather than by delivery
+/// eventually succeeding (ADR 0009). What applying a received ack block releases, and how a slide arms
+/// what it newly covers, is asserted here too, since it is the same instrument and the same horizon.
 /// </summary>
 /// <remarks>
 /// <para>

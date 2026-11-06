@@ -4,14 +4,14 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.4.1c (issue #140): a capacity refusal caused by an Interrupted Peer's reserved Slot
-/// (slice 4.4.1, issue #122) must never disturb the Peer whose reservation caused it. The refusal
+/// A capacity refusal caused by an Interrupted Peer's reserved Slot
+/// (issue #122) must never disturb the Peer whose reservation caused it. The refusal
 /// path (<c>StreamSessionReactor.RefuseForCapacity</c>) tracks a refused connection outside the Peer
 /// table entirely — it never becomes a Peer at all — so the held Peer keeps its <see cref="PeerId"/>
 /// (generation included), its counters keep answering unreset, and it stays Interrupted rather than
-/// closed or resumed. This ticket pins that separation as observable behaviour through the public L2
-/// surface only (tests/CLAUDE.md, ADR 0015), using the capacity-fill and fresh-dial harness helpers
-/// issue #138 added to <see cref="StreamSessionReactorHarness"/>.
+/// closed or resumed. These tests pin that separation as observable behaviour through the public L2
+/// surface only (tests/CLAUDE.md, ADR 0015), using the capacity-fill and fresh-dial helpers on
+/// <see cref="StreamSessionReactorHarness"/>.
 /// </summary>
 public class StreamSessionSlotReservationHeldPeerTests
 {

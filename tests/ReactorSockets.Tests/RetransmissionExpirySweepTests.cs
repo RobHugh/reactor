@@ -4,11 +4,11 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.4.8 (issue #198): the per-Pump expiry sweep that reports the sequences a Peer's
+/// The per-Pump expiry sweep that reports the sequences a Peer's
 /// <c>OutstandingReliableSequences.AckTracker</c> considers overdue for retransmission, marks them
 /// retransmitted, re-arms them at the backed-off RTO, and raises <see cref="PeerCounters.PacketsRetransmitted"/>
-/// by however many were reported. Subtask 6.4.9 (issue #199) adds the at-most-once-per-Pump backoff
-/// restructure and the <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> Diagnostic that reports it.
+/// by however many were reported. Backoff happens at most once per Pump, and the
+/// <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> Diagnostic reports it.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -70,7 +70,7 @@ public class RetransmissionExpirySweepTests
     public void CountersOf_ASlotReusedByALaterPeer_ReadsZeroPacketsRetransmittedInheritingNothingFromThePreviousOccupant()
     {
         // Arrange — close the first Peer so its Slot is free, dial again so a new Peer reuses that Slot
-        // (capacity 1 forces the reuse), running several Pumps in between so the sweep this ticket adds
+        // (capacity 1 forces the reuse), running several Pumps in between so the expiry sweep
         // has run against the first occupant before its Slot is released.
         using DatagramSessionReactorHarness accepter = new(capacity: 1);
         using DatagramSessionReactorHarness firstDialler = new(bindLoopback: false, capacity: 1);

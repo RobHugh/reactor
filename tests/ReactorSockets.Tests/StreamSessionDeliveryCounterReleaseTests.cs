@@ -6,14 +6,10 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.1.3 (issue #113, folding in #110): receiving a peer's delivery-counter record releases this
-/// end's own outbound retention through the confirmed Message count
-/// (<see cref="RetentionArena.ReleaseThroughMessageCount"/>), replacing the release-on-socket-write
-/// policy <see cref="StreamSessionRetentionFlushTests"/> used to cover. <see cref="RetentionArena"/> is
-/// L0 and untested-through (tests/CLAUDE.md, ADR 0015), and #110 originally proposed testing
-/// <c>ReleaseThroughMessageCount</c> directly — that was in error, since nothing sanctioned could reach
-/// it before this ticket's wiring existed, so its six acceptance criteria are proven here instead,
-/// entirely through the public L2 surface: a real <see cref="StreamSessionReactor"/> Sending framed
+/// Receiving a peer's delivery-counter record releases this end's own outbound retention through the
+/// confirmed Message count (<see cref="RetentionArena.ReleaseThroughMessageCount"/>).
+/// <see cref="RetentionArena"/> is L0 and untested-through (tests/CLAUDE.md, ADR 0015), so this is
+/// proven entirely through the public L2 surface: a real <see cref="StreamSessionReactor"/> Sending framed
 /// Messages, a hand-built raw counterparty peer replying with delivery-counter records, and room
 /// recovering (or not) exactly as byte-precise as each criterion demands. The counterparty is
 /// <see cref="ReleasePeer"/>, mirroring <see cref="StreamSessionRetentionFlushTests"/>'s <c>FlushPeer</c>

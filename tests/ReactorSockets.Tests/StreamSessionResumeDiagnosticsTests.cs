@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.4.4 (issue #124): what an operator reads when a Resume is matched and when one is refused,
+/// What an operator reads when a Resume is matched and when one is refused,
 /// and the three ways a Resume is refused. <see cref="DiagnosticId.ResumeMatched"/> names the resumed
 /// Peer, because a match by definition found one. <see cref="DiagnosticId.ResumeUnmatched"/> names a
 /// claimed Source instead, because a claim that is not matched comes from a party that is by

@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 7.2.4 (issue #244): what a refused <see cref="DatagramSessionReactor.Send"/> is allowed to
+/// What a refused <see cref="DatagramSessionReactor.Send"/> is allowed to
 /// leave behind, and the span-copy contract that lets a caller reuse its buffer the instant
 /// <c>Send</c> returns. A <see cref="SendOutcome.RetentionExhausted"/> refusal spends nothing: no
 /// record is queued, no retention is taken, and no sequence number is claimed from the Space.

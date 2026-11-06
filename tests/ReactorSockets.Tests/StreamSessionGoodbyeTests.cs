@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 3.7 (issue #23): Goodbye, Closing, and the <see cref="DisconnectReason"/> roster. Goodbye is
+/// Goodbye, Closing, and the <see cref="DisconnectReason"/> roster. Goodbye is
 /// the announcement that a Session is ending on purpose (ADR 0010); Closing is reached only when a
 /// Goodbye arrives while something is still outstanding — either this end's own outbound retention
 /// for that Peer still has bytes to deliver, or the consumer has not yet drained Messages this end
@@ -30,7 +30,7 @@ public class StreamSessionGoodbyeTests
     /// <summary>
     /// Pumps <paramref name="accepter"/> until it has drained a <see cref="SessionEventKind.PeerConnected"/>
     /// event, returning the established Peer's id, and reads the accepter's own Hello record off
-    /// <paramref name="peer"/>'s socket first, so later reads see only what this ticket's flush writes.
+    /// <paramref name="peer"/>'s socket first, so later reads see only what the flush writes.
     /// </summary>
     private static PeerId EstablishSession(StreamSessionReactorHarness accepter, GoodbyePeer peer, TimeSpan? budget = null)
     {
@@ -282,9 +282,9 @@ public class StreamSessionGoodbyeTests
         // (the smallest legal pair under issue #16's cross-check, retention >= MaxMessageSize + 4):
         // a single 16-byte Send occupies the whole 20-byte ring, leaving the 4-byte Goodbye sentinel
         // Close tries to append no room at all. Retention is released only by a peer's delivery-counter
-        // confirmation (issue #113) — handing bytes to the socket is no longer enough — so this test's
-        // peer must actually send one back once it has read the Message, or the Goodbye append would
-        // stay Exhausted forever rather than getting the retry-and-commit this ticket is about.
+        // confirmation — handing bytes to the socket is not enough — so this test's peer must actually
+        // send one back once it has read the Message, or the Goodbye append would stay Exhausted forever
+        // rather than getting the retry-and-commit this test is about.
         const int maxMessageSize = 16;
         const int retentionBytes = maxMessageSize + 4; // 4-byte length prefix, matching BuildFrame.
         byte[] message = PayloadOf(maxMessageSize, 7);
@@ -625,7 +625,7 @@ public class StreamSessionGoodbyeTests
     /// that can put a raw Goodbye sentinel on the wire directly — something no consumer of the public
     /// <see cref="StreamSessionReactor"/> surface can do, since <see cref="StreamSessionReactor.Close"/>
     /// is the only way this library ever writes one. Mirrors <see cref="StreamSessionRetentionFlushTests"/>'s
-    /// <c>FlushPeer</c>, minus the shrunk receive buffer that ticket's backpressure tests need and this
+    /// <c>FlushPeer</c>, minus the shrunk receive buffer that file's backpressure tests need and this
     /// one does not.
     /// </summary>
     private sealed class GoodbyePeer : IDisposable

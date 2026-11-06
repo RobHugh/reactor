@@ -9,7 +9,7 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Self-tests for <see cref="LossyProxy"/>, driven from two plain BCL UDP sockets standing in for the
 /// client and the upstream endpoint — the proxy itself is the only <see cref="RawReactor"/> in this
-/// picture, exactly the role it plays for a real Session-under-test in slices 3 through 8.
+/// picture, exactly the role it plays for a real Session under test.
 /// </summary>
 public class LossyProxyTests
 {

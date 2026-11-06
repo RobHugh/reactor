@@ -29,7 +29,7 @@ public class DatagramSessionFlushSplitTests
     /// <paramref name="bindLoopback"/>'s default capacity of more than one Peer, the frame arena's
     /// escape for a share-holder's very first reservation of a Frame would let only one 30 000-byte
     /// Message through per Pump even though the receive window admitted more, which is an arena-sizing
-    /// artefact this ticket is not about. <see cref="ReactorOptions.ArenaSize"/> is set to hold every
+    /// artefact these tests are not about. <see cref="ReactorOptions.ArenaSize"/> is set to hold every
     /// Message these tests deliver inside a single Frame.
     /// </summary>
     private static DatagramSessionReactorHarness NewHarness(bool bindLoopback = true) => new(

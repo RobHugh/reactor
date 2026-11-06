@@ -7,10 +7,9 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 5.5 (issue #36): refusal — a version mismatch, capacity exhaustion, and the admission cap.
-/// Every test drives a real <see cref="DatagramSessionReactor"/> with hand-built control datagrams (see
-/// the wire format fixed in the parent slice spec: a 256-byte, big-endian, zero-padded control
-/// datagram — session id, control type, body, padding) sent from a <see cref="RawPeer"/>, a plain BCL
+/// Refusal — a version mismatch, capacity exhaustion, and the admission cap.
+/// Every test drives a real <see cref="DatagramSessionReactor"/> with hand-built control datagrams (a
+/// 256-byte, big-endian, zero-padded control datagram — session id, control type, body, padding) sent from a <see cref="RawPeer"/>, a plain BCL
 /// UDP socket standing in for a counterparty this Reactor has never seen. A genuine Cookie is always
 /// obtained by sending a real Hello and reading the Reactor's own reply, never fabricated, because the
 /// Reactor authenticates it before doing anything else.
@@ -906,7 +905,7 @@ public class DatagramSessionRefusalTests
 
     /// <summary>
     /// A plain BCL UDP socket bound to loopback, standing in for a counterparty this Reactor has never
-    /// seen — the same instrument the parent slice spec's Further Notes call for, but bidirectional:
+    /// seen. It is bidirectional:
     /// unlike <see cref="HostilePeer"/>, a refusal test must read a genuine Cookie or Refusal back off
     /// the wire, not merely put bytes on it.
     /// </summary>

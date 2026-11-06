@@ -215,8 +215,8 @@ public class StreamSessionResumeRewindTests
         accepter.Reactor.Send(held[0].Peer, [1]).Should().Be(SendOutcome.RetentionExhausted);
 
         // Act — the peer resumes claiming to have received nothing at all: one Message below the
-        // released head of 1 (RetentionRewindOutcome.BelowReleasedHead, D1) — the gap case this ticket
-        // is named for, since bytes at count 0 are bytes this end no longer retains.
+        // released head of 1 (RetentionRewindOutcome.BelowReleasedHead, D1) — the gap case, since
+        // bytes at count 0 are bytes this end no longer retains.
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 0));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
@@ -292,7 +292,7 @@ public class StreamSessionResumeRewindTests
         accepter.InterruptHeldPeer(held[0]);
 
         // Act — the counters are read one Pump before the gap resume closes the Slot, the last moment
-        // this ticket's own acceptance criteria requires them to still answer.
+        // they are required to still answer.
         PeerCounters beforeClose = accepter.Reactor.CountersOf(held[0].Peer);
 
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);

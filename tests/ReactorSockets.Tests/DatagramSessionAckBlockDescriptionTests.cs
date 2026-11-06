@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtasks 6.3.1 (issue #183), 6.3.4 (issue #186) and 6.3.8 (issue #190): what the two ack blocks a
+/// What the two ack blocks a
 /// Peer stamps on its outbound datagrams actually say about its receive state — the cumulative base
 /// each reliable Space has reached, plus the 32-bit field describing the 32 sequences above it.
 /// </summary>

@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.4.1d (issue #141): nothing new decides when a reserved Slot's hold ends — it lasts exactly
+/// A reserved Slot's hold lasts exactly
 /// as long as the Interrupted Peer holding it is held (#122, #121). These tests prove the release that
 /// falls out of that actually reaches the admission path: with a <see cref="StreamSessionReactor"/> at
 /// capacity and one Peer Interrupted, a fresh connection attempted just before the effective Linger

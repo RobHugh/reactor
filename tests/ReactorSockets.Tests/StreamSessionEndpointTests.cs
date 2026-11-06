@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 3.2 (issue #18): Peers, the endpoint set, and the Peer lifecycle up to an established
+/// Peers, the endpoint set, and the Peer lifecycle up to an established
 /// Session. Mirrors <see cref="DatagramSessionEndpointTests"/>, the house pattern for this profile.
 /// </summary>
 public class StreamSessionEndpointTests

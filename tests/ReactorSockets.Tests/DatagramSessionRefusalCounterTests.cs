@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.6.15 (issue #225): duplicate and out-of-window arrivals are counters, never Diagnostics.
+/// Duplicate and out-of-window arrivals are counters, never Diagnostics.
 /// Across one scripted exchange <see cref="PeerCounters.DuplicatePackets"/> and
 /// <see cref="PeerCounters.OutOfWindowPackets"/> each rise by exactly one, at different moments, and the
 /// Diagnostics Sink receives nothing at all.

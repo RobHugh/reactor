@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.2.2 (issue #117, #26's second idle timer), revised by issue #119: over TCP only receiving
+/// The second idle timer. Over TCP only receiving
 /// is evidence a Peer's transport is still there — the kernel accepts written bytes into a buffer
 /// whether or not anything is at the far end. A Peer from which nothing at all has been received for
 /// <see cref="PeerSlot.RemoteSendIdleInterval"/> x <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>
@@ -212,7 +212,7 @@ public class StreamSessionReceiveIdleDeadlineTests
     }
 
     // =========================================================================================
-    // AC5 — no DiagnosticId member is added by this ticket
+    // No DiagnosticId member for the receive-idle deadline
     // =========================================================================================
 
     [Fact]
@@ -221,9 +221,9 @@ public class StreamSessionReceiveIdleDeadlineTests
         // Arrange
         string[] names = Enum.GetNames<DiagnosticId>();
 
-        // Assert — the receive-idle-to-Interrupted transition (issue #117, revised by #119) is already
-        // an Event (SessionEventKind.PeerInterrupted); Info is reserved for lifecycle that never became
-        // one (ADR 0013), so this ticket adds no DiagnosticId member for it.
+        // Assert — the receive-idle-to-Interrupted transition is already an Event
+        // (SessionEventKind.PeerInterrupted); Info is reserved for lifecycle that never became one
+        // (ADR 0013), so there is no DiagnosticId member for it.
         names.Should().NotContain(
             n => n.Contains("ReceiveIdle", StringComparison.OrdinalIgnoreCase)
                 || n.Contains("MissedHeartbeat", StringComparison.OrdinalIgnoreCase)

@@ -126,9 +126,8 @@ public class StreamSessionNegotiatedLingerTests
 
         // Assert — both roles rounded their own 5000.4 ms Linger up to 5001 ms once, before negotiating,
         // so the LingerNegotiated Diagnostic reports 5001 on both Value0 (this end's own announced
-        // Linger) and Value1 (the negotiated minimum against the far end's 8 s) — before this fix,
-        // negotiation read the unrounded 5000.4 ms directly, and the truncating cast on Value0/Value1
-        // reported 5000 on both, while the Peer's actual effective Linger stayed the unrounded 5000.4 ms.
+        // Linger) and Value1 (the negotiated minimum against the far end's 8 s). Negotiating on the
+        // unrounded 5000.4 ms would report 5000 on both through the truncating cast.
         listening.Sink.Received.Where(r => r.Id == DiagnosticId.LingerNegotiated).Should().ContainSingle()
             .Which.Should().Match<DiagnosticRecord>(r => r.Value0 == 5001 && r.Value1 == 5001);
         dialling.Sink.Received.Where(r => r.Id == DiagnosticId.LingerNegotiated).Should().ContainSingle()
@@ -140,8 +139,8 @@ public class StreamSessionNegotiatedLingerTests
         listening.Reactor.Pump();
         dialling.Reactor.Pump();
 
-        // Assert — both sides still hold the Peer Interrupted: before this fix the listening Reactor
-        // would already have closed around 5000.4 ms, well short of this point.
+        // Assert — both sides still hold the Peer Interrupted. A listening Reactor that negotiated on the
+        // unrounded Linger would already have closed around 5000.4 ms, well short of this point.
         listening.DrainToList().Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
         dialling.DrainToList().Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
 

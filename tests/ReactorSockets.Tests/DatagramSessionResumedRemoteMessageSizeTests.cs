@@ -7,7 +7,7 @@ namespace ReactorSockets.Tests;
 /// Issue #289: a Peer that has Resumed still validates a reliable <see cref="DatagramSessionReactor.Send"/>
 /// against the peer's own announced <c>MaxMessageSize</c> — captured on the Peer's <c>Slot</c> at
 /// handshake (issue #284) — rather than losing it and falling back to zero or to this Reactor's own
-/// setting. The Datagram profile has a wire-level Resume (issue #52, slice 8.4) that carries no
+/// setting. The Datagram profile has a wire-level Resume that carries no
 /// parameters and only moves the send address; this class exercises the property that keeps the
 /// captured limit intact across it: a Session is identified by its wire token rather than by the
 /// address or link a datagram arrived on
@@ -42,7 +42,7 @@ namespace ReactorSockets.Tests;
 /// interruption — zero, if the Resume path failed to keep it — would refuse both payloads, including
 /// the at-limit one that a working implementation must accept. That is why the accepted case, not the
 /// refused one, is what actually establishes the property: a test asserting only the refusal would pass
-/// just as well against the very bug this ticket exists to catch.
+/// just as well against the very bug this file exists to catch.
 /// </remarks>
 public class DatagramSessionResumedRemoteMessageSizeTests
 {

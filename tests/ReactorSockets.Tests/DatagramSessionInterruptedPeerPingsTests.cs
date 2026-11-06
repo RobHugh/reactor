@@ -11,8 +11,7 @@ namespace ReactorSockets.Tests;
 /// unacknowledged. A datagram Session has no re-dial schedule (#55): there is nothing to re-dial, and
 /// the interrupted end can only resume by being heard from again, so it keeps probing the path with
 /// Pings for as long as Linger holds the Peer alive. <c>EnforceSendIdleTimer</c> does not read
-/// <c>PeerSlot.IsInterrupted</c> — no code change was needed for this ticket, and its XML doc now
-/// records the decision.
+/// <c>PeerSlot.IsInterrupted</c>, and its XML doc records that decision.
 /// </summary>
 /// <remarks>
 /// Drives a real <see cref="DatagramSessionReactor"/> pair through a <see cref="LossyProxy"/> on a

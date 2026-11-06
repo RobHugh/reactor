@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 7.2.6 (issue #246): the refusal that gives fragmentation its shape.
+/// The refusal that gives fragmentation its shape.
 /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> are capped
 /// at a single Datagram and <see cref="DatagramSessionReactor.Send"/> answers
 /// <see cref="SendOutcome.MessageTooLarge"/> above it, because you may only fragment what you can

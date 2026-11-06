@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 3.4.4 (issue #82): the per-Peer whole-Message delivery counter, and its load-bearing
+/// The per-Peer whole-Message delivery counter, and its load-bearing
 /// property — it advances only when a Message is actually handed to the frame arena for delivery,
 /// never merely because its bytes have all arrived. The held-back case reuses #81's read-share
 /// exhaustion mechanism (a capacity/arena small enough that a second whole Message in one Frame

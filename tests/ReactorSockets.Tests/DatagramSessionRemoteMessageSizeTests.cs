@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 7.4.1.4 (issue #288): the boundary <see cref="DatagramSessionReactor.Send"/> enforces on a
+/// The boundary <see cref="DatagramSessionReactor.Send"/> enforces on a
 /// reliable Message is inclusive, and refusing at it is free. #284 changed that boundary from this
 /// Reactor's own <see cref="DatagramSessionOptions.MaxMessageSize"/> to the peer's own announced limit,
 /// so every test below gives the dialler and the accepter different limits: a Message that fits between

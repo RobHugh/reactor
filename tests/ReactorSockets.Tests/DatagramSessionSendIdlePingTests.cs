@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 8.1.4 (issue #340, parent #53): the send-idle timer, and the Ping it emits. An Established
+/// The send-idle timer, and the Ping it emits. An Established
 /// Peer that has sent no data datagram for <see cref="DatagramSessionOptions.SendIdleInterval"/> queues
 /// one Ping — a seven-byte <c>ReliableUnordered</c> control record — which takes a sequence and a
 /// retention slot exactly like an ordinary reliable Send, marked in retention as control so a first send

@@ -230,7 +230,7 @@ public class DatagramSessionReceiveArenaAllocationTests
     /// run of inbound datagrams" — left unticked when the arena landed because nothing wrote into the
     /// receive path yet; #172 and #173 wired that up. Each cycle sends every odd offset in the window
     /// in one datagram, then every even offset in another — the same out-of-order, hole-filling pattern
-    /// the direct <c>ReceiveWindow</c> unit test used before the type went internal (this ticket) — over
+    /// a direct <c>ReceiveWindow</c> test would use — over
     /// the <c>Unreliable</c> Space, which classifies without retaining any payload, so this measures the
     /// window's own bookkeeping rather than reliable retention.
     /// </summary>
@@ -266,7 +266,7 @@ public class DatagramSessionReceiveArenaAllocationTests
         RunCycles(accepter, client, clientLink, sessionId, capacity, cycleBase, measuredCyclesPerPhase);
         long phaseTwoDelta = GC.GetAllocatedBytesForCurrentThread() - beforePhaseTwo;
 
-        // Assert — a per-datagram cost from the socket layer (L1, not this ticket's concern) is
+        // Assert — a per-datagram cost from the socket layer (L1, not this test's concern) is
         // expected and unavoidable; what must not happen is that cost climbing as the run goes on,
         // which is what an accumulating receive window would show up as. The multiple is generous
         // headroom against GC noise, not a tight bound.

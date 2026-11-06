@@ -7,7 +7,7 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Issue #132: a two-way Peer's delivery-counter record rides the retention write already due in that
 /// Pump — one gather write carrying the record and this end's own Messages — rather than taking a
-/// write of its own, which is what slice 4.1 (#25) stated as the trigger's cost.
+/// write of its own.
 /// </summary>
 /// <remarks>
 /// <para>

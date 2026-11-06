@@ -7,7 +7,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.2.1 (issue #114, #26's first idle timer): a Peer that has written nothing to the wire for
+/// A Peer that has written nothing to the wire for
 /// <see cref="StreamSessionOptions.SendIdleInterval"/> sends its delivery-counter record as a heartbeat
 /// — unconditionally, never consulting whether anything was received (issue #118 tests that rule
 /// directly against a Peer that only ever sends into a receiver that never confirms). Every test here

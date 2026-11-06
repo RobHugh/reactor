@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.2.6 (issues #173, #176): both unreliable Spaces' receive windows slide their base forward
+/// Both unreliable Spaces' receive windows slide their base forward
 /// rather than stalling on a hole (#173's design decision), and every sequence either slide retires
 /// un-admitted raises the one per-Peer loss figure by exactly one — with no Diagnostic per gap (ADR 0013),
 /// since a lossy path must not fill the Sink with volume. The instrument is the one
