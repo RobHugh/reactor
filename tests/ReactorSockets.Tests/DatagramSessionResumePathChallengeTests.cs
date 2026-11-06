@@ -7,7 +7,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #426: a matched Resume whose source IP differs from the Peer's current address does not move
+/// A matched Resume whose source IP differs from the Peer's current address does not move
 /// where the Peer is sent until that address proves it receives. The accepting end answers with one
 /// PathChallenge to the Resume's source and moves only when the challenge's nonce comes back in a
 /// PathResponse from that same source. Without this, anyone who completed a handshake could name a

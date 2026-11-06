@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.5.7 (issue #206) and subtask 6.5.6 (issue #205): the retention pool belongs to the
+/// The retention pool belongs to the
 /// capacity Slot, not to the Peer occupying it, so it outlives whichever Peer is admitted. A Peer
 /// admitted into a Slot a previous Peer vacated must therefore find that Slot's retention empty and its
 /// <see cref="PeerCounters.RetentionHighWaterBytes"/> at zero, exactly as every other per-Peer counter

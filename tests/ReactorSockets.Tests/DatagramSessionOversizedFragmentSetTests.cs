@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #285: a Fragment declaring more pieces than this Reactor's own <c>MaxMessageSize</c> could ever
+/// A Fragment declaring more pieces than this Reactor's own <c>MaxMessageSize</c> could ever
 /// back is a claim that end could never honour, not merely a malformed record (#282). Rather than
 /// discarding just the offending datagram, the Peer that made the claim is closed with
 /// <see cref="DisconnectReason.ProtocolViolation"/> — the same treatment #253's individually-illegal
@@ -110,7 +110,7 @@ public class DatagramSessionOversizedFragmentSetTests
     [Fact]
     public void Pump_OversizedFragmentSetClosesThePeer_TheFreedSlotAdmitsANewPeerCleanly()
     {
-        // Arrange — issue #285's third criterion is that the oversized set occupies no receive-window
+        // Arrange — the oversized set must occupy no receive-window
         // slot, but DatagramSessionHostileFragmentDiscardTests' own technique for proving that —
         // resending the same sequence to the SAME Peer and checking it is admitted rather than refused
         // as a duplicate — has no Peer left to run against here: the oversized claim ends the Session,
@@ -468,7 +468,7 @@ public class DatagramSessionOversizedFragmentSetTests
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
         offset += 8;
         // The remaining ResumeSecretLength bytes are the dialler's resume secret; an all-zero one is
-        // fine, since nothing in this ticket's path ever reads it.
+        // fine, since only a Resume reads it and these tests send none.
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 

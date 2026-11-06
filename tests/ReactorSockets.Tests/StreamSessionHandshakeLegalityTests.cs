@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #429: a stream handshake record is held to the same legality rules the datagram profile's
+/// A stream handshake record is held to the same legality rules the datagram profile's
 /// control codec applies, so both transports reject the same malformed inputs. A Hello announcing a
 /// zero <c>MaxMessageSize</c>, a Refusal naming no known reason, and a Refusal or Resume whose padding
 /// is not zero are all malformed. Driven from outside the L2 seam (tests/CLAUDE.md) by plain sockets

@@ -6,7 +6,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #387 (parent #56): a Fragment set that is half arrived, with the arrived half acknowledged to the
+/// A Fragment set that is half arrived, with the arrived half acknowledged to the
 /// sender, when the path is cut, completes after a wire-level Resume from a new port. The Message is
 /// delivered once and whole, and the sender does not resend a Fragment that was acknowledged before the cut.
 /// The model for the wire assertion and the Fragment sizing is

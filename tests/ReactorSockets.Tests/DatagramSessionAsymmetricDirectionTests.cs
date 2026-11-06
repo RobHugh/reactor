@@ -4,10 +4,10 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #291: the peer's announced <see cref="DatagramSessionOptions.MaxMessageSize"/> is the boundary
-/// <see cref="DatagramSessionReactor.Send"/> enforces (#284), not this Reactor's own. #290 proved that
-/// with the dialler sending toward the accepter's smaller announced limit; this file proves the same
-/// rule holds in the other direction too. Checking only one direction would leave a Reactor that reads
+/// The peer's announced <see cref="DatagramSessionOptions.MaxMessageSize"/> is the boundary
+/// <see cref="DatagramSessionReactor.Send"/> enforces, not this Reactor's own.
+/// <see cref="DatagramSessionAsymmetricMessageSizeTests"/> proves that with the dialler sending toward
+/// the accepter's smaller announced limit. This file proves the same rule in the other direction. Checking only one direction would leave a Reactor that reads
 /// its own <see cref="DatagramSessionOptions.MaxMessageSize"/> instead of the peer's undetected whenever
 /// that Reactor happens to be the one with the larger limit — the bug is symmetric, so the proof has to
 /// be. Neither test asserts how many Fragments a Message split into — only the <see cref="SendOutcome"/>

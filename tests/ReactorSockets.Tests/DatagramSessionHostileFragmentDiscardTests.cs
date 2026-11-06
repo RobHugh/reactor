@@ -6,10 +6,9 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #255: the codec's refusal of impossible Fragment metadata (#253); issue #256 extends this
-/// file with the claimed-set forgeries a Fragment can pass #253 individually and still commit — a
-/// group claiming one index twice (a gap in the indices present is honest traffic since #274) and two
-/// groups whose ranges overlap. Both are proved against a live Session
+/// The codec's refusal of impossible Fragment metadata, and the claimed-set forgeries a Fragment
+/// can pass that check with individually and still commit: a group claiming one index twice (a gap
+/// in the indices present is honest traffic) and two groups whose ranges overlap. Both are proved against a live Session
 /// rather than in isolation — a real attacker sits at a hostile peer driving an established Session,
 /// not at a unit test calling the codec directly. Every datagram here is built and sent by hand over a
 /// bare <see cref="RawReactor"/> — the same instrument <see cref="HostilePeer"/> is built from, and the
@@ -459,7 +458,7 @@ public class DatagramSessionHostileFragmentDiscardTests
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
         offset += 8;
         // The remaining ResumeSecretLength bytes are the dialler's resume secret; an all-zero one is
-        // fine, since nothing in this ticket's path ever reads it.
+        // fine, since only a Resume reads it and these tests send none.
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 

@@ -5,7 +5,7 @@ using Harness = ReactorSockets.Tests.DatagramSessionReactorHarness;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #61: the Counter surface audited on the datagram Session profile. Every field rises where
+/// The Counter surface audited on the datagram Session profile. Every field rises where
 /// expected and nowhere else, <see cref="ReactorCounters.AdmissionDeferrals"/> stays at zero for a
 /// whole exchange, a declined Hello is an exact <see cref="ReactorCounters.AdmissionDiscards"/>, a
 /// spent read share is counted on the Peer, and a snapshot is a value.

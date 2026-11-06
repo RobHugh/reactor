@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 7.2.2 (issue #242): the arithmetic <see cref="FragmentPlan.Resolve"/> uses to decide how a
+/// The arithmetic <see cref="FragmentPlan.Resolve"/> uses to decide how a
 /// Message is cut, pinned directly — no Session, no Peer, no reactor — the way ADR 0015 lets a pure
 /// algorithmic type be tested when it is made public for exactly that reason.
 /// </summary>

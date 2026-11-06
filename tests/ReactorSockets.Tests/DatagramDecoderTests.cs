@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #229: <see cref="DatagramDecoder.TryDecode"/> against byte arrays built by hand in each test,
+/// <see cref="DatagramDecoder.TryDecode"/> against byte arrays built by hand in each test,
 /// proving the decoder itself reads the live-Session wire format (ADR 0009) correctly and refuses
 /// strictly rather than returning a partial result. Every input here is constructed independently of
 /// the decoder's own offsets, using local helpers scoped to this file — the point is that the decoder's

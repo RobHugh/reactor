@@ -6,13 +6,13 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.3.1 (issue #119): <c>Interrupted</c>, the state of a Session whose transport has been lost
+/// <c>Interrupted</c>, the state of a Session whose transport has been lost
 /// but whose Peer identity and undelivered Messages are still held, pending a Resume. ADR 0010's rule
 /// governs every test here — <b>a FIN is not a Goodbye</b>, so a collapsing half-open pipe, a reset, or
 /// a local write failure all move an established Peer to <see cref="SessionEventKind.PeerInterrupted"/>
 /// rather than closing it, while a Goodbye followed by a FIN still reaches
-/// <see cref="SessionEventKind.PeerClosing"/>/<see cref="SessionEventKind.PeerClosed"/> exactly as
-/// before this ticket and never raises <see cref="SessionEventKind.PeerInterrupted"/>. Every test here
+/// <see cref="SessionEventKind.PeerClosing"/>/<see cref="SessionEventKind.PeerClosed"/> and never
+/// raises <see cref="SessionEventKind.PeerInterrupted"/>. Every test here
 /// drives a real <see cref="StreamSessionReactor"/> against a hand-built raw counterparty
 /// (<see cref="InterruptedPeer"/>) through the public L2 surface only (tests/CLAUDE.md, ADR 0015).
 /// Mirrors <see cref="StreamSessionGoodbyeTests"/>'s <c>GoodbyePeer</c> and
@@ -89,7 +89,7 @@ public class StreamSessionInterruptedTests
     }
 
     // =========================================================================================
-    // Goodbye then FIN: Closing/Closed as before this ticket, never Interrupted
+    // Goodbye then FIN: Closing/Closed, never Interrupted
     // =========================================================================================
 
     [Fact]
@@ -158,7 +158,7 @@ public class StreamSessionInterruptedTests
     }
 
     // =========================================================================================
-    // No DiagnosticId member is added by this ticket
+    // No DiagnosticId member for Interrupted
     // =========================================================================================
 
     [Fact]
@@ -169,7 +169,7 @@ public class StreamSessionInterruptedTests
 
         // Assert — the transition to Interrupted is already an Event
         // (SessionEventKind.PeerInterrupted); Info is reserved for lifecycle that never became one
-        // (ADR 0013), so this ticket adds no DiagnosticId member for it.
+        // (ADR 0013), so there is no DiagnosticId member for it.
         names.Should().NotContain(
             n => n.Contains("Interrupt", StringComparison.OrdinalIgnoreCase),
             "Interrupted (issue #119) is surfaced only through SessionEventKind, never a DiagnosticId");
@@ -180,7 +180,7 @@ public class StreamSessionInterruptedTests
     /// whose transport can be killed abruptly (<see cref="ResetAbruptly"/>) or ended gracefully with no
     /// Goodbye (<see cref="CloseGracefully"/>) — the two ways ADR 0010 says a Session reaches
     /// Interrupted from the far end. Mirrors <see cref="StreamSessionGoodbyeTests"/>'s
-    /// <c>GoodbyePeer</c>, widened with the abrupt-reset method that ticket had no need for.
+    /// <c>GoodbyePeer</c>, widened with an abrupt-reset method.
     /// </summary>
     private sealed class InterruptedPeer : IDisposable
     {
@@ -225,8 +225,7 @@ public class StreamSessionInterruptedTests
 
         /// <summary>
         /// Kills the connection abruptly: <c>SO_LINGER</c> set to zero, then closed, which forces the
-        /// OS to send a reset instead of an ordinary FIN — the "socket closed with linger zero" half of
-        /// issue #119's first acceptance criterion.
+        /// OS to send a reset instead of an ordinary FIN.
         /// </summary>
         public void ResetAbruptly()
         {

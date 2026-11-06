@@ -6,10 +6,10 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #262: a half-arrived Fragment set survives an interruption of its Peer's transport at no
+/// A half-arrived Fragment set survives an interruption of its Peer's transport at no
 /// cost, because the pieces already held live in the ordinary per-Peer receive window
 /// (<see cref="DatagramSessionReactor.HoldFragment"/>'s own remarks) — state a lost and rebuilt
-/// transport never touches. The Datagram profile now has a wire-level Resume (issue #52, slice 8.4):
+/// transport never touches. The Datagram profile has a wire-level Resume:
 /// the dialling end sends one at the send-idle cadence while Interrupted, and the accepting end
 /// authorises it by secret, routes it by session id and moves its send address. The end-to-end test
 /// that a half-arrived Fragment set survives that Resume lives in the Fragment-set Resume test class
@@ -31,21 +31,6 @@ namespace ReactorSockets.Tests;
 /// <see cref="FragmentSize"/> is sized so no two Fragment records ever share one Datagram (matching that
 /// same test's own sizing note), so each dropped or interrupted Fragment's transmission is isolated to
 /// its own captured Datagram.
-/// </remarks>
-/// <remarks>
-/// <b>Finding, not this ticket's scope:</b> nothing in the current ack-application path
-/// (<see cref="DatagramSessionReactor.ParseDataDatagram"/>'s two <c>ApplyAck</c> calls) ever calls
-/// <see cref="RetentionPool.Release"/> for a Datagram Peer's send-side retention. <c>ApplyAck</c> only
-/// releases a sequence from the retransmit-deadline tracker (<see cref="OutstandingReliableSequences"/>)
-/// — a different "release" than freeing its <see cref="RetentionPool"/> slot. The only place
-/// <see cref="RetentionPool.Release"/> is ever called is nowhere in production code: a Peer's outbound
-/// retention slots for a reliable Space, once filled, stay filled for that Peer's whole life; they are
-/// only reset in bulk when a vacated capacity Slot is reused by a new Peer
-/// (<see cref="RetentionPool.ResetShareHolder"/>, exercised by
-/// <see cref="DatagramSessionRetentionSlotRecycleTests"/>). This is unrelated to receive-side Fragment
-/// survival — the subject of this file — and is left unfixed here, per this ticket's test-only scope;
-/// <see cref="RetentionBytes"/> below is sized generously so this file's own further Sends are never
-/// incidentally blocked by it.
 /// </remarks>
 public class DatagramSessionFragmentSurvivesInterruptionTests
 {
@@ -74,13 +59,11 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
     private const int MessageSize = (FragmentSize * (FragmentCount - 1)) + LastFragmentRemainder;
 
     /// <summary>
-    /// Retention sized to hold every Fragment one Send retains, plus one further slot. Datagram
-    /// retention slots are freed only when a Peer's Slot is reused by a new occupant
-    /// (<see cref="RetentionPool.ResetShareHolder"/>) — nothing in the ack path calls
-    /// <see cref="RetentionPool.Release"/> today (see the class remarks) — so the one extra slot is
-    /// what <see cref="Pump_AfterCompletionFollowingTheInterruption_TheGroupsSlotsAreReleasedSoFurtherMessagesStillFitTheWindow"/>
-    /// needs room for its own further Send, on top of the original set's four Fragments that stay
-    /// retained for this Fixture's whole life.
+    /// Retention sized to hold every Fragment one Send retains, plus one further slot, so the further
+    /// Send in
+    /// <see cref="Pump_AfterCompletionFollowingTheInterruption_TheGroupsSlotsAreReleasedSoFurtherMessagesStillFitTheWindow"/>
+    /// fits whether or not an ack has yet freed the original set's four Fragments
+    /// (<see cref="RetentionPool.Release"/>).
     /// </summary>
     private const int RetentionBytes = FragmentSize * (FragmentCount + 1);
 
@@ -122,7 +105,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
         // Assert — every Datagram the dialler has transmitted since the pre-interruption ack, captured
         // by the tap ahead of the proxy so a dropped attempt would show up too, is decoded by hand; the
         // sequences of the two Fragments already acked before the interruption never reappear among
-        // them. This is the assertion the ticket turns on: the sender's own retransmission is selective
+        // them. This is the assertion the test turns on: the sender's own retransmission is selective
         // per unacked sequence, not a wholesale resend of the buffered set it happens to belong to.
         List<uint> sequencesSentSinceTheAck = fixture.Tap.PayloadsInDirection(TapDirection.DiallerToAccepter)
             .Skip(captureCountAtAck)
@@ -147,10 +130,9 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
         fixture.ResumeAndCollectDeliveredPayloads().Should().ContainSingle();
 
         // Act — an ordinary further Message. This is deliberately about the accepter's receive window,
-        // not the dialler's own send-side retention (see the class remarks on RetentionPool.Release
-        // never being called): RetentionBytes already gives the dialler's retention pool one spare slot
-        // for exactly this Send, so nothing about this Act depends on the completed group's Fragments
-        // ever being released from the dialler's own retention.
+        // not the dialler's own send-side retention: RetentionBytes gives the dialler's retention pool
+        // one spare slot for exactly this Send, so nothing about this Act depends on when an ack frees
+        // the completed group's Fragments from the dialler's own retention.
         byte[] further = [9, 9, 9];
         fixture.Dialler.Reactor.Send(fixture.DiallerPeer, DeliveryMode.ReliableOrdered, further).Should().Be(SendOutcome.Sent);
         List<byte[]> delivered = fixture.PumpRoundsCollectingPayloads(rounds: 6);
@@ -161,7 +143,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
     }
 
     /// <summary>
-    /// The dual-Space acceptance criterion is about receive-side survival, not the send side's single
+    /// The dual-Space case is about receive-side survival, not the send side's single
     /// per-Peer queue (<see cref="DatagramSessionReactor.FlushPeer"/> packs one Peer's records strictly
     /// in Send order regardless of Space, so two independent live <c>Send</c> calls can never be made to
     /// progress "at once" — the second Space's own first Fragment would not even reach the wire until
@@ -380,7 +362,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
     /// <summary>
     /// The one-Space fixture every test above but the last shares: a dialler and an accepter connected
     /// through a <see cref="WireTap"/> chained ahead of a <see cref="LossyProxy"/>, plus the send/interrupt/resume
-    /// choreography every acceptance criterion needs a variant of.
+    /// choreography every test here needs a variant of.
     /// </summary>
     private sealed class Fixture : IDisposable
     {

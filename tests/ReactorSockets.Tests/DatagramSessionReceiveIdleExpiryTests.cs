@@ -4,11 +4,12 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #352 (parent #54): the datagram profile's second liveness timer. A Peer that hears nothing
+/// The datagram profile's second liveness timer. A Peer that hears nothing
 /// from its remote for <c>RemoteSendIdleInterval × ResolvedMissedHeartbeats</c> moves to
 /// <see cref="SessionEventKind.PeerInterrupted"/>, mirroring <c>StreamSessionReactor</c>'s own
-/// receive-idle deadline (issue #117) at the datagram profile's own shape: no socket to unregister, no
-/// Linger to start counting down yet (#55), just the Event.
+/// receive-idle deadline (issue #117) at the datagram profile's own shape: no socket to unregister,
+/// just the Event. The Linger countdown that starts from the interruption is
+/// <see cref="DatagramSessionLingerExpiryTests"/>' subject.
 /// </summary>
 /// <remarks>
 /// Every test drives two real <see cref="DatagramSessionReactor"/>s through a <see cref="LossyProxy"/>
@@ -40,7 +41,7 @@ public class DatagramSessionReceiveIdleExpiryTests
     private static readonly TimeSpan _margin = TimeSpan.FromMilliseconds(1);
 
     // =========================================================================================
-    // AC1/AC2 — no PeerInterrupted just before the deadline, PeerInterrupted just after
+    // No PeerInterrupted just before the deadline, PeerInterrupted just after
     // =========================================================================================
 
     [Fact]
@@ -76,7 +77,7 @@ public class DatagramSessionReceiveIdleExpiryTests
     }
 
     // =========================================================================================
-    // AC3 — no Diagnostic is recorded by the transition
+    // No Diagnostic is recorded by the transition
     // =========================================================================================
 
     [Fact]
@@ -108,7 +109,7 @@ public class DatagramSessionReceiveIdleExpiryTests
     }
 
     // =========================================================================================
-    // AC4 — the Peer is not closed
+    // The Peer is not closed
     // =========================================================================================
 
     [Fact]

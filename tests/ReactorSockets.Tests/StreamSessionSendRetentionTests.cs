@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 3.5.3 (issue #85): <see cref="StreamSessionReactor.Send(PeerId, ReadOnlySpan{byte})"/> frames
+/// <see cref="StreamSessionReactor.Send(PeerId, ReadOnlySpan{byte})"/> frames
 /// a Message and appends it to a Peer's retention region, reporting <see cref="SendOutcome.Sent"/> or
 /// <see cref="SendOutcome.RetentionExhausted"/>. No socket write happens here — flushing retained bytes
 /// to the wire is #86 — so every assertion here is about the ring accepting or refusing, never about
@@ -150,7 +150,7 @@ public class StreamSessionSendRetentionTests
     }
 
     /// <summary>
-    /// The distinctness this ticket's second acceptance criterion asks for, proven directly rather than
+    /// The distinctness of the two refusal vocabularies, proven directly rather than
     /// by construction alone: <see cref="SendOutcome"/> and <see cref="DisconnectReason"/> are separate
     /// enum types that share no member name, so no consumer switch or pattern match over one can be
     /// silently satisfied by a value meant for the other.

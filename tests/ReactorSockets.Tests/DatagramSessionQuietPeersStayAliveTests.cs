@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #355 (parent #54): the deadlock the datagram profile's two independent liveness timers exist
+/// The deadlock the datagram profile's two independent liveness timers exist
 /// to prevent. A single timer driven by receive idleness alone would deadlock two wholly quiet peers —
 /// A's probe resets B's receive clock, so B stays silent, so A itself hears nothing and (wrongly)
 /// declares a healthy peer dead. <see cref="DatagramSessionReactor.EnforceSendIdleTimer"/> (#340) and
@@ -42,7 +42,7 @@ public class DatagramSessionQuietPeersStayAliveTests
     private const byte ControlBit = 0b0000_1000;
 
     // =========================================================================================
-    // AC1 — neither Reactor raises PeerInterrupted or PeerClosed over ten intervals of quiet
+    // Neither Reactor raises PeerInterrupted or PeerClosed over ten intervals of quiet
     // =========================================================================================
 
     [Fact]
@@ -82,7 +82,7 @@ public class DatagramSessionQuietPeersStayAliveTests
     }
 
     // =========================================================================================
-    // AC2 — Pings are observed flowing both ways, so the test is not passing only because the
+    // Pings are observed flowing both ways, so the test is not passing only because the
     // clock never moved
     // =========================================================================================
 

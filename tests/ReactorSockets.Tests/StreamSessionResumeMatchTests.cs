@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.4.3 (issue #123): an incoming connection presenting a valid resume secret is matched onto
+/// An incoming connection presenting a valid resume secret is matched onto
 /// the Interrupted Peer whose Slot is reserving it, and <b>the match runs before the capacity check</b>
 /// (ADR 0011). A reconnecting Peer is not asking for a Slot, it already owns one, so checking capacity
 /// first would refuse a reconnection into a Reactor holding the very state being reconnected to —
@@ -15,10 +15,9 @@ namespace ReactorSockets.Tests;
 /// Drives the public L2 surface only (tests/CLAUDE.md, ADR 0015): the resume secret is read off the
 /// wire out of the Hello the Reactor itself sent
 /// (<see cref="StreamSessionTestRecords.ReadResumeSecretFromHello"/>), never out of the Reactor, and
-/// nothing here asserts how it is stored. That a match happened is observed the only way a consumer
-/// could observe it in this slice — the Peer goes on receiving, under the same
-/// <see cref="PeerId"/> — since the <c>Resumed</c> event and the rewind are issues #128 and #127.
-/// Built on the capacity-fill and interruption helpers issue #138 added, the same ones
+/// nothing here asserts how it is stored. That a match happened is observed as the Peer going on
+/// receiving under the same <see cref="PeerId"/>. The <c>Resumed</c> event and the rewind have their
+/// own test files. Built on the capacity-fill and interruption helpers, the same ones
 /// <see cref="StreamSessionSlotReservationTests"/> uses to prove the reservation this match collects on.
 /// </remarks>
 public class StreamSessionResumeMatchTests
@@ -182,8 +181,8 @@ public class StreamSessionResumeMatchTests
         // Act — an ordinary dial, asking for a Slot this Reactor does not have.
         using StreamSessionReactorHarness.InboundAttemptResult outcome = accepter.AttemptFreshConnection();
 
-        // Assert — moving the match ahead of the capacity check did not make the capacity check
-        // unreachable: a connection that is not a Resume is refused exactly as before.
+        // Assert — the match running ahead of the capacity check does not make the capacity check
+        // unreachable: a connection that is not a Resume is refused for capacity.
         outcome.Admitted.Should().BeFalse();
         outcome.RefusalReason.Should().Be(RefusalReasonCapacity);
         outcome.RefusalCapacity.Should().Be((uint)accepter.Capacity);

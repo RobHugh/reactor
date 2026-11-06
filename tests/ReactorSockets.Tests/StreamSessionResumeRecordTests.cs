@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.4.2 (issue #115): the Resume record on the wire — a third stream-handshake message type
+/// The Resume record on the wire — a third stream-handshake message type
 /// carrying only the resume secret and the delivery counter, padded to exactly the size a Hello and a
 /// Refusal occupy so a Peer waiting on a fixed-size handshake record never has to know which kind is
 /// coming before it has read the whole thing. Every Resume here names a Session this Reactor is not
@@ -155,7 +155,7 @@ public class StreamSessionResumeRecordTests
     [Fact]
     public void Handshake_ARecordWhoseTypeByteNamesNoKnownKind_EndsTheConnectionRatherThanGuessing()
     {
-        // Arrange — one past the Resume type this ticket added: the discard arm refuses an unrecognised
+        // Arrange — one past the Resume type: the discard arm refuses an unrecognised
         // type rather than treating it as the nearest kind it knows.
         using StreamSessionReactorHarness accepter = new();
         using StreamSessionReactorHarness.RawStreamPeer peer = new(accepter.Endpoint);

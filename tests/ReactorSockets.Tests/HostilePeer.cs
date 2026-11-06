@@ -4,17 +4,16 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// A counterparty that puts exactly the bytes it is handed on the wire, with no framing, validation
-/// or interpretation of its own — the instrument slices 3 through 8 use to feed a Session Reactor
+/// or interpretation of its own — the instrument tests use to feed a Session Reactor
 /// malformed datagrams, wrong versions, invalid cookies, unknown flag bits and oversized length
-/// prefixes (parent slice spec's Further Notes). Built entirely from the public Raw surface: this
-/// type is an ordinary <see cref="RawReactor"/> consumer, exactly like the code it will be used to
-/// test, so nothing it does exercises a capability that code would not also have.
+/// prefixes. Built entirely from the public Raw surface: this type is an ordinary
+/// <see cref="RawReactor"/> consumer, exactly like the code it is used to test, so nothing it does exercises a capability that code would not also have.
 /// </summary>
 /// <remarks>
 /// A hostile peer's whole point is that it never validates its own output — every method here takes
-/// a caller-supplied <see cref="ReadOnlySpan{T}"/> of bytes and puts it on the wire unexamined. If a
-/// future caller wants to send something structurally invalid, they build the bytes themselves; this
-/// type supplies no framing to be structurally invalid <em>with</em>.
+/// a caller-supplied <see cref="ReadOnlySpan{T}"/> of bytes and puts it on the wire unexamined. A
+/// caller that wants to send something structurally invalid builds the bytes itself. This type
+/// supplies no framing to be structurally invalid <em>with</em>.
 /// </remarks>
 internal sealed class HostilePeer : IDisposable
 {

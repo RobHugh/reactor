@@ -7,7 +7,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #384 (parent #56): a third party that watches the wire learns the session field of a live
+/// A third party that watches the wire learns the session field of a live
 /// data datagram, but not the resume secret, and so cannot resume the Session (ADR 0009: the session
 /// id routes, the secret authorises). The observer is a real <see cref="RawReactor"/> on its own
 /// loopback port, so its datagrams come from an address that is not the Peer's.

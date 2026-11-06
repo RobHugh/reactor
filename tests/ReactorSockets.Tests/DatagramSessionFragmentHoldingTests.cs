@@ -6,10 +6,10 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #257: an admitted Fragment is diverted into its Space's receive-window slot instead of being
+/// An admitted Fragment is diverted into its Space's receive-window slot instead of being
 /// delivered — no frame-arena reservation, no pending <see cref="SessionEventKind.MessageReceived"/>,
 /// no rise in <see cref="PeerCounters.MessagesReceived"/>. Recognising a complete Fragment set is
-/// issue #258's concern, not this one's: these tests only prove a held Fragment is invisible to a
+/// proven elsewhere. These tests only prove a held Fragment is invisible to a
 /// consumer and that an ordinary record alongside it is unaffected. Built the same way
 /// <see cref="DatagramSessionHostileFragmentDiscardTests"/> is — a live Session driven by hand from a
 /// bare <see cref="RawReactor"/>, since establishing a Session and then addressing it needs the
@@ -260,7 +260,7 @@ public class DatagramSessionFragmentHoldingTests
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
         offset += 8;
         // The remaining ResumeSecretLength bytes are the dialler's resume secret; an all-zero one is
-        // fine, since nothing in this ticket's path ever reads it.
+        // fine, since only a Resume reads it and these tests send none.
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 

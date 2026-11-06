@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 7.4.1.4 (issue #288): the boundary <see cref="DatagramSessionReactor.Send"/> enforces on a
+/// The boundary <see cref="DatagramSessionReactor.Send"/> enforces on a
 /// reliable Message is inclusive, and refusing at it is free. #284 changed that boundary from this
 /// Reactor's own <see cref="DatagramSessionOptions.MaxMessageSize"/> to the peer's own announced limit,
 /// so every test below gives the dialler and the accepter different limits: a Message that fits between
@@ -13,11 +13,11 @@ namespace ReactorSockets.Tests;
 /// prove.
 /// </summary>
 /// <remarks>
-/// The no-retention half is asserted through <see cref="PeerCounters.RetentionHighWaterBytes"/>, the
-/// same reachable figure <see cref="DatagramSessionRefusedSendTraceTests"/> already documents: nothing
-/// on any live path calls <c>Core.RetentionPool.Release</c> yet (issue #187), so this high-water mark
-/// is monotonic for the life of the Peer and staying flat across a refusal is exactly what "acquired no
-/// retention" means through the seam. No sharper figure is reachable without opening L0.
+/// The no-retention half is asserted through <see cref="PeerCounters.RetentionHighWaterBytes"/>, read
+/// immediately before and after the refused Send. No Pump runs between the two reads, so no ack can
+/// free the earlier Send's retention: retained bytes equal the high-water mark at that moment, and
+/// any retention the refusal acquired would raise it. Staying flat across the refusal is what
+/// "acquired no retention" means through the seam.
 /// </remarks>
 public class DatagramSessionRemoteMessageSizeTests
 {

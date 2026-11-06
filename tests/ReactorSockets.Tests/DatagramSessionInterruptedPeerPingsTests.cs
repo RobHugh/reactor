@@ -4,15 +4,14 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #371 (parent #55): once a datagram Peer transitions to
+/// Once a datagram Peer transitions to
 /// <see cref="SessionEventKind.PeerInterrupted"/>, the Interrupted end keeps sending Pings — the
 /// seven-byte <c>ReliableUnordered</c> control record <see cref="DatagramSessionSendIdlePingTests"/>
 /// proves the shape of — at the send-idle interval or as the adaptive retransmission of one still
 /// unacknowledged. A datagram Session has no re-dial schedule (#55): there is nothing to re-dial, and
 /// the interrupted end can only resume by being heard from again, so it keeps probing the path with
 /// Pings for as long as Linger holds the Peer alive. <c>EnforceSendIdleTimer</c> does not read
-/// <c>PeerSlot.IsInterrupted</c> — no code change was needed for this ticket, and its XML doc now
-/// records the decision.
+/// <c>PeerSlot.IsInterrupted</c>, and its XML doc records that decision.
 /// </summary>
 /// <remarks>
 /// Drives a real <see cref="DatagramSessionReactor"/> pair through a <see cref="LossyProxy"/> on a

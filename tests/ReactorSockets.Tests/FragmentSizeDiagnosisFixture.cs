@@ -5,7 +5,7 @@ using Microsoft.Extensions.Time.Testing;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// The shared instrument issue #271's two runs are built on (subtask 7.5.5.1, issue #304): two
+/// The shared instrument the fragment-size stall diagnosis tests are built on: two
 /// <see cref="DatagramSessionReactor"/>s talking through a <see cref="LossyProxy"/>, all three driven by
 /// one <see cref="FakeTimeProvider"/> so a single <see cref="PumpRound"/> call's clock advance moves every
 /// retransmission timer in the scenario together. What differs between the positive (a size threshold
@@ -20,9 +20,8 @@ namespace ReactorSockets.Tests;
 /// <see cref="FakeTimeProvider"/> per instance by default, which is right for a single-Reactor test but
 /// wrong here: the stall signature's four retransmission rounds are read off <c>RetransmissionTimer</c>
 /// deadlines on both Peers and the proxy's own delayed-relay queue, and those only stay in lockstep if
-/// they all read the same clock. The harness now accepts an injected <see cref="FakeTimeProvider"/> for
-/// exactly this reason (see its constructor remarks) — the minimal change that keeps every existing
-/// caller, which passes none, compiling and behaving exactly as before.
+/// they all read the same clock. The harness accepts an injected <see cref="FakeTimeProvider"/> for exactly
+/// this reason (see its constructor remarks). A caller that passes none gets the harness's own clock.
 /// </para>
 /// <para>
 /// <b>Why the roles are fixed.</b> The dialler is the only side that sends Messages; the accepter is the
@@ -466,7 +465,7 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     }
 
     /// <summary>
-    /// Issue #307's first shared assertion: across every datagram this fixture's proxy has observed
+    /// The first shared assertion: across every datagram this fixture's proxy has observed
     /// since the handshake completed, every record decodes as one of the three shapes this fixture's own
     /// scenario ever produces, travelling only the one direction that shape can legitimately come from —
     /// a Fragment of the large Message or the small Message's own record
@@ -541,7 +540,7 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     }
 
     /// <summary>
-    /// Issue #307's second shared assertion: both ends' configured fragment size, read back off the same
+    /// The second shared assertion: both ends' configured fragment size, read back off the same
     /// <see cref="DatagramSessionOptions"/> instance each harness was constructed with
     /// (<see cref="DatagramSessionOptions.ResolvedFragmentSize"/> via
     /// <see cref="DatagramSessionReactorHarness.Options"/>), is exactly <paramref name="expectedFragmentSize"/>

@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.4.4 (issue #124): what an operator reads when a Resume is matched and when one is refused,
+/// What an operator reads when a Resume is matched and when one is refused,
 /// and the three ways a Resume is refused. <see cref="DiagnosticId.ResumeMatched"/> names the resumed
 /// Peer, because a match by definition found one. <see cref="DiagnosticId.ResumeUnmatched"/> names a
 /// claimed Source instead, because a claim that is not matched comes from a party that is by
@@ -269,7 +269,7 @@ public class StreamSessionResumeDiagnosticsTests
     {
         // Arrange — the same expired reservation. This is the reconfiguration path and the correct
         // one: the Session that secret named is gone, so what comes back negotiates fresh. The dial
-        // carries the once-valid secret, which is what makes this the criterion's own case rather
+        // carries the once-valid secret, which is what makes this the expired-secret case rather
         // than an unrelated fresh dial that happens to arrive afterwards.
         using StreamSessionReactorHarness accepter = new(capacity: 1);
         List<StreamSessionReactorHarness.HeldPeer> held = accepter.FillToCapacity();

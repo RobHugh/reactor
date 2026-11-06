@@ -6,9 +6,8 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #422 on the stream profile: a Hello's announced send-idle interval and Linger are a
-/// <c>ulong</c> off the wire, and an out-of-range one used to throw out of
-/// <see cref="StreamSessionReactor.Pump"/>. Driven from outside the L2 seam (tests/CLAUDE.md) by plain
+/// On the stream profile, a Hello's announced send-idle interval and Linger are a <c>ulong</c> off
+/// the wire, and an out-of-range one must not throw out of <see cref="StreamSessionReactor.Pump"/>. Driven from outside the L2 seam (tests/CLAUDE.md) by plain
 /// sockets writing a hand-built record.
 /// </summary>
 public class StreamSessionHostileAnnouncedIntervalTests

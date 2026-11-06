@@ -6,8 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #362: Accept gains the accepting end's Linger, mirroring #348's addition of the send-idle
-/// interval to the same control datagram. Every assertion here is made from outside the L2 seam
+/// Accept carries the accepting end's Linger beside its send-idle interval. Every assertion here is made from outside the L2 seam
 /// (tests/CLAUDE.md): a real <see cref="DatagramSessionReactorHarness"/> plays the dialling end, and a
 /// hand-built <see cref="RawReactor"/> plays a counterparty that answers with control datagrams built
 /// byte by byte from <c>ControlDatagramCodec</c>'s documented layout (read-only from this file, per

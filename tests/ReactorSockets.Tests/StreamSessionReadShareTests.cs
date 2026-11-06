@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 3.4.3 (issue #81): the per-Peer read share and the one-whole-Message escape.
+/// The per-Peer read share and the one-whole-Message escape.
 /// <see cref="Core.FrameArena"/> already derives Arena ÷ Capacity and implements the escape that lets
 /// a share-holder always deliver one whole unit (see <c>FrameArena.Reserve</c>); this class exercises
 /// <see cref="StreamSessionReactor"/> making Peers the share-holders, by slot index, and — the actual

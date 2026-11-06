@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #248: fragment size is decided once, at <see cref="DatagramSessionReactor.Send"/>, captured
+/// Fragment size is decided once, at <see cref="DatagramSessionReactor.Send"/>, captured
 /// per-Peer at admission rather than read afresh from <see cref="DatagramSessionOptions"/> on every
 /// call. It is unilateral and per-direction (ADR 0004) and is never announced in the handshake, because
 /// a receiver reassembles a Fragment set from <c>fragmentIndex</c> and <c>fragmentCount</c> alone and

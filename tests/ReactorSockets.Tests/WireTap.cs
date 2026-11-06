@@ -20,8 +20,8 @@ internal readonly record struct TapCapture(TapDirection Direction, byte[] Payloa
 /// <summary>
 /// A <see cref="RawReactor"/> relaying UDP datagrams unmodified between a dial-facing address and a
 /// fixed accepter endpoint while keeping a byte-for-byte copy of every one, tagged with its direction
-/// and kept in arrival order — the instrument #228 adds so the seven tickets that assert on datagram
-/// bytes each start from a captured buffer instead of building their own. Built entirely from the
+/// and kept in arrival order, so tests that assert on datagram bytes start from a captured buffer
+/// instead of building their own. Built entirely from the
 /// public Raw surface, and driven by the same <see cref="TimeProvider"/> as the rest of a test's
 /// fixture, exactly as <see cref="LossyProxy"/> is.
 /// </summary>

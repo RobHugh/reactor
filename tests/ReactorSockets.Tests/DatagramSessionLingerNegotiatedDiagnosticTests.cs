@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #364: both datagram establishing paths — the dialler's <c>OnAccept</c> and the accepter's
+/// Both datagram establishing paths — the dialler's <c>OnAccept</c> and the accepter's
 /// path reached from <c>OnHelloWithCookie</c> via <c>NewAcceptedPeer</c> — report
 /// <see cref="DiagnosticId.LingerNegotiated"/> once establishment completes, mirroring
 /// <c>StreamSessionReactor</c>. This is also the first test to observe

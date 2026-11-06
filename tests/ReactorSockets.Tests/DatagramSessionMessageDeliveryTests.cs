@@ -4,12 +4,13 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtasks 6.6.5 and 6.6.6 (issues #217, #219): an admitted record's payload is copied into the frame
+/// An admitted record's payload is copied into the frame
 /// arena, raises the receiving Peer's <see cref="PeerCounters.MessagesReceived"/>, and drains as a
 /// <see cref="SessionEventKind.MessageReceived"/> carrying the bytes that were Sent. The mode used
 /// throughout is <see cref="DeliveryMode.ReliableUnordered"/>, whose rule — deliver everything, in
-/// whatever order it arrives — needs nothing this ticket does not build; the three other modes' own
-/// rules are #220's, #221's and #222's.
+/// whatever order it arrives — needs no ordering or duplicate rule of its own. The three other modes'
+/// rules have their own files: <see cref="DatagramSessionOrderedDeliveryTests"/>,
+/// <see cref="DatagramSessionUnreliableSequencedTests"/> and <see cref="DatagramSessionUnreliableDuplicateTests"/>.
 /// </summary>
 public class DatagramSessionMessageDeliveryTests
 {

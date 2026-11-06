@@ -7,7 +7,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 5.4 (issue #35): Session identity — the receiver-assigned wire id, the in-process
+/// Session identity — the receiver-assigned wire id, the in-process
 /// <see cref="PeerId"/>, and the demultiplex path. The two identities are deliberately different
 /// things: the wire carries a random 32-bit token chosen by whichever end will receive datagrams
 /// stamped with it, while a <see cref="PeerId"/> is a dense Slot index and a generation, which is

@@ -5,7 +5,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #388 (parent #56): one Session interrupted and resumed three times, with retransmissions
+/// One Session interrupted and resumed three times, with retransmissions
 /// provoked between the resumes, reports <see cref="PeerCounters.Resumes"/> = 3 on each end and never
 /// lowers <see cref="PeerCounters.BytesSent"/>, <see cref="PeerCounters.BytesReceived"/> or
 /// <see cref="PeerCounters.PacketsRetransmitted"/> across any Resume (ADR 0013: counters are never reset

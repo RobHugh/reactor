@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #424: a <c>ReliableOrdered</c> Space holds at most twice its receive window of ordinary records
+/// A <c>ReliableOrdered</c> Space holds at most twice its receive window of ordinary records
 /// behind its send-order head, each no wider than a fragment slot. A record past either limit is left
 /// unadmitted and counted as out of window. Every stall here is built by hand and sent from a bare
 /// <see cref="RawReactor"/>, the same way <see cref="DatagramSessionFragmentGroupCapacityTests"/> addresses

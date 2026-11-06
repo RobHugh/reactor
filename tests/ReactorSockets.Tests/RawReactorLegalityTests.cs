@@ -255,7 +255,7 @@ public class RawReactorLegalityTests
     [Fact]
     public void Dispose_WithLinksOfEveryKindOpen_LeavesNoEventsToDrainRatherThanQueueingAClosedForEach()
     {
-        // Arrange — the other half of the disposal criterion: closing every Link must produce no
+        // Arrange — the other half of disposal: closing every Link must produce no
         // Events, because by the time Dispose returns there is nobody left to drain them. Disposal
         // also discards Events already queued, so this pends a real Closed first and proves even that
         // one is unreachable afterwards, rather than only proving Dispose queued nothing new.

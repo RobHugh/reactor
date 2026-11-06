@@ -113,7 +113,7 @@ internal sealed class ReceiveWindow
     /// <summary>
     /// The Fragment-length run for this window's Space, two bytes per slot, ring-indexed exactly as
     /// <see cref="_admitted"/> is — <see cref="Core.ReceiveArena.GetFragmentLengthRun"/>. Empty for a
-    /// window built over a Space that never retains a Fragment (today, the two unreliable Spaces, which
+    /// window built over a Space that never retains a Fragment (the two unreliable Spaces, which
     /// ADR 0004 never routes a Fragment into): <see cref="RecordFragmentLength"/> and
     /// <see cref="GetFragmentLength"/> both throw for such a window rather than silently accepting a
     /// call that could never be meaningful.
@@ -154,9 +154,8 @@ internal sealed class ReceiveWindow
     /// </param>
     /// <param name="slides">
     /// Whether a sequence at or beyond the window's far edge slides the base forward to admit it,
-    /// rather than being refused. Defaults to <see langword="false"/> — today's behaviour for every
-    /// window built before this parameter existed, and the one <c>ReliableOrdered</c> and
-    /// <c>ReliableUnordered</c> keep: retransmission fills their holes, so sliding would retire data
+    /// rather than being refused. Defaults to <see langword="false"/>, which <c>ReliableOrdered</c> and
+    /// <c>ReliableUnordered</c> use: retransmission fills their holes, so sliding would retire data
     /// that was about to arrive. <c>Unreliable</c> and <c>UnreliableSequenced</c> pass
     /// <see langword="true"/>, because nothing retransmits into them and a window that never advances
     /// past a hole would stall forever after the first real loss.

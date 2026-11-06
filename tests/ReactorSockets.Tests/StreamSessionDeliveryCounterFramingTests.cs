@@ -7,7 +7,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.1.1 (issue #109): the delivery-counter control record's wire format and its classification
+/// The delivery-counter control record's wire format and its classification
 /// in the framing table — <see cref="StreamSessionTestRecords.DeliveryCounterSentinel"/> followed by an
 /// 8-byte <c>u64</c> body, a second reserved sentinel alongside Goodbye's (issue #23/#95). Issue #113
 /// then wired a complete record into <see cref="RetentionArena.ReleaseThroughMessageCount"/>: a

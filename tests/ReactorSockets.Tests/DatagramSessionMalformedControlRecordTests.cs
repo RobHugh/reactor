@@ -6,17 +6,17 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #341: a control record that is not a legal Ping is refused like any other malformed record —
+/// A control record that is not a legal Ping is refused like any other malformed record —
 /// the whole datagram is discarded and nothing in it is admitted, exactly as
 /// <see cref="DatagramSessionDataDatagramParseTests"/> already proves for a spare bit or an overrun
-/// length. <see cref="PacketRecordCodec.TryRead"/> (#339) already refuses the control bit alongside the
-/// fragment bit, alongside a nonzero length, or in any mode but <c>ReliableUnordered</c>; this file
+/// length. <see cref="PacketRecordCodec.TryRead"/> refuses the control bit alongside the
+/// fragment bit, alongside a nonzero length, or in any mode but <c>ReliableUnordered</c>. This file
 /// drives each refusal through the seam rather than trusting the parse loop's internals.
 /// </summary>
 /// <remarks>
 /// The seam is the same as every other datagram-parse test (tests/CLAUDE.md, ADR 0015): a bare
 /// <see cref="RawReactor"/> plays the remote end and a <see cref="DatagramSessionReactorHarness"/>
-/// accepter is driven through hand-built bytes. Proving "not acked" for the criterion mixing a legal
+/// accepter is driven through hand-built bytes. Proving "not acked" for the case mixing a legal
 /// record ahead of an illegal one needs the accepter's own next outbound datagram, which nothing here
 /// can read directly — <see cref="DatagramSessionOptions"/> exposes no outbound capture — so the
 /// accepter is made to <c>Send</c> a Message of its own back to the client, whose reply datagram carries

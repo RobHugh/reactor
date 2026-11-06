@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #326: a retention flush must not write to a socket that still owes the remainder of a
+/// A retention flush must not write to a socket that still owes the remainder of a
 /// short-sent delivery-counter record, or its bytes land inside that record on the wire. The guard
 /// that prevents it must never outlive the connection the record was begun on.
 /// </summary>

@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 8.1.4 (issue #340, parent #53): the send-idle timer, and the Ping it emits. An Established
+/// The send-idle timer, and the Ping it emits. An Established
 /// Peer that has sent no data datagram for <see cref="DatagramSessionOptions.SendIdleInterval"/> queues
 /// one Ping — a seven-byte <c>ReliableUnordered</c> control record — which takes a sequence and a
 /// retention slot exactly like an ordinary reliable Send, marked in retention as control so a first send
@@ -24,7 +24,7 @@ public class DatagramSessionSendIdlePingTests
     private const byte ControlBit = 0b0000_1000;
 
     // =========================================================================================
-    // AC1 — nothing reaches the wire before SendIdleInterval elapses
+    // Nothing reaches the wire before SendIdleInterval elapses
     // =========================================================================================
 
     [Fact]
@@ -54,7 +54,7 @@ public class DatagramSessionSendIdlePingTests
     }
 
     // =========================================================================================
-    // AC2 — once the interval elapses, exactly one datagram carries exactly one seven-byte
+    // Once the interval elapses, exactly one datagram carries exactly one seven-byte
     // control record: the control bit set alongside ReliableUnordered's mode bits, length zero
     // =========================================================================================
 
@@ -101,7 +101,7 @@ public class DatagramSessionSendIdlePingTests
     }
 
     // =========================================================================================
-    // AC3 — one Ping per interval, not one per Pump; and a further interval emits exactly one more
+    // One Ping per interval, not one per Pump; and a further interval emits exactly one more
     // =========================================================================================
 
     [Fact]
@@ -150,13 +150,12 @@ public class DatagramSessionSendIdlePingTests
     }
 
     // =========================================================================================
-    // AC4 — a Peer whose ReliableUnordered retention is full emits no Ping that Pump, and emits
+    // A Peer whose ReliableUnordered retention is full emits no Ping that Pump, and emits
     // it on the first Pump after a slot frees
     // =========================================================================================
 
     /// <remarks>
-    /// Issue #345 wired up <c>RetentionPool.Release</c>'s only production caller: an acknowledgement now
-    /// frees the retention slot of every reliable record it releases, so a live Peer's
+    /// An acknowledgement frees the retention slot of every reliable record it releases, so a live Peer's
     /// <c>ReliableUnordered</c> retention can be freed mid-Session by a real acknowledgement through the
     /// public surface, on the very Peer that filled it — this test proves the slot frees on the same
     /// Peer via its own ack, rather than through <c>ResetShareHolder</c>'s admission-time reset, which
@@ -226,7 +225,7 @@ public class DatagramSessionSendIdlePingTests
     }
 
     // =========================================================================================
-    // AC5 — DatagramSessionOptions has no member that disables the heartbeat
+    // DatagramSessionOptions has no member that disables the heartbeat
     // =========================================================================================
 
     [Fact]

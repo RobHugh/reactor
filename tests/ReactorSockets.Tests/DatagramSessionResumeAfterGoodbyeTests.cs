@@ -6,7 +6,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #405 (parent #57): once a Peer has closed because of a Goodbye, a Resume carrying that Session's
+/// Once a Peer has closed because of a Goodbye, a Resume carrying that Session's
 /// id and secret matches nothing. <see cref="DiagnosticId.ResumeUnmatched"/> is logged, and no
 /// <see cref="SessionEventKind.PeerResumed"/> or <see cref="SessionEventKind.PeerConnected"/> is raised.
 /// </summary>

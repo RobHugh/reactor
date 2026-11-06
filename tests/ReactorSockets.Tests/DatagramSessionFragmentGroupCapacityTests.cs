@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #423: no peer can push a Space past the waiting Fragment groups its receive window has room for.
+/// No peer can push a Space past the waiting Fragment groups its receive window has room for.
 /// A group is at least two Fragments wide, so a window of <c>n</c> slots holds at most <c>n / 2</c>
 /// waiting groups, but only while no two of them share a slot and no waiting group loses its slots.
 /// Each case here broke one of those two conditions. Every datagram is built by hand and sent from a

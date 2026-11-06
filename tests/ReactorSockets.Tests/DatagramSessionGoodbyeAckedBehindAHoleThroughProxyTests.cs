@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #398 (parent #57), review fix: a Closing sender closes with <see cref="DisconnectReason.LocalClose"/>
+/// A Closing sender closes with <see cref="DisconnectReason.LocalClose"/>
 /// only once every <c>ReliableOrdered</c> record up to and including the Goodbye is acknowledged. Two
 /// Messages then <see cref="DatagramSessionReactor.Close"/> cross a <see cref="LossyProxy"/> that drops the
 /// first Message's datagram, so the receiver holds the second Message and the Goodbye behind the hole. The

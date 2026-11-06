@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.2.2 (issue #117, #26's second idle timer), revised by issue #119: over TCP only receiving
+/// The second idle timer. Over TCP only receiving
 /// is evidence a Peer's transport is still there — the kernel accepts written bytes into a buffer
 /// whether or not anything is at the far end. A Peer from which nothing at all has been received for
 /// <see cref="PeerSlot.RemoteSendIdleInterval"/> x <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>
@@ -32,7 +32,7 @@ public class StreamSessionReceiveIdleDeadlineTests
     /// drains, then reads the accepter's own Hello reply off the wire so a later read on the same socket
     /// never mistakes it for something else. Mirrors <see cref="StreamSessionTestRecords.EstablishSession"/>,
     /// widened only to let a test announce a peer send-idle interval other than the default — the one
-    /// customisation issue #117's AC2 needs and the shared helper does not offer.
+    /// customisation the announced-interval test needs and the shared helper does not offer.
     /// </summary>
     private static PeerId EstablishSession(
         StreamSessionReactorHarness accepter, RawPeer peer, ulong peerSendIdleMs = DefaultPeerSendIdleMs, TimeSpan? budget = null)
@@ -61,7 +61,7 @@ public class StreamSessionReceiveIdleDeadlineTests
     }
 
     // =========================================================================================
-    // AC1 — a Peer that stops responding entirely is declared lost after peerSendIdle x
+    // A Peer that stops responding entirely is declared lost after peerSendIdle x
     // MissedHeartbeats, and not before
     // =========================================================================================
 
@@ -99,7 +99,7 @@ public class StreamSessionReceiveIdleDeadlineTests
     }
 
     // =========================================================================================
-    // AC2 — the deadline is computed from the interval the peer announced, not this end's own
+    // The deadline is computed from the interval the peer announced, not this end's own
     // SendIdleInterval
     // =========================================================================================
 
@@ -138,7 +138,7 @@ public class StreamSessionReceiveIdleDeadlineTests
     }
 
     // =========================================================================================
-    // AC3 — any received record resets the deadline, including a bare heartbeat carrying no
+    // Any received record resets the deadline, including a bare heartbeat carrying no
     // Messages
     // =========================================================================================
 
@@ -179,7 +179,7 @@ public class StreamSessionReceiveIdleDeadlineTests
     }
 
     // =========================================================================================
-    // AC4 — a non-default MissedHeartbeats moves the deadline proportionally
+    // A non-default MissedHeartbeats moves the deadline proportionally
     // =========================================================================================
 
     [Fact]
@@ -212,7 +212,7 @@ public class StreamSessionReceiveIdleDeadlineTests
     }
 
     // =========================================================================================
-    // AC5 — no DiagnosticId member is added by this ticket
+    // No DiagnosticId member for the receive-idle deadline
     // =========================================================================================
 
     [Fact]
@@ -221,9 +221,9 @@ public class StreamSessionReceiveIdleDeadlineTests
         // Arrange
         string[] names = Enum.GetNames<DiagnosticId>();
 
-        // Assert — the receive-idle-to-Interrupted transition (issue #117, revised by #119) is already
-        // an Event (SessionEventKind.PeerInterrupted); Info is reserved for lifecycle that never became
-        // one (ADR 0013), so this ticket adds no DiagnosticId member for it.
+        // Assert — the receive-idle-to-Interrupted transition is already an Event
+        // (SessionEventKind.PeerInterrupted); Info is reserved for lifecycle that never became one
+        // (ADR 0013), so there is no DiagnosticId member for it.
         names.Should().NotContain(
             n => n.Contains("ReceiveIdle", StringComparison.OrdinalIgnoreCase)
                 || n.Contains("MissedHeartbeat", StringComparison.OrdinalIgnoreCase)

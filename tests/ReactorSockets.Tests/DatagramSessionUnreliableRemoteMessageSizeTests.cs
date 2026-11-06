@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #449: an unreliable Message above the peer's announced <c>MaxMessageSize</c> is certain to be
+/// An unreliable Message above the peer's announced <c>MaxMessageSize</c> is certain to be
 /// discarded on arrival (issue #425), so <see cref="DatagramSessionReactor.Send"/> refuses it, spending
 /// nothing. The one-Datagram cap is checked first, so a Message above the fragment size still returns
 /// <see cref="SendOutcome.MessageTooLarge"/> whatever the peer announced.

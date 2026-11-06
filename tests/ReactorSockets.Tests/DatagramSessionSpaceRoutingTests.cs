@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.2.5 (issue #172): a packet record arriving on a live Session picks its Space from the
+/// A packet record arriving on a live Session picks its Space from the
 /// mode bits in its flags byte and is classified through that Space's receive window — what the
 /// window rejects is counted, never logged, and delivery is out of scope (that is #173 and 6.6's).
 /// The instrument is the one <see cref="DatagramSessionDataDatagramParseTests"/> already uses: a raw

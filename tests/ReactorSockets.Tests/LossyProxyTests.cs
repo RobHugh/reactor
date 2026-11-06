@@ -9,7 +9,7 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Self-tests for <see cref="LossyProxy"/>, driven from two plain BCL UDP sockets standing in for the
 /// client and the upstream endpoint — the proxy itself is the only <see cref="RawReactor"/> in this
-/// picture, exactly the role it plays for a real Session-under-test in slices 3 through 8.
+/// picture, exactly the role it plays for a real Session under test.
 /// </summary>
 public class LossyProxyTests
 {
@@ -375,7 +375,7 @@ public class LossyProxyTests
     [Fact]
     public void SetLossEveryNth_SizeThresholdStandingOnTheSameDirection_OversizedRelayDoesNotAdvanceTheEveryNthCount()
     {
-        // Arrange — issue #296's acceptance criterion: the every-Nth rule composes with a size
+        // Arrange — the every-Nth rule composes with a size
         // threshold standing at the same time. The threshold is consulted first and unconditionally
         // (per Relay's doc), so a relay it kills must never reach the every-Nth rule and therefore
         // must not advance its count. Every-3rd is set alongside a threshold of 3; an oversized

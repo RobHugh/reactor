@@ -5,12 +5,12 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #245: <see cref="DatagramSessionReactor.Send"/> cutting a reliable Message wider than one
+/// <see cref="DatagramSessionReactor.Send"/> cutting a reliable Message wider than one
 /// Fragment into <c>ceil(size / fragmentSize)</c> Fragments, each an ordinary reliable packet with its
 /// own sequence number. Every test here drives a live Session through <see cref="WireTap"/> and decodes
 /// the captured bytes by hand — the same proof style <see cref="DatagramSessionWireFormatTests"/> uses —
 /// rather than through <see cref="DatagramDecoder"/>, which only understands the unfragmented record
-/// shape (issue #229) and is left alone here (out of this ticket's scope).
+/// shape.
 /// </summary>
 public class DatagramSessionSendFragmentationTests
 {

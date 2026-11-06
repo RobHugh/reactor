@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 3.4.2 (issue #80): the malformed-framing table — an oversized prefix, a zero-length prefix,
+/// The malformed-framing table — an oversized prefix, a zero-length prefix,
 /// a stream that ends mid-prefix or mid-Message, and the transport-failure branch that stays distinct
 /// from all four. The counterparty in every test here is a hand-built raw TCP peer, exactly as
 /// <see cref="StreamSessionMessageFramingTests"/>'s <c>MessagePeer</c> — a hostile peer is an ordinary

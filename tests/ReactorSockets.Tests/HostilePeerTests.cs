@@ -5,8 +5,8 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Self-tests for <see cref="HostilePeer"/> — sub-issue 2.5's requirement that the Raw test instrument
-/// arrives at slice 3 already known to work, rather than debugged alongside the code it tests. Proven
+/// Self-tests for <see cref="HostilePeer"/>, so the Raw test instrument is known to work rather than
+/// debugged alongside the code it tests. Proven
 /// against a <see cref="WireObserver"/>, itself only proven by <c>WireObserverTests</c>, so between the
 /// two files every claim rests on the public Raw surface and nothing else.
 /// </summary>

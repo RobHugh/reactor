@@ -6,11 +6,10 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.4.9 (issue #199), the headline deliverable of issue #42: the whole adaptive timer proved
-/// over a real Peer rather than over a <see cref="RetransmissionTimer"/> in isolation, through the
-/// <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record each backoff emits. The parts of
-/// subtask 6.4.7 (issue #197) and 6.4.8 (issue #198) that are only observable once a Peer's estimator
-/// has actually been fed — that releasing an armed sequence samples it, that releasing a deferred one
+/// The whole adaptive timer proved over a real Peer rather than over a
+/// <see cref="RetransmissionTimer"/> in isolation, through the
+/// <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record each backoff emits. The behaviours
+/// that are only observable once a Peer's estimator has actually been fed — that releasing an armed sequence samples it, that releasing a deferred one
 /// does not, and that an expired sequence re-arms at the backed-off RTO — are asserted here too, since
 /// the reported RTO is the one instrument that shows them.
 /// </summary>

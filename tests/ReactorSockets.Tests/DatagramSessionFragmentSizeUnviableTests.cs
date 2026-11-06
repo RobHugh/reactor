@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #303 (parent #270): what a consumer actually sees once <see cref="FragmentStallSignature"/>
+/// What a consumer actually sees once <see cref="FragmentStallSignature"/>
 /// fires and <see cref="DatagramSessionReactor"/> acts on it — the Peer that stalled on Fragments is
 /// closed with <see cref="DisconnectReason.FragmentSizeUnviable"/> named on the drained Event, nothing
 /// else about the wire or the Session's other Peers changes because of it.

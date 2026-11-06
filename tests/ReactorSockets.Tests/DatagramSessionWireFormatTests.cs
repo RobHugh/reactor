@@ -5,11 +5,8 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #234: the wire-format proof inherited from #165, now observable because a live
-/// <see cref="DatagramSessionReactor"/> Session actually sends data records. #165 defined the
-/// 20-byte header and the 7-bytes-plus-payload packet record shape (ADR 0009); at that point the
-/// datagram profile exposed no <c>Send</c>, so nothing captured here could be proven from a live
-/// Session. This proves it from datagrams a real <see cref="WireTap"/> captured off a live
+/// The 20-byte header and the 7-bytes-plus-payload packet record shape (ADR 0009), proven from
+/// datagrams a real <see cref="WireTap"/> captured off a live
 /// dialogue between two Reactors, asserting on byte offsets directly rather than only on
 /// <see cref="DatagramDecoder"/>'s decoded output — the decoder is a convenience used here as a
 /// cross-check, not the thing under test.

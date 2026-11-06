@@ -4,11 +4,10 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.2.1 (issue #168): the datagram profile's per-Peer counter reader. Nothing increments
-/// <see cref="PeerCounters.OutOfWindowPackets"/> or <see cref="PeerCounters.DuplicatePackets"/> yet —
-/// that lands with the per-Space receive window (issue #170) — so these tests assert only that the
-/// reader exists, that a freshly connected Peer reads zero for both, and that it fails the same way
-/// the stream profile's <c>CountersOf</c> does for a Peer that is not open.
+/// The datagram profile's per-Peer counter reader: that a freshly connected Peer reads zero, and that
+/// it fails the same way the stream profile's <c>CountersOf</c> does for a Peer that is not open. What
+/// moves each counter is asserted with the behaviour that moves it, for example in
+/// <see cref="DatagramSessionRefusalCounterTests"/> and <see cref="DatagramSessionCounterExchangeTests"/>.
 /// </summary>
 public class DatagramSessionCounterTests
 {
@@ -39,9 +38,7 @@ public class DatagramSessionCounterTests
     [Fact]
     public void CountersOf_AFreshlyConnectedPeer_ReadsZeroForHorizonDeferrals()
     {
-        // Arrange — subtask 6.3.2 (issue #184). Nothing increments HorizonDeferrals yet; that lands
-        // with the horizon gate (issue #185), so this asserts only that a freshly connected Peer's
-        // figure starts at zero.
+        // Arrange — a freshly connected Peer has deferred nothing, so its figure starts at zero.
         using DatagramSessionReactorHarness accepter = new();
         using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
 
@@ -63,9 +60,8 @@ public class DatagramSessionCounterTests
     [Fact]
     public void CountersOf_AFreshlyConnectedPeer_ReadsZeroForPacketsRetransmitted()
     {
-        // Arrange — subtask 6.4.6 (issue #196). Nothing increments PacketsRetransmitted yet; that
-        // lands with the expiry path (issue #198), so this asserts only that a freshly connected
-        // Peer's figure starts at zero and rides the same snapshot as the other window counters.
+        // Arrange — a freshly connected Peer has retransmitted nothing, so its figure starts at zero
+        // and rides the same snapshot as the other window counters.
         using DatagramSessionReactorHarness accepter = new();
         using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
 

@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #357 (parent #54): a count only means something relative to the peer's emission interval, so
+/// A count only means something relative to the peer's emission interval, so
 /// each end's receive-idle deadline (issue #352's <c>EnforceReceiveIdleTimer</c>) is computed from the
 /// interval the <em>peer</em> announced — <see cref="PeerSlot.RemoteSendIdleInterval"/> — never the
 /// end's own <see cref="DatagramSessionOptions.SendIdleInterval"/>. A dialler with a 1-second interval
@@ -38,7 +38,7 @@ public class DatagramSessionReceiveIdleDeadlineUsesPeerIntervalTests
     private static readonly TimeSpan _margin = TimeSpan.FromMilliseconds(1);
 
     // =========================================================================================
-    // AC1 — the accepter hears nothing from a 1-second peer, so it is interrupted at about 3s
+    // The accepter hears nothing from a 1-second peer, so it is interrupted at about 3s
     // =========================================================================================
 
     [Fact]
@@ -74,7 +74,7 @@ public class DatagramSessionReceiveIdleDeadlineUsesPeerIntervalTests
     }
 
     // =========================================================================================
-    // AC2 — the dialler hears nothing from a 5-second peer, so it is interrupted at about 15s,
+    // The dialler hears nothing from a 5-second peer, so it is interrupted at about 15s,
     //       and in particular not at 3s (its own interval × missed heartbeats)
     // =========================================================================================
 

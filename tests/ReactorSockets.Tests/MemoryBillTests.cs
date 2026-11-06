@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #63: each profile's memory bill, as <c>docs/options.md</c> and the options types' remarks
+/// Each profile's memory bill, as <c>docs/options.md</c> and the options types' remarks
 /// state it, is evaluated against what construction actually allocates. Every measurement is a pair of
 /// Reactors identical but for the knobs the formula names, each with every share-holder Slot occupied,
 /// so the difference between them is exactly the formula's own bytes with nothing else to allow for —

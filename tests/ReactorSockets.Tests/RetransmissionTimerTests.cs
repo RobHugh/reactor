@@ -9,7 +9,7 @@ namespace ReactorSockets.Tests;
 /// <see cref="RoundTripEstimator"/>, so these tests construct it directly — the type is public
 /// precisely so the backoff-and-reset behaviour, and issue #195's <see cref="RetransmissionTimer.EffectiveTimeout"/>
 /// clamp, can be pinned without an <c>InternalsVisibleTo</c> (ADR 0015), the same reason
-/// <see cref="PumpIntervalObserver"/> is public. The acceptance criterion that pumping at one cadence
+/// <see cref="PumpIntervalObserver"/> is public. The claim that pumping at one cadence
 /// and then a different one under <c>FakeTimeProvider</c> moves the floor describes a
 /// <see cref="DatagramSessionReactor"/> end-to-end, but <see cref="DatagramSessionReactor.ObservedPumpInterval"/>
 /// is <c>internal</c> with no <c>InternalsVisibleTo</c> (ADR 0015), so it cannot be driven from here.

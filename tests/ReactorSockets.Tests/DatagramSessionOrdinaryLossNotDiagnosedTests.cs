@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #306 (parent #271): the negative half of the fragment-size stall signature's own test, judging
+/// The negative half of the fragment-size stall signature's own test, judging
 /// <see cref="FragmentStallSignature.StallRoundCount"/> against a path that is merely lossy rather than
 /// size-limited. The same <see cref="FragmentSizeDiagnosisFixture"/> the positive
 /// (<see cref="DatagramSessionFragmentSizeUnviableTests"/>) is driven through, but with the proxy's
@@ -150,7 +150,7 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
     }
 
     /// <summary>
-    /// Issue #307: across the whole negative run, no datagram beyond this fixture's own two Messages and
+    /// Across the whole negative run, no datagram beyond this fixture's own two Messages and
     /// the accepter's keep-alive ever reaches the wire. Ordinary loss recovers the large Message through
     /// retransmission alone — the same shared check the positive run uses
     /// (<see cref="DatagramSessionFragmentSizeStallDiagnosisTests"/>'s own equivalent Fact) proves that
@@ -171,7 +171,7 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
     }
 
     /// <summary>
-    /// Issue #307: across the whole negative run, both ends' configured fragment size is unchanged.
+    /// Across the whole negative run, both ends' configured fragment size is unchanged.
     /// Ordinary loss recovers the large Message through retransmission alone, never by touching the
     /// setting — the same shared check the positive run uses
     /// (<see cref="DatagramSessionFragmentSizeStallDiagnosisTests"/>'s own equivalent Fact), which is the

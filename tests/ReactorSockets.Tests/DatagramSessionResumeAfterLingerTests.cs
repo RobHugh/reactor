@@ -6,7 +6,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #390 (parent #56): once an Interrupted Session's effective Linger has expired, both ends have
+/// Once an Interrupted Session's effective Linger has expired, both ends have
 /// closed it, so a Resume carrying the once-valid session id and secret matches nothing, and a fresh
 /// Connect is admitted as a new Peer with a different <see cref="PeerId"/>.
 /// </summary>

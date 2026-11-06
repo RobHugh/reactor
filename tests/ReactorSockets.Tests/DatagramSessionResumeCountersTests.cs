@@ -7,7 +7,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #389 (parent #56, inherited from #231): a Resume carries no history away. The whole
+/// A Resume carries no history away. The whole
 /// <see cref="PeerCounters"/> snapshot on each end, taken just before and just after a Resume, only grows,
 /// and <see cref="PeerCounters.Resumes"/> rises by exactly one.
 /// </summary>

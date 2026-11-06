@@ -4,12 +4,12 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #235: the ack-block proof inherited from #165. Both reliable Spaces' ack blocks
+/// Both reliable Spaces' ack blocks
 /// (<see cref="ReceiveWindowSpaces.GenerateAckBlocks"/>) are written unconditionally into a live-Session
 /// datagram's header, so the header is a fixed 20 bytes whether or not this Session has received
 /// anything to acknowledge, rather than a shape the reader has to negotiate. These tests read the wire
 /// bytes a real Session actually sends — through <see cref="WireTap"/> and decoded independently by
-/// <see cref="DatagramDecoder"/> (#228, #229) — rather than the counters or Events the rest of the ack
+/// <see cref="DatagramDecoder"/> — rather than the counters or Events the rest of the ack
 /// suite (<see cref="DatagramSessionAckBlockTests"/>) asserts through.
 /// </summary>
 public class DatagramSessionAckBlockWireTests

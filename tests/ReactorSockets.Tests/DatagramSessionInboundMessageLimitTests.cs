@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #425: this Reactor's own <see cref="DatagramSessionOptions.MaxMessageSize"/> is a contract on
+/// This Reactor's own <see cref="DatagramSessionOptions.MaxMessageSize"/> is a contract on
 /// what reaches the consumer. A completed Message above it is discarded and reported with
 /// <see cref="DiagnosticId.OversizedMessage"/>, the Session stays open, and the discarded Message's
 /// sequences are finished with, so nothing behind it stalls.

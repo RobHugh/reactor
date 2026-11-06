@@ -6,7 +6,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #404 (parent #57): a Goodbye forbids a Resume, so a valid-secret Resume aimed at a Peer in
+/// A Goodbye forbids a Resume, so a valid-secret Resume aimed at a Peer in
 /// receiver-side Closing (Goodbye received, Messages still draining) is refused. It logs
 /// <see cref="DiagnosticId.ResumeUnmatched"/>, raises no <see cref="SessionEventKind.PeerResumed"/>, does
 /// not move the Peer's remote address, and the Peer still closes with

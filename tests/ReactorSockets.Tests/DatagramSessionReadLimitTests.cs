@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #428: one Pump reads at most <see cref="DatagramSessionOptions.MaxDatagramsPerPump"/> datagrams
+/// One Pump reads at most <see cref="DatagramSessionOptions.MaxDatagramsPerPump"/> datagrams
 /// from each bound socket and leaves the rest for a later Pump, so a flood cannot keep a Pump from
 /// returning. Each flood is one-byte datagrams, too short to name a Session, which are read, counted,
 /// logged as malformed and discarded. The short sleep before a measured Pump gives loopback delivery time

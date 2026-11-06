@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.4.1f (issue #143): the capacity reservation issue #122 gave the listening side to an
+/// The capacity reservation issue #122 gave the listening side to an
 /// <see cref="SessionEventKind.PeerInterrupted"/> Peer is symmetric with the local dialling side — a
 /// <see cref="StreamSessionReactor.Connect"/> call takes a capacity Slot at the moment it is made, so a
 /// Slot a held Peer still occupies must not be available to it either. Where a fresh inbound connection

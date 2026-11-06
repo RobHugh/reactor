@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #353 (parent #54): once a Peer is <see cref="SessionEventKind.PeerInterrupted"/>, later Pumps
+/// Once a Peer is <see cref="SessionEventKind.PeerInterrupted"/>, later Pumps
 /// must not raise that Event for it again, even though its receive-idle deadline
 /// (<c>HasExceededReceiveIdleDeadline</c>, issue #352) stays exceeded forever after the path is cut.
 /// </summary>

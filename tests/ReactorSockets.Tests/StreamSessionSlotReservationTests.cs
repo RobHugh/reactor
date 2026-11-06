@@ -5,14 +5,13 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.4.1b (issue #139): an Interrupted Peer keeps reserving its Slot for the whole of Linger
+/// An Interrupted Peer keeps reserving its Slot for the whole of Linger
 /// (issue #121), so a busy Reactor never gives away the state a reconnection is coming back for
-/// (ADR 0010). No production change lands with this ticket — a held Peer already occupies its Slot
-/// until <c>ClosePeer</c> runs at Linger expiry, and both <c>AdmitOrRefuse</c> and its predecessor
-/// gate read the same <c>_peers.HasFreeSlot</c> regardless of whether the Peer holding a Slot is
-/// established or Interrupted. Every test here proves that reservation through the public L2 surface
-/// only (tests/CLAUDE.md, ADR 0015), using the capacity-fill and fresh-dial harness helpers issue #138
-/// added. Mirrors <see cref="StreamSessionHandshakeGuardTests"/>'s
+/// (ADR 0010). A held Peer occupies its Slot until <c>ClosePeer</c> runs at Linger expiry, and
+/// admission reads <c>_peers.HasFreeSlot</c> regardless of whether the Peer holding a Slot
+/// is established or Interrupted. Every test here proves that reservation through the public L2
+/// surface only (tests/CLAUDE.md, ADR 0015), using the capacity-fill and fresh-dial harness
+/// helpers. Mirrors <see cref="StreamSessionHandshakeGuardTests"/>'s
 /// <c>Connect_EveryCapacitySlotOccupied_IsRefusedWithReasonCapacityAndClosedCleanlyRatherThanReset</c>,
 /// the house pattern for a capacity refusal, and <see cref="StreamSessionInterruptedTests"/> for how
 /// an interruption is arranged.

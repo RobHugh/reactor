@@ -8,7 +8,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #61: the shape of the Counter surface, asserted over the public assembly rather than any one
+/// The shape of the Counter surface, asserted over the public assembly rather than any one
 /// profile. Covers <see cref="ReactorCounters"/> and its two per-subject siblings,
 /// <see cref="PeerCounters"/> and <see cref="LinkCounters"/>, because the three rules here — no reset,
 /// no enumeration of subjects, and a non-derivability line per field — are one decision (ADR 0013).

@@ -4,10 +4,9 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.5.6 (issue #205): <see cref="PeerCounters.RetentionHighWaterBytes"/> reports the most
+/// <see cref="PeerCounters.RetentionHighWaterBytes"/> reports the most
 /// bytes one Peer ever held retained at once, summed across both of that Peer's reliable Spaces, and
-/// never falls. Subtask 6.5.7 (issue #206) is asserted here too, in the one place its Slot-reuse
-/// claim shows: a Slot's retention outlives whichever Peer occupies it, so a Peer admitted into a
+/// never falls. Slot reuse is asserted here too, in the one place it shows: a Slot's retention outlives whichever Peer occupies it, so a Peer admitted into a
 /// Slot a previous Peer left fragments in must still start empty.
 /// </summary>
 /// <remarks>

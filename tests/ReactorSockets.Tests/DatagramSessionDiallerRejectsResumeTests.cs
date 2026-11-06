@@ -6,7 +6,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #56 (PR #392 review, D3): only the accepting end is a Resume target. The dialling end is the
+/// Only the accepting end is a Resume target. The dialling end is the
 /// one that sends Resume, because only it can know its own new address, so a Resume arriving at a
 /// dialled Peer is rejected like one naming no held session, even when it presents the dialler's own
 /// session id and the secret the dialler issued. Both travel in the dialler's HelloWithCookie, so
