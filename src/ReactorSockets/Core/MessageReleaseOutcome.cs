@@ -8,7 +8,7 @@ internal enum MessageReleaseOutcome
     /// <summary>
     /// The share-holder's released total now covers everything through the requested Message —
     /// whether this call was the one that advanced it, or it already did, because the same peer
-    /// counter rides both emission triggers (issue #25) and repeating one is not an error.
+    /// counter rides both emission triggers and repeating one is not an error.
     /// </summary>
     Released,
 

@@ -26,9 +26,8 @@ namespace ReactorSockets.Session;
 /// the schedule is derived and cannot be set, and a public constructor would have been a permanent
 /// commitment to a value no consumer ever builds. The jitter source is a constructor parameter rather
 /// than a source this type creates, so a test substitutes a deterministic one through the options
-/// seam a Reactor draws it from, and the schedule is observed through the Reactor that re-dials on it
-/// (issue #125). Nothing here is reached past the seam and no <c>InternalsVisibleTo</c> exists
-/// (ADR 0015).
+/// seam a Reactor draws it from, and the schedule is observed through the Reactor that re-dials on it.
+/// Nothing here is reached past the seam and no <c>InternalsVisibleTo</c> exists (ADR 0015).
 /// </para>
 /// </remarks>
 internal sealed class RedialSchedule

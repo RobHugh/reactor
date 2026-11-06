@@ -155,38 +155,38 @@ public readonly record struct DiagnosticRecord
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.UnreliableFragment"/> record for the claimed Source that put a
-    /// Fragment on the wire in an unreliable mode (issue #273), carrying the mode it claimed as the two
-    /// mode bits' wire value. <c>Value1</c> is unused: the rule has no threshold to report against.
+    /// Fragment on the wire in an unreliable mode, carrying the mode it claimed as the two mode bits'
+    /// wire value. <c>Value1</c> is unused: the rule has no threshold to report against.
     /// </summary>
     public static DiagnosticRecord ForUnreliableFragment(Source source, long modeBits) =>
         new(DiagnosticId.UnreliableFragment, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, modeBits, 0);
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.OversizedMessage"/> record for the Peer whose completed Message
-    /// was larger than this Reactor's own <c>MaxMessageSize</c> (issue #425), carrying the Message's
-    /// length and that limit.
+    /// was larger than this Reactor's own <c>MaxMessageSize</c>, carrying the Message's length and that
+    /// limit.
     /// </summary>
     public static DiagnosticRecord ForOversizedMessage(PeerId peer, long messageLength, long maxMessageSize) =>
         new(DiagnosticId.OversizedMessage, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, messageLength, maxMessageSize);
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.AddressPeerLimitReached"/> record for the claimed Source whose
-    /// handshake was refused (issue #427), carrying the per-address limit.
+    /// handshake was refused, carrying the per-address limit.
     /// </summary>
     public static DiagnosticRecord ForAddressPeerLimitReached(Source source, int limit) =>
         new(DiagnosticId.AddressPeerLimitReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, limit, 0);
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.DatagramReadLimitReached"/> record. No subject. Carries the per-socket
-    /// read limit and the socket's index in <see cref="DatagramSessionReactor.BoundEndpoints"/> (issue #428).
+    /// read limit and the socket's index in <see cref="DatagramSessionReactor.BoundEndpoints"/>.
     /// </summary>
     public static DiagnosticRecord ForDatagramReadLimitReached(int limit, int socketIndex) =>
         new(DiagnosticId.DatagramReadLimitReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, default, limit, socketIndex);
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record for the Peer whose
-    /// <see cref="RetransmissionTimer"/> just backed off (subtask 6.4.9, issue #199). <c>Value0</c> is
-    /// the new RTO in milliseconds; <c>Value1</c> is the consecutive backoff count after this backoff.
+    /// <see cref="RetransmissionTimer"/> just backed off. <c>Value0</c> is the new RTO in milliseconds;
+    /// <c>Value1</c> is the consecutive backoff count after this backoff.
     /// </summary>
     public static DiagnosticRecord ForRetransmissionTimerBackedOff(PeerId peer, long newRtoMilliseconds, long consecutiveBackoffs) =>
         new(DiagnosticId.RetransmissionTimerBackedOff, DiagnosticLevel.Trace, DiagnosticSubjectKind.Peer, default, default, peer, newRtoMilliseconds, consecutiveBackoffs);

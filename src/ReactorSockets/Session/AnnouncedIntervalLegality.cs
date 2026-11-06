@@ -3,7 +3,7 @@ namespace ReactorSockets.Session;
 /// <summary>
 /// The range a send-idle interval or Linger announced in a handshake must lie in, stated once for both
 /// Session profiles and for the options that produce this end's own announcements. Both fields are a
-/// <c>ulong</c> on the wire and come from a sender nothing has authenticated (issue #422).
+/// <c>ulong</c> on the wire and come from a sender nothing has authenticated.
 /// </summary>
 internal static class AnnouncedIntervalLegality
 {

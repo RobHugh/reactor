@@ -21,7 +21,7 @@ internal readonly struct TcpAcceptResult
 
     /// <summary>
     /// Whether this attempt produced an accepted socket. Lets a caller narrow <see cref="Socket"/> to
-    /// non-null on the success path without a null-forgiving operator (#99).
+    /// non-null on the success path without a null-forgiving operator.
     /// </summary>
     [MemberNotNullWhen(true, nameof(Socket))]
     public bool IsAccepted => Outcome == TcpAcceptOutcome.Accepted;

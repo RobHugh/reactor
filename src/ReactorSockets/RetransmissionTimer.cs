@@ -1,10 +1,10 @@
 namespace ReactorSockets;
 
 /// <summary>
-/// Layers exponential backoff above a <see cref="RoundTripEstimator"/>. Built for issue #194 (slice
-/// #42, the adaptive RTO): each consecutive expiry without a delivery doubles the timeout and raises
-/// a consecutive-backoff count, and a successful delivery resets both in one step so the next timeout
-/// is the estimate again rather than a decayed version of the backed-off one.
+/// Layers exponential backoff above a <see cref="RoundTripEstimator"/> for the adaptive RTO: each
+/// consecutive expiry without a delivery doubles the timeout and raises a consecutive-backoff count,
+/// and a successful delivery resets both in one step so the next timeout is the estimate again rather
+/// than a decayed version of the backed-off one.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -17,16 +17,16 @@ namespace ReactorSockets;
 /// Backoff sits above the estimator rather than inside it: <see cref="BackOff"/> and
 /// <see cref="RecordDelivery"/> never touch <see cref="RoundTripEstimator.SmoothedRoundTrip"/> or
 /// <see cref="RoundTripEstimator.RoundTripVariance"/>. The smoothed value still describes the network
-/// as last measured; the backoff is what is actually waited. With Karn's rule (issue #193) discarding
-/// the ambiguous samples a retransmit would otherwise produce, the backoff multiplier is the only
-/// thing that adapts while a path is failing.
+/// as last measured; the backoff is what is actually waited. With Karn's rule discarding the ambiguous
+/// samples a retransmit would otherwise produce, the backoff multiplier is the only thing that adapts
+/// while a path is failing.
 /// </para>
 /// <para>
 /// <see cref="Timeout"/> here is deliberately unbounded — it is <see cref="Estimator"/>'s own
 /// <see cref="RoundTripEstimator.Timeout"/> doubled <see cref="ConsecutiveBackoffs"/> times and
 /// nothing more. The clamp against a Reactor's observed Pump cadence and the Linger ceiling is
-/// <see cref="EffectiveTimeout"/> (issue #195), which reads both bounds fresh at every call rather than
-/// touching <see cref="Timeout"/>'s own arithmetic.
+/// <see cref="EffectiveTimeout"/>, which reads both bounds fresh at every call rather than touching
+/// <see cref="Timeout"/>'s own arithmetic.
 /// </para>
 /// </remarks>
 public sealed class RetransmissionTimer
@@ -53,8 +53,8 @@ public sealed class RetransmissionTimer
     /// While <see cref="Estimator"/> is unseeded its own <see cref="RoundTripEstimator.Timeout"/> is
     /// already <see cref="TimeSpan.MaxValue"/>; doubling that saturates immediately rather than
     /// wrapping, so this reads <see cref="TimeSpan.MaxValue"/> from the very first <see cref="BackOff"/>
-    /// call too. This value is unbounded on purpose — issue #195's <c>EffectiveTimeout</c> is what
-    /// clamps it against a Reactor's observed Pump cadence and the Linger ceiling.
+    /// call too. This value is unbounded on purpose — <see cref="EffectiveTimeout"/> is what clamps it
+    /// against a Reactor's observed Pump cadence and the Linger ceiling.
     /// </remarks>
     public TimeSpan Timeout
     {
@@ -100,8 +100,8 @@ public sealed class RetransmissionTimer
     /// is <paramref name="linger"/> rather than an inverted or thrown range.
     /// </summary>
     /// <param name="observedPumpInterval">
-    /// The Reactor's own <see cref="PumpIntervalObserver.Interval"/> (issue #191): an RTO shorter than
-    /// the gap between Pumps cannot be acted on, so this floors <see cref="Timeout"/>.
+    /// The Reactor's own <see cref="PumpIntervalObserver.Interval"/>: an RTO shorter than the gap
+    /// between Pumps cannot be acted on, so this floors <see cref="Timeout"/>.
     /// <see cref="PumpIntervalObserver.Interval"/> reads <see cref="TimeSpan.MaxValue"/> before a
     /// second Pump — deliberately, per that type's own docs — so with no cadence observed yet this
     /// floor evaluates above <paramref name="linger"/> and the clamp resolves to

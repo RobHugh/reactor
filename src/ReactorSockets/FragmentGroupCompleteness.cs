@@ -5,9 +5,9 @@ namespace ReactorSockets;
 
 /// <summary>
 /// The arithmetic that decides whether every Fragment of one group has been held in a
-/// <see cref="ReceiveWindow"/> (issue #258, part of #49's reassembly work). Internal, and tested only
-/// through <see cref="DatagramSessionReactor"/> (ADR 0003, ADR 0015, issue #278): its inputs are the
-/// receive arena's run layouts and a ring index, which mean nothing to a consumer.
+/// <see cref="ReceiveWindow"/>. Internal, and tested only through <see cref="DatagramSessionReactor"/>
+/// (ADR 0003, ADR 0015): its inputs are the receive arena's run layouts and a ring index, which mean
+/// nothing to a consumer.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -93,7 +93,7 @@ internal static class FragmentGroupCompleteness
     /// <param name="admitted">
     /// The window's admission run — see <see cref="Core.ReceiveArena.GetAdmissionRun"/> — one byte per
     /// ring slot, non-zero exactly where that slot's sequence is currently admitted. Needed only to
-    /// corroborate a piece still at or ahead of <paramref name="windowBase"/> (issue #259): see remarks.
+    /// corroborate a piece still at or ahead of <paramref name="windowBase"/>: see remarks.
     /// </param>
     /// <param name="fragmentLengths">
     /// The window's Fragment-length run — see <see cref="Core.ReceiveArena.GetFragmentLengthRun"/> —
@@ -121,13 +121,13 @@ internal static class FragmentGroupCompleteness
     /// A piece already behind <paramref name="windowBase"/> is trusted on its length alone:
     /// <see cref="ReceiveWindow.AdvanceBase"/> clears a passed slot's admission entry, so the length run is
     /// what survives to answer this, and a length reused since is cleared at the next fresh admission of
-    /// that slot (issue #259). A piece at or ahead of the base is different: the ring slot a not-yet-arrived
+    /// that slot. A piece at or ahead of the base is different: the ring slot a not-yet-arrived
     /// sequence resolves to can still hold a non-zero length left by an earlier, abandoned occupant whose
     /// admission entry was cleared when the base swept past it. A live forward piece always has its entry
     /// set, so requiring it rejects exactly the stale case.
     /// </para>
     /// <para>
-    /// <b>A piece counts only for the group it named when it arrived (issue #423).</b> A datagram's own
+    /// <b>A piece counts only for the group it named when it arrived.</b> A datagram's own
     /// well-formedness check cannot see across datagrams, so a peer can send overlapping claims one
     /// Fragment at a time. Reading lengths alone would report each of them complete from the same pieces
     /// and stitch a Message from another group's bytes. Comparing identity means two complete groups

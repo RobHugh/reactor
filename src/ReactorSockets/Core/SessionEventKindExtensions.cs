@@ -1,15 +1,14 @@
 namespace ReactorSockets.Core;
 
 /// <summary>
-/// The half of <c>ISessionEventSource.GetPendingEvent</c>'s translation both Session profiles share
-/// (issue #103): <see cref="SessionEventKind.PeerConnected"/>, <see cref="SessionEventKind.PeerClosed"/>,
-/// <see cref="SessionEventKind.PeerInterrupted"/> (issue #350) and <see cref="SessionEventKind.PeerResumed"/>
-/// (issue #383, so the datagram profile can raise it too) need nothing beyond a
-/// <see cref="PeerId"/> and, for <see cref="SessionEventKind.PeerClosed"/>, a
-/// <see cref="DisconnectReason"/> to become a <see cref="SessionEvent"/>. A profile with kinds of its
-/// own — the stream profile's <see cref="SessionEventKind.MessageReceived"/> and
-/// <see cref="SessionEventKind.PeerClosing"/> — falls through to its own switch when this returns
-/// <see langword="false"/>.
+/// The half of <c>ISessionEventSource.GetPendingEvent</c>'s translation both Session profiles share:
+/// <see cref="SessionEventKind.PeerConnected"/>, <see cref="SessionEventKind.PeerClosed"/>,
+/// <see cref="SessionEventKind.PeerInterrupted"/> and <see cref="SessionEventKind.PeerResumed"/> (so
+/// the datagram profile can raise it too) need nothing beyond a <see cref="PeerId"/> and, for
+/// <see cref="SessionEventKind.PeerClosed"/>, a <see cref="DisconnectReason"/> to become a
+/// <see cref="SessionEvent"/>. A profile with kinds of its own — the stream profile's
+/// <see cref="SessionEventKind.MessageReceived"/> and <see cref="SessionEventKind.PeerClosing"/> —
+/// falls through to its own switch when this returns <see langword="false"/>.
 /// </summary>
 internal static class SessionEventKindExtensions
 {

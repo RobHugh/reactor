@@ -1,10 +1,9 @@
 namespace ReactorSockets;
 
 /// <summary>
-/// Which kind of <see cref="RawEvent"/> a drained event is. This slice adds the stream-relevant kinds
-/// to the datagram-only roster shipped earlier (ADR 0008); <see cref="Accepted"/> lands with the
-/// listening-Link work, <see cref="Connected"/> with dialling, <see cref="SegmentReceived"/> and
-/// <see cref="EndOfStream"/> with stream reads, and <see cref="Writable"/> with partial sends.
+/// Which kind of <see cref="RawEvent"/> a drained event is (ADR 0008). <see cref="Accepted"/> comes
+/// from a listening Link, <see cref="Connected"/> from dialling, <see cref="SegmentReceived"/> and
+/// <see cref="EndOfStream"/> from stream reads, and <see cref="Writable"/> from partial sends.
 /// </summary>
 public enum RawEventKind
 {

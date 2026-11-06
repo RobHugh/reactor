@@ -18,7 +18,7 @@ internal enum RetentionRewindOutcome
     /// The requested Message count names a Message already below the share-holder's released head —
     /// bytes this end no longer retains, because a peer's earlier confirmation already freed them.
     /// Refused without touching the arena: resuming to a point this ring has no bytes for would leave
-    /// a hole in the stream rather than a rewind. Issue #130's own gap case.
+    /// a hole in the stream rather than a rewind.
     /// </summary>
     BelowReleasedHead,
 

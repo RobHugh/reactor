@@ -2,8 +2,8 @@ namespace ReactorSockets.Core;
 
 /// <summary>
 /// The conversion between the public <see cref="PeerId"/> and the internal <see cref="SlotHandle"/> it
-/// wraps — identical in both Session profiles (ADR 0007, issue #103), since a <see cref="PeerId"/>
-/// carries the same three fields a <see cref="SlotHandle"/> does under its own public names.
+/// wraps — identical in both Session profiles (ADR 0007), since a <see cref="PeerId"/> carries the same
+/// three fields a <see cref="SlotHandle"/> does under its own public names.
 /// </summary>
 internal static class PeerIdentityExtensions
 {

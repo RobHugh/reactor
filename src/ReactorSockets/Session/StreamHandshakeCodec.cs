@@ -5,8 +5,8 @@ namespace ReactorSockets.Session;
 /// <summary>
 /// Which of the three records a stream handshake message on the wire carries. A one-byte tag prefixing
 /// every record, so a Peer already waiting for a plain Hello can also recognise the in-protocol
-/// Refusal that takes its place when the far end declines (subtask 3.3), or the Resume a re-dialling
-/// end sends in its place to claim a Session the far end may still be holding (subtask 4.4).
+/// Refusal that takes its place when the far end declines, or the Resume a re-dialling end sends in its
+/// place to claim a Session the far end may still be holding.
 /// </summary>
 internal enum StreamHandshakeMessageType : byte
 {
@@ -96,8 +96,7 @@ internal static class StreamHandshakeCodec
     /// <summary>
     /// Whether every byte of <paramref name="record"/> past a payload of
     /// <paramref name="payloadSize"/> bytes is zero — the padding a writer here always clears. Non-zero
-    /// padding fails the read, as it does in <see cref="ControlDatagramCodec.TryReadControlType"/>
-    /// (issue #429).
+    /// padding fails the read, as it does in <see cref="ControlDatagramCodec.TryReadControlType"/>.
     /// </summary>
     private static bool IsPaddingZero(ReadOnlySpan<byte> record, int payloadSize) =>
         record[(1 + payloadSize)..].IndexOfAnyExcept((byte)0) == -1;
@@ -158,11 +157,11 @@ internal static class StreamHandshakeCodec
     /// hold a full secret could not use one correctly regardless of what the record contains. Also fails
     /// when the announced <paramref name="maxMessageSize"/> is zero, whatever the version, and when a
     /// Hello of this end's <see cref="StreamSessionProtocol.Version"/> announces an interval that is not
-    /// <see cref="AnnouncedIntervalLegality.IsLegal">legal</see> (issue #422). Both are the rules
+    /// <see cref="AnnouncedIntervalLegality.IsLegal">legal</see>. Both are the rules
     /// <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> applies, so the two profiles reject the
-    /// same malformed inputs (issue #429). A Hello of any other version with a non-zero
-    /// <c>MaxMessageSize</c> is left for the version Refusal, because this end cannot judge the
-    /// intervals of a version it does not speak.
+    /// same malformed inputs. A Hello of any other version with a non-zero <c>MaxMessageSize</c> is
+    /// left for the version Refusal, because this end cannot judge the intervals of a version it does
+    /// not speak.
     /// </summary>
     public static bool TryRead(
         ReadOnlySpan<byte> record,
@@ -229,8 +228,8 @@ internal static class StreamHandshakeCodec
     /// <see cref="RecordSize"/> bytes, its message type is not
     /// <see cref="StreamHandshakeMessageType.Refusal"/>, its reason byte is one
     /// <see cref="RefusalReasonMap.DisconnectReasonFor"/> does not understand, or its padding is not
-    /// zero. Those are the rules <see cref="ControlDatagramCodec.TryReadRefusal"/> applies (issue #429):
-    /// an unreadable reason is indistinguishable from a forged Refusal, so nothing in the record can be
+    /// zero. Those are the rules <see cref="ControlDatagramCodec.TryReadRefusal"/> applies: an
+    /// unreadable reason is indistinguishable from a forged Refusal, so nothing in the record can be
     /// trusted.
     /// </summary>
     public static bool TryReadRefusal(ReadOnlySpan<byte> record, out RefusalReason reason, out uint value0, out uint value1)
@@ -282,7 +281,7 @@ internal static class StreamHandshakeCodec
     /// <summary>
     /// Reads one Resume record's payload. Fails when <paramref name="record"/> is not exactly
     /// <see cref="RecordSize"/> bytes, its message type is not
-    /// <see cref="StreamHandshakeMessageType.Resume"/>, its padding is not zero (issue #429), or
+    /// <see cref="StreamHandshakeMessageType.Resume"/>, its padding is not zero, or
     /// <paramref name="resumeSecret"/> is not exactly its wire length, since a caller that cannot hold a
     /// full secret could not use one correctly regardless of what the record contains.
     /// </summary>

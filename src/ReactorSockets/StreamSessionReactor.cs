@@ -10,12 +10,10 @@ namespace ReactorSockets;
 /// <summary>
 /// The stream Session profile (ADR 0010): Sessions established over TCP, addressed as Peers,
 /// delivering <c>u32</c> length-prefixed Messages rather than the byte runs the transport gives.
-/// Slices 3.1-3.3 validate <see cref="StreamSessionOptions"/> and its allocation bill at
-/// construction, bind the declared endpoint set, and carry a Peer through the handshake to an
-/// established Session. Slice 3.4 adds the data plane: each established Peer reassembles Messages in
-/// its own persistent receive buffer and delivers each whole one as a
-/// <see cref="SessionEventKind.MessageReceived"/> event copied into the shared frame arena. Retention,
-/// write batching and the Goodbye exchange are not yet built and land in the sub-issues that follow.
+/// Construction validates <see cref="StreamSessionOptions"/> and its allocation bill and binds the
+/// declared endpoint set; each Peer is carried through the handshake to an established Session. Each
+/// established Peer reassembles Messages in its own persistent receive buffer and delivers each whole
+/// one as a <see cref="SessionEventKind.MessageReceived"/> event copied into the shared frame arena.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -155,8 +153,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// The interval this Reactor's own Pump calls are currently observed to arrive at
     /// (<see cref="PumpIntervalObserver"/>), read fresh from every Pump. This is the derived floor
-    /// the re-dial schedule (<see cref="RedialSchedule"/>, issue #125) starts its first delay at: a
-    /// retry sooner than the next Pump cannot happen. Internal because a consumer never constructs a
+    /// the re-dial schedule (<see cref="RedialSchedule"/>) starts its first delay at: a retry sooner
+    /// than the next Pump cannot happen. Internal because a consumer never constructs a
     /// <see cref="RedialSchedule"/> themselves — this Reactor does, on their behalf, once a re-dial is
     /// needed.
     /// </summary>
@@ -167,32 +165,31 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// One synchronous advance: records this call's arrival against the last one
-    /// (<see cref="ObservedPumpInterval"/>, issue #112) before anything else, then wipes the previous
-    /// Frame's events — which is also the moment a Peer
-    /// still <see cref="SessionEventKind.PeerClosing"/> only because the last Frame's Messages had not
-    /// been drained past yet becomes eligible to close (<see cref="RetryPeersPendingClose"/>) — then
-    /// admits ready connections, advances every in-flight dial and reads whatever bound socket is
-    /// ready right now, running the handshake for everything that arrived. Every Peer whose received
-    /// count advanced somewhere in that work — this Frame's own reads, or a held-back Message finally
-    /// delivered by <see cref="RetryPeersWithBufferedMessages"/> — then has its delivery counter emitted
-    /// exactly once (<see cref="EmitDeliveryCounters"/>, issue #116/#25's second trigger), before every
-    /// Peer's queued retention bytes are flushed exactly once
-    /// (<see cref="FlushPendingRetentionWrites"/>, #90/3.6.2) regardless of how many <see cref="Send"/>
-    /// calls queued them. Finally, every established Peer's two independent idle timers (#26) are
-    /// enforced in one scan (<see cref="EnforceIdleTimers"/>): a Peer from which nothing has been
-    /// received for <see cref="PeerSlot.RemoteSendIdleInterval"/> × <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>
-    /// moves to <see cref="SessionEventKind.PeerInterrupted"/> (issue #117, revised by issue #119), an
-    /// already-Interrupted Peer instead closes with <see cref="DisconnectReason.LingerExpired"/> once
-    /// its effective Linger has elapsed since the interruption (issue #121), and every surviving Peer
-    /// that has written nothing
-    /// to the wire — including whatever this Frame's own flush just carried — for at least
+    /// (<see cref="ObservedPumpInterval"/>) before anything else, then wipes the previous Frame's
+    /// events — which is also the moment a Peer still <see cref="SessionEventKind.PeerClosing"/> only
+    /// because the last Frame's Messages had not been drained past yet becomes eligible to close
+    /// (<see cref="RetryPeersPendingClose"/>) — then admits ready connections, advances every in-flight
+    /// dial and reads whatever bound socket is ready right now, running the handshake for everything
+    /// that arrived. Every Peer whose received count advanced somewhere in that work — this Frame's own
+    /// reads, or a held-back Message finally delivered by <see cref="RetryPeersWithBufferedMessages"/>
+    /// — then has its delivery counter emitted exactly once (<see cref="EmitDeliveryCounters"/>),
+    /// before every Peer's queued retention bytes are flushed exactly once
+    /// (<see cref="FlushPendingRetentionWrites"/>) regardless of how many <see cref="Send"/> calls
+    /// queued them. Finally, every established Peer's two independent idle timers are enforced in one
+    /// scan (<see cref="EnforceIdleTimers"/>): a Peer from which nothing has been received for
+    /// <see cref="PeerSlot.RemoteSendIdleInterval"/> ×
+    /// <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/> moves to
+    /// <see cref="SessionEventKind.PeerInterrupted"/>, an already-Interrupted Peer instead closes with
+    /// <see cref="DisconnectReason.LingerExpired"/> once its effective Linger has elapsed since the
+    /// interruption, and every surviving Peer that has written nothing to the wire — including whatever
+    /// this Frame's own flush just carried — for at least
     /// <see cref="StreamSessionOptions.SendIdleInterval"/> sends the same delivery-counter record as a
-    /// heartbeat (issue #114/#26's first idle timer), unconditionally and regardless of whether anything
-    /// was ever received from it. Once idle timers may have closed an Interrupted Peer on Linger expiry
-    /// (issue #121), every Interrupted Peer this Reactor itself dialled is given its re-dial attempt for
-    /// this Frame (<see cref="ProcessRedials"/>, issue #125) — a schedule derived from the observed Pump
-    /// interval just recorded above and the effective Linger, never a separate attempt-count knob, so a
-    /// Peer whose Linger closed it this same Frame is never also given one. Throws
+    /// heartbeat, unconditionally and regardless of whether anything was ever received from it. Once
+    /// idle timers may have closed an Interrupted Peer on Linger expiry, every Interrupted Peer this
+    /// Reactor itself dialled is given its re-dial attempt for this Frame
+    /// (<see cref="ProcessRedials"/>) — a schedule derived from the observed Pump interval just
+    /// recorded above and the effective Linger, never a separate attempt-count knob, so a Peer whose
+    /// Linger closed it this same Frame is never also given one. Throws
     /// <see cref="InvalidOperationException"/> if called from any thread other than the one that
     /// constructed this Reactor, or from inside a Pump already in progress.
     /// </summary>
@@ -289,14 +286,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// further <see cref="Send"/> to it. If retention has no room for it yet, the attempt is retried
     /// on every later Pump (<see cref="RetryGoodbyeAppends"/>) until it commits — <see cref="Close"/>
     /// must never leave the far end open indefinitely because the Goodbye it promised was silently
-    /// dropped (issue #23 review finding), and this end never closes itself locally until its own
-    /// Goodbye has actually been appended and flushed. The <see cref="SessionEventKind.PeerClosed"/>
-    /// carrying <see cref="DisconnectReason.LocalClose"/> is queued once that flush fully drains —
-    /// immediately, on a later Pump, if nothing was queued when <see cref="Close"/> was called, or
-    /// after however many Pumps a short write (or a retention append retry) takes to carry everything
-    /// already retained plus the Goodbye itself. Idempotent: a stale <see cref="PeerId"/>, or a Peer
-    /// already closing, is a no-op — a Peer closing under a caller, or a caller that closes the same
-    /// Peer twice, is an ordinary race rather than a programmer error.
+    /// dropped, and this end never closes itself locally until its own Goodbye has actually been
+    /// appended and flushed. The <see cref="SessionEventKind.PeerClosed"/> carrying
+    /// <see cref="DisconnectReason.LocalClose"/> is queued once that flush fully drains — immediately,
+    /// on a later Pump, if nothing was queued when <see cref="Close"/> was called, or after however
+    /// many Pumps a short write (or a retention append retry) takes to carry everything already
+    /// retained plus the Goodbye itself. Idempotent: a stale <see cref="PeerId"/>, or a Peer already
+    /// closing, is a no-op — a Peer closing under a caller, or a caller that closes the same Peer
+    /// twice, is an ordinary race rather than a programmer error.
     /// </summary>
     public void Close(PeerId peer)
     {
@@ -338,9 +335,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// finally committing — the far end's reason was recorded first and stays.
     /// On <see cref="RetentionOutcome.Exhausted"/>, the attempt is
     /// recorded in <see cref="_peersWithGoodbyeOwed"/> for <see cref="RetryGoodbyeAppends"/> to retry
-    /// on a later Pump, mirroring the shape #81's <see cref="RetryPeersWithBufferedMessages"/>
-    /// established — that set is for Messages a Peer sent this end; this one is for the single control
-    /// record this end owes the far end.
+    /// on a later Pump, mirroring the shape of <see cref="RetryPeersWithBufferedMessages"/> — that set
+    /// is for Messages a Peer sent this end; this one is for the single control record this end owes
+    /// the far end.
     /// </summary>
     private void AppendGoodbyeOrDefer(SlotHandle handle, PeerSlot slot)
     {
@@ -374,7 +371,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Re-attempts <see cref="AppendGoodbyeOrDefer"/> for every Peer whose <see cref="Close"/> found
     /// retention exhausted at the time. Runs once, at the start of every Pump, after an earlier
     /// Frame's flush may have released the room the first attempt lacked — the same position and
-    /// snapshot-then-clear shape as <see cref="RetryPeersWithBufferedMessages"/> (#81), so a Peer whose
+    /// snapshot-then-clear shape as <see cref="RetryPeersWithBufferedMessages"/>, so a Peer whose
     /// append keeps failing is simply re-added to <see cref="_peersWithGoodbyeOwed"/> by
     /// <see cref="AppendGoodbyeOrDefer"/> itself rather than left off this list.
     /// </summary>
@@ -415,8 +412,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Frames <paramref name="message"/> as a <c>u32</c> big-endian length prefix followed by its
     /// bytes (<see cref="MessageFramingCodec"/>, ADR 0010) and appends the framed bytes to
-    /// <paramref name="peer"/>'s retention region. Nothing is written to the socket here, ever (#90,
-    /// 3.6.2 write batching) — a successful append only sets this Peer's pending-write marker
+    /// <paramref name="peer"/>'s retention region. Nothing is written to the socket here, ever (write
+    /// batching) — a successful append only sets this Peer's pending-write marker
     /// (<see cref="PeerSlot.HasPendingRetentionWrite"/>), which the next <see cref="Pump"/>'s explicit
     /// flush step (<see cref="FlushPendingRetentionWrites"/>) drains in a single write carrying
     /// everything queued, including whatever was already sitting there. A Send with no following Pump
@@ -424,25 +421,24 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// end's own (<see cref="PeerSlot.LocalGoodbyeSent"/>) or the far end's arrived and this Peer is
     /// already <see cref="SessionEventKind.PeerClosing"/> or on its way to
     /// <see cref="SessionEventKind.PeerClosed"/> (<see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/>)
-    /// — since a Message queued after a Goodbye is not one the far end has any business receiving
-    /// (issue #23). Also refuses a Peer whose handshake has not reached
-    /// <see cref="HandshakeState.Established"/> with <see cref="SendOutcome.NotEstablished"/> (issue #332):
-    /// flushing that Message would write to a socket whose connect has not resolved, closing the Peer
-    /// with <see cref="DisconnectReason.TransportFailed"/>, or send it before the far end's handshake
-    /// record has been read.
+    /// — since a Message queued after a Goodbye is not one the far end has any business receiving. Also
+    /// refuses a Peer whose handshake has not reached <see cref="HandshakeState.Established"/> with
+    /// <see cref="SendOutcome.NotEstablished"/>: flushing that Message would write to a socket whose
+    /// connect has not resolved, closing the Peer with <see cref="DisconnectReason.TransportFailed"/>,
+    /// or send it before the far end's handshake record has been read.
     /// </summary>
     /// <remarks>
     /// <see cref="PeerSlot.IsInterrupted"/> is deliberately not one of the refusal conditions above
-    /// (issue #120, ADR 0010's backpressure rule): a Send against an Interrupted Peer is exactly as
-    /// welcome as one against a live Peer, because holding retention across the interruption for a
-    /// possible Resume is the entire point of not closing the Peer in the first place. The append
-    /// behaves identically either way — the difference is only downstream, in
-    /// <see cref="FlushRetention"/>'s own <c>IsInterrupted</c> guard, which leaves these bytes queued
-    /// rather than attempting a dead socket. Once the ring genuinely has no room,
-    /// <see cref="RetentionOutcome.Exhausted"/> reports the same way it would for a live Peer — the
-    /// ring does not know or care why nothing has drained it — so an interruption that outlasts the
-    /// send rate reaches <see cref="SendOutcome.RetentionExhausted"/> exactly like a single oversized
-    /// Message or a sustained rate would, the third of the three paths ADR 0010 names to it.
+    /// (ADR 0010's backpressure rule): a Send against an Interrupted Peer is exactly as welcome as one
+    /// against a live Peer, because holding retention across the interruption for a possible Resume is
+    /// the entire point of not closing the Peer in the first place. The append behaves identically
+    /// either way — the difference is only downstream, in <see cref="FlushRetention"/>'s own
+    /// <c>IsInterrupted</c> guard, which leaves these bytes queued rather than attempting a dead
+    /// socket. Once the ring genuinely has no room, <see cref="RetentionOutcome.Exhausted"/> reports
+    /// the same way it would for a live Peer — the ring does not know or care why nothing has drained
+    /// it — so an interruption that outlasts the send rate reaches
+    /// <see cref="SendOutcome.RetentionExhausted"/> exactly like a single oversized Message or a
+    /// sustained rate would, the third of the three paths ADR 0010 names to it.
     /// </remarks>
     /// <param name="peer">The Peer to send to. Throws if not open, matching <see cref="CountersOf"/>.</param>
     /// <param name="message">
@@ -592,9 +588,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Accepts as many pending connections as the shared admission cap still allows this Frame,
     /// stopping the moment it is spent or the backlog runs dry — whichever comes first. Every accepted
     /// connection is admitted as a Peer or, if this Reactor has no capacity Slot free, refused
-    /// in-protocol and closed (subtask 3.3): a burst of connections beyond capacity is an
-    /// accept-refuse-close cycle inside the admission budget, never a silent drop and never left
-    /// waiting in the backlog the way a cap-exhausted Frame's remainder is.
+    /// in-protocol and closed: a burst of connections beyond capacity is an accept-refuse-close cycle
+    /// inside the admission budget, never a silent drop and never left waiting in the backlog the way a
+    /// cap-exhausted Frame's remainder is.
     /// </summary>
     private void OnListeningLinkReadable(TcpListenLink link)
     {
@@ -633,11 +629,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// handshake record has arrived in full, deciding nothing before then. Nothing is sent to it and
     /// no capacity Slot is touched: the record is what says whether this connection is a fresh dial
     /// asking for a Slot or a Resume claiming one it already owns, and that difference has to be known
-    /// before the capacity check runs (issue #123, ADR 0011). Whatever the far end has already sent is
-    /// read here rather than left for the next Pump, so a dialler whose record landed before this
-    /// accept is still answered on the Frame that accepted it — the same reason
-    /// <see cref="RefuseForCapacity"/> drains before it closes. A connection with nothing waiting is
-    /// left for the dispatcher, which is what <see cref="TcpLink.HasPendingBytes"/> is checked for.
+    /// before the capacity check runs (ADR 0011). Whatever the far end has already sent is read here
+    /// rather than left for the next Pump, so a dialler whose record landed before this accept is still
+    /// answered on the Frame that accepted it — the same reason <see cref="RefuseForCapacity"/> drains
+    /// before it closes. A connection with nothing waiting is left for the dispatcher, which is what
+    /// <see cref="TcpLink.HasPendingBytes"/> is checked for.
     /// </summary>
     /// <remarks>
     /// Accepting first and deciding after is unchanged from before this held state existed: the
@@ -691,25 +687,25 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Decides what a held connection is, now that its whole first record has arrived. The order of
-    /// the three arms is the point of issue #123 and ADR 0011: <b>the resume match runs before the
-    /// capacity check</b>. A reconnecting Peer is not asking for a Slot, it already owns one — the very
-    /// Slot its Interrupted self is reserving — so checking capacity first would refuse a reconnection
-    /// into a Reactor holding the state being reconnected to, which is the failure reserving exists to
-    /// prevent and which only appears once the Reactor is full.
+    /// the three arms is the point (ADR 0011): <b>the resume match runs before the capacity check</b>.
+    /// A reconnecting Peer is not asking for a Slot, it already owns one — the very Slot its
+    /// Interrupted self is reserving — so checking capacity first would refuse a reconnection into a
+    /// Reactor holding the state being reconnected to, which is the failure reserving exists to prevent
+    /// and which only appears once the Reactor is full.
     /// </summary>
     /// <remarks>
     /// A Resume matching no held Peer is closed rather than admitted: a Resume carries no version and
-    /// no announced parameters (issue #115), so there is nothing in one to establish a fresh Session
-    /// from, and treating it as a silent success would hand back a Session that does not exist. What an
-    /// operator reads for that, and for the other refusal paths, is
-    /// <see cref="DiagnosticId.ResumeUnmatched"/> (issue #124). A record naming no known type is dropped
-    /// here too, ahead of the capacity check, so the discard arm still refuses rather than answering it
-    /// with a Refusal that implies it was understood. A Hello announcing an illegal interval is dropped
-    /// there for the same reason, before it can take a Slot (issue #422). A Hello announcing a secret a reservation is
-    /// holding is refused ahead of the capacity check as well, since it is a claim on that reserved
-    /// Session and not a request for a Slot (<see cref="IsHelloClaimingAReservedSession"/>). Everything
-    /// else — an ordinary Hello, a Refusal, and how each is answered — reaches
-    /// <see cref="OnHandshakeRecordFilled"/> through <see cref="AdmitPendingAdmission"/> unchanged.
+    /// no announced parameters, so there is nothing in one to establish a fresh Session from, and
+    /// treating it as a silent success would hand back a Session that does not exist. What an operator
+    /// reads for that, and for the other refusal paths, is <see cref="DiagnosticId.ResumeUnmatched"/>.
+    /// A record naming no known type is dropped here too, ahead of the capacity check, so the discard
+    /// arm still refuses rather than answering it with a Refusal that implies it was understood. A
+    /// Hello announcing an illegal interval is dropped there for the same reason, before it can take a
+    /// Slot. A Hello announcing a secret a reservation is holding is refused ahead of the capacity
+    /// check as well, since it is a claim on that reserved Session and not a request for a Slot
+    /// (<see cref="IsHelloClaimingAReservedSession"/>). Everything else — an ordinary Hello, a Refusal,
+    /// and how each is answered — reaches <see cref="OnHandshakeRecordFilled"/> through
+    /// <see cref="AdmitPendingAdmission"/> unchanged.
     /// </remarks>
     private void OnPendingAdmissionRecordFilled(PendingAdmission pending)
     {
@@ -767,13 +763,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Answers whether a held connection's Hello is really a claim on a reserved Session rather than a
     /// fresh dial: it announces the resume secret one of this Reactor's Interrupted Peers is holding
     /// its Slot against, but arrives in the one record shape that also re-announces the Session's
-    /// parameters. That is the third way a Resume is refused (issue #124), and it is a protocol
-    /// violation rather than something to accept or ignore. A Resume has no field for parameters by
-    /// construction (issue #115), and re-announcing them would break the retention ring underneath the
-    /// Session: retention holds framed bytes admitted against the <c>MaxMessageSize</c> in force when
-    /// they were sent, so a party announcing a smaller one has made retained Messages illegal, leaving
-    /// only dropping them — silently breaking reliable delivery where a consumer cannot observe it —
-    /// or sending them anyway, which makes the announced limit a lie.
+    /// parameters. That is the third way a Resume is refused, and it is a protocol violation rather
+    /// than something to accept or ignore. A Resume has no field for parameters by construction, and
+    /// re-announcing them would break the retention ring underneath the Session: retention holds framed
+    /// bytes admitted against the <c>MaxMessageSize</c> in force when they were sent, so a party
+    /// announcing a smaller one has made retained Messages illegal, leaving only dropping them —
+    /// silently breaking reliable delivery where a consumer cannot observe it — or sending them anyway,
+    /// which makes the announced limit a lie.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -785,12 +781,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="DiagnosticId.ResumeUnmatched"/>, logged by the caller.
     /// </para>
     /// <para>
-    /// This is the whole of the third refusal path. Issue #124 also describes it as reachable by "a
-    /// Resume from a party that has changed its mind about the Session it is resuming", but that shape
-    /// is unrepresentable: a Resume carries a secret and a delivery counter and nothing else (issue
-    /// #115), so there is no field in one for a changed parameter to arrive in. A Hello is the only
-    /// record that can both present the secret and re-announce the parameters, which is why it is the
-    /// only case there is to check.
+    /// This is the whole of the third refusal path. A Resume from a party that has changed its mind
+    /// about the Session it is resuming cannot reach it, because that shape is unrepresentable: a
+    /// Resume carries a secret and a delivery counter and nothing else, so there is no field in one for
+    /// a changed parameter to arrive in. A Hello is the only record that can both present the secret
+    /// and re-announce the parameters, which is why it is the only case there is to check.
     /// </para>
     /// </remarks>
     private bool IsHelloClaimingAReservedSession(PendingAdmission pending, out int reservationsChecked)
@@ -848,8 +843,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// so to an operator as <see cref="DiagnosticId.ResumeUnmatched"/> and to the party as a close.
     /// </summary>
     /// <remarks>
-    /// The delivery counter the record carries drives the rewind (issue #127); the <c>Resumed</c> event
-    /// the consumer sees is issue #128.
+    /// The delivery counter the record carries drives the rewind.
     /// </remarks>
     private bool TryResumeHeldPeer(PendingAdmission pending)
     {
@@ -932,37 +926,37 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="PeerSlot.InterruptedTimestamp"/>, whose Linger deadline no longer applies. Both idle
     /// timers restart from now for the same reason they are stamped at establishment
     /// (<see cref="OnHelloRecordReceived"/>) — the interruption's stale timestamps would otherwise read
-    /// as intervals already elapsed. A Peer that queued retention while Interrupted (issue #120) is put
-    /// back on <see cref="_peersWithPendingRetentionWrites"/>, which <see cref="InterruptPeer"/> cleared
-    /// only because it would have handed <see cref="FlushPendingRetentionWrites"/> a disposed socket;
-    /// there is a live one again now.
+    /// as intervals already elapsed. A Peer that queued retention while Interrupted is put back on
+    /// <see cref="_peersWithPendingRetentionWrites"/>, which <see cref="InterruptPeer"/> cleared only
+    /// because it would have handed <see cref="FlushPendingRetentionWrites"/> a disposed socket; there
+    /// is a live one again now.
     /// </para>
     /// <para>
-    /// <b>The rewind (issue #127).</b> <paramref name="deliveryCount"/> — the Resume record's own
-    /// delivery counter — is where the peer says it actually got to, so this end's outbound retention
-    /// rewinds its sent cursor back to that Message boundary via
-    /// <see cref="RetentionArena.RewindSentToMessageCount"/> before anything else here runs. Anything
-    /// but <see cref="RetentionRewindOutcome.Rewound"/> means the peer's own counter names a position
-    /// this end cannot honour — ahead of what it ever sent, or behind what it has already released — so
-    /// this Peer is closed instead of resumed: no <see cref="SessionEventKind.PeerResumed"/> event, no
-    /// <see cref="DiagnosticId.ResumeMatched"/> record. A non-zero rewind marks this Peer's pending-write
-    /// bit so the next <see cref="FlushPendingRetentionWrites"/> resends exactly the bytes the rewind
-    /// un-sent — the same one flush path every other retention write already rides, never a bespoke one.
+    /// <b>The rewind.</b> <paramref name="deliveryCount"/> — the Resume record's own delivery counter —
+    /// is where the peer says it actually got to, so this end's outbound retention rewinds its sent
+    /// cursor back to that Message boundary via <see cref="RetentionArena.RewindSentToMessageCount"/>
+    /// before anything else here runs. Anything but <see cref="RetentionRewindOutcome.Rewound"/> means
+    /// the peer's own counter names a position this end cannot honour — ahead of what it ever sent, or
+    /// behind what it has already released — so this Peer is closed instead of resumed: no
+    /// <see cref="SessionEventKind.PeerResumed"/> event, no <see cref="DiagnosticId.ResumeMatched"/>
+    /// record. A non-zero rewind marks this Peer's pending-write bit so the next
+    /// <see cref="FlushPendingRetentionWrites"/> resends exactly the bytes the rewind un-sent — the
+    /// same one flush path every other retention write already rides, never a bespoke one.
     /// <see cref="RetentionArena.ReleaseThroughMessageCount"/> is also applied for
     /// <paramref name="deliveryCount"/>: the peer's reported counter is a delivery confirmation like any
     /// other, and releasing on it can only ever match or trail what the rewind's own guard already
     /// verified, so it is safe to apply unconditionally here.
     /// </para>
     /// <para>
-    /// <b>The reciprocal rewind (issue #127, D3).</b> A Resume record is one-way — it carries only what
-    /// the dialling side reports, never what this end reports back — so the dialling side has no way to
-    /// learn where <em>this</em> end's own read position actually is except by asking. This end asks
-    /// immediately, riding the same <see cref="SendDeliveryCounterOrArm"/> a received-count advance
-    /// already uses (issue #116), rather than inventing a second wire shape for the same fact.
+    /// <b>The reciprocal rewind.</b> A Resume record is one-way — it carries only what the dialling
+    /// side reports, never what this end reports back — so the dialling side has no way to learn where
+    /// <em>this</em> end's own read position actually is except by asking. This end asks immediately,
+    /// riding the same <see cref="SendDeliveryCounterOrArm"/> a received-count advance already uses,
+    /// rather than inventing a second wire shape for the same fact.
     /// </para>
     /// <para>
-    /// <b>What this rewind does not touch (issue #262).</b> Every step above is outbound: it renegotiates
-    /// only where <em>this end's own sent</em> retention resumes from, at the Message granularity
+    /// <b>What this rewind does not touch.</b> Every step above is outbound: it renegotiates only where
+    /// <em>this end's own sent</em> retention resumes from, at the Message granularity
     /// <paramref name="deliveryCount"/> is expressed in. Nothing here reads or clears anything this end
     /// has received — an inbound reassembly buffer, were this profile to grow one, would be untouched by
     /// a rewind that never looks at it. The Datagram profile's own receive-window Fragment holding
@@ -1036,14 +1030,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Maps a <see cref="RetentionRewindOutcome"/> other than <see cref="RetentionRewindOutcome.Rewound"/>
-    /// onto the <see cref="DisconnectReason"/> a refused rewind closes the Peer with (issue #130). Shared
-    /// by both rewind call sites — <see cref="ResumeHeldPeer"/>'s own rewind off the Resume record's
-    /// counter, and <see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm's
-    /// reciprocal rewind — so the two refusal paths cannot drift onto different reasons for the same
-    /// outcome. States the mapping as its own table with a discard arm that refuses rather than permits
-    /// (the <c>RawLinkLegality</c> house rule <see cref="DisconnectReason"/>'s own remarks describe):
-    /// <see cref="RetentionRewindOutcome.BelowReleasedHead"/> is this ticket's gap case — the peer's
-    /// counter names bytes this end's ring already released — and maps to
+    /// onto the <see cref="DisconnectReason"/> a refused rewind closes the Peer with. Shared by both
+    /// rewind call sites — <see cref="ResumeHeldPeer"/>'s own rewind off the Resume record's counter,
+    /// and <see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm's reciprocal
+    /// rewind — so the two refusal paths cannot drift onto different reasons for the same outcome.
+    /// States the mapping as its own table with a discard arm that refuses rather than permits (the
+    /// <c>RawLinkLegality</c> house rule <see cref="DisconnectReason"/>'s own remarks describe):
+    /// <see cref="RetentionRewindOutcome.BelowReleasedHead"/> is the gap case — the peer's counter
+    /// names bytes this end's ring already released — and maps to
     /// <see cref="DisconnectReason.RetentionGap"/> because the fix is a configuration one, more
     /// retention or more Linger. <see cref="RetentionRewindOutcome.AheadOfAppended"/> maps to
     /// <see cref="DisconnectReason.ProtocolViolation"/> instead: the peer is claiming Messages this end
@@ -1087,15 +1081,15 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <para>
     /// A Slot an Interrupted Peer is reserving for the length of its Linger (ADR 0010) counts as
     /// occupied here, so a fresh dial arriving against a reservation is refused down this same path and
-    /// is counted the same way: neither admission counter moves (issue #107). The capacity figure the
-    /// Refusal names is this Reactor's configured capacity either way, so a dialler cannot tell a
-    /// reserved Slot apart from one holding an established Peer — it learns "full", never "gone".
+    /// is counted the same way: neither admission counter moves. The capacity figure the Refusal names
+    /// is this Reactor's configured capacity either way, so a dialler cannot tell a reserved Slot apart
+    /// from one holding an established Peer — it learns "full", never "gone".
     /// </para>
     /// <para>
     /// Reached only once the connection's first record has been read and found not to be a Resume this
-    /// Reactor could match (<see cref="OnPendingAdmissionRecordFilled"/>, issue #123). That ordering is
-    /// what keeps a reconnection out of this path: the Peer a Resume comes back for is the very reason
-    /// the Slot it needs is occupied, so refusing it for capacity would refuse it for its own presence.
+    /// Reactor could match (<see cref="OnPendingAdmissionRecordFilled"/>). That ordering is what keeps
+    /// a reconnection out of this path: the Peer a Resume comes back for is the very reason the Slot it
+    /// needs is occupied, so refusing it for capacity would refuse it for its own presence.
     /// </para>
     /// </summary>
     private void RefuseForCapacity(PendingAdmission pending)
@@ -1220,9 +1214,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// This Reactor's <see cref="StreamSessionOptions.Linger"/> as announced on the Hello record, in
     /// whole milliseconds rounded up — the stream profile's twin of
-    /// <see cref="DatagramSessionReactor.AnnouncedLingerMilliseconds"/> (issue #55 follow-up). Rounding
-    /// up keeps a sub-millisecond Linger from going out as zero, and never shortens the value the far
-    /// end negotiates the effective (minimum) Linger from. This is also this end's own operand of that
+    /// <see cref="DatagramSessionReactor.AnnouncedLingerMilliseconds"/>. Rounding up keeps a
+    /// sub-millisecond Linger from going out as zero, and never shortens the value the far end
+    /// negotiates the effective (minimum) Linger from. This is also this end's own operand of that
     /// minimum in <see cref="PeerSlot.EffectiveLinger"/> (<see cref="OnHelloRecordReceived"/>) — rounded
     /// here once, so both ends negotiate from identical whole-millisecond values and land on the same
     /// effective Linger, whatever fractional-millisecond <see cref="StreamSessionOptions.Linger"/>
@@ -1278,8 +1272,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <remarks>
     /// If this end's own earlier record (its Hello) short-sent and is still draining, its remainder in
     /// <see cref="PeerSlot.PendingHandshakeBytesToSend"/> must not be overwritten by a Refusal that
-    /// becomes necessary before that flush finishes (#98) — writing <paramref name="record"/> to the
-    /// wire now would interleave it into the still-unfinished one. This queues it in
+    /// becomes necessary before that flush finishes — writing <paramref name="record"/> to the wire now
+    /// would interleave it into the still-unfinished one. This queues it in
     /// <see cref="PeerSlot.QueuedHandshakeSend"/> instead; <see cref="OnPeerWritable"/> sends it, in
     /// order, once the pending remainder is fully flushed.
     /// </remarks>
@@ -1315,13 +1309,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Flushes whatever remains of a handshake record a short send left behind, closes if a reason is
     /// pending on it, then, once any short-sent delivery-counter remainder
-    /// (<see cref="PeerSlot.PendingDeliveryCounterBytesToSend"/>, issue #116) is also flushed, marks
-    /// this Peer's retention pending again, so a short retention write's own re-arm
-    /// (<see cref="FlushRetention"/>) is picked up by this Frame's explicit flush step
-    /// (<see cref="FlushPendingRetentionWrites"/>) rather than writing to the socket directly here. This
-    /// is what keeps every retention write routed through exactly one call site: a socket that is both
-    /// freshly re-armed from a short write and independently marked pending by a same-Frame
-    /// <see cref="Send"/> still gets flushed exactly once.
+    /// (<see cref="PeerSlot.PendingDeliveryCounterBytesToSend"/>) is also flushed, marks this Peer's
+    /// retention pending again, so a short retention write's own re-arm (<see cref="FlushRetention"/>)
+    /// is picked up by this Frame's explicit flush step (<see cref="FlushPendingRetentionWrites"/>)
+    /// rather than writing to the socket directly here. This is what keeps every retention write routed
+    /// through exactly one call site: a socket that is both freshly re-armed from a short write and
+    /// independently marked pending by a same-Frame <see cref="Send"/> still gets flushed exactly once.
     /// </summary>
     private void OnPeerWritable(SlotHandle handle)
     {
@@ -1403,12 +1396,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// The four-step shape both the Refusal send (<see cref="SendRefusalRecord"/>/<see cref="OnRefusalWritable"/>)
     /// and the handshake send (<see cref="SendRecordOrArm"/>/<see cref="OnPeerWritable"/>) repeat twice
-    /// each (issue #103): send once, and either the send failed, the whole record landed, or a short
-    /// send left <paramref name="remainder"/> for the caller to store and re-arm for. Arming on a short
-    /// send happens here, since every caller does the same thing with it; what a failure or a complete
-    /// send means — close, or close only if a reason was given — differs per caller and is left to it.
-    /// <paramref name="counters"/> is the Peer the write is charged to (issue #325), or
-    /// <see langword="null"/> for a Refusal, which has no Peer.
+    /// each: send once, and either the send failed, the whole record landed, or a short send left
+    /// <paramref name="remainder"/> for the caller to store and re-arm for. Arming on a short send
+    /// happens here, since every caller does the same thing with it; what a failure or a complete send
+    /// means — close, or close only if a reason was given — differs per caller and is left to it.
+    /// <paramref name="counters"/> is the Peer the write is charged to, or <see langword="null"/> for a
+    /// Refusal, which has no Peer.
     /// </summary>
     private PendingRecordSendOutcome SendPendingRecord(
         TcpLink link,
@@ -1439,20 +1432,20 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Emits one delivery-counter control record to every Peer whose received count advanced somewhere
     /// in this Frame's reads (<see cref="_peersWithAdvancedReceivedCount"/>, populated by
-    /// <see cref="DeliverCompleteMessages"/>) — issue #116/#25's second emission trigger, alongside the
-    /// send-idle timer #114 lands separately. Runs once per Pump, after the readiness dispatcher and
-    /// before <see cref="FlushPendingRetentionWrites"/>, which is what makes "once per Pump per Peer"
-    /// true of this method the same way #90/3.6.2 makes it true of that one: however many Messages a
-    /// Peer delivered this Frame, its handle is added to the set at most once each, so the record sent
-    /// here always carries the Frame's final count rather than one per Message.
+    /// <see cref="DeliverCompleteMessages"/>) — the counter's second emission trigger, alongside the
+    /// send-idle timer. Runs once per Pump, after the readiness dispatcher and before
+    /// <see cref="FlushPendingRetentionWrites"/>, which is what makes "once per Pump per Peer" true of
+    /// this method the same way write batching makes it true of that one: however many Messages a Peer
+    /// delivered this Frame, its handle is added to the set at most once each, so the record sent here
+    /// always carries the Frame's final count rather than one per Message.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>No new timer, no new constant (issue #116).</b> This rides the Pump boundary the consumer
-    /// already chose by calling <see cref="Pump"/> at whatever rate suits it, rather than a trigger every
-    /// <c>N</c> received Messages — <c>N</c> would be a constant about the consumer's own traffic that
-    /// governs the *peer's* retention, a number the consumer has no way to choose sensibly even if asked.
-    /// The cost is bounded by construction: nothing is emitted for a Peer whose received count did not
+    /// <b>No new timer, no new constant.</b> This rides the Pump boundary the consumer already chose by
+    /// calling <see cref="Pump"/> at whatever rate suits it, rather than a trigger every <c>N</c>
+    /// received Messages — <c>N</c> would be a constant about the consumer's own traffic that governs
+    /// the *peer's* retention, a number the consumer has no way to choose sensibly even if asked. The
+    /// cost is bounded by construction: nothing is emitted for a Peer whose received count did not
     /// move, and at most one record per Peer regardless of how many Messages did.
     /// </para>
     /// <para>
@@ -1477,21 +1470,21 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// for retention-ring room and never perturbs a Message's boundary index.
     /// </para>
     /// <para>
-    /// <b>How it costs a two-way Peer nothing (issue #132, #25's stated cost).</b> Bypassing the ring
-    /// says where the bytes may not come from, not that they need a write of their own. When this Peer
-    /// already has a retention write due this Pump (<see cref="PeerSlot.HasPendingRetentionWrite"/>),
-    /// this method writes the record into <see cref="PeerSlot.DeliveryCounterRecord"/> and marks it to
-    /// ride (<see cref="PeerSlot.DeliveryCounterRidesRetentionWrite"/>) instead of sending it;
+    /// <b>How it costs a two-way Peer nothing.</b> Bypassing the ring says where the bytes may not come
+    /// from, not that they need a write of their own. When this Peer already has a retention write due
+    /// this Pump (<see cref="PeerSlot.HasPendingRetentionWrite"/>), this method writes the record into
+    /// <see cref="PeerSlot.DeliveryCounterRecord"/> and marks it to ride
+    /// (<see cref="PeerSlot.DeliveryCounterRidesRetentionWrite"/>) instead of sending it;
     /// <see cref="FlushRetention"/> then offers the record and the unsent retention runs to the socket
     /// as one gather write (<see cref="TcpLink.Send(IList{ArraySegment{byte}})"/>). The record stays
     /// outside the ring — it is still this end's own buffer, never a retained Message, so no boundary
     /// ordinal moves and nothing awaits release — while a Peer with continuous two-way traffic pays no
     /// additional record and no additional syscall for the counter. A purely receiving Peer has no
-    /// write to ride and gets the standalone send below, which is the one write per Pump #25 bounds it
+    /// write to ride and gets the standalone send below, which is the one write per Pump it is bounded
     /// at. The ride is declined whenever the flush would not carry it out this Pump — a counter
     /// remainder still draining (<see cref="PeerSlot.PendingDeliveryCounterBytesToSend"/>), or a Peer
-    /// <see cref="PeerSlot.AwaitingResumeCounter"/>, whose flush is a deliberate no-op (issue #127) and
-    /// which is exactly the Peer the far end is waiting on a counter from.
+    /// <see cref="PeerSlot.AwaitingResumeCounter"/>, whose flush is a deliberate no-op and which is
+    /// exactly the Peer the far end is waiting on a counter from.
     /// </para>
     /// <para>
     /// <b>Ordering.</b> This runs before <see cref="FlushPendingRetentionWrites"/> in <see cref="Pump"/>,
@@ -1500,14 +1493,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// entirely separate stream position from this end's own outbound Messages the peer's parser
     /// distinguishes by sentinel. That holds only at a frame boundary, so a Peer whose retention a short
     /// write left partway through a frame (<see cref="RetentionArena.IsSentOnMessageBoundary"/>) is kept
-    /// in the set and retried next Pump rather than given a record (issue #333). What must never happen is a counter reaching
-    /// the wire once a Goodbye has passed for this Peer in either direction — this end's own
+    /// in the set and retried next Pump rather than given a record. What must never happen is a counter
+    /// reaching the wire once a Goodbye has passed for this Peer in either direction — this end's own
     /// (<see cref="PeerSlot.LocalGoodbyeSent"/>, set the instant <see cref="Close"/> accepts
     /// responsibility for this end's Goodbye, before its bytes necessarily reach the wire) or the far
     /// end's (<see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/>, set the instant an inbound
     /// Goodbye is classified) — the same pair <see cref="Send"/> already refuses on, so nothing this end
     /// writes ever lands behind either Goodbye and hands the far end
-    /// <see cref="DiagnosticId.DataAfterGoodbye"/> to close on (issue #106).
+    /// <see cref="DiagnosticId.DataAfterGoodbye"/> to close on.
     /// </para>
     /// </remarks>
     private void EmitDeliveryCounters()
@@ -1628,19 +1621,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Records that this end just wrote outbound bytes to <paramref name="slot"/>'s wire — a Message, a
     /// Goodbye, or a delivery-counter record, whichever this end's own traffic happened to send last —
-    /// as the moment the send-idle timer (issue #114) next counts silence from. Every call site already
-    /// knows some positive number of bytes actually reached the socket before calling this; this method
-    /// only stamps <em>when</em>, not <em>how much</em>, since the timer cares about silence on the wire
-    /// and nothing about volume.
+    /// as the moment the send-idle timer next counts silence from. Every call site already knows some
+    /// positive number of bytes actually reached the socket before calling this; this method only
+    /// stamps <em>when</em>, not <em>how much</em>, since the timer cares about silence on the wire and
+    /// nothing about volume.
     /// </summary>
     private void MarkSendActivity(PeerSlot slot) =>
         slot.LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
 
     /// <summary>
     /// Records that a run of bytes just arrived from <paramref name="slot"/>'s wire — the only evidence
-    /// this end has that the peer's transport is still there (issue #117): over TCP, sending proves
-    /// nothing, since the kernel accepts written bytes into a buffer whether or not anything is at the
-    /// far end, but a byte the OS handed back on a read came from somewhere. Stamped on every
+    /// this end has that the peer's transport is still there: over TCP, sending proves nothing, since
+    /// the kernel accepts written bytes into a buffer whether or not anything is at the far end, but a
+    /// byte the OS handed back on a read came from somewhere. Stamped on every
     /// <see cref="TcpLinkReceiveOutcome.Delivered"/> read (<see cref="OnEstablishedPeerReadable"/>),
     /// before framing even classifies what those bytes are — a bare heartbeat carrying no Messages
     /// resets the receive-idle deadline exactly as a Message does, because both are bytes this end did
@@ -1650,16 +1643,17 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         slot.LastReceiveTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
 
     /// <summary>
-    /// Whether <paramref name="slot"/> has gone silent past this end's receive-idle deadline (issue
-    /// #117, #26's second idle timer): <see cref="PeerSlot.RemoteSendIdleInterval"/> — the interval the
-    /// peer itself announced in its Hello, never this end's own <see cref="StreamSessionOptions.SendIdleInterval"/>
-    /// — multiplied by <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>. A count only means
-    /// something relative to the peer's own emission interval, which is why this deadline is computed
-    /// rather than configured, and why no round-trip term is added to it (ADR 0010's figure would have
-    /// had to be invented, since this profile has no RTT estimator — a dimensionless count of 2 or more
-    /// satisfies "exceeds the send interval" by construction instead). Worked example: a peer announcing
-    /// a 10-second send-idle interval, at the default <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>
-    /// of 3, is declared lost after 30 seconds of silence from it — three of its own heartbeats missed.
+    /// Whether <paramref name="slot"/> has gone silent past this end's receive-idle deadline:
+    /// <see cref="PeerSlot.RemoteSendIdleInterval"/> — the interval the peer itself announced in its
+    /// Hello, never this end's own <see cref="StreamSessionOptions.SendIdleInterval"/> — multiplied by
+    /// <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>. A count only means something
+    /// relative to the peer's own emission interval, which is why this deadline is computed rather than
+    /// configured, and why no round-trip term is added to it (ADR 0010's figure would have had to be
+    /// invented, since this profile has no RTT estimator — a dimensionless count of 2 or more satisfies
+    /// "exceeds the send interval" by construction instead). Worked example: a peer announcing a
+    /// 10-second send-idle interval, at the default
+    /// <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/> of 3, is declared lost after 30
+    /// seconds of silence from it — three of its own heartbeats missed.
     /// </summary>
     private bool HasExceededReceiveIdleDeadline(PeerSlot slot) =>
         // Divides instead of multiplying, for the reason DatagramSessionReactor's copy of this deadline
@@ -1670,17 +1664,17 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Whether an <see cref="PeerSlot.IsInterrupted"/> Peer's effective Linger
     /// (<see cref="PeerSlot.EffectiveLinger"/>, negotiated at handshake and already reported via
-    /// <c>LingerNegotiated</c>) has run out since <see cref="PeerSlot.InterruptedTimestamp"/> (issue
-    /// #121). Linger is what closes an Interrupted Peer, not the transport loss that produced it — the
-    /// loss already happened, potentially long before this check ever runs, so the deadline is measured
-    /// from the moment this end stopped waiting on that transport rather than from anything about the
-    /// transport itself.
+    /// <c>LingerNegotiated</c>) has run out since <see cref="PeerSlot.InterruptedTimestamp"/>. Linger
+    /// is what closes an Interrupted Peer, not the transport loss that produced it — the loss already
+    /// happened, potentially long before this check ever runs, so the deadline is measured from the
+    /// moment this end stopped waiting on that transport rather than from anything about the transport
+    /// itself.
     /// </summary>
     private bool HasExceededLinger(PeerSlot slot) =>
         _options.Reactor.TimeProvider.GetElapsedTime(slot.InterruptedTimestamp) >= slot.EffectiveLinger;
 
     /// <summary>
-    /// Reactor's two independent idle timers (#26): runs once per <see cref="Pump"/>, after
+    /// Reactor's two independent idle timers: runs once per <see cref="Pump"/>, after
     /// <see cref="FlushPendingRetentionWrites"/>, over a single scan of every occupied Slot
     /// (<see cref="ShareHolderTable{T}.OccupantAt"/>) rather than two, since neither timer's trigger
     /// produces an event of its own to enqueue a handle from the way <see cref="EmitDeliveryCounters"/>
@@ -1688,24 +1682,23 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// on either timer, is to ask every established one, every Pump. The scan costs at most
     /// <see cref="ShareHolderTable{T}.Capacity"/> array reads, all of it against already-allocated
     /// state; nothing here allocates. Sharing the loop does not couple the two decisions: the
-    /// receive-idle check (issue #117) is evaluated and acted on, independently, before the send-idle
-    /// check (issue #114) ever runs for that same Slot, so a Peer that receives nothing yet keeps
-    /// sending fine is judged purely on <see cref="HasExceededReceiveIdleDeadline"/> — never on whether
-    /// it also happened to send something this Frame (issue #118's requirement that the send timer stay
-    /// unconditional on what was received).
+    /// receive-idle check is evaluated and acted on, independently, before the send-idle check ever
+    /// runs for that same Slot, so a Peer that receives nothing yet keeps sending fine is judged purely
+    /// on <see cref="HasExceededReceiveIdleDeadline"/> — never on whether it also happened to send
+    /// something this Frame.
     /// </summary>
     /// <remarks>
-    /// Receive-idle expiry (#117, revised by #119) is checked first, ahead of the Goodbye gate below:
-    /// a Peer whose transport has actually died moves to <c>Interrupted</c>
-    /// (<see cref="InterruptOrCloseOnTransportFailure"/>) regardless of whichever side's Goodbye may or
-    /// may not be pending — or closes outright if a Goodbye had already decided this Peer's fate, that
-    /// helper's own job — and once it acts there is nothing left in this Slot for the send-idle check
-    /// to act on, so the loop moves to the next index. An already-Interrupted Peer skips both of those
-    /// timers — its socket is gone, so neither has anything left to measure or write to — and is
-    /// instead checked against its own Linger deadline (<see cref="HasExceededLinger"/>, issue #121):
-    /// once that elapses this Peer closes with <see cref="DisconnectReason.LingerExpired"/>, which is
-    /// also what ends the limbo a <see cref="Close"/> against an Interrupted Peer would otherwise leave
-    /// forever pending (issue #92) — <see cref="ClosePeer"/> is called directly here rather than through
+    /// Receive-idle expiry is checked first, ahead of the Goodbye gate below: a Peer whose transport
+    /// has actually died moves to <c>Interrupted</c> (<see cref="InterruptOrCloseOnTransportFailure"/>)
+    /// regardless of whichever side's Goodbye may or may not be pending — or closes outright if a
+    /// Goodbye had already decided this Peer's fate, that helper's own job — and once it acts there is
+    /// nothing left in this Slot for the send-idle check to act on, so the loop moves to the next
+    /// index. An already-Interrupted Peer skips both of those timers — its socket is gone, so neither
+    /// has anything left to measure or write to — and is instead checked against its own Linger
+    /// deadline (<see cref="HasExceededLinger"/>): once that elapses this Peer closes with
+    /// <see cref="DisconnectReason.LingerExpired"/>, which is also what ends the limbo a
+    /// <see cref="Close"/> against an Interrupted Peer would otherwise leave forever pending —
+    /// <see cref="ClosePeer"/> is called directly here rather than through
     /// <see cref="InterruptOrCloseOnTransportFailure"/>, since that helper answers "a live Peer's
     /// transport just failed" and this is "an already-Interrupted Peer's Linger ran out", a different
     /// question with an already-known answer.
@@ -1768,11 +1761,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// re-arms for a further short write starts this Frame with a clean marker rather than one already
     /// (spuriously) set. Runs once per <see cref="Pump"/>, after the readiness dispatcher, which is what
     /// makes "at most one write per Peer per Pump" an enforced property of this method rather than an
-    /// incidental one of how readiness happened to fire (#90, 3.6.2 write batching): a Peer that
-    /// received any number of <see cref="Send"/> calls since the last Pump is serviced here in a single
-    /// pass over everything <see cref="RetentionArena.GetUnsent"/> currently reports, and a Peer with
-    /// no marker set — because nothing was ever sent to it, or a Send with no following Pump — is never
-    /// visited at all.
+    /// incidental one of how readiness happened to fire (write batching): a Peer that received any
+    /// number of <see cref="Send"/> calls since the last Pump is serviced here in a single pass over
+    /// everything <see cref="RetentionArena.GetUnsent"/> currently reports, and a Peer with no marker
+    /// set — because nothing was ever sent to it, or a Send with no following Pump — is never visited
+    /// at all.
     /// </summary>
     private void FlushPendingRetentionWrites()
     {
@@ -1806,12 +1799,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// (<see cref="RetentionArena.GetUnsent"/>) to the socket as it will currently take, marking each
     /// portion sent (<see cref="RetentionArena.MarkSent"/>) the instant it is handed off. Retention
     /// itself — the room a further <see cref="Send"/> has to work with — is released only once the
-    /// peer's own delivery-counter record confirms it (<see cref="RetentionArena.ReleaseThroughMessageCount"/>,
-    /// issue #113/#25); this method never frees any of that, it only tracks what has and has not yet
-    /// reached the transport, which is a different question with a different answer (see
-    /// <see cref="RetentionArena"/>'s class remarks on its two cursors). Marking sent rather than
-    /// released is also what keeps a later Pump's flush from ever re-handing the same bytes to the
-    /// socket a second time.
+    /// peer's own delivery-counter record confirms it
+    /// (<see cref="RetentionArena.ReleaseThroughMessageCount"/>); this method never frees any of that,
+    /// it only tracks what has and has not yet reached the transport, which is a different question
+    /// with a different answer (see <see cref="RetentionArena"/>'s class remarks on its two cursors).
+    /// Marking sent rather than released is also what keeps a later Pump's flush from ever re-handing
+    /// the same bytes to the socket a second time.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1822,37 +1815,37 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// attempted, with the same short-write re-arm applied to it in turn.
     /// </para>
     /// <para>
-    /// A no-op for a Peer already <see cref="PeerSlot.IsInterrupted"/> (issue #119): its socket is
-    /// disposed, so there is nowhere for these bytes to go until a Resume — landing a write on that
-    /// socket is not merely wasted work, it is a use of a disposed <see cref="Socket"/>. Reachable even
-    /// though <see cref="InterruptPeer"/> already removes this handle from
+    /// A no-op for a Peer already <see cref="PeerSlot.IsInterrupted"/>: its socket is disposed, so
+    /// there is nowhere for these bytes to go until a Resume — landing a write on that socket is not
+    /// merely wasted work, it is a use of a disposed <see cref="Socket"/>. Reachable even though
+    /// <see cref="InterruptPeer"/> already removes this handle from
     /// <see cref="_peersWithPendingRetentionWrites"/>: a <see cref="Close"/> called against an
     /// Interrupted Peer re-adds it via <see cref="AppendGoodbyeOrDefer"/>, which knows nothing about
-    /// transport state. What becomes of that owed Goodbye is #120/#121's concern, not this guard's —
-    /// this only keeps the attempt from touching a dead socket.
+    /// transport state. What becomes of that owed Goodbye is not this guard's concern — this only keeps
+    /// the attempt from touching a dead socket.
     /// </para>
     /// <para>
-    /// Also a no-op while <see cref="PeerSlot.AwaitingResumeCounter"/> (issue #127, D3): the dialling
-    /// side of a Resume considers itself resumed the moment its own Resume record is queued, but a
-    /// Resume carries no field for what the far end's read position is, so this end does not yet know
-    /// where a rewind would even start from. Resending before that arrives risks resending bytes the
-    /// far end already has. <see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm
-    /// clears the flag the moment the far end's own first post-resume counter answers that question.
+    /// Also a no-op while <see cref="PeerSlot.AwaitingResumeCounter"/>: the dialling side of a Resume
+    /// considers itself resumed the moment its own Resume record is queued, but a Resume carries no
+    /// field for what the far end's read position is, so this end does not yet know where a rewind
+    /// would even start from. Resending before that arrives risks resending bytes the far end already
+    /// has. <see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm clears the flag
+    /// the moment the far end's own first post-resume counter answers that question.
     /// </para>
     /// <para>
     /// Also a no-op while a control record's short-send remainder is still draining
     /// (<see cref="PeerSlot.PendingHandshakeBytesToSend"/> or
-    /// <see cref="PeerSlot.PendingDeliveryCounterBytesToSend"/>, issue #326): retention bytes written now
-    /// would land inside that record on the wire and corrupt both. Nothing is lost by returning:
+    /// <see cref="PeerSlot.PendingDeliveryCounterBytesToSend"/>): retention bytes written now would
+    /// land inside that record on the wire and corrupt both. Nothing is lost by returning:
     /// <see cref="OnPeerWritable"/> marks this Peer pending again once both remainders have drained.
     /// </para>
     /// <para>
     /// When <see cref="EmitDeliveryCounters"/> has marked this Peer's counter to ride this write
-    /// (<see cref="PeerSlot.DeliveryCounterRidesRetentionWrite"/>, issue #132), the record leads the
-    /// gather write (<see cref="FlushRetentionWithDeliveryCounter"/>) and this method's own one-run-at-
-    /// a-time path is not used. The mark is consumed either way — a ride declined here, because the
-    /// ring turned out to have nothing unsent after all, falls back to the standalone send rather than
-    /// being carried into a later Pump against a stale count.
+    /// (<see cref="PeerSlot.DeliveryCounterRidesRetentionWrite"/>), the record leads the gather write
+    /// (<see cref="FlushRetentionWithDeliveryCounter"/>) and this method's own one-run-at- a-time path
+    /// is not used. The mark is consumed either way — a ride declined here, because the ring turned out
+    /// to have nothing unsent after all, falls back to the standalone send rather than being carried
+    /// into a later Pump against a stale count.
     /// </para>
     /// </remarks>
     private void FlushRetention(SlotHandle handle, PeerSlot slot)
@@ -1942,10 +1935,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// The one write that carries both this Peer's delivery-counter record and its unsent retention
-    /// bytes (issue #132): the record leads, <paramref name="first"/> and any wrapped
-    /// <paramref name="second"/> follow, and the socket is offered all of them in a single gather send
-    /// (<see cref="TcpLink.Send(IList{ArraySegment{byte}})"/>). This is what makes #25's stated cost
-    /// true — a Peer with two-way traffic pays no record and no syscall for the counter beyond the
+    /// bytes: the record leads, <paramref name="first"/> and any wrapped <paramref name="second"/>
+    /// follow, and the socket is offered all of them in a single gather send
+    /// (<see cref="TcpLink.Send(IList{ArraySegment{byte}})"/>). This is what makes the counter's stated
+    /// cost true — a Peer with two-way traffic pays no record and no syscall for the counter beyond the
     /// write its own outbound Messages were already going to take.
     /// </summary>
     /// <remarks>
@@ -2032,12 +2025,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// (<see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/>) — has been recorded, this end's
     /// own outbound retention for it has fully flushed (<see cref="RetentionIsDrained"/>), and nothing
     /// this end already reassembled from it remains undelivered to the consumer
-    /// (<see cref="HasUndeliveredInboundWork"/>, issue #23 review finding — a Goodbye does not outrun
-    /// the Messages queued ahead of it). Called both from every point in <see cref="FlushRetention"/>
-    /// that finds nothing left to send, and once per Pump for every Peer still waiting
-    /// (<see cref="RetryPeersPendingClose"/>) in case only the inbound side was still outstanding; a
-    /// no-op when nothing is pending, which is the ordinary case for a Peer that was never told to
-    /// close.
+    /// (<see cref="HasUndeliveredInboundWork"/>, a Goodbye does not outrun the Messages queued ahead of
+    /// it). Called both from every point in <see cref="FlushRetention"/> that finds nothing left to
+    /// send, and once per Pump for every Peer still waiting (<see cref="RetryPeersPendingClose"/>) in
+    /// case only the inbound side was still outstanding; a no-op when nothing is pending, which is the
+    /// ordinary case for a Peer that was never told to close.
     /// </summary>
     private void TryCloseAfterRetentionDrained(SlotHandle handle, PeerSlot slot)
     {
@@ -2054,7 +2046,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// end's own half of what <see cref="TryCloseAfterRetentionDrained"/> requires before closing.
     /// Deliberately asks whether everything has been *sent*, not whether the peer has *confirmed* it
     /// (<see cref="RetentionArena.GetUnsent"/>, not released-through-count): this end's own Goodbye
-    /// sentinel is never confirmed by a peer's Message-received counter at all (issue #113 — see
+    /// sentinel is never confirmed by a peer's Message-received counter at all (see
     /// <see cref="RetentionArena"/>'s remarks), so a drained check that waited on confirmation would
     /// never fire once a Goodbye was the last thing queued. Says nothing about inbound work still owed
     /// to the consumer; see <see cref="HasUndeliveredInboundWork"/> for that half.
@@ -2069,12 +2061,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Whether the consumer still has something outstanding to receive from <paramref name="handle"/>:
     /// either a Message this end already reassembled and queued as
     /// <see cref="SessionEventKind.MessageReceived"/> in the current Frame's undrained events, or bytes
-    /// still buffered in its receive share awaiting arena room (<see cref="_peersWithBufferedMessages"/>,
-    /// #81). Checked live against <see cref="_pendingEvents"/> rather than any separate counter: since
-    /// <see cref="Pump"/> clears that list first thing, a Message from an earlier Frame is — by the
-    /// library's own memory-validity contract — already considered delivered, so this naturally reports
-    /// false for anything older than the Frame in progress without this end needing to track whether
-    /// the consumer literally called <c>Drain</c>.
+    /// still buffered in its receive share awaiting arena room
+    /// (<see cref="_peersWithBufferedMessages"/>). Checked live against <see cref="_pendingEvents"/>
+    /// rather than any separate counter: since <see cref="Pump"/> clears that list first thing, a
+    /// Message from an earlier Frame is — by the library's own memory-validity contract — already
+    /// considered delivered, so this naturally reports false for anything older than the Frame in
+    /// progress without this end needing to track whether the consumer literally called <c>Drain</c>.
     /// </summary>
     private bool HasUndeliveredInboundWork(SlotHandle handle)
     {
@@ -2122,7 +2114,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// send, deferring <c>ClosePeer</c>) must not be read again: <see cref="PeerSlot.HandshakeBytesFilled"/>
     /// sitting at <see cref="StreamHandshakeCodec.RecordSize"/> would otherwise hand
     /// <c>Receive</c> a zero-length span and re-enter <see cref="OnHandshakeRecordFilled"/> on the same
-    /// buffer for whatever readability fires next (#98). This Peer's own writable/close path owns what
+    /// buffer for whatever readability fires next. This Peer's own writable/close path owns what
     /// happens next once a record is full; a further read is not this state's job.
     /// </remarks>
     private void OnPeerReadable(SlotHandle handle)
@@ -2165,23 +2157,23 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Reads whatever is ready on an established Peer's transport into its persistent per-Peer receive
     /// buffer — never the frame arena directly, since a partial Message's tail must survive the arena
-    /// being wiped every Pump (Scope 3.4.1) — then delivers every whole Message the buffer now holds
+    /// being wiped every Pump — then delivers every whole Message the buffer now holds
     /// (<see cref="DeliverCompleteMessages"/>). The read is skipped, not failed, when the buffer is
     /// already full of a Message body still legally in flight: the escape that lets a Peer always
-    /// deliver one whole Message is #81's job, not this one's — this slice only refuses to read out of
-    /// bounds. An oversized or zero-length prefix never reaches this state: <see cref="DeliverCompleteMessages"/>
-    /// closes the Session the moment the four-byte prefix that names it has arrived, long before the
-    /// buffer could fill.
+    /// deliver one whole Message is <see cref="RetryPeersWithBufferedMessages"/>'s job, not this one's
+    /// — this method only refuses to read out of bounds. An oversized or zero-length prefix never
+    /// reaches this state: <see cref="DeliverCompleteMessages"/> closes the Session the moment the
+    /// four-byte prefix that names it has arrived, long before the buffer could fill.
     /// </summary>
     /// <remarks>
     /// <see cref="TcpLinkReceiveOutcome.EndOfStream"/> and <see cref="TcpLinkReceiveOutcome.Failed"/>
     /// are deliberately not folded into one branch here, unlike the handshake path above: a pending
     /// socket error (<c>Failed</c>) — a reset — moves this Peer to <c>Interrupted</c>
-    /// (<see cref="InterruptOrCloseOnTransportFailure"/>, issue #119), arriving through this same read
-    /// path exactly as PR #73's readiness dispatcher promises and needing nothing extra to detect. A
-    /// graceful end of stream (<c>EndOfStream</c>) is classified by <see cref="ClassifyEndOfStream"/>
-    /// instead, because whether it is ordinary or a truncation depends on what this Peer's receive
-    /// buffer was still holding — a mid-Message truncation is still a genuine
+    /// (<see cref="InterruptOrCloseOnTransportFailure"/>), arriving through this same read path exactly
+    /// as the readiness dispatcher promises and needing nothing extra to detect. A graceful end of
+    /// stream (<c>EndOfStream</c>) is classified by <see cref="ClassifyEndOfStream"/> instead, because
+    /// whether it is ordinary or a truncation depends on what this Peer's receive buffer was still
+    /// holding — a mid-Message truncation is still a genuine
     /// <see cref="DisconnectReason.ProtocolViolation"/> close, never merely an interruption, but a
     /// clean FIN with nothing buffered and no Goodbye already accounted for is exactly the "FIN is not
     /// a Goodbye" case ADR 0010 names: Interrupted, not closed, and never raised at all once a Goodbye
@@ -2226,28 +2218,28 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// (<see cref="MessageFramingLegality"/>). A complete, legal Message is copied into the shared
     /// frame arena and queued as a <see cref="SessionEventKind.MessageReceived"/> event, shifting the
     /// remainder of the buffer down to offset zero. An oversized or zero-length prefix, or bytes
-    /// arriving behind an already-received Goodbye (<see cref="MessageFramingOutcome.DataAfterGoodbye"/>,
-    /// issue #93 — a Peer that announced it is leaving and then keeps sending), ends the Session
-    /// immediately with <see cref="DisconnectReason.ProtocolViolation"/> — the whole reason
-    /// <c>MaxMessageSize</c> is announced as a receive limit is so an oversized claim never becomes an
-    /// allocation. Stops — leaving whatever is left in place for a later Pump — the moment the front of
-    /// the buffer holds less than a whole Message, or an arena reservation cannot be made this Frame. A
-    /// Goodbye control record at the front (<see cref="MessageFramingOutcome.GoodbyeReceived"/>, issue
-    /// #23) closes the Peer directly only if nothing is outstanding on either side: this end's own
-    /// outbound retention for it already empty, and nothing this end already reassembled from it still
-    /// queued undelivered (<see cref="HasUndeliveredInboundWork"/> — a Message parsed earlier in this
-    /// same loop, ahead of the Goodbye in the same read, counts even though it already reached
+    /// arriving behind an already-received Goodbye
+    /// (<see cref="MessageFramingOutcome.DataAfterGoodbye"/>, a Peer that announced it is leaving and
+    /// then keeps sending), ends the Session immediately with
+    /// <see cref="DisconnectReason.ProtocolViolation"/> — the whole reason <c>MaxMessageSize</c> is
+    /// announced as a receive limit is so an oversized claim never becomes an allocation. Stops —
+    /// leaving whatever is left in place for a later Pump — the moment the front of the buffer holds
+    /// less than a whole Message, or an arena reservation cannot be made this Frame. A Goodbye control
+    /// record at the front (<see cref="MessageFramingOutcome.GoodbyeReceived"/>) closes the Peer
+    /// directly only if nothing is outstanding on either side: this end's own outbound retention for it
+    /// already empty, and nothing this end already reassembled from it still queued undelivered
+    /// (<see cref="HasUndeliveredInboundWork"/> — a Message parsed earlier in this same loop, ahead of
+    /// the Goodbye in the same read, counts even though it already reached
     /// <see cref="SessionEventKind.MessageReceived"/> first). Otherwise marks it
     /// <see cref="SessionEventKind.PeerClosing"/> and defers the close to whenever both sides drain
     /// (<see cref="TryCloseAfterRetentionDrained"/>) — never both a <c>PeerClosing</c> event and an
     /// immediate close for the same Goodbye. A delivery-counter sentinel with fewer than its full u64
-    /// body arrived (<see cref="MessageFramingOutcome.AwaitingDeliveryCounterBody"/>, issue #109) waits
-    /// exactly like an incomplete Message; a whole delivery-counter record
-    /// (<see cref="MessageFramingOutcome.DeliveryCounterReceived"/>, issue #113) releases this Peer's own
-    /// outbound retention through the confirmed count
-    /// (<see cref="RetentionArena.ReleaseThroughMessageCount"/>) — or, if the count claims Messages this
-    /// end never sent, ends the Session with <see cref="DisconnectReason.ProtocolViolation"/> exactly as
-    /// the other named violations below do.
+    /// body arrived (<see cref="MessageFramingOutcome.AwaitingDeliveryCounterBody"/>) waits exactly
+    /// like an incomplete Message; a whole delivery-counter record
+    /// (<see cref="MessageFramingOutcome.DeliveryCounterReceived"/>) releases this Peer's own outbound
+    /// retention through the confirmed count (<see cref="RetentionArena.ReleaseThroughMessageCount"/>)
+    /// — or, if the count claims Messages this end never sent, ends the Session with
+    /// <see cref="DisconnectReason.ProtocolViolation"/> exactly as the other named violations below do.
     /// </summary>
     private void DeliverCompleteMessages(SlotHandle handle, PeerSlot slot)
     {
@@ -2503,9 +2495,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// instant its four bytes arrive, so nonzero leftover bytes here are always a mid-prefix or
     /// mid-Message truncation — <see cref="DisconnectReason.ProtocolViolation"/>, the malformed-framing
     /// table's other two rows. Nothing buffered means no Message was in flight when it ended — but a
-    /// FIN is not a Goodbye (issue #23): without one, an otherwise-ordinary transport ending is not a
-    /// close this library reports at all, so <see langword="null"/> here sends the caller to
-    /// <see cref="InterruptPeer"/> instead (issue #119) rather than ending the Session outright.
+    /// FIN is not a Goodbye: without one, an otherwise-ordinary transport ending is not a close this
+    /// library reports at all, so <see langword="null"/> here sends the caller to
+    /// <see cref="InterruptPeer"/> instead rather than ending the Session outright.
     /// </summary>
     private static DisconnectReason? ClassifyEndOfStream(PeerSlot slot) =>
         slot.ReceiveBytesFilled == 0 ? null : DisconnectReason.ProtocolViolation;
@@ -2514,7 +2506,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Reserves <paramref name="message"/> in the shared frame arena under this Peer's own
     /// share-holder identity (<see cref="SlotHandle.Index"/>, per ADR 0014), logging
     /// <see cref="DiagnosticId.ArenaExhausted"/> only for the outcome that names an actual shortfall.
-    /// A commit raises the Arena high-water and a spent read share is counted on the Peer (issue #61).
+    /// A commit raises the Arena high-water and a spent read share is counted on the Peer.
     /// </summary>
     private bool TryReserveMessage(SlotHandle handle, PeerSlot slot, ReadOnlySpan<byte> message, out int payloadOffset)
     {
@@ -2542,19 +2534,18 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Dispatches a Peer's now-complete handshake record by its message type: a Hello, the ordinary
-    /// case, a Refusal — the shape the far end's reply takes when it declines instead of establishing
-    /// (subtask 3.3) — or a Resume, a re-dialling end's claim on a Session this end may still be
-    /// holding (subtask 4.4). A record naming none of the three is malformed and closes the Peer, per
-    /// the house rule that a discard arm refuses rather than guesses.
+    /// case, a Refusal — the shape the far end's reply takes when it declines instead of establishing —
+    /// or a Resume, a re-dialling end's claim on a Session this end may still be holding. A record
+    /// naming none of the three is malformed and closes the Peer, per the house rule that a discard arm
+    /// refuses rather than guesses.
     /// </summary>
     /// <remarks>
     /// A Resume never reaches here on the accepting side: a connection this Reactor accepted is held
     /// outside <see cref="_peers"/> until its first record has been read, and a Resume is matched onto
     /// the Peer it names — or dropped — before any Slot exists to reach this method with
-    /// (<see cref="OnPendingAdmissionRecordFilled"/>, issue #123). What can arrive here is a Resume sent
-    /// to a Peer <em>this</em> end dialled, which is a far end claiming a Session in the direction only
-    /// the dialling side may claim one (issue #125): that closes the Peer, exactly as an unrecognised
-    /// type does.
+    /// (<see cref="OnPendingAdmissionRecordFilled"/>). What can arrive here is a Resume sent to a Peer
+    /// <em>this</em> end dialled, which is a far end claiming a Session in the direction only the
+    /// dialling side may claim one: that closes the Peer, exactly as an unrecognised type does.
     /// </remarks>
     private void OnHandshakeRecordFilled(SlotHandle handle, PeerSlot slot)
     {
@@ -2666,7 +2657,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// never a Deferral left for a later Pump, and the two counters this method feeds must stay
     /// untouched by it (see <see cref="RefuseForCapacity"/>). That holds whether the Slot the dial was
     /// refused for holds an established Peer or is reserved by an Interrupted one — a reservation
-    /// changes which dials are refused, never how a refusal is counted (issue #107).
+    /// changes which dials are refused, never how a refusal is counted.
     /// </summary>
     private void ReportDeclinedAdmissions()
     {
@@ -2687,20 +2678,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Moves an established Peer to Interrupted (issue #119): unregisters and disposes its dead
-    /// socket, then stops — unlike <see cref="ClosePeer"/>, the Slot is never removed from
-    /// <see cref="_peers"/>, so <see cref="PeerId"/> (generation included) stays live,
-    /// <see cref="CountersOf"/> keeps answering for it, and its retention ring and any inbound
-    /// Messages still buffered are held exactly as they were rather than reset or discarded. Any
-    /// short-sent control record's remainder is dropped with the socket it was begun on (issue #326).
-    /// The pending-retention-write marker is cleared only from the bookkeeping set that would
-    /// otherwise hand <see cref="FlushPendingRetentionWrites"/> a disposed socket on this Frame — a
-    /// consumer's own <see cref="Send"/> queuing more retention afterwards is #120's concern, not this
-    /// one's. Also stamps <see cref="PeerSlot.InterruptedTimestamp"/>, which is what starts this Peer's
-    /// effective Linger counting down (issue #121) — closing it is <see cref="EnforceIdleTimers"/>'s
-    /// job on a later Pump, not this method's. A no-op if this Peer is already Interrupted, since every
-    /// call site that reaches here can race a receive-idle expiry against a socket-level failure
-    /// discovered the same Frame.
+    /// Moves an established Peer to Interrupted: unregisters and disposes its dead socket, then stops —
+    /// unlike <see cref="ClosePeer"/>, the Slot is never removed from <see cref="_peers"/>, so
+    /// <see cref="PeerId"/> (generation included) stays live, <see cref="CountersOf"/> keeps answering
+    /// for it, and its retention ring and any inbound Messages still buffered are held exactly as they
+    /// were rather than reset or discarded. Any short-sent control record's remainder is dropped with
+    /// the socket it was begun on. The pending-retention-write marker is cleared only from the
+    /// bookkeeping set that would otherwise hand <see cref="FlushPendingRetentionWrites"/> a disposed
+    /// socket on this Frame — a consumer's own <see cref="Send"/> queuing more retention afterwards is
+    /// not this method's concern. Also stamps <see cref="PeerSlot.InterruptedTimestamp"/>, which is
+    /// what starts this Peer's effective Linger counting down — closing it is
+    /// <see cref="EnforceIdleTimers"/>'s job on a later Pump, not this method's. A no-op if this Peer
+    /// is already Interrupted, since every call site that reaches here can race a receive-idle expiry
+    /// against a socket-level failure discovered the same Frame.
     /// </summary>
     private void InterruptPeer(SlotHandle handle, PeerSlot slot)
     {
@@ -2752,14 +2742,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Derives this Peer's re-dial schedule (<see cref="RedialSchedule"/>, issue #111) from the Pump
-    /// interval just observed this Frame (<see cref="ObservedPumpInterval"/>, issue #112) and this
-    /// Peer's own effective Linger, draws the first delay, and tracks the Peer for
-    /// <see cref="ProcessRedials"/> to act on once that delay elapses. The jitter source is this
-    /// Reactor's own <c>_entropy</c> generator — the same one <see cref="NextResumeSecret"/> already
-    /// draws from — rather than a fresh one per Peer, since nothing about the schedule's own contract
-    /// needs Peer-local entropy state. Called only from <see cref="InterruptPeer"/>, which has already
-    /// checked <see cref="PeerSlot.DialedEndpoint"/> and both Goodbye flags.
+    /// Derives this Peer's re-dial schedule (<see cref="RedialSchedule"/>) from the Pump interval just
+    /// observed this Frame (<see cref="ObservedPumpInterval"/>) and this Peer's own effective Linger,
+    /// draws the first delay, and tracks the Peer for <see cref="ProcessRedials"/> to act on once that
+    /// delay elapses. The jitter source is this Reactor's own <c>_entropy</c> generator — the same one
+    /// <see cref="NextResumeSecret"/> already draws from — rather than a fresh one per Peer, since
+    /// nothing about the schedule's own contract needs Peer-local entropy state. Called only from
+    /// <see cref="InterruptPeer"/>, which has already checked <see cref="PeerSlot.DialedEndpoint"/> and
+    /// both Goodbye flags.
     /// </summary>
     /// <remarks>
     /// An observed interval of exactly zero — a loop pumping faster than its own clock can resolve —
@@ -2785,8 +2775,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Gives every Interrupted Peer this Reactor is re-dialling (<c>_peersWithRedialScheduled</c>, issue
-    /// #125) its turn this Frame: a Peer with an attempt already in flight has that attempt polled
+    /// Gives every Interrupted Peer this Reactor is re-dialling (<c>_peersWithRedialScheduled</c>) its
+    /// turn this Frame: a Peer with an attempt already in flight has that attempt polled
     /// (<see cref="PollRedialAttempt"/>); one waiting out its current delay begins a fresh dial the
     /// instant that delay has elapsed, to the same <see cref="PeerSlot.DialedEndpoint"/> this Reactor
     /// originally dialled — there is no rebinding and no address discovery. A Peer no longer tracked
@@ -2885,26 +2875,25 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Puts a re-dial's freshly connected transport under the Peer it belongs to and immediately claims
     /// the Session with a Resume record — this end's own resume secret is not what the far end needs;
     /// <see cref="PeerSlot.RemoteResumeSecret"/> is, since that is the secret the far end issued and will
-    /// require back (<see cref="StreamHandshakeCodec.WriteResume"/>, issue #115). No reply record is
-    /// expected: a Resume has no acknowledgement in this protocol, exactly as <see cref="ResumeHeldPeer"/>
-    /// sends nothing back to a matched Resume on the listening side, so this Peer is considered resumed
-    /// — <see cref="PeerSlot.IsInterrupted"/> cleared, both idle timers restarted from now — the moment
+    /// require back (<see cref="StreamHandshakeCodec.WriteResume"/>). No reply record is expected: a
+    /// Resume has no acknowledgement in this protocol, exactly as <see cref="ResumeHeldPeer"/> sends
+    /// nothing back to a matched Resume on the listening side, so this Peer is considered resumed —
+    /// <see cref="PeerSlot.IsInterrupted"/> cleared, both idle timers restarted from now — the moment
     /// the record is queued rather than waiting on anything further from the wire.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Sets <see cref="PeerSlot.AwaitingResumeCounter"/> (issue #127, D3): this Resume record carries
-    /// only this end's own claim, never the far end's read position, so this end does not yet know
-    /// where its own rewind would start from. <see cref="FlushRetention"/>'s own guard on that flag
-    /// keeps this Peer from resending anything until the far end's first post-resume delivery-counter
-    /// record answers that (<see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm).
+    /// Sets <see cref="PeerSlot.AwaitingResumeCounter"/>: this Resume record carries only this end's
+    /// own claim, never the far end's read position, so this end does not yet know where its own rewind
+    /// would start from. <see cref="FlushRetention"/>'s own guard on that flag keeps this Peer from
+    /// resending anything until the far end's first post-resume delivery-counter record answers that
+    /// (<see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm).
     /// </para>
     /// <para>
     /// <see cref="SessionEventKind.PeerResumed"/> and the <see cref="PeerCounters.Resumes"/> counter are
-    /// <b>not</b> raised here (issue #128): this method re-establishes the transport but cannot yet rule
-    /// out a refusal (D5) — that only resolves once the reciprocal rewind above runs. Both are raised
-    /// from the same <c>DeliveryCounterReceived</c> arm, the first point this end knows the resume is
-    /// good.
+    /// <b>not</b> raised here: this method re-establishes the transport but cannot yet rule out a
+    /// refusal (D5) — that only resolves once the reciprocal rewind above runs. Both are raised from
+    /// the same <c>DeliveryCounterReceived</c> arm, the first point this end knows the resume is good.
     /// </para>
     /// </remarks>
     private void ResumeDialledPeer(SlotHandle handle, PeerSlot slot, TcpLink link)
@@ -2934,16 +2923,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// The shared decision behind every established-Peer transport failure this Reactor discovers on
-    /// its own side — a reset or failed read, a failed write, or the receive-idle deadline (issue
-    /// #119): <see cref="InterruptPeer"/> normally, except when a Goodbye already decided this Peer's
-    /// fate (<see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/> already set), in which case
-    /// the dead transport simply completes that ending — a write or read failing after this end's own
+    /// its own side — a reset or failed read, a failed write, or the receive-idle deadline:
+    /// <see cref="InterruptPeer"/> normally, except when a Goodbye already decided this Peer's fate
+    /// (<see cref="PeerSlot.PendingCloseReasonAfterRetentionDrains"/> already set), in which case the
+    /// dead transport simply completes that ending — a write or read failing after this end's own
     /// Goodbye or the far end's was already recorded is not a fresh interruption, it is that ending's
     /// own socket finally giving out, and Closing must never be followed by Interrupted for the same
-    /// Peer (issue #119's acceptance criterion). Pre-establishment failures — a handshake still in
-    /// flight — never reach here at all: nothing was ever reported as connected, so there is no
-    /// established Peer for a consumer to see interrupted, and those keep the plain
-    /// <see cref="ClosePeer"/> behaviour this method exists to leave unchanged.
+    /// Peer. Pre-establishment failures — a handshake still in flight — never reach here at all:
+    /// nothing was ever reported as connected, so there is no established Peer for a consumer to see
+    /// interrupted, and those keep the plain <see cref="ClosePeer"/> behaviour this method exists to
+    /// leave unchanged.
     /// </summary>
     private void InterruptOrCloseOnTransportFailure(SlotHandle handle, PeerSlot slot)
     {
@@ -3023,9 +3012,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     {
         /// <summary>
         /// The connected (or connecting) transport this Peer runs over. Settable rather than
-        /// <c>init</c>-only because a Resume replaces it (<see cref="ResumeHeldPeer"/>, issue #123):
-        /// the Session outlives the transport it happened to be running over, which is the one thing a
-        /// Resume is for.
+        /// <c>init</c>-only because a Resume replaces it (<see cref="ResumeHeldPeer"/>): the Session
+        /// outlives the transport it happened to be running over, which is the one thing a Resume is
+        /// for.
         /// </summary>
         public required TcpLink Link { get; set; }
 
@@ -3063,10 +3052,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>
         /// This Peer's own fixed <see cref="MessageFramingCodec.DeliveryCounterRecordSize"/>-byte scratch
-        /// buffer, rewritten in place each time <see cref="SendDeliveryCounterOrArm"/> emits (issue #116).
-        /// Allocated once with the slot, like <see cref="ReceiveBuffer"/>, rather than per emission: the
-        /// per-Pump trigger fires on every Pump a receiving Peer's count advances, so building a fresh
-        /// record each time would put an allocation on the steady-state receive path — the one thing this
+        /// buffer, rewritten in place each time <see cref="SendDeliveryCounterOrArm"/> emits. Allocated
+        /// once with the slot, like <see cref="ReceiveBuffer"/>, rather than per emission: the per-Pump
+        /// trigger fires on every Pump a receiving Peer's count advances, so building a fresh record
+        /// each time would put an allocation on the steady-state receive path — the one thing this
         /// Reactor's preallocate-everything discipline exists to avoid. Safe to reuse in place because
         /// <see cref="SendDeliveryCounterOrArm"/> refuses to build a new record at all while
         /// <see cref="PendingDeliveryCounterBytesToSend"/> — a remainder pointing into this very buffer —
@@ -3116,8 +3105,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>
         /// A second handshake record — always a Refusal — that arrived while
-        /// <see cref="PendingHandshakeBytesToSend"/> was still draining a short-sent first one (#98),
-        /// queued here rather than overwriting the still-pending remainder or interleaving early.
+        /// <see cref="PendingHandshakeBytesToSend"/> was still draining a short-sent first one, queued
+        /// here rather than overwriting the still-pending remainder or interleaving early.
         /// <see cref="OnPeerWritable"/> sends it, via <c>SendRecordOrArm</c>, the moment the first
         /// record's remainder is fully on the wire.
         /// </summary>
@@ -3127,19 +3116,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// Whatever remains of this end's own delivery-counter record after a short send, or
         /// <see langword="null"/> once it has all been sent — the same shape
         /// <see cref="PendingHandshakeBytesToSend"/> and <see cref="RefusalSlot.PendingBytesToSend"/>
-        /// already use for a small fixed-size record sent directly to the socket (issue #116). Never
-        /// routed through <see cref="RetentionArena"/>: see <see cref="EmitDeliveryCounters"/>'s remarks
-        /// for why a recurring control record cannot safely ride that ring the way the one-shot Goodbye
-        /// sentinel does.
+        /// already use for a small fixed-size record sent directly to the socket. Never routed through
+        /// <see cref="RetentionArena"/>: see <see cref="EmitDeliveryCounters"/>'s remarks for why a
+        /// recurring control record cannot safely ride that ring the way the one-shot Goodbye sentinel
+        /// does.
         /// </summary>
         public ReadOnlyMemory<byte>? PendingDeliveryCounterBytesToSend { get; set; }
 
         /// <summary>
         /// Set by <see cref="EmitDeliveryCounters"/> when this Peer's counter record — already written
         /// into <see cref="DeliveryCounterRecord"/> — is to lead this Pump's retention write rather than
-        /// take a write of its own (issue #132), and consumed by <see cref="FlushRetention"/> the moment
-        /// it visits this Peer. Never outlives the Pump that set it: the two run back to back inside a
-        /// single <see cref="Pump"/>, and the flush clears it whether or not the ride turns out to be
+        /// take a write of its own, and consumed by <see cref="FlushRetention"/> the moment it visits
+        /// this Peer. Never outlives the Pump that set it: the two run back to back inside a single
+        /// <see cref="Pump"/>, and the flush clears it whether or not the ride turns out to be
         /// possible, so a later Pump can never put a stale count on the wire.
         /// </summary>
         public bool DeliveryCounterRidesRetentionWrite { get; set; }
@@ -3148,8 +3137,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// Set by <see cref="Send"/> when it appends to this Peer's retention ring, and again by
         /// <see cref="OnPeerWritable"/> when a short retention write's own re-arm lands — cleared by
         /// <see cref="FlushPendingRetentionWrites"/> the moment it visits this Peer. This is the single
-        /// signal that routes every retention write through that one call site (#90, 3.6.2): a
-        /// <see cref="Send"/> never writes to the socket itself, it only sets this.
+        /// signal that routes every retention write through that one call site: a <see cref="Send"/>
+        /// never writes to the socket itself, it only sets this.
         /// </summary>
         public bool HasPendingRetentionWrite { get; set; }
 
@@ -3158,10 +3147,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// the append is attempted, and it stays set even when that append is deferred for want of
         /// retention room, because from the caller's point of view the ending is already decided and
         /// the Goodbye is owed either way. Idempotent-guard and Send-refusal flag in one: a second
-        /// <see cref="Close"/> call is a no-op, and <see cref="Send"/> refuses once this is set
-        /// (issue #23). Note this says the Goodbye is owed, not that it has reached retention, let
-        /// alone the wire — <see cref="PendingCloseReasonAfterRetentionDrains"/> is the record that
-        /// waits on the append actually committing.
+        /// <see cref="Close"/> call is a no-op, and <see cref="Send"/> refuses once this is set. Note
+        /// this says the Goodbye is owed, not that it has reached retention, let alone the wire —
+        /// <see cref="PendingCloseReasonAfterRetentionDrains"/> is the record that waits on the append
+        /// actually committing.
         /// </summary>
         public bool LocalGoodbyeSent { get; set; }
 
@@ -3175,7 +3164,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// this end was leaving. Only an inbound Goodbye — this Peer announcing its own departure — means
         /// anything it sends afterward is announcing one thing and doing another. Once true, every
         /// further byte at the front of <see cref="ReceiveBuffer"/> classifies as
-        /// <see cref="MessageFramingOutcome.DataAfterGoodbye"/> (issue #93) and ends the Session with
+        /// <see cref="MessageFramingOutcome.DataAfterGoodbye"/> and ends the Session with
         /// <see cref="DisconnectReason.ProtocolViolation"/> — the fix for a Peer that could otherwise
         /// hold its capacity Slot open indefinitely after announcing it was leaving.
         /// </summary>
@@ -3204,25 +3193,25 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// The <see cref="TimeProvider.GetTimestamp"/> value at this end's most recent outbound write to
         /// this Peer's wire — a Message or Goodbye byte actually handed to the socket
         /// (<see cref="FlushRetention"/>), or a delivery-counter record sent either as this end's
-        /// send-idle heartbeat (<see cref="EnforceIdleTimers"/>, issue #114) or the received-count
-        /// trigger (<see cref="SendDeliveryCounterOrArm"/>, issue #116) — whichever happened last.
-        /// Initialised the instant this Peer establishes (<see cref="OnHelloRecordReceived"/>), so the
-        /// send-idle deadline counts from establishment rather than from
-        /// <see langword="default"/>'s epoch, which would otherwise read as an already-elapsed interval
-        /// and fire a heartbeat the very first Pump after connecting. Deliberately named for what this
-        /// end wrote, not what it merely queued into retention: the send-idle timer measures silence on
-        /// the wire, not silence in the application (issue #114's own wording), so a <see cref="Send"/>
-        /// that queues a Message but is never followed by a <see cref="Pump"/> must not reset it.
+        /// send-idle heartbeat (<see cref="EnforceIdleTimers"/>) or the received-count trigger
+        /// (<see cref="SendDeliveryCounterOrArm"/>) — whichever happened last. Initialised the instant
+        /// this Peer establishes (<see cref="OnHelloRecordReceived"/>), so the send-idle deadline
+        /// counts from establishment rather than from <see langword="default"/>'s epoch, which would
+        /// otherwise read as an already-elapsed interval and fire a heartbeat the very first Pump after
+        /// connecting. Deliberately named for what this end wrote, not what it merely queued into
+        /// retention: the send-idle timer measures silence on the wire, not silence in the application,
+        /// so a <see cref="Send"/> that queues a Message but is never followed by a <see cref="Pump"/>
+        /// must not reset it.
         /// </summary>
         public long LastSendTimestamp { get; set; }
 
         /// <summary>
         /// The <see cref="TimeProvider.GetTimestamp"/> value at this end's most recent inbound bytes
-        /// from this Peer's wire (<see cref="MarkReceiveActivity"/>, issue #117) — any run of bytes the
-        /// OS handed back on a read, including a bare heartbeat's delivery-counter record carrying no
-        /// Messages, since over TCP only receiving is evidence the peer's transport is still there.
-        /// Initialised the instant this Peer establishes (<see cref="OnHelloRecordReceived"/>) from the
-        /// Hello record that just arrived, so the receive-idle deadline
+        /// from this Peer's wire (<see cref="MarkReceiveActivity"/>) — any run of bytes the OS handed
+        /// back on a read, including a bare heartbeat's delivery-counter record carrying no Messages,
+        /// since over TCP only receiving is evidence the peer's transport is still there. Initialised
+        /// the instant this Peer establishes (<see cref="OnHelloRecordReceived"/>) from the Hello
+        /// record that just arrived, so the receive-idle deadline
         /// (<see cref="HasExceededReceiveIdleDeadline"/>) counts from establishment rather than from
         /// <see langword="default"/>'s epoch, which would otherwise read as an already-elapsed interval
         /// and declare the Peer lost the very first Pump after connecting.
@@ -3230,23 +3219,22 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         public long LastReceiveTimestamp { get; set; }
 
         /// <summary>
-        /// Set by <see cref="InterruptPeer"/> the instant this Peer's transport is gone (issue #119):
-        /// its socket has already been unregistered and disposed, but the Slot itself, this end's
-        /// counters, retention ring and any undelivered inbound Messages all stay exactly as they
-        /// were, so <see cref="EnforceIdleTimers"/> and <see cref="FlushPendingRetentionWrites"/> must
-        /// never touch <see cref="Link"/> again for a Peer with this set. Cleared only by a Resume
-        /// matching onto this Slot (<see cref="ResumeHeldPeer"/>, issue #123) or by
-        /// <see cref="ClosePeer"/> removing the Slot outright — Linger expiry (issue #121) is what
-        /// eventually calls that when no Resume arrives first.
+        /// Set by <see cref="InterruptPeer"/> the instant this Peer's transport is gone: its socket has
+        /// already been unregistered and disposed, but the Slot itself, this end's counters, retention
+        /// ring and any undelivered inbound Messages all stay exactly as they were, so
+        /// <see cref="EnforceIdleTimers"/> and <see cref="FlushPendingRetentionWrites"/> must never
+        /// touch <see cref="Link"/> again for a Peer with this set. Cleared only by a Resume matching
+        /// onto this Slot (<see cref="ResumeHeldPeer"/>) or by <see cref="ClosePeer"/> removing the
+        /// Slot outright — Linger expiry is what eventually calls that when no Resume arrives first.
         /// </summary>
         public bool IsInterrupted { get; set; }
 
         /// <summary>
         /// Set by <see cref="ResumeDialledPeer"/> the moment the dialling side's own Resume record is
-        /// queued (issue #127, D3): that record carries only this end's own claim, never the far end's
-        /// read position, so this end does not yet know where its own rewind would even start from.
-        /// While set, <see cref="FlushRetention"/>'s own guard on this flag refuses to resend anything
-        /// for this Peer — resending blind could hand the far end bytes it already has. Cleared by
+        /// queued: that record carries only this end's own claim, never the far end's read position, so
+        /// this end does not yet know where its own rewind would even start from. While set,
+        /// <see cref="FlushRetention"/>'s own guard on this flag refuses to resend anything for this
+        /// Peer — resending blind could hand the far end bytes it already has. Cleared by
         /// <see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm the moment the far
         /// end's first post-resume delivery-counter record answers that question, which is also what
         /// drives this end's own reciprocal rewind.
@@ -3255,32 +3243,32 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>
         /// The <see cref="TimeProvider.GetTimestamp"/> value at the instant <see cref="InterruptPeer"/>
-        /// set <see cref="IsInterrupted"/> (issue #121) — the moment this Peer's effective Linger began
-        /// counting down. Meaningless while <see cref="IsInterrupted"/> is <see langword="false"/>: a
-        /// Resume replacing <see cref="Link"/> clears this alongside <see cref="IsInterrupted"/>
-        /// (<see cref="ResumeHeldPeer"/>, issue #123) rather than leaving a stale value behind for a
-        /// Linger deadline that no longer applies.
+        /// set <see cref="IsInterrupted"/> — the moment this Peer's effective Linger began counting
+        /// down. Meaningless while <see cref="IsInterrupted"/> is <see langword="false"/>: a Resume
+        /// replacing <see cref="Link"/> clears this alongside <see cref="IsInterrupted"/>
+        /// (<see cref="ResumeHeldPeer"/>) rather than leaving a stale value behind for a Linger
+        /// deadline that no longer applies.
         /// </summary>
         public long InterruptedTimestamp { get; set; }
 
         /// <summary>
         /// The endpoint <see cref="Connect"/> dialled to open this Session, or <see langword="null"/>
         /// for a Peer this Reactor accepted instead. Set once, at construction, and never cleared or
-        /// replaced by a later Resume — it is what makes issue #125's re-dial possible at all: only the
-        /// side that dialled has an address to retry, so <see cref="InterruptPeer"/> reads this to decide
-        /// whether this Peer's transport loss is even eligible for one. A re-dial always targets exactly
-        /// this endpoint — there is no rebinding and no address discovery.
+        /// replaced by a later Resume — it is what makes a re-dial possible at all: only the side that
+        /// dialled has an address to retry, so <see cref="InterruptPeer"/> reads this to decide whether
+        /// this Peer's transport loss is even eligible for one. A re-dial always targets exactly this
+        /// endpoint — there is no rebinding and no address discovery.
         /// </summary>
         public IPEndPoint? DialedEndpoint { get; init; }
 
         /// <summary>
-        /// This Peer's re-dial schedule (<see cref="Session.RedialSchedule"/>, issue #111), or
+        /// This Peer's re-dial schedule (<see cref="Session.RedialSchedule"/>), or
         /// <see langword="null"/> while this Peer is not currently being re-dialled — either it has
-        /// never been Interrupted, its transport loss was ineligible (issue #125:
-        /// <see cref="DialedEndpoint"/> unset or a Goodbye had passed), or a Resume already matched and
-        /// cleared it. Constructed once per interruption by <see cref="BeginRedialSchedule"/>, from the
-        /// Pump interval observed at that moment and this Peer's own effective Linger, and consulted only
-        /// by <see cref="ProcessRedials"/> and <see cref="FailRedialAttempt"/>.
+        /// never been Interrupted, its transport loss was ineligible (<see cref="DialedEndpoint"/>
+        /// unset or a Goodbye had passed), or a Resume already matched and cleared it. Constructed once
+        /// per interruption by <see cref="BeginRedialSchedule"/>, from the Pump interval observed at
+        /// that moment and this Peer's own effective Linger, and consulted only by
+        /// <see cref="ProcessRedials"/> and <see cref="FailRedialAttempt"/>.
         /// </summary>
         public RedialSchedule? RedialSchedule { get; set; }
 
@@ -3323,9 +3311,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// A just-accepted connection held outside <see cref="_peers"/> until its first handshake record
-    /// has arrived in full (issue #123). It has no Slot and no <see cref="PeerId"/> because it is not
-    /// yet known to need one: a Resume is claiming the Slot its own Interrupted Peer is already
-    /// reserving, and only the record says which of the two this is.
+    /// has arrived in full. It has no Slot and no <see cref="PeerId"/> because it is not yet known to
+    /// need one: a Resume is claiming the Slot its own Interrupted Peer is already reserving, and only
+    /// the record says which of the two this is.
     /// </summary>
     private sealed class PendingAdmission
     {

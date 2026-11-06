@@ -1,12 +1,12 @@
 namespace ReactorSockets.Session;
 
 /// <summary>
-/// What a packet record of a given shape must look like, and whether this slice acts on it — stated
+/// What a packet record of a given shape must look like, and whether this profile acts on it — stated
 /// once, as a table, so that the parser and the sender both consult the same statement rather than two
 /// copies that can drift apart.
 /// </summary>
 /// <param name="IsProcessed">
-/// Whether this slice reads a record of this shape at all. Both wire shapes ADR 0009 defines are
+/// Whether this profile reads a record of this shape at all. Both wire shapes ADR 0009 defines are
 /// <see langword="true"/> here; only a shape not on the roster falls through to the discard arm and
 /// is rejected exactly as an unrecognised shape would be — the wire is not the place to advertise an
 /// unfinished feature.
@@ -22,9 +22,9 @@ internal readonly record struct PacketRecordShape(bool IsProcessed, int RecordSi
 /// and <see cref="RawLinkLegality"/> set). Both shapes ADR 0009 defines are spelled out and the
 /// fall-through refuses, so a shape added without a decision here is rejected rather than parsed
 /// against whatever length the last arm happened to name. The fragment shape's row also carries the
-/// mode restriction ADR 0004 puts on it (issue #273), since which of the two shapes a record may be is
-/// decided by the same flags byte and belongs in the same table rather than in a second test the
-/// parser would have to remember to make.
+/// mode restriction ADR 0004 puts on it, since which of the two shapes a record may be is decided by
+/// the same flags byte and belongs in the same table rather than in a second test the parser would have
+/// to remember to make.
 /// </summary>
 internal static class PacketRecordLegality
 {
@@ -32,7 +32,7 @@ internal static class PacketRecordLegality
     /// The shape of a packet record whose flags byte is <paramref name="flags"/>, decided by
     /// <see cref="DatagramSessionProtocol.FragmentBit"/> — the only bit in the flags byte that changes
     /// which shape a record is — and, for the fragment shape, by the two mode bits that say whether a
-    /// record of that shape may exist at all (issue #273).
+    /// record of that shape may exist at all.
     /// </summary>
     public static PacketRecordShape ShapeOf(byte flags) => (flags & DatagramSessionProtocol.FragmentBit) switch
     {
@@ -57,11 +57,11 @@ internal static class PacketRecordLegality
 
     /// <summary>
     /// Whether <paramref name="record"/> is refused by <see cref="PacketRecordCodec.TryRead"/>
-    /// specifically because its flags byte names a Fragment in an unreliable mode (issue #273), rather
-    /// than for any of the other reasons a read fails. <see langword="false"/> for a record whose spare
-    /// bits are set, mirroring <see cref="PacketRecordCodec.TryRead"/>'s own precedence: a spare bit is
-    /// judged before the flags byte is read for anything else, so a record breaking both rules is
-    /// reported as the violation that actually refused it.
+    /// specifically because its flags byte names a Fragment in an unreliable mode, rather than for any
+    /// of the other reasons a read fails. <see langword="false"/> for a record whose spare bits are
+    /// set, mirroring <see cref="PacketRecordCodec.TryRead"/>'s own precedence: a spare bit is judged
+    /// before the flags byte is read for anything else, so a record breaking both rules is reported as
+    /// the violation that actually refused it.
     /// </summary>
     /// <param name="record">
     /// The datagram's bytes from the record's first byte onward, exactly as handed to
@@ -84,12 +84,12 @@ internal static class PacketRecordLegality
 
     /// <summary>
     /// Whether a record already read as far as its mode, fragment shape, and length may legally carry
-    /// <see cref="DatagramSessionProtocol.ControlBit"/> (issue #341, following #339's Ping). Exactly two
-    /// combinations qualify — unfragmented, zero length, and either <c>ReliableUnordered</c> (a Ping) or
-    /// <c>ReliableOrdered</c> (a Goodbye, issue #394) — so the Space alone tells the two apart. Stated once
-    /// here so <see cref="PacketRecordCodec.TryRead"/> consults this table for the control bit's
-    /// legality the same way it already consults <see cref="ShapeOf"/> for a record's shape, rather than
-    /// restating the three-way condition inline.
+    /// <see cref="DatagramSessionProtocol.ControlBit"/>. Exactly two combinations qualify —
+    /// unfragmented, zero length, and either <c>ReliableUnordered</c> (a Ping) or
+    /// <c>ReliableOrdered</c> (a Goodbye) — so the Space alone tells the two apart. Stated once here so
+    /// <see cref="PacketRecordCodec.TryRead"/> consults this table for the control bit's legality the
+    /// same way it already consults <see cref="ShapeOf"/> for a record's shape, rather than restating
+    /// the three-way condition inline.
     /// </summary>
     /// <param name="mode">The record's decoded delivery mode.</param>
     /// <param name="isFragment">Whether the record carries the fragment shape.</param>

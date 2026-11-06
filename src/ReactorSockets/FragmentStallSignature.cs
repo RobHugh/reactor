@@ -1,12 +1,11 @@
 namespace ReactorSockets;
 
 /// <summary>
-/// One Peer's raw material for the fragment-size stall signature (subtask 7.5.3.1, issue #294; parent
-/// #269): three facts — when an unfragmented record was last acked, whether any Fragment has ever been
-/// acked, and how many retransmission rounds have elapsed since the first still-unacked Fragment was
-/// sent — tracked from the existing ack and retransmission paths with no timer or sweep of its own. This
-/// type holds state only; the predicate that reads it and decides whether the signature fires is a
-/// separate ticket (issue #298).
+/// One Peer's raw material for the fragment-size stall signature: three facts — when an unfragmented
+/// record was last acked, whether any Fragment has ever been acked, and how many retransmission rounds
+/// have elapsed since the first still-unacked Fragment was sent — tracked from the existing ack and
+/// retransmission paths with no timer or sweep of its own. <see cref="IsFragmentSizeStall"/> reads that
+/// state and decides whether the signature fires; acting on it is the caller's job.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -27,8 +26,8 @@ namespace ReactorSockets;
 /// <para>
 /// Both timestamps are monotonic <see cref="TimeProvider.GetTimestamp"/> readings, never
 /// <see cref="TimeProvider.GetUtcNow"/>, matching <see cref="Session.OutstandingReliableSequences"/>'s own
-/// discipline (issue #42): a wall-clock reading is exactly the state a clock adjustment could use to move,
-/// and a monotonic timestamp cannot be moved by one. <see langword="null"/> means the fact has never
+/// discipline: a wall-clock reading is exactly the state a clock adjustment could use to move, and a
+/// monotonic timestamp cannot be moved by one. <see langword="null"/> means the fact has never
 /// happened, not "happened at time zero".
 /// </para>
 /// <para>
@@ -165,7 +164,7 @@ public sealed class FragmentStallSignature
     /// Whether this Peer's state matches the fragment-size stall signature: a Fragment window open, no
     /// Fragment ever acked, an unfragmented record acked at or after the window opened, and at least
     /// <see cref="StallRoundCount"/> retransmission rounds elapsed since. Read-only; nothing here acts
-    /// on the result (issue #270 does that).
+    /// on the result.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -177,7 +176,7 @@ public sealed class FragmentStallSignature
     /// still in flight).
     /// </para>
     /// <para>
-    /// <b>Why the unfragmented ack must postdate the window.</b> Issue #269 asks for <em>recently</em>
+    /// <b>Why the unfragmented ack must postdate the window.</b> The signature needs <em>recently</em>
     /// acked unfragmented records, and the moment the first unacked Fragment went out is what "recently"
     /// is measured against here, rather than a wall-clock window nothing in this design has a budget
     /// for. An unfragmented record acked only before the Fragments started is a Peer that <em>was</em>

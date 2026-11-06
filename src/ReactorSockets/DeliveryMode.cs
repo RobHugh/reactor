@@ -2,11 +2,10 @@ namespace ReactorSockets;
 
 /// <summary>
 /// Which of a datagram Session's four delivery modes carries a Message sent through
-/// <see cref="DatagramSessionReactor.Send(PeerId, DeliveryMode, ReadOnlySpan{byte})"/> (ADR 0009,
-/// issue #207). See <c>docs/delivery-modes.md</c> for the consumer-facing guide to choosing one; the
-/// full guarantees each mode makes — ordering, duplicate suppression, what a late arrival does — land
-/// in #44, and fragmentation of a Message wider than one Datagram lands in #45. This ticket only
-/// routes a mode to its own Space.
+/// <see cref="DatagramSessionReactor.Send(PeerId, DeliveryMode, ReadOnlySpan{byte})"/> (ADR 0009). See
+/// <c>docs/delivery-modes.md</c> for the consumer-facing guide to choosing one and the full guarantees
+/// each mode makes: ordering, duplicate suppression, and what a late arrival does. Each mode is carried
+/// in its own Space.
 /// </summary>
 /// <remarks>
 /// Explicit values throughout, the same house style as <see cref="DisconnectReason"/> and

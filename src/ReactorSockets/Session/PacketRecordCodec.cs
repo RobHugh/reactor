@@ -6,9 +6,9 @@ namespace ReactorSockets.Session;
 /// The wire value of a packet record's two mode bits (ADR 0009), named rather than left as a raw
 /// byte so a caller reading <see cref="PacketRecordCodec.TryRead"/>'s result does not have to
 /// re-derive what each bit pattern means. Not the public <see cref="ReactorSockets.DeliveryMode"/>
-/// enum (issue #207): that enum is this Session's user-facing vocabulary. This one is
-/// scoped to <see cref="PacketRecordCodec"/> and exists only so #163's parse loop and #164 have a
-/// symbol to switch on instead of the four <see cref="DatagramSessionProtocol"/> mode constants.
+/// enum: that enum is this Session's user-facing vocabulary. This one is scoped to
+/// <see cref="PacketRecordCodec"/> and exists only so the datagram parse loop has a symbol to switch on
+/// instead of the four <see cref="DatagramSessionProtocol"/> mode constants.
 /// </summary>
 internal enum PacketRecordMode : byte
 {
@@ -29,8 +29,8 @@ internal enum PacketRecordMode : byte
 /// The single place a packet record (ADR 0009) is read from or written to a datagram. A datagram is a
 /// container of as many records as fit, so this class reads or writes exactly one record positioned at
 /// the start of the span it is given and reports how many bytes it consumed or produced — the caller
-/// (#163's parse loop for reading, <see cref="DatagramRecordPacker"/> for writing) re-slices past that
-/// count to move on to the next one.
+/// (<see cref="DatagramRecordPacker"/> for writing) re-slices past that count to move on to the next
+/// one.
 /// </summary>
 /// <remarks>
 /// Allocation-free and total by construction, the same discipline <see cref="ControlDatagramCodec"/>
@@ -58,24 +58,24 @@ internal static class PacketRecordCodec
     /// with <paramref name="fragmentIndex"/> and <paramref name="fragmentCount"/> left unset, since a
     /// complete Message has no fragment to index into; or a Fragment, whose two extra fields are read
     /// and reported alongside it. This method reads the shape and, for a Fragment, judges whether its
-    /// index and count describe a set that could ever legally exist (issue #253): an index at or beyond
-    /// its count names a piece outside the set it claims; a count of zero has no valid index at all; and
-    /// a count of one is refused too, because a one-piece Message is unfragmented and should never have
-    /// carried the fragment shape — treating it as a degenerate but legal set would let the fragment bit
-    /// mean two different things for the same content. This method also judges <see
-    /// cref="DatagramSessionProtocol.ControlBit"/> (issue #339): the bit is legal only on a record that
-    /// is otherwise unfragmented, zero length, and either <c>ReliableUnordered</c> (a Ping) or
-    /// <c>ReliableOrdered</c> (a Goodbye, issue #394) — and
-    /// <paramref name="isControl"/> reports it only for those two combinations. Every other combination
-    /// carrying the bit (another mode, the fragment bit, or a nonzero length) fails the read exactly as
-    /// a spare bit would, judged by <see cref="PacketRecordLegality.IsLegalControlRecord"/> (issue #341). Fails
-    /// without reading past <paramref name="record"/> when: any spare bit (<see
+    /// index and count describe a set that could ever legally exist: an index at or beyond its count
+    /// names a piece outside the set it claims; a count of zero has no valid index at all; and a count
+    /// of one is refused too, because a one-piece Message is unfragmented and should never have carried
+    /// the fragment shape — treating it as a degenerate but legal set would let the fragment bit mean
+    /// two different things for the same content. This method also judges <see
+    /// cref="DatagramSessionProtocol.ControlBit"/>: the bit is legal only on a record that is otherwise
+    /// unfragmented, zero length, and either <c>ReliableUnordered</c> (a Ping) or
+    /// <c>ReliableOrdered</c> (a Goodbye) — and <paramref name="isControl"/> reports it only for those
+    /// two combinations. Every other combination carrying the bit (another mode, the fragment bit, or a
+    /// nonzero length) fails the read exactly as a spare bit would, judged by
+    /// <see cref="PacketRecordLegality.IsLegalControlRecord"/>. Fails without reading past
+    /// <paramref name="record"/> when: any spare bit (<see
     /// cref="DatagramSessionProtocol.SpareBitsMask"/>) is set; the flags byte names the Fragment shape
     /// in one of the two unreliable modes, which ADR 0004 forbids and
-    /// <see cref="PacketRecordLegality.ShapeOf"/> therefore refuses (issue #273); fewer bytes remain
-    /// than the record's shape needs; <paramref name="length"/> would exceed the bytes left in the
-    /// datagram after the record header; a Fragment's index and count form one of the impossible
-    /// combinations above; or the control bit is set on a record that is not a legal Ping or Goodbye. A malformed
+    /// <see cref="PacketRecordLegality.ShapeOf"/> therefore refuses; fewer bytes remain than the
+    /// record's shape needs; <paramref name="length"/> would exceed the bytes left in the datagram
+    /// after the record header; a Fragment's index and count form one of the impossible combinations
+    /// above; or the control bit is set on a record that is not a legal Ping or Goodbye. A malformed
     /// Fragment or a malformed control record fails exactly as a record too short for its shape does —
     /// the caller has no new failure case to handle. A caller that wants to tell the
     /// unreliable-Fragment refusal apart from the rest, to report which rule broke, asks
@@ -108,9 +108,9 @@ internal static class PacketRecordCodec
     /// record claiming either fails the read rather than being treated as a degenerate one-piece set.
     /// </param>
     /// <param name="isControl">
-    /// Whether this record is an in-Session control record — the wire shape a Ping (#339) or a Goodbye
-    /// (#394) uses — valid only when this method returns <see langword="true"/>. <see langword="false"/>
-    /// for an ordinary Message record. Always accompanied by <c>mode</c> of <c>ReliableUnordered</c> or
+    /// Whether this record is an in-Session control record — the wire shape a Ping or a Goodbye uses —
+    /// valid only when this method returns <see langword="true"/>. <see langword="false"/> for an
+    /// ordinary Message record. Always accompanied by <c>mode</c> of <c>ReliableUnordered</c> or
     /// <c>ReliableOrdered</c>, <c>isFragment == false</c> and <c>length == 0</c> when
     /// <see langword="true"/>: those are the only terms <see cref="DatagramSessionProtocol.ControlBit"/> is legal under, so a record carrying the
     /// bit under any other terms fails the read instead of reaching here with it set.
@@ -292,10 +292,11 @@ internal static class PacketRecordCodec
     /// bits, <c>u32</c> sequence, then a <c>u16</c> length of zero — to the start of <paramref
     /// name="destination"/>. The unfragmented shape carries a control record: seven bytes, no payload,
     /// no fragment index or count. A control record is always <c>ReliableUnordered</c> — its first use
-    /// is the idle-triggered Ping (#53), which the parent issue restricts to that mode — so this method
-    /// takes no mode parameter, unlike <see cref="TryWrite(Span{byte}, PacketRecordMode, uint, ReadOnlySpan{byte}, out int)"/>.
-    /// <see cref="TryRead"/> now accepts exactly this shape back (issue #339): ReliableUnordered,
-    /// unfragmented, zero length, control bit set.
+    /// is the idle-triggered Ping, which the parent issue restricts to that mode — so this method takes
+    /// no mode parameter, unlike
+    /// <see cref="TryWrite(Span{byte}, PacketRecordMode, uint, ReadOnlySpan{byte}, out int)"/>.
+    /// <see cref="TryRead"/> now accepts exactly this shape back: ReliableUnordered, unfragmented, zero
+    /// length, control bit set.
     /// </summary>
     /// <param name="destination">
     /// The bytes to write into, positioned at the record's first byte. Never partially written: a
@@ -318,12 +319,11 @@ internal static class PacketRecordCodec
         TryWriteZeroLengthControlRecord(destination, PacketRecordMode.ReliableUnordered, sequence, out bytesWritten);
 
     /// <summary>
-    /// Writes one Goodbye record (issue #395) — flags byte with <see
-    /// cref="DatagramSessionProtocol.ControlBit"/> set alongside the <c>ReliableOrdered</c> mode bits,
-    /// <c>u32</c> sequence, then a <c>u16</c> length of zero — to the start of <paramref
-    /// name="destination"/>. The same seven-byte shape <see cref="TryWritePingRecord"/> writes for a
-    /// Ping, in the other reliable Space: the Space alone tells the two apart, and
-    /// <see cref="TryRead"/> accepts exactly this shape back (issue #394).
+    /// Writes one Goodbye record — flags byte with <see cref="DatagramSessionProtocol.ControlBit"/> set
+    /// alongside the <c>ReliableOrdered</c> mode bits, <c>u32</c> sequence, then a <c>u16</c> length of
+    /// zero — to the start of <paramref name="destination"/>. The same seven-byte shape
+    /// <see cref="TryWritePingRecord"/> writes for a Ping, in the other reliable Space: the Space alone
+    /// tells the two apart, and <see cref="TryRead"/> accepts exactly this shape back.
     /// </summary>
     /// <param name="destination">
     /// The bytes to write into, positioned at the record's first byte. Never partially written: a
@@ -390,22 +390,22 @@ internal static class PacketRecordCodec
     /// </param>
     /// <remarks>
     /// <para>
-    /// <strong>Neither fragment field has a path that varies with its magnitude</strong>, and issue
-    /// #243 closed its "index and count at their maximum" criterion on that basis rather than on a
-    /// test, by ADR 0015's criterion 3: the code is already such that the invariant is trivially true.
-    /// Both parameters are <see cref="ushort"/>, so the type bounds the domain; both are written by a
-    /// single fixed-width big-endian primitive that is total over that domain; and the only two
-    /// branches reading them — <paramref name="fragmentCount"/> against 1 and
-    /// <paramref name="fragmentIndex"/> against <paramref name="fragmentCount"/> — are relational
-    /// rather than magnitude-dependent, and are pinned at the boundaries that actually separate their
-    /// arms. A test at 65535 would therefore exercise the same path as a test at 2 and assert the
-    /// compiler's type bounds rather than this method's behaviour.
+    /// <strong>Neither fragment field has a path that varies with its magnitude</strong>, so "index and
+    /// count at their maximum" holds by ADR 0015's criterion 3 rather than by a test: the code is
+    /// already such that the invariant is trivially true. Both parameters are <see cref="ushort"/>, so
+    /// the type bounds the domain; both are written by a single fixed-width big-endian primitive that
+    /// is total over that domain; and the only two branches reading them —
+    /// <paramref name="fragmentCount"/> against 1 and <paramref name="fragmentIndex"/> against
+    /// <paramref name="fragmentCount"/> — are relational rather than magnitude-dependent, and are
+    /// pinned at the boundaries that actually separate their arms. A test at 65535 would therefore
+    /// exercise the same path as a test at 2 and assert the compiler's type bounds rather than this
+    /// method's behaviour.
     /// </para>
     /// <para>
     /// The reading half of the boundary is a different matter and <em>is</em> covered, because a
     /// hostile peer can put any <c>u16</c> on the wire whatever this writer would have chosen:
     /// <c>DatagramSessionDataDatagramParseTests.Pump_FragmentRecordsAtTheValidBoundaries_AllParseSuccessfully</c>
-    /// drives a count of 65535 through <see cref="TryRead"/> (issue #252).
+    /// drives a count of 65535 through <see cref="TryRead"/>.
     /// </para>
     /// </remarks>
     /// <param name="payload">
@@ -420,14 +420,14 @@ internal static class PacketRecordCodec
     /// <paramref name="payload"/> is longer than <see cref="ushort.MaxValue"/>; or
     /// <paramref name="fragmentCount"/> is 0 or 1; or <paramref name="fragmentIndex"/> is greater than
     /// or equal to <paramref name="fragmentCount"/>. All three are refused the same way <see
-    /// cref="TryRead"/> refuses them on the way in (issue #253) — a count of zero has no valid index, a
-    /// count of one describes a Message that is whole in one piece and should never carry the fragment
-    /// shape, and an index at or beyond its count names a piece outside the set it claims. The
-    /// difference from a short <paramref name="destination"/>, which is an ordinary and expected outcome
-    /// reported by a <see langword="false"/> return, is who chose the bad value: a remote peer chooses
-    /// what arrives over the wire, but this method's caller chooses what it hands to the writer, so
-    /// metadata that could never legally round-trip is this library's own bug, not a remote sender's —
-    /// the same distinction the payload-length check above already draws.
+    /// cref="TryRead"/> refuses them on the way in — a count of zero has no valid index, a count of one
+    /// describes a Message that is whole in one piece and should never carry the fragment shape, and an
+    /// index at or beyond its count names a piece outside the set it claims. The difference from a
+    /// short <paramref name="destination"/>, which is an ordinary and expected outcome reported by a
+    /// <see langword="false"/> return, is who chose the bad value: a remote peer chooses what arrives
+    /// over the wire, but this method's caller chooses what it hands to the writer, so metadata that
+    /// could never legally round-trip is this library's own bug, not a remote sender's — the same
+    /// distinction the payload-length check above already draws.
     /// </exception>
     public static bool TryWrite(
         Span<byte> destination,

@@ -23,7 +23,7 @@ internal enum MessageFramingOutcome
 
     /// <summary>
     /// The prefix is <see cref="MessageFramingCodec.GoodbyeSentinel"/>: a whole Goodbye control
-    /// record, carrying no body, is buffered at the front (ADR 0010, issue #23).
+    /// record, carrying no body, is buffered at the front (ADR 0010).
     /// </summary>
     GoodbyeReceived,
 
@@ -38,25 +38,25 @@ internal enum MessageFramingOutcome
     ZeroLengthPrefix,
 
     /// <summary>
-    /// Bytes have arrived at the front of the buffer behind a Goodbye already classified for this Peer
-    /// (issue #93). A Peer that announced it is leaving and then keeps sending is contradicting its own
-    /// announcement — nothing legitimate is ever buffered ahead of a Goodbye, by construction, so any
-    /// further bytes are a violation regardless of what they would otherwise have classified as.
+    /// Bytes have arrived at the front of the buffer behind a Goodbye already classified for this Peer.
+    /// A Peer that announced it is leaving and then keeps sending is contradicting its own announcement
+    /// — nothing legitimate is ever buffered ahead of a Goodbye, by construction, so any further bytes
+    /// are a violation regardless of what they would otherwise have classified as.
     /// </summary>
     DataAfterGoodbye,
 
     /// <summary>
     /// The prefix is <see cref="MessageFramingCodec.DeliveryCounterSentinel"/>, but fewer than
     /// <see cref="MessageFramingCodec.DeliveryCounterBodySize"/> bytes of its <c>u64</c> body have
-    /// arrived yet (issue #109). An ordinary, expected state while a receive buffer is filling — not a
-    /// violation, and not yet a whole record either.
+    /// arrived yet. An ordinary, expected state while a receive buffer is filling — not a violation,
+    /// and not yet a whole record either.
     /// </summary>
     AwaitingDeliveryCounterBody,
 
     /// <summary>
     /// A whole delivery-counter control record — <see cref="MessageFramingCodec.DeliveryCounterSentinel"/>
-    /// followed by its full <c>u64</c> body — is buffered at the front (issue #109). Decoding the count
-    /// itself is left to the caller via <see cref="MessageFramingCodec.ReadDeliveryCounter"/>, exactly as
+    /// followed by its full <c>u64</c> body — is buffered at the front. Decoding the count itself is
+    /// left to the caller via <see cref="MessageFramingCodec.ReadDeliveryCounter"/>, exactly as
     /// <see cref="Ready"/> leaves Message-body extraction to its caller.
     /// </summary>
     DeliveryCounterReceived,

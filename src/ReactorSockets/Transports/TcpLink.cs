@@ -6,8 +6,8 @@ namespace ReactorSockets.Transports;
 /// <summary>
 /// L1: one connected (or connecting) TCP socket, produced either by a listening Link's accept or by
 /// dialling out. Carries the socket and its bound local address, and — like <see cref="UdpLink"/> —
-/// is built out incrementally in its own slice: reads (<see cref="Receive"/>), sends
-/// (<see cref="Send(ReadOnlySpan{byte})"/>) and half-close (<see cref="Shutdown"/>) all land here.
+/// owns reads (<see cref="Receive"/>), sends (<see cref="Send(ReadOnlySpan{byte})"/>) and half-close
+/// (<see cref="Shutdown"/>).
 /// </summary>
 internal sealed class TcpLink : IDisposable
 {
@@ -270,14 +270,14 @@ internal sealed class TcpLink : IDisposable
     }
 
     /// <summary>
-    /// The gather form of <see cref="Send(ReadOnlySpan{byte})"/> (issue #132): offers
-    /// <paramref name="segments"/> to the socket as one call — <c>WSASend</c> on Windows,
-    /// <c>writev</c> elsewhere — so bytes living in two unrelated buffers reach the wire in a single
-    /// write rather than one write each. Identical in every other respect: it still takes only what
-    /// the socket will accept right now, still reports that count, still never blocks, copies or
-    /// queues, and still translates <see cref="SocketError.WouldBlock"/> into a successful send of
-    /// zero bytes. The reported count spans the segments in order, so a caller that offered two
-    /// segments learns how far into them the socket reached by subtracting the first's length.
+    /// The gather form of <see cref="Send(ReadOnlySpan{byte})"/>: offers <paramref name="segments"/> to
+    /// the socket as one call — <c>WSASend</c> on Windows, <c>writev</c> elsewhere — so bytes living in
+    /// two unrelated buffers reach the wire in a single write rather than one write each. Identical in
+    /// every other respect: it still takes only what the socket will accept right now, still reports
+    /// that count, still never blocks, copies or queues, and still translates
+    /// <see cref="SocketError.WouldBlock"/> into a successful send of zero bytes. The reported count
+    /// spans the segments in order, so a caller that offered two segments learns how far into them the
+    /// socket reached by subtracting the first's length.
     /// </summary>
     /// <remarks>
     /// This adds no queueing and no policy — the two things ADR 0008 rules out of a Link — it only

@@ -7,7 +7,7 @@ namespace ReactorSockets.Session;
 /// </summary>
 /// <param name="IsProcessed">
 /// Whether this profile does anything with a datagram of this type. A type on the roster that this
-/// slice does not implement is <see langword="false"/> here, which discards it exactly as an
+/// profile does not implement is <see langword="false"/> here, which discards it exactly as an
 /// off-roster type is discarded — the wire is not the place to advertise an unfinished feature.
 /// </param>
 /// <param name="BodyLength">

@@ -4,20 +4,19 @@ using ReactorSockets.Session;
 namespace ReactorSockets;
 
 /// <summary>
-/// A Fragment's group identity (ADR 0009, issue #47): no message ID exists on the wire, so a group is
-/// named by where it starts rather than by a number stamped on it. <see cref="FirstSequenceOf"/> is
-/// the one place <c>firstSeq = seq - fragmentIndex</c> is computed, and <see cref="AssertContiguousSet"/>
-/// is the debug check the send path calls when it emits a set, so a sender bug that would make the
-/// naming scheme lie is caught where the set is built rather than inferred later by a receiver.
+/// A Fragment's group identity (ADR 0009): no message ID exists on the wire, so a group is named by
+/// where it starts rather than by a number stamped on it. <see cref="FirstSequenceOf"/> is the one
+/// place <c>firstSeq = seq - fragmentIndex</c> is computed, and <see cref="AssertContiguousSet"/> is
+/// the debug check the send path calls when it emits a set, so a sender bug that would make the naming
+/// scheme lie is caught where the set is built rather than inferred later by a receiver.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Public for the same reason <see cref="FragmentPlan"/> is (ADR 0015, issue #254): a test pins the
-/// <c>u32</c>-wrap identity by calling <see cref="FirstSequenceOf"/> directly with hand-picked
-/// sequences and fragment indices, with no <c>InternalsVisibleTo</c> and no interface invented for the
-/// purpose. It is not part of a consumer's request path — nothing here is reached by name from
-/// application code — but the seam this library tests through has no other way to reach arithmetic
-/// this precise.
+/// Public for the same reason <see cref="FragmentPlan"/> is (ADR 0015): a test pins the <c>u32</c>-wrap
+/// identity by calling <see cref="FirstSequenceOf"/> directly with hand-picked sequences and fragment
+/// indices, with no <c>InternalsVisibleTo</c> and no interface invented for the purpose. It is not part
+/// of a consumer's request path — nothing here is reached by name from application code — but the seam
+/// this library tests through has no other way to reach arithmetic this precise.
 /// </para>
 /// <para>
 /// Added as a sibling to <see cref="SequenceNumber"/> rather than folded into it: that type answers
@@ -68,8 +67,8 @@ public static class FragmentGroup
     /// contiguity invariant is enforced by construction in the send path that builds these sets, so this
     /// exists to catch a defect in that construction, not to police an untrusted input — a remote peer's
     /// Fragments are validated by <see cref="PacketRecordCodec.TryRead"/>, not by this method. Public for
-    /// the same reason <see cref="FirstSequenceOf"/> is (ADR 0015, issue #319): the send path only ever
-    /// hands this a set it just built correctly, so the happy path exercised through
+    /// the same reason <see cref="FirstSequenceOf"/> is (ADR 0015): the send path only ever hands this
+    /// a set it just built correctly, so the happy path exercised through
     /// <see cref="DatagramSessionReactor.Send"/> can never reach the gap or length-mismatch it guards
     /// against. Those two failure shapes are unreachable through the public seam at any cost — not
     /// expensive, unreachable — so a test pins them by calling this method directly with a hand-built

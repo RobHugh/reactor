@@ -31,11 +31,11 @@ namespace ReactorSockets;
 /// its Peer takes a Slot, so the bound has no traffic term. The retention line is buffered <em>twice</em> over — once in our retention, once
 /// again in the kernel's own send buffer for the socket — so a stream Peer's real footprint is this
 /// bound plus whatever the OS is holding, and the OS's half is not fully ours to control. The third
-/// line (issue #110) is what lets retention be released by what the peer has confirmed receiving
-/// rather than by what the local kernel merely accepted — the point of slice 4 — and is driven by
-/// <see cref="RetentionBytes"/> too: one <c>uint</c> per Message that could be outstanding in a Peer's
-/// retention region at once, which this profile's four-byte length prefix bounds at roughly one entry
-/// per four retained bytes, so it costs about as much as retention itself.
+/// line is what lets retention be released by what the peer has confirmed receiving rather than by what
+/// the local kernel merely accepted, and is driven by <see cref="RetentionBytes"/> too: one <c>uint</c>
+/// per Message that could be outstanding in a Peer's retention region at once, which this profile's
+/// four-byte length prefix bounds at roughly one entry per four retained bytes, so it costs about as
+/// much as retention itself.
 /// </para>
 /// <para>
 /// <see cref="MaxMessageSize"/> appears in three places at once: announced to the remote as a receive
@@ -145,13 +145,13 @@ public sealed class StreamSessionOptions
     /// <summary>
     /// <c>SO_SNDBUF</c> for every Peer socket this Reactor accepts or dials, or <see langword="null"/>
     /// — the default — for the OS default and its own autotuning. This is the kernel's send queue, not
-    /// <see cref="RetentionBytes"/>: retention is what this end holds until the peer confirms receipt
-    /// (issue #113), while this bounds how much the kernel will absorb from a flush before a write
-    /// reports it would block and the bytes stay in retention, unsent. Unset, the two are unrelated in
-    /// practice on Linux, whose send autotuning will absorb megabytes against a peer that has stopped
-    /// reading; set, a consumer who needs transport backpressure to reach their own flow control at a
-    /// known point can put it there. Provenance: unset leaves the OS's own default and autotuning in
-    /// place, so the library chooses nothing.
+    /// <see cref="RetentionBytes"/>: retention is what this end holds until the peer confirms receipt,
+    /// while this bounds how much the kernel will absorb from a flush before a write reports it would
+    /// block and the bytes stay in retention, unsent. Unset, the two are unrelated in practice on
+    /// Linux, whose send autotuning will absorb megabytes against a peer that has stopped reading; set,
+    /// a consumer who needs transport backpressure to reach their own flow control at a known point can
+    /// put it there. Provenance: unset leaves the OS's own default and autotuning in place, so the
+    /// library chooses nothing.
     /// </summary>
     /// <remarks>
     /// A request, not an exact size — Linux doubles the value and holds it to its own <c>tcp_wmem</c>
@@ -192,7 +192,7 @@ public sealed class StreamSessionOptions
     /// <summary>
     /// The number of <see cref="Core.RetentionArena"/> Message-boundary ring entries one Peer's region
     /// holds: <c>⌈RetentionBytes / 4⌉</c>, against the four-byte length prefix this profile passes the
-    /// arena as its <c>minimumFramedMessageSize</c> (issue #110). Delegates to
+    /// arena as its <c>minimumFramedMessageSize</c>. Delegates to
     /// <see cref="Core.RetentionArena.BoundaryEntriesFor"/> rather than repeating the ceiling division,
     /// so this published memory bill cannot drift from what the arena actually allocates.
     /// </summary>
@@ -200,10 +200,10 @@ public sealed class StreamSessionOptions
         Core.RetentionArena.BoundaryEntriesFor(RetentionBytes, LengthPrefixSize);
 
     /// <summary>
-    /// The Message-boundary ring line of the memory bill in bytes (issue #110): one <c>uint</c> (4
-    /// bytes) per entry in <see cref="BoundaryRingEntriesPerPeer"/>, across every Peer, reported the
-    /// same way as the other two lines. This is what makes releasing retention by what the peer
-    /// confirmed receiving possible at all — see the class remarks.
+    /// The Message-boundary ring line of the memory bill in bytes: one <c>uint</c> (4 bytes) per entry
+    /// in <see cref="BoundaryRingEntriesPerPeer"/>, across every Peer, reported the same way as the
+    /// other two lines. This is what makes releasing retention by what the peer confirmed receiving
+    /// possible at all — see the class remarks.
     /// </summary>
     public long BoundaryRingBudgetBytes => (long)Reactor.Capacity * BoundaryRingEntriesPerPeer * sizeof(uint);
 
