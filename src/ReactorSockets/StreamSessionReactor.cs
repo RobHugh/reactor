@@ -2794,7 +2794,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         SlotHandle[] scheduled = [.. _peersWithRedialScheduled];
         foreach (SlotHandle handle in scheduled)
         {
-            if (_peers.TryResolve(handle) is not PeerSlot slot || !slot.IsInterrupted || slot.RedialSchedule is null)
+            if (_peers.TryResolve(handle) is not PeerSlot slot
+                || !slot.IsInterrupted
+                || slot.RedialSchedule is not RedialSchedule schedule
+                || slot.DialedEndpoint is not IPEndPoint endpoint)
             {
                 _peersWithRedialScheduled.Remove(handle);
                 continue;
@@ -2802,7 +2805,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
             if (slot.RedialLink is TcpLink link)
             {
-                PollRedialAttempt(handle, slot, link);
+                PollRedialAttempt(handle, slot, schedule, link);
                 continue;
             }
 
@@ -2811,9 +2814,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            // DialedEndpoint is guaranteed non-null here: only BeginRedialSchedule adds a handle to
-            // _peersWithRedialScheduled, and it does so only after InterruptPeer has already checked it.
-            slot.RedialLink = TcpLink.Dial(slot.DialedEndpoint!, _options.SendBufferSize);
+            slot.RedialLink = TcpLink.Dial(endpoint, _options.SendBufferSize);
             slot.RedialAttemptCount++;
 
             if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
@@ -2833,7 +2834,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// (<see cref="FailRedialAttempt"/>): it stays Interrupted and simply waits out the schedule's next
     /// delay, which is what leaves Linger, not an attempt count, as the only thing that ever closes it.
     /// </summary>
-    private void PollRedialAttempt(SlotHandle handle, PeerSlot slot, TcpLink link)
+    private void PollRedialAttempt(SlotHandle handle, PeerSlot slot, RedialSchedule schedule, TcpLink link)
     {
         TcpConnectPollResult result = link.PollConnect();
         switch (result.Outcome)
@@ -2846,7 +2847,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 break;
 
             case TcpConnectPollOutcome.Failed:
-                FailRedialAttempt(handle, slot, result.Error);
+                FailRedialAttempt(handle, slot, schedule, result.Error);
                 break;
         }
     }
@@ -2858,12 +2859,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Interrupted and tracked in <c>_peersWithRedialScheduled</c>; only <see cref="EnforceIdleTimers"/>'s
     /// Linger check ever closes it from here.
     /// </summary>
-    private void FailRedialAttempt(SlotHandle handle, PeerSlot slot, SocketError error)
+    private void FailRedialAttempt(SlotHandle handle, PeerSlot slot, RedialSchedule schedule, SocketError error)
     {
         slot.RedialLink?.Dispose();
         slot.RedialLink = null;
         slot.RedialWaitStartTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
-        slot.RedialDelay = slot.RedialSchedule!.NextDelay();
+        slot.RedialDelay = schedule.NextDelay();
 
         if (_diagnostics.IsEnabled(DiagnosticLevel.Info))
         {
@@ -3267,8 +3268,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// never been Interrupted, its transport loss was ineligible (<see cref="DialedEndpoint"/>
         /// unset or a Goodbye had passed), or a Resume already matched and cleared it. Constructed once
         /// per interruption by <see cref="BeginRedialSchedule"/>, from the Pump interval observed at
-        /// that moment and this Peer's own effective Linger, and consulted only by
-        /// <see cref="ProcessRedials"/> and <see cref="FailRedialAttempt"/>.
+        /// that moment and this Peer's own effective Linger, and read only by
+        /// <see cref="ProcessRedials"/>, which hands it to <see cref="FailRedialAttempt"/>.
         /// </summary>
         public RedialSchedule? RedialSchedule { get; set; }
 

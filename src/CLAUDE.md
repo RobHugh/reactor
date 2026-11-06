@@ -4,6 +4,7 @@
 - File-scoped namespaces only.
 - Primary constructors for injected dependencies: `class OrderService(IRepo repo, ILogger<OrderService> log) : IOrderService`.
 - `<Nullable>enable</Nullable>`. No `!` unless working around a documented framework limitation — add an inline comment when used.
+- One top-level type per file, named after it. A small type that exists only to serve that type (an outcome enum, a shape record, a lookup map) may share its file, e.g. `ReceiveWindowOutcome` in `ReceiveWindow.cs`.
 - Collection expressions: `List<string> items = [];`, `ReadOnlySpan<byte> b = [1, 2, 3];`.
 - Pattern matching and switch expressions over if/else chains for type checks and state transitions.
 
