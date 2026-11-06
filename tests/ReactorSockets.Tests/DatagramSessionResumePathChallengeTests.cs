@@ -182,6 +182,69 @@ public class DatagramSessionResumePathChallengeTests
     }
 
     [Fact]
+    public void Pump_MatchingResumeFromTheSameAddressOnANewPort_SendsNoChallengeAndResumesAtOnce()
+    {
+        // Arrange — a NAT rebinding that changes only the port must not cost a round trip.
+        using Scenario scenario = Scenario.Establish(linger: TimeSpan.FromSeconds(30));
+        scenario.InterruptAccepter();
+        using UdpClient resumer = Scenario.NewResumer();
+
+        // Act
+        resumer.Send(Scenario.BuildResume(scenario.AccepterSessionId, scenario.ResumeSecret), scenario.Accepter.Endpoint);
+        scenario.PumpAccepterUntil(() => scenario.AccepterEvents.Any(e => e.Kind == SessionEventKind.PeerResumed));
+
+        // Assert
+        scenario.AccepterEvents.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerResumed);
+        Scenario.WaitForDatagram(resumer, TimeSpan.FromMilliseconds(100)).Should().BeFalse("nothing is sent before the next Ping is due");
+    }
+
+    [Fact]
+    public void Pump_ResumeFromAnotherNewSource_ChallengesItWithAFreshNonce()
+    {
+        // Arrange
+        using Scenario scenario = Scenario.Establish(linger: TimeSpan.FromSeconds(30));
+        scenario.InterruptAccepter();
+        using UdpClient first = Scenario.NewResumer(_otherAddress);
+        using UdpClient second = Scenario.NewResumer(_otherAddress);
+        byte[] firstChallenge = SendResumeAndReadChallenge(scenario, first);
+
+        // Act
+        byte[] secondChallenge = SendResumeAndReadChallenge(scenario, second);
+
+        // Assert
+        Scenario.PathNonce(secondChallenge).Should().NotEqual(Scenario.PathNonce(firstChallenge));
+    }
+
+    [Fact]
+    public void Pump_PathResponseArrivingAfterASameAddressResume_DoesNotMoveThePeerAgain()
+    {
+        // Arrange — a challenge is pending when the Peer resumes from its own IP, which settles where it is.
+        using Scenario scenario = Scenario.Establish(linger: TimeSpan.FromSeconds(30));
+        scenario.InterruptAccepter();
+        using UdpClient elsewhere = Scenario.NewResumer(_otherAddress);
+        using UdpClient sameAddress = Scenario.NewResumer();
+        byte[] challenge = SendResumeAndReadChallenge(scenario, elsewhere);
+        sameAddress.Send(Scenario.BuildResume(scenario.AccepterSessionId, scenario.ResumeSecret), scenario.Accepter.Endpoint);
+        scenario.PumpAccepterUntil(() => scenario.AccepterEvents.Any(e => e.Kind == SessionEventKind.PeerResumed));
+        ulong receivedBefore = scenario.Accepter.Reactor.Counters.DatagramsReceived;
+
+        // Act — the late echo, then a send-idle interval so the Peer Pings wherever it is sent.
+        elsewhere.Send(Scenario.BuildPathResponse(scenario.AccepterSessionId, Scenario.PathNonce(challenge)), scenario.Accepter.Endpoint);
+        scenario.PumpAccepterUntilReceivedMoreThan(receivedBefore);
+        bool reachedSameAddress = false;
+        for (int i = 0; i < 2 && !reachedSameAddress; i++)
+        {
+            scenario.AdvanceAccepter(Scenario.SendIdleInterval);
+            scenario.PumpAccepter();
+            reachedSameAddress = Scenario.WaitForDatagram(sameAddress);
+        }
+
+        // Assert
+        reachedSameAddress.Should().BeTrue("the Peer stays where the same-address Resume moved it");
+        Scenario.WaitForDatagram(elsewhere, TimeSpan.FromMilliseconds(100)).Should().BeFalse();
+    }
+
+    [Fact]
     public void Pump_ResumeFromANewAddressWithAWrongSecret_SendsNoChallenge()
     {
         // Arrange

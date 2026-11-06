@@ -3643,11 +3643,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Answers a matched Resume from a new IP address with one <see cref="DatagramControlType.PathChallenge"/>
-    /// sent to that address from <paramref name="link"/>, the socket the Resume arrived on, and remembers
-    /// the address, the socket and the nonce on <paramref name="slot"/> (ADR 0021). Nothing else about the
+    /// sent to that address from <paramref name="link"/>, the Link the Resume arrived on, and remembers
+    /// the address, the Link and the nonce on <paramref name="slot"/> (ADR 0021). Nothing else about the
     /// Peer changes: it keeps sending to its old address until <see cref="OnPathResponse"/> sees the nonce
     /// come back from this one. A further Resume from the same source repeats the same nonce, so an answer
-    /// still in flight when the dialler's next Resume arrives is not voided; one from any other source
+    /// still in flight when the dialler's next Resume arrives is not voided. One from any other source
     /// replaces the pending challenge with a fresh nonce. One control datagram answers one, so the
     /// exchange cannot amplify (<see cref="DatagramSessionProtocol.ControlDatagramSize"/>). The Resume and
     /// the challenge are charged to the Peer, whose secret the Resume presented (ADR 0013).
@@ -3667,9 +3667,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             slot.PendingPath = pending;
         }
 
+        AnswerWithPathProbe(slot, DatagramControlType.PathChallenge, pending.Nonce, link, source);
+    }
+
+    /// <summary>
+    /// Charges the control datagram just received to <paramref name="slot"/>, then sends it a
+    /// <paramref name="type"/> probe carrying <paramref name="nonce"/> and routed by its
+    /// <see cref="PeerSlot.RemoteSessionId"/>, from <paramref name="link"/> to <paramref name="destination"/>,
+    /// and charges that send too (ADR 0013).
+    /// </summary>
+    private void AnswerWithPathProbe(PeerSlot slot, DatagramControlType type, ReadOnlySpan<byte> nonce, UdpLink link, Source destination)
+    {
         slot.Counters.RecordBytesReceived(DatagramSessionProtocol.ControlDatagramSize);
-        ControlDatagramCodec.WritePathProbe(_sendBuffer, DatagramControlType.PathChallenge, slot.RemoteSessionId, pending.Nonce);
-        SendControl(link, source);
+        ControlDatagramCodec.WritePathProbe(_sendBuffer, type, slot.RemoteSessionId, nonce);
+        SendControl(link, destination);
         slot.Counters.RecordSocketWrite();
         slot.Counters.RecordBytesSent(DatagramSessionProtocol.ControlDatagramSize);
     }
@@ -3677,7 +3688,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// The dialling end's half of ADR 0021: echoes a <see cref="DatagramControlType.PathChallenge"/>'s
     /// nonce in a <see cref="DatagramControlType.PathResponse"/> sent to the address this end already sends
-    /// its Peer to, from the socket it already sends from. The response never goes to the challenge's
+    /// its Peer to, from the Link it already sends from. The response never goes to the challenge's
     /// source, so a forged challenge cannot aim this end's traffic anywhere. A challenge that does not read,
     /// or names no Established dialled Peer this Reactor holds, is discarded as malformed.
     /// </summary>
@@ -3694,18 +3705,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        slot.Counters.RecordBytesReceived(DatagramSessionProtocol.ControlDatagramSize);
-        ControlDatagramCodec.WritePathProbe(_sendBuffer, DatagramControlType.PathResponse, slot.RemoteSessionId, nonce);
-        SendControl(slot.Link, slot.Remote);
-        slot.Counters.RecordSocketWrite();
-        slot.Counters.RecordBytesSent(DatagramSessionProtocol.ControlDatagramSize);
+        AnswerWithPathProbe(slot, DatagramControlType.PathResponse, nonce, slot.Link, slot.Remote);
     }
 
     /// <summary>
     /// Completes a pending path challenge (ADR 0021): a <see cref="DatagramControlType.PathResponse"/> that
-    /// names an accepted Peer, arrives from exactly the source and on exactly the socket the challenge went
-    /// to and from, and echoes its nonce (compared in constant time) proves that source receives, so the
-    /// Peer resumes there through <see cref="ResumeInterruptedPeer"/>. A Peer that has since entered Closing,
+    /// names an accepted Peer, arrives from exactly the source the challenge went to and on exactly the
+    /// Link it left from, and echoes its nonce (compared in constant time) proves that source receives, so
+    /// the Peer resumes there through <see cref="ResumeInterruptedPeer"/>. A Peer that has since entered Closing,
     /// either side, is refused as <see cref="OnResume"/> refuses it. Any other response is discarded as
     /// malformed and changes nothing.
     /// </summary>
@@ -4393,18 +4400,18 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// A path challenge in flight (ADR 0021): the new source a matched Resume came from, the Link it
+    /// arrived on and the challenge was sent from, and the nonce that must come back from that source on
+    /// that Link before the Peer's sends move there.
+    /// </summary>
+    private sealed record PendingPathChallenge(Source Source, UdpLink Link, byte[] Nonce);
+
+    /// <summary>
     /// The state one occupied capacity Slot holds. The two session ids are deliberately separate:
     /// each end assigns the value it wants stamped on datagrams sent to it, so neither has to agree
     /// with the other about a single shared number, and neither can be made to adopt one it did not
     /// choose.
     /// </summary>
-    /// <summary>
-    /// A path challenge in flight (ADR 0021): the new source a matched Resume came from, the socket it
-    /// arrived on and the challenge was sent from, and the nonce that must come back from that source on
-    /// that socket before the Peer's sends move there.
-    /// </summary>
-    private sealed record PendingPathChallenge(Source Source, UdpLink Link, byte[] Nonce);
-
     private sealed class PeerSlot
     {
         /// <summary>The address this Peer was last known at — a claim, never an authenticator.</summary>

@@ -18,15 +18,15 @@ address changes the IP too.
 
 **A matched Resume from the IP address the Peer is already sent to moves the Peer at once, whatever the
 port.** Address, family and scope id must match. This is the common rebinding case, and it costs nothing
-extra. A forged Resume on this path can only name a port on an address the handshake already proved
-receives, which is the attacker's own.
+extra. A forged Resume on this path can only name a port on the attacker's own public address, which
+the handshake already proved receives. Where that address is shared, see Cost.
 
 **A matched Resume from any other IP address moves nothing until that address answers a challenge.**
-The accepting end sends a `PathChallenge` control datagram to the Resume's source, from the socket the
+The accepting end sends a `PathChallenge` control datagram to the Resume's source, from the Link the
 Resume arrived on, carrying a 16-byte random nonce. The dialling end echoes it in a `PathResponse` sent
-to the address it already sends its Peer to, from the socket it already sends from. The accepting end
+to the address it already sends its Peer to, from the Link it already sends from. The accepting end
 moves the Peer only when the echo arrives from exactly the challenged source, on exactly the challenging
-socket, with the nonce matching in constant time. Until then the Peer keeps being sent to its old address.
+Link, with the nonce matching in constant time. Until then the Peer keeps being sent to its old address.
 
 The two new control types are 7 and 8 on the pre-Session roster. Both bodies are the receiver's own
 session id (4 bytes, which routes) then the nonce (16 bytes). Like every control datagram they are 256
@@ -61,5 +61,13 @@ handshake has already proved that address receives.
 - The challenge itself goes to an unproven address. A forger can still make the Reactor send one 256-byte
   datagram to a victim per Resume it sends, which is the same one-for-one exposure the Cookie already
   accepts for a Hello.
+- **Same-IP redirection stays open where an IP is shared.** Behind a carrier-grade NAT, an office NAT or
+  a shared host, other ports on the Peer's IP can belong to other hosts. A Peer can still point sends at
+  one of them with a forged-source Resume. This is accepted: the victim set is limited to hosts that
+  share the attacker's own public address, and challenging port-only changes would tax every NAT
+  rebinding to close it.
+- **A captured Resume still replays.** Replayed from the Peer's IP it moves sends to that IP at once.
+  Replayed from any other IP it only triggers a challenge that the replayer cannot answer without seeing
+  it. Capturing a Resume needs an on-path position, which is out of scope.
 - On-path attackers remain out of scope. One who sees the Accept holds the secret, and one who sees the
   challenge can answer it.
