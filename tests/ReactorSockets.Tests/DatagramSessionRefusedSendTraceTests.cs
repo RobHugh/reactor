@@ -8,17 +8,14 @@ namespace ReactorSockets.Tests;
 /// Subtask 7.2.4 (issue #244): what a refused <see cref="DatagramSessionReactor.Send"/> is allowed to
 /// leave behind, and the span-copy contract that lets a caller reuse its buffer the instant
 /// <c>Send</c> returns. A <see cref="SendOutcome.RetentionExhausted"/> refusal spends nothing: no
-/// record is queued, no retention is taken, and no sequence number is claimed from the Space, because
-/// the sequence is read with <c>Peek</c> and only claimed once retention has committed.
+/// record is queued, no retention is taken, and no sequence number is claimed from the Space.
 /// </summary>
 /// <remarks>
-/// The no-sequence-burned half is asserted indirectly. A burned sequence becomes visible only when a
-/// <em>later</em> record in the same Space reaches the wire carrying a number one too high, which
-/// needs an ack to free a retention slot after the refusal. This file asserts that the refusal puts
-/// nothing on the wire and that every other Space still bases at zero. The code makes the rest true by
-/// construction: the sequence is read with <c>Peek</c> and claimed only once retention has committed.
-/// The direct assertion — exhaust a Space, refuse, let an ack free a slot, and read the next record's
-/// sequence off the wire — is not made here.
+/// A burned sequence becomes visible only when a <em>later</em> record in the same Space reaches the
+/// wire carrying a number one too high, so
+/// <see cref="Send_AcceptedAfterAnAckFreesTheSlotARefusalFoundFull_CarriesTheNextSequenceSoTheRefusalBurnedNone"/>
+/// exhausts a Space, is refused, lets an ack free the slot, and reads the next accepted record's
+/// sequence off the wire.
 /// </remarks>
 public class DatagramSessionRefusedSendTraceTests
 {
@@ -51,6 +48,45 @@ public class DatagramSessionRefusedSendTraceTests
         datagram.Records[0].Mode.Should().Be(DeliveryMode.ReliableOrdered);
         datagram.Records[0].Sequence.Should().Be(0U, "the accepted Send is this Space's first allocation");
         datagram.Records[0].Payload.Should().Equal([1, 2, 3], "the record on the wire is the one that was accepted");
+    }
+
+    [Fact]
+    public void Send_AcceptedAfterAnAckFreesTheSlotARefusalFoundFull_CarriesTheNextSequenceSoTheRefusalBurnedNone()
+    {
+        // Arrange — one retention slot per reliable Space. Linger is pushed far out so no RTO fires
+        // and resends sequence 0 mid-test.
+        using DatagramSessionReactorHarness dialler = new(
+            bindLoopback: false, maxMessageSize: FragmentSize, retentionBytes: FragmentSize, fragmentSize: FragmentSize,
+            linger: TimeSpan.FromHours(1));
+        using DatagramSessionReactorHarness accepter = new(
+            maxMessageSize: FragmentSize, retentionBytes: FragmentSize, fragmentSize: FragmentSize);
+        using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
+        PeerId diallerPeer = dialler.Reactor.Connect(tap.PublicEndPoint);
+        PeerId accepterPeer = DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
+
+        dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, [1]).Should().Be(SendOutcome.Sent);
+        SendOutcome refused = dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, [2]);
+        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
+
+        // The accepter's reply carries the ack for sequence 0, and the dialler's next Pump reads it
+        // and frees the slot.
+        accepter.Reactor.Send(accepterPeer, DeliveryMode.Unreliable, [9]).Should().Be(SendOutcome.Sent);
+        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
+        dialler.Reactor.Pump();
+
+        // Act
+        SendOutcome afterAck = dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, [3]);
+        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
+
+        // Assert
+        refused.Should().Be(SendOutcome.RetentionExhausted, "the Space holds exactly one slot and the first Send took it");
+        afterAck.Should().Be(SendOutcome.Sent, "the ack for sequence 0 freed the only slot this Space has");
+
+        DecodedPacketRecord record = DecodeDataDatagrams(tap)
+            .SelectMany(datagram => datagram.Records)
+            .Should().ContainSingle(r => r.Mode == DeliveryMode.ReliableOrdered && r.Payload.SequenceEqual(new byte[] { 3 }))
+            .Subject;
+        record.Sequence.Should().Be(1U, "the refusal claimed no sequence, so the next accepted Send takes the one after 0");
     }
 
     [Theory]
@@ -131,5 +167,22 @@ public class DatagramSessionRefusedSendTraceTests
         DatagramDecodeResult decoded = DatagramDecoder.TryDecode(payload);
         decoded.IsSuccess.Should().BeTrue(decoded.Error);
         return decoded.Datagram!;
+    }
+
+    /// <summary>
+    /// Every datagram the dialler sent that is not a control datagram, decoded, in the order sent.
+    /// </summary>
+    private static List<DecodedDatagram> DecodeDataDatagrams(WireTap tap)
+    {
+        List<DecodedDatagram> datagrams = [];
+        foreach (byte[] payload in tap.PayloadsInDirection(TapDirection.DiallerToAccepter)
+            .Where(p => BinaryPrimitives.ReadUInt32BigEndian(p.AsSpan(0, 4)) != 0))
+        {
+            DatagramDecodeResult decoded = DatagramDecoder.TryDecode(payload);
+            decoded.IsSuccess.Should().BeTrue(decoded.Error);
+            datagrams.Add(decoded.Datagram!);
+        }
+
+        return datagrams;
     }
 }
