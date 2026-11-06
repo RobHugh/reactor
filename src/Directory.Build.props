@@ -1,5 +1,7 @@
 <Project>
 
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
   <!--
     One version for every package under src/, so ReactorSockets.Logging versions in lockstep with the
     core (ADR 0006). LoggerSinkPackageTests asserts the two assemblies agree.

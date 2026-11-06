@@ -1,0 +1,17 @@
+<Project>
+
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <!--
+    The compiler reports IDE0005 (unnecessary using) only when it generates a documentation file.
+    Test doc comments are never published, and they cref the internal types a test pins, which the
+    test assembly cannot see (no InternalsVisibleTo, ADR 0015). So the doc-comment checks are off:
+    CS1591 missing comment, CS1573 missing param tag, CS1574 and CS0419 unresolved or ambiguous cref,
+    CS1734 paramref to no parameter.
+  -->
+  <PropertyGroup>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573;CS1574;CS0419;CS1734</NoWarn>
+  </PropertyGroup>
+
+</Project>

@@ -7,6 +7,29 @@ on:
   workflow_dispatch:
 
 jobs:
+  format:
+    name: format
+    # Windows only: .editorconfig sets end_of_line = crlf and the repo stores LF, so only a Windows
+    # checkout (core.autocrlf on) matches. On Linux every line would fail the whitespace check.
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      - name: Restore
+        run: dotnet restore ReactorSockets.slnx
+
+      - name: Verify formatting
+        run: dotnet format ReactorSockets.slnx --no-restore --verify-no-changes --verbosity normal
+
   test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
