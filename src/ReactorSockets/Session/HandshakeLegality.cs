@@ -7,6 +7,11 @@ namespace ReactorSockets.Session;
 /// <see cref="AnnouncedLimits.IsLegal"/> judges its intervals here. Every value judged here comes from a
 /// sender nothing has authenticated.
 /// </summary>
+/// <remarks>
+/// The rules here make both handshake parsers total: a read that succeeds returns only values every
+/// downstream conversion accepts without throwing, and a read that fails discards the record. Each
+/// Session profile has a handshake fuzz test that holds this through the public surface.
+/// </remarks>
 internal static class HandshakeLegality
 {
     /// <summary>
