@@ -65,6 +65,64 @@ public class DatagramSessionFragmentDeliveryTests
     }
 
     [Fact]
+    public void Pump_ADatagramCarryingTwoCompleteSetsWhoseDeclaredRangesTouch_DeliversBothMessages()
+    {
+        // Arrange — sequences 0..1 and 2..3 in one Space: the second range starts exactly one past the
+        // first one's end. Touching is not overlapping, so both sets are honest.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        FindAccepterPeer(accepter);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 0, fragmentCount: 2, payload: [0x03]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 1, fragmentCount: 2, payload: [0x04]),
+        ];
+
+        // Act
+        SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
+        List<byte[]> delivered = accepter.DrainPayloads();
+
+        // Assert
+        accepter.Reactor.Counters.MalformedSessionDatagrams.Should().Be(0, "adjacent declared ranges do not overlap");
+        delivered.Should().BeEquivalentTo([new byte[] { 0x01, 0x02 }, new byte[] { 0x03, 0x04 }]);
+    }
+
+    [Fact]
+    public void Pump_ADatagramCarryingCompleteSetsAtTheSameFirstSequenceInTwoReliableSpaces_DeliversBothMessages()
+    {
+        // Arrange — each reliable Space has its own sequence numbers, so the same first sequence in two
+        // Spaces names two different groups.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        FindAccepterPeer(accepter);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02]),
+            .. BuildFragmentRecord(ModeReliableOrderedProbe, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x03]),
+            .. BuildFragmentRecord(ModeReliableOrderedProbe, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x04]),
+        ];
+
+        // Act
+        SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
+        List<byte[]> delivered = accepter.DrainPayloads();
+
+        // Assert
+        accepter.Reactor.Counters.MalformedSessionDatagrams.Should().Be(0, "groups in different Spaces are never compared");
+        delivered.Should().BeEquivalentTo([new byte[] { 0x01, 0x02 }, new byte[] { 0x03, 0x04 }]);
+    }
+
+    [Fact]
     public void Pump_ADatagramCarryingANonContiguousSubsetOfOneGroup_IsAdmittedAndTheSetStillCompletes()
     {
         // Arrange — issue #274: the shape selective retransmission produces. A three-Fragment set whose

@@ -9,11 +9,8 @@ namespace ReactorSockets;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Public for the same reason <see cref="RetransmissionTimer"/>, <see cref="RoundTripEstimator"/> and
-/// <see cref="PumpIntervalObserver"/> are (ADR 0015): a test drives this directly by constructing one and
-/// calling <see cref="RecordFragmentSent"/> / <see cref="RecordUnfragmentedRecordAcked"/> /
-/// <see cref="RecordFragmentAcked"/> / <see cref="RecordRetransmissionRound"/> against hand-picked
-/// timestamps, with no <c>InternalsVisibleTo</c> and no interface invented for the purpose.
+/// Internal (ADR 0022). Each condition of the signature is proved through a live Peer, by whether it
+/// closes with <see cref="DisconnectReason.FragmentSizeUnviable"/>.
 /// </para>
 /// <para>
 /// <b>Why an acked Fragment latches permanently.</b> The signature this state feeds exists to recognise a
@@ -35,7 +32,7 @@ namespace ReactorSockets;
 /// Reactor's single synchronous Pump. Allocates nothing after construction.
 /// </para>
 /// </remarks>
-public sealed class FragmentStallSignature
+internal sealed class FragmentStallSignature
 {
     /// <summary>
     /// The number of elapsed retransmission rounds (<see cref="RecordRetransmissionRound"/>, one per

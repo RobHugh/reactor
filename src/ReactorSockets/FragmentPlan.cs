@@ -10,7 +10,7 @@ namespace ReactorSockets;
 /// <see cref="Result"/> uses for the public surface, extended with the count a success needs to hand
 /// back.
 /// </summary>
-public readonly record struct FragmentPlanResult
+internal readonly record struct FragmentPlanResult
 {
     private FragmentPlanResult(bool isMessageTooLarge, bool isOverRemoteLimit, int fragmentCount)
     {
@@ -43,10 +43,7 @@ public readonly record struct FragmentPlanResult
     public int FragmentCount { get; }
 
     /// <summary>
-    /// Builds a success carrying <paramref name="fragmentCount"/> Fragments. Public because the type
-    /// itself is (ADR 0015): a consumer that can observe this result through <see cref="FragmentPlan.Resolve"/> must
-    /// be able to construct one, the same coherence <see cref="MessageTooLarge"/> already has as a
-    /// public singleton.
+    /// Builds a success carrying <paramref name="fragmentCount"/> Fragments.
     /// </summary>
     public static FragmentPlanResult ForFragmentCount(int fragmentCount) => new(false, false, fragmentCount);
 
@@ -67,11 +64,8 @@ public readonly record struct FragmentPlanResult
 /// </summary>
 /// <remarks>
 /// <para>
-/// Public for the same reason <see cref="RoundTripEstimator"/> is (ADR 0015): a test pins this
-/// behaviour by calling <see cref="Resolve"/> directly with hand-picked lengths, with no
-/// <c>InternalsVisibleTo</c> and no interface invented for the purpose. It is not part of a
-/// consumer's request path — nothing here is reached by name from application code — but the seam
-/// this library tests through has no other way to reach arithmetic this precise.
+/// Internal (ADR 0022). The cut and both refusals are proved through <see cref="DatagramSessionReactor.Send"/>,
+/// by the record count a Message puts on the wire and the <see cref="SendOutcome"/> a refusal returns.
 /// </para>
 /// <para>
 /// <b>Fragmentation is reliable-only (ADR 0004).</b> <see cref="DeliveryMode.ReliableOrdered"/> and
@@ -96,7 +90,7 @@ public readonly record struct FragmentPlanResult
 /// which is why it is called out here rather than left to fall out of the arithmetic.
 /// </para>
 /// </remarks>
-public static class FragmentPlan
+internal static class FragmentPlan
 {
     /// <summary>
     /// Decides how a Message of <paramref name="messageLength"/> bytes is cut when sent under

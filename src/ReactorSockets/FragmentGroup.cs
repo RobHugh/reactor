@@ -12,11 +12,8 @@ namespace ReactorSockets;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Public for the same reason <see cref="FragmentPlan"/> is (ADR 0015): a test pins the <c>u32</c>-wrap
-/// identity by calling <see cref="FirstSequenceOf"/> directly with hand-picked sequences and fragment
-/// indices, with no <c>InternalsVisibleTo</c> and no interface invented for the purpose. It is not part
-/// of a consumer's request path — nothing here is reached by name from application code — but the seam
-/// this library tests through has no other way to reach arithmetic this precise.
+/// Internal (ADR 0022). The <c>u32</c>-wrap identity is proved through the receive path, by the
+/// hostile-fragment and ring-wrap delivery tests.
 /// </para>
 /// <para>
 /// Added as a sibling to <see cref="SequenceNumber"/> rather than folded into it: that type answers
@@ -28,7 +25,7 @@ namespace ReactorSockets;
 /// question instead of two.
 /// </para>
 /// </remarks>
-public static class FragmentGroup
+internal static class FragmentGroup
 {
     /// <summary>
     /// The first sequence of the group a Fragment at <paramref name="sequence"/> and
@@ -66,13 +63,9 @@ public static class FragmentGroup
     /// A no-op outside <c>DEBUG</c> builds, matching every other debug-only guard in this codebase: the
     /// contiguity invariant is enforced by construction in the send path that builds these sets, so this
     /// exists to catch a defect in that construction, not to police an untrusted input — a remote peer's
-    /// Fragments are validated by <see cref="PacketRecordCodec.TryRead"/>, not by this method. Public for
-    /// the same reason <see cref="FirstSequenceOf"/> is (ADR 0015): the send path only ever hands this
-    /// a set it just built correctly, so the happy path exercised through
-    /// <see cref="DatagramSessionReactor.Send"/> can never reach the gap or length-mismatch it guards
-    /// against. Those two failure shapes are unreachable through the public seam at any cost — not
-    /// expensive, unreachable — so a test pins them by calling this method directly with a hand-built
-    /// bad set, with no <c>InternalsVisibleTo</c> and no interface invented for the purpose.
+    /// Fragments are validated by <see cref="PacketRecordCodec.TryRead"/>, not by this method. The send
+    /// path only ever hands this a set it just built correctly, so the gap and length mismatch it guards
+    /// against cannot be reached through the public seam, and nothing tests them (ADR 0022).
     /// </remarks>
     /// <param name="sequencesInFragmentIndexOrder">
     /// The group's sequences, ordered by ascending fragment index — <c>sequencesInFragmentIndexOrder[i]</c>

@@ -4,13 +4,12 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// <see cref="DatagramSessionReactor"/> now owns a <see cref="PumpIntervalObserver"/>,
+/// <see cref="DatagramSessionReactor"/> owns a <c>PumpIntervalObserver</c>,
 /// observed exactly once per <see cref="DatagramSessionReactor.Pump"/>, mirroring
-/// <see cref="StreamSessionReactor"/>'s own use of the same type. The reading itself —
-/// unseeded <c>TimeSpan.MaxValue</c>, most-recent-cadence tracking, wall-clock independence — is
-/// already pinned once, against the observer directly, in <see cref="PumpIntervalObserverTests"/>;
-/// re-asserting it here through a full Reactor would duplicate that contract rather than test
-/// anything new. What this file pins instead is that wiring the observation into the datagram
+/// <see cref="StreamSessionReactor"/>'s own use of the same type. The reading itself is observable
+/// only as the floor it puts under the retransmission timeout, and
+/// <see cref="DatagramSessionAdaptiveRtoTests"/> pins it there, including that the wall clock is never
+/// read. What this file pins is that wiring the observation into the datagram
 /// Reactor's Pump body is safe: the Reactor stays usable, pumping at varying cadences under a
 /// substituted <see cref="Microsoft.Extensions.Time.Testing.FakeTimeProvider"/> raises no
 /// Warn-or-above diagnostic, and a steady-state run of Pumps allocates nothing beyond warmup —

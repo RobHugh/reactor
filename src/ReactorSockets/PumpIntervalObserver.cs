@@ -12,10 +12,8 @@ namespace ReactorSockets;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Public for the same reason <see cref="Session.RedialSchedule"/> is (ADR 0015): a test pins this behaviour
-/// by constructing one directly against a substituted <see cref="TimeProvider"/> and calling
-/// <see cref="Observe"/> the same way a Reactor's own Pump would, with no <c>InternalsVisibleTo</c>
-/// and no interface invented for the purpose.
+/// Internal (ADR 0022). The interval is observable only as the floor it puts under a Reactor's
+/// retransmission timeout, and is proved there.
 /// </para>
 /// <para>
 /// Only <see cref="TimeProvider.GetTimestamp"/> and <see cref="TimeProvider.GetElapsedTime(long,long)"/>
@@ -27,7 +25,7 @@ namespace ReactorSockets;
 /// slower loop has already left behind.
 /// </para>
 /// </remarks>
-public sealed class PumpIntervalObserver
+internal sealed class PumpIntervalObserver
 {
     private readonly TimeProvider _timeProvider;
     private long? _lastTimestamp;

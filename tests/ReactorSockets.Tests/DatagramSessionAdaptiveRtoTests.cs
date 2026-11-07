@@ -7,7 +7,7 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// The whole adaptive timer proved over a real Peer rather than over a
-/// <see cref="RetransmissionTimer"/> in isolation, through the
+/// <c>RetransmissionTimer</c> in isolation, through the
 /// <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record each backoff emits. The behaviours
 /// that are only observable once a Peer's estimator has actually been fed — that releasing an armed sequence samples it, that releasing a deferred one
 /// does not, and that an expired sequence re-arms at the backed-off RTO — are asserted here too, since
@@ -308,6 +308,151 @@ public class DatagramSessionAdaptiveRtoTests
             1, "the sequence armed after the RTO changed has its own deadline, and the earlier one is not retroactively moved");
         afterTheOlderDeadline.Should().Be(
             3, "past a second the sequence armed at the Linger-wide RTO expires too, with the newer one expiring a second time");
+    }
+
+    [Fact]
+    public void Pump_ASecondCleanSampleAfterTheSeed_MovesTheRtoByTheRfc6298RecurrenceWithVarianceUpdatedFirst()
+    {
+        // Arrange — the 20ms seed leaves smoothed 20ms and variance 10ms. A second clean sample of 60ms
+        // then updates the variance from the smoothed value current before it, 3/4 x 10 + 1/4 x |20 - 60|
+        // = 17.5ms, and only then the smoothed value, 7/8 x 20 + 1/8 x 60 = 25ms. The timeout is
+        // 25 + 4 x 17.5 = 95ms, so the first backoff reports 190.
+        using DatagramSessionReactorHarness node = new(retentionBytes: RetentionForSixtyFourRecords);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(node, client, clientLink);
+        PeerId nodePeer = FindNodePeer(node);
+
+        SeedTheEstimator(node, client, clientLink, sessionId, nodePeer);
+        ArmOneReliableSequence(node, nodePeer);
+        node.TimeProvider.Advance(TimeSpan.FromMilliseconds(60));
+        SendCraftedArrival(
+            node,
+            client,
+            clientLink,
+            BuildDatagram(sessionId, reliableOrderedAckBase: 2, reliableOrderedAckBits: 0, sequence: 10));
+        SettleCadence(node);
+
+        node.Sink.Received.Clear();
+        ArmOneReliableSequence(node, nodePeer);
+
+        // Act
+        node.TimeProvider.Advance(TimeSpan.FromMilliseconds(95));
+        node.Reactor.Pump();
+
+        // Assert — 190 is the recurrence in this order. Updating the smoothed value first would give a
+        // variance of 16.25ms and report 180. Ignoring the second sample would leave the seed's 120.
+        BackedOffRecords(node, nodePeer).Should().Equal(
+            [(190, 1)],
+            "the second sample moved the variance from the old smoothed value, then the smoothed value itself");
+    }
+
+    [Fact]
+    public void Pump_AtACadenceSlowerThanTheEstimate_FloorsTheRtoAtThePumpIntervalUntilTheBackoffPassesIt()
+    {
+        // Arrange — the seed gives a 60ms estimate, then every Pump is 150ms after the one before it.
+        using DatagramSessionReactorHarness node = new(retentionBytes: RetentionForSixtyFourRecords);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(node, client, clientLink);
+        PeerId nodePeer = FindNodePeer(node);
+
+        SeedTheEstimator(node, client, clientLink, sessionId, nodePeer);
+        node.Sink.Received.Clear();
+        TimeSpan cadence = TimeSpan.FromMilliseconds(150);
+
+        // Act — the flush that arms the sequence, then two Pumps that each find it expired.
+        node.Reactor.Send(nodePeer, DeliveryMode.ReliableOrdered, [1]).Should().Be(SendOutcome.Sent);
+        for (int i = 0; i < 3; i++)
+        {
+            node.TimeProvider.Advance(cadence);
+            node.Reactor.Pump();
+        }
+
+        // Assert — the first doubling, 120ms, is shorter than a Pump that cannot come sooner than 150ms,
+        // so it reports the floor. The second, 240ms, is past the floor and reports itself.
+        BackedOffRecords(node, nodePeer).Should().Equal(
+            [(150, 1), (240, 2)],
+            "a timeout shorter than the gap between Pumps cannot be acted on, so the observed cadence floors it");
+    }
+
+    [Fact]
+    public void Pump_SixtyFourConsecutiveLosses_KeepTheRtoAtLingerRatherThanOverflowingTheDoubling()
+    {
+        // Arrange — 60ms doubled 64 times is far past what a TimeSpan holds, so the doubling must
+        // saturate before the Linger ceiling is applied to it.
+        using DatagramSessionReactorHarness node = new(retentionBytes: RetentionForSixtyFourRecords);
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(node, client, clientLink);
+        PeerId nodePeer = FindNodePeer(node);
+
+        SeedTheEstimator(node, client, clientLink, sessionId, nodePeer);
+        ArmOneReliableSequence(node, nodePeer);
+        node.Sink.Received.Clear();
+
+        // Act
+        TimeSpan[] firstDeadlines = [_seededTimeout, _seededTimeout * 2, _seededTimeout * 4, _seededTimeout * 8];
+        foreach (TimeSpan deadline in firstDeadlines)
+        {
+            node.TimeProvider.Advance(deadline);
+            node.Reactor.Pump();
+        }
+
+        // Each later Linger-wide wait is stepped 10ms at a time. One Linger-wide jump would make the
+        // observed cadence a full second, and that floor alone would hide a wrapped doubling.
+        TimeSpan step = TimeSpan.FromMilliseconds(10);
+        for (int i = firstDeadlines.Length; i < 64; i++)
+        {
+            for (TimeSpan waited = TimeSpan.Zero; waited < _linger; waited += step)
+            {
+                node.TimeProvider.Advance(step);
+                node.Reactor.Pump();
+            }
+        }
+
+        // Assert
+        List<(long Rto, long Count)> reported = BackedOffRecords(node, nodePeer);
+        reported.Should().HaveCount(64, "every Pump found the one sequence expired again");
+        reported.Select(entry => entry.Count).Should().Equal(Enumerable.Range(1, 64).Select(count => (long)count));
+        reported.Skip(4).Should().OnlyContain(
+            entry => entry.Rto == (long)_linger.TotalMilliseconds,
+            "a saturated doubling is still clamped to Linger, never wrapped to a negative or tiny timeout");
+    }
+
+    [Fact]
+    public void Pump_EstimatingBackingOffAndFlooringOverAClockWhoseWallTimeThrows_NeverReadsTheWallClock()
+    {
+        // Arrange — every timer this library owns is monotonic (ADR 0002), so a clock whose wall time
+        // throws must not disturb a sample, a backoff or the Pump-interval floor.
+        using DatagramSessionReactorHarness node = new(
+            retentionBytes: RetentionForSixtyFourRecords, timeProvider: new WallClockForbiddenTimeProvider());
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(node, client, clientLink);
+        PeerId nodePeer = FindNodePeer(node);
+
+        // Act
+        SeedTheEstimator(node, client, clientLink, sessionId, nodePeer);
+        ArmOneReliableSequence(node, nodePeer);
+        node.Sink.Received.Clear();
+        node.TimeProvider.Advance(_seededTimeout);
+        node.Reactor.Pump();
+
+        // Assert
+        BackedOffRecords(node, nodePeer).Should().Equal(
+            [(120, 1)], "the estimate, the backoff and the floor were all computed from timestamps alone");
+    }
+
+    /// <summary>
+    /// A <see cref="Microsoft.Extensions.Time.Testing.FakeTimeProvider"/> whose wall time throws, so any
+    /// read of <see cref="TimeProvider.GetUtcNow"/> fails the test that uses it. Timestamps still advance
+    /// with the fake clock.
+    /// </summary>
+    private sealed class WallClockForbiddenTimeProvider : Microsoft.Extensions.Time.Testing.FakeTimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() =>
+            throw new InvalidOperationException("The wall clock was read; only monotonic timestamps may be.");
     }
 
     /// <summary>

@@ -8,10 +8,8 @@ namespace ReactorSockets;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Public for the same reason <see cref="PumpIntervalObserver"/> is (ADR 0015): a test pins this
-/// behaviour by constructing one directly and calling <see cref="BackOff"/> /
-/// <see cref="RecordDelivery"/> against hand-picked <see cref="RoundTripEstimator"/> samples, with no
-/// <c>InternalsVisibleTo</c> and no interface invented for the purpose.
+/// Internal (ADR 0022). The backoff, its reset and both clamps are proved through a live Peer, by the
+/// RTO and count each <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record carries.
 /// </para>
 /// <para>
 /// Backoff sits above the estimator rather than inside it: <see cref="BackOff"/> and
@@ -29,7 +27,7 @@ namespace ReactorSockets;
 /// <see cref="Timeout"/>'s own arithmetic.
 /// </para>
 /// </remarks>
-public sealed class RetransmissionTimer
+internal sealed class RetransmissionTimer
 {
     /// <summary>
     /// The RTT estimator this timer backs off above. Owned and constructed here rather than injected,

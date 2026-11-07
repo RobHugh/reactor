@@ -48,7 +48,7 @@ namespace ReactorSockets.Tests;
 /// <see cref="System.Diagnostics.Stopwatch"/> budget the way the harness's own connect helpers do.
 /// Measured on issue #304 before the switch, with a throwaway probe rather than a kept test: 5000 fresh
 /// proxied handshakes on this path each completed within three rounds, none needing a wait of any kind. Every timing decision either run makes after that — RTO
-/// expiry, backoff, and the four retransmission rounds <see cref="FragmentStallSignature"/> counts — is
+/// expiry, backoff, and the four retransmission rounds <c>FragmentStallSignature</c> counts — is
 /// read off <see cref="Clock"/>, the shared <see cref="FakeTimeProvider"/>, and advanced only by
 /// <see cref="PumpRound"/>'s own <paramref name="advance"/> parameter.
 /// </para>
