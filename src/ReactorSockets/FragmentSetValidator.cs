@@ -115,7 +115,7 @@ public sealed class FragmentSetValidator
                 // record, and a longer body was refused above.
                 Debug.Assert(fragmentCount < MaxFragmentRecords, "More Fragments than the scratch was sized for.");
 
-                _fragmentGroupKey[fragmentCount] = ((ulong)(byte)mode << 32) | FragmentGroup.FirstSequenceOf(sequence, index);
+                _fragmentGroupKey[fragmentCount] = PackFragmentGroupKey((byte)mode, FragmentGroup.FirstSequenceOf(sequence, index));
                 _fragmentIndexAndCount[fragmentCount] = ((uint)index << 16) | count;
                 fragmentCount++;
             }
@@ -147,6 +147,13 @@ public sealed class FragmentSetValidator
 
         return NoTwoDeclaredRangesOverlap(distinctGroupCount);
     }
+
+    /// <summary>Packs a Fragment's group identity: mode in bits 32-39, so it dominates the sort, first sequence in bits 0-31.</summary>
+    private static ulong PackFragmentGroupKey(byte mode, uint firstSequence) => ((ulong)mode << 32) | firstSequence;
+
+    private static byte FragmentGroupKeyMode(ulong key) => (byte)(key >> 32);
+
+    private static uint FragmentGroupKeyFirstSequence(ulong key) => (uint)key;
 
     private static ushort IndexOf(uint indexAndCount) => (ushort)(indexAndCount >> 16);
 
@@ -191,8 +198,8 @@ public sealed class FragmentSetValidator
         }
 
         ulong key = _fragmentGroupKey[runStart];
-        byte mode = (byte)(key >> 32);
-        uint firstSequence = (uint)key;
+        byte mode = FragmentGroupKeyMode(key);
+        uint firstSequence = FragmentGroupKeyFirstSequence(key);
         _distinctGroups[distinctGroupCount] = ((ulong)mode << 48) | ((ulong)firstSequence << 16) | declaredCount;
         distinctGroupCount++;
         return true;

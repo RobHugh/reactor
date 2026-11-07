@@ -103,17 +103,29 @@ public sealed class ClosedSessionMemory
             return false;
         }
 
-        ReadOnlySpan<byte> body = datagram[DatagramSessionProtocol.DatagramHeaderSize..];
+        // The Goodbye is applied to a copy, committed only once the whole body has parsed and proved to
+        // carry an ordered record, so a datagram that is declined leaves the entry untouched.
+        ClosedSessionAck candidate = entry.Ack;
         bool carriesReliableOrderedRecord = false;
-        ReadOnlySpan<byte> remainder = body;
+        ReadOnlySpan<byte> remainder = datagram[DatagramSessionProtocol.DatagramHeaderSize..];
         while (remainder.Length > 0)
         {
-            if (!PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
+            if (!PacketRecordCodec.TryRead(
+                    remainder, out PacketRecordMode mode, out uint sequence, out _, out _, out _, out _,
+                    out bool isControl, out int bytesConsumed))
             {
                 return false;
             }
 
-            carriesReliableOrderedRecord |= mode == PacketRecordMode.ReliableOrdered;
+            if (mode == PacketRecordMode.ReliableOrdered)
+            {
+                carriesReliableOrderedRecord = true;
+                if (isControl)
+                {
+                    candidate = AcknowledgeGoodbye(candidate, sequence);
+                }
+            }
+
             remainder = remainder[bytesConsumed..];
         }
 
@@ -122,19 +134,8 @@ public sealed class ClosedSessionMemory
             return false;
         }
 
-        remainder = body;
-        while (remainder.Length > 0)
-        {
-            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out _, out _, out _, out _, out bool isControl, out int bytesConsumed);
-            if (mode == PacketRecordMode.ReliableOrdered && isControl)
-            {
-                entry.Ack = AcknowledgeGoodbye(entry.Ack, sequence);
-            }
-
-            remainder = remainder[bytesConsumed..];
-        }
-
-        ack = entry.Ack;
+        entry.Ack = candidate;
+        ack = candidate;
         return true;
     }
 
