@@ -117,7 +117,10 @@ public class AssemblySkeletonTests
             nameof(FragmentStallSignature),
             nameof(FragmentPlan),
             nameof(FragmentPlanResult),
-            nameof(FragmentGroup));
+            nameof(FragmentGroup),
+            nameof(FragmentSetValidator),
+            nameof(ClosedSessionMemory),
+            nameof(ClosedSessionAck));
     }
 
     [Fact]

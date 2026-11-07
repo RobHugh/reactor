@@ -108,19 +108,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private readonly Dictionary<(Source Remote, ulong Nonce), SlotHandle> _acceptedHandshakes = [];
 
     /// <summary>
-    /// Closed-session records (ADR 0017, second amendment 2026-09-29): one ring entry per capacity Slot,
-    /// written by <see cref="RememberClosedSession"/> when a Peer closes while the remote may still be
-    /// waiting for the ack of its Goodbye. Holds no capacity Slot. When the ring is full the oldest entry
-    /// is overwritten, so a burst of closes larger than Capacity within one Linger can lose the oldest
-    /// re-ack, which degrades that sender to <see cref="DisconnectReason.LingerExpired"/> as before.
+    /// Sessions that closed on a Goodbye, remembered for one effective Linger so a resent Goodbye can
+    /// still be acknowledged (ADR 0017, second amendment). Written by <see cref="RememberClosedSession"/>,
+    /// read by <see cref="TryReAckClosedSession"/>. Holds no capacity Slot.
     /// </summary>
-    private readonly ClosedSession[] _closedSessions;
-
-    /// <summary>Ring index in <see cref="_closedSessions"/> by the closed session's local id. Sized once, never grows.</summary>
-    private readonly Dictionary<uint, int> _closedSessionIndex;
-
-    /// <summary>The ring position the next <see cref="RememberClosedSession"/> writes to.</summary>
-    private int _closedSessionNext;
+    private readonly ClosedSessionMemory _closedSessions;
 
     private readonly byte[] _scratchBuffer = new byte[MaxUdpDatagramSize];
     private readonly byte[] _sendBuffer = new byte[DatagramSessionProtocol.ControlDatagramSize];
@@ -136,49 +128,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private readonly byte[] _outboundDatagramBuffer = new byte[MaxUdpDatagramSize];
 
     /// <summary>
-    /// <see cref="FragmentSetsAreWellFormed"/>'s scratch, sized once at construction from
-    /// <see cref="MaxUdpDatagramSize"/> — the largest datagram this Reactor ever reads — divided by the
-    /// smallest a Fragment record can be (<see cref="DatagramSessionProtocol.FragmentRecordSize"/>), so
-    /// no datagram this Reactor accepts can ever hold more Fragments than these arrays hold entries
-    /// for. A group's identity is the pair (mode, first sequence), never first sequence alone:
-    /// <see cref="ReceiveWindowSpaces"/>'s own doc states the reason — each
-    /// <see cref="PacketRecordMode"/> is an independent Space, so a sequence admitted under one mode says
-    /// nothing about the same sequence under another, and two groups in different modes can never
-    /// conflict, however their first sequences or declared ranges happen to line up. One entry per
-    /// Fragment actually found in the datagram being parsed: <see cref="_fragmentGroupKey"/> packs each
-    /// Fragment's mode into its high bits and its first sequence into its low bits
-    /// (<see cref="PackModeAndFirstSequence"/>), and is sorted together with
-    /// <see cref="_fragmentGroupIndexAndCount"/> by that combined key so every Fragment of one (mode,
-    /// first sequence) group becomes one contiguous run in O(n log n) instead of re-walking the datagram
-    /// once per Fragment — sorting by mode first is what keeps one mode's runs from ever interleaving
-    /// with another's. <see cref="_distinctGroupFirstSequenceAndCount"/> then holds one entry per
-    /// distinct group (mode, first sequence and declared count all packed together), grouped by mode in
-    /// the same order the runs above were closed in; the O(g log g) sweep that finds a declared-range
-    /// overlap is run once per mode's own contiguous slice of that array via
-    /// <see cref="_distinctGroupSortKey"/> — each group's declared range start relative to an anchor
-    /// derived fresh for that mode's slice — so a comparison across two different modes' groups never
-    /// happens at all.
-    /// Four arrays of <see cref="MaxFragmentRecordsPerDatagram"/> entries costs about 140 KB per Reactor,
-    /// paid once at construction and never again: the point of sizing them off a bound fixed at
-    /// construction is that a peer's choice of datagram can never move it.
-    /// Reused across every datagram parsed — never cleared, since every read is bounded by a count
-    /// computed fresh for that datagram, and never resized, since the bound above is fixed at
-    /// construction. Single-threaded like every other field this Reactor's Pump touches (ADR 0002).
+    /// Refuses a data datagram whose individually legal Fragments lie about which set each belongs to
+    /// (ADR 0009). Its scratch is sized once here and reused for every datagram parsed.
     /// </summary>
-    /// <remarks>
-    /// <see cref="OneSequenceSpace"/> sits beside these because the sweep they feed measures distances
-    /// around the <c>u32</c> sequence circle, and 2^32 does not fit in the <see cref="uint"/> that circle
-    /// is counted in.
-    /// </remarks>
-    private const ulong OneSequenceSpace = 1UL << 32;
-
-    private const int MaxFragmentRecordsPerDatagram =
-        (MaxUdpDatagramSize - DatagramSessionProtocol.DatagramHeaderSize) / DatagramSessionProtocol.FragmentRecordSize;
-
-    private readonly ulong[] _fragmentGroupKey = new ulong[MaxFragmentRecordsPerDatagram];
-    private readonly uint[] _fragmentGroupIndexAndCount = new uint[MaxFragmentRecordsPerDatagram];
-    private readonly ulong[] _distinctGroupFirstSequenceAndCount = new ulong[MaxFragmentRecordsPerDatagram];
-    private readonly int[] _distinctGroupSortKey = new int[MaxFragmentRecordsPerDatagram];
+    private readonly FragmentSetValidator _fragmentSetValidator = new();
 
     private readonly int _maxDatagramsPerPump;
     private readonly int _admissionCap;
@@ -247,8 +200,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _maxLegalFragmentCount = options.ResolvedReceiveWindowFragments;
         _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
 
-        _closedSessions = new ClosedSession[options.Reactor.Capacity];
-        _closedSessionIndex = new Dictionary<uint, int>(options.Reactor.Capacity);
+        _closedSessions = new ClosedSessionMemory(options.Reactor.Capacity, options.Reactor.TimeProvider);
 
         _receiveWindows = new ReceiveWindowSpaces[options.Reactor.Capacity];
         for (int i = 0; i < _receiveWindows.Length; i++)
@@ -774,7 +726,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _lifecycle.IsDisposed = true;
         _peers.DrainAll();
         _peersBySessionId.Clear();
-        _closedSessionIndex.Clear();
+        _closedSessions.ForgetAll();
         _dialsByNonce.Clear();
         _acceptedHandshakes.Clear();
         _pendingEvents.Clear();
@@ -1001,7 +953,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// first pass below names that refusal on the Diagnostic stream as well, because it says the sender
     /// fragments in modes this profile does not rather than that rubbish arrived. Parsing therefore
     /// runs in three passes over the same bytes: the first confirms every record is well-formed without
-    /// touching any Space; the second, once <see cref="FragmentSetsAreWellFormed"/> also stands, walks
+    /// touching any Space; the second, once <see cref="FragmentSetValidator.AreWellFormed"/> also stands, walks
     /// every record again to refuse — with a close, not a discard — a declared <c>fragmentCount</c>
     /// larger than this Reactor's own receive window, <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>,
     /// could ever hold; only once neither of those passes objects does the third classify each record
@@ -1061,7 +1013,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // only half the story: this checks the claimed sets those individually-legal Fragments form
         // (issue #256), still before any Space is touched, so a forged set is refused exactly like a
         // malformed record rather than reaching classification.
-        if (!FragmentSetsAreWellFormed(body))
+        if (!_fragmentSetValidator.AreWellFormed(body))
         {
             DiscardMalformedForSession(source, datagram.Length);
             return;
@@ -1150,384 +1102,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             ClassifyRecord(slot, mode, sequence, isFragment, isControl, fragmentIndex, fragmentCount, payload);
             remainder = remainder[bytesConsumed..];
         }
-    }
-
-    /// <summary>
-    /// Checks every Fragment in <paramref name="body"/> as part of the set it claims to belong to, not
-    /// only individually (ADR 0009). Contiguity stands in for a message ID no wire byte carries, so two
-    /// shapes of forgery break it: Fragments naming the same group — the pair of that group's mode and
-    /// <see cref="FragmentGroup.FirstSequenceOf"/> — whose actually-present indices leave a gap, and
-    /// two distinct claimed groups <em>in the same mode</em> whose <em>declared</em> ranges overlap —
-    /// some one wire sequence that could be read as belonging to either, whether or not a Fragment has
-    /// actually arrived there yet. Every record here already proved individually legal in the pass
-    /// above — an index at or beyond its own count, a count of zero, or a count of one already
-    /// discarded the datagram before this method is reached — so this is where a datagram whose
-    /// individually-legal Fragments lie about which set each belongs to is refused instead.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>A group is identified by (mode, first sequence), not first sequence alone.</b>
-    /// <see cref="ReceiveWindowSpaces"/> keeps one independent <see cref="ReceiveWindow"/> per
-    /// <see cref="PacketRecordMode"/> — its own doc states why: a sequence admitted under one mode says
-    /// nothing about the same sequence under another. A <c>ReliableOrdered</c> group starting at sequence
-    /// 100 and a <c>ReliableUnordered</c> group also starting at sequence 100 are unrelated groups in
-    /// unrelated Spaces; folding them into one first-sequence-only namespace, as an earlier shape of this
-    /// check did, sees two Fragments both claiming index 0 of what it wrongly believes is one group and
-    /// discards a datagram no attacker forged. The same is true of the declared-range overlap sweep: two
-    /// groups in different modes can never conflict, however their declared ranges happen to line up, so
-    /// that sweep only ever compares two groups already known to share a mode.
-    /// </para>
-    /// <para>
-    /// <b>Scope is this one datagram.</b> A group that arrives split across more than one datagram, or
-    /// one a later datagram contradicts, needs state only reassembly owns; this method holds nothing
-    /// across calls beyond its own preallocated scratch (below) and knows nothing beyond
-    /// <paramref name="body"/>'s own bytes. A partial set — fewer Fragments than
-    /// <see cref="PacketRecordCodec.TryRead"/>'s <c>fragmentCount</c> promises — is not a violation, and
-    /// neither is a gap in the indices it does carry: an honest sender's Fragments of one group may be
-    /// spread across datagrams, and selective retransmission packs whichever of them expired, which is
-    /// a subset chosen by what was acked rather than a run (see <see cref="TryCloseContiguousRun"/>'s
-    /// own remarks). What each group's members must agree on is their declared count, and no index may
-    /// appear twice.
-    /// </para>
-    /// <para>
-    /// <b>Overlap is judged on each same-mode group's DECLARED range, not on what is merely observed.</b>
-    /// Two Fragments in one mode — firstSeq 100 declaring count 5 (range 100..104), and firstSeq 103
-    /// declaring count 2 (range 103..104) — can arrive with only sequences 100, 101 and 103 actually
-    /// present, so their observed points (100-101 vs 103) never collide. Sequence 104 is still claimed by
-    /// both groups: a later Fragment landing there is index 4 of the first group or index 1 of the second
-    /// depending on which group is believed, and nothing observed so far can tell them apart. Judging the
-    /// check on declared ranges is what catches this before either group is trusted.
-    /// </para>
-    /// <para>
-    /// <b>Bounded cost, no per-datagram allocation.</b> Re-deriving every Fragment's group by
-    /// re-walking <paramref name="body"/> once per Fragment — the previous shape of this check — is
-    /// O(n²) in the datagram's record count on a path a remote peer's datagram length alone controls:
-    /// at the wire floor of 11 bytes per Fragment, a maximum-size 65,507-byte UDP datagram holds
-    /// <see cref="MaxFragmentRecordsPerDatagram"/> (5,953) of them, and two O(n²) walks over that many
-    /// records is tens of millions of <see cref="PacketRecordCodec.TryRead"/> calls for one datagram on
-    /// the single-threaded Pump. Instead, one linear pass collects each Fragment's (mode, first
-    /// sequence) key and index into <see cref="_fragmentGroupKey"/> and
-    /// <see cref="_fragmentGroupIndexAndCount"/>, both sorted by that combined key
-    /// (<see cref="Array.Sort(Array, Array, int, int)"/> over ulong/uint keys, no comparer allocated,
-    /// mode occupying the key's high bits so one mode's entries never interleave with another's) so
-    /// every Fragment of one (mode, first sequence) group becomes one contiguous
-    /// run — O(n log n) rather than O(n) group lookups each costing O(n). Each run is checked for a
-    /// disagreed count and a repeated index and, if it passes, contributes one entry to
-    /// <see cref="_distinctGroupFirstSequenceAndCount"/> (<see cref="TryCloseContiguousRun"/>), which
-    /// packs that group's mode alongside its first sequence and declared count. Because the runs above
-    /// were closed in (mode, first sequence) order, the distinct groups already sit in contiguous
-    /// per-mode slices; the declared-range overlap sweep (<see cref="NoTwoDeclaredRangesOverlap"/>) walks
-    /// those slices one mode at a time and only ever sorts and sweeps within one slice
-    /// (<see cref="_distinctGroupSortKey"/>) — an interval-scheduling sweep, O(g log g) overall in the
-    /// number of distinct groups (the per-mode sweeps' costs sum to at most that bound) rather than the
-    /// O(g²) an all-pairs comparison would cost, and a comparison between two different modes' groups
-    /// never happens at all. Every array here is preallocated once at construction from
-    /// <see cref="MaxUdpDatagramSize"/> (see the scratch fields' own remarks) and reused datagram after
-    /// datagram: nothing is allocated, resized or cleared on this path, only bounded by a count freshly
-    /// computed for the datagram being parsed.
-    /// </para>
-    /// <para>
-    /// <b>Each per-mode sweep's sort key is relative to an anchor chosen fresh for that mode's slice,
-    /// using the same unsigned wrap-aware subtraction <see cref="SequenceNumber.IsNewerThan"/> is built
-    /// on.</b> This assumes, as every "newer than" decision on this data path already does, that the
-    /// groups actually present in one datagram never span more than half the sequence space (2^31) — true
-    /// of anything an honest sender produces, and the same boundary this whole design accepts elsewhere
-    /// rather than treating as a hazard to defend against (see <see cref="SequenceNumber"/>'s own
-    /// remarks). Each mode's own anchor keeps this assumption scoped to that mode's own groups, exactly as
-    /// their sequence Spaces already are.
-    /// </para>
-    /// </remarks>
-    private bool FragmentSetsAreWellFormed(ReadOnlySpan<byte> body)
-    {
-        int fragmentCount = 0;
-        ReadOnlySpan<byte> remainder = body;
-        while (remainder.Length > 0)
-        {
-            PacketRecordCodec.TryRead(
-                remainder, out PacketRecordMode mode, out uint sequence, out _, out bool isFragment,
-                out ushort index, out ushort count, out _, out int bytesConsumed);
-
-            if (isFragment)
-            {
-                // Cannot happen: MaxFragmentRecordsPerDatagram is this Reactor's own scratch bound,
-                // derived from the largest datagram it ever reads (MaxUdpDatagramSize) divided by the
-                // smallest a Fragment record can be, so no datagram this method is ever called with can
-                // produce more Fragments than the scratch below has room for.
-                Debug.Assert(fragmentCount < MaxFragmentRecordsPerDatagram, "More Fragments than the scratch was sized for.");
-
-                _fragmentGroupKey[fragmentCount] = PackModeAndFirstSequence(mode, FragmentGroup.FirstSequenceOf(sequence, index));
-                _fragmentGroupIndexAndCount[fragmentCount] = PackIndexAndCount(index, count);
-                fragmentCount++;
-            }
-
-            remainder = remainder[bytesConsumed..];
-        }
-
-        if (fragmentCount == 0)
-        {
-            return true;
-        }
-
-        Array.Sort(_fragmentGroupKey, _fragmentGroupIndexAndCount, 0, fragmentCount);
-
-        int distinctGroupCount = 0;
-        int runStart = 0;
-        for (int i = 1; i <= fragmentCount; i++)
-        {
-            if (i == fragmentCount || _fragmentGroupKey[i] != _fragmentGroupKey[runStart])
-            {
-                if (!TryCloseContiguousRun(runStart, i, ref distinctGroupCount))
-                {
-                    return false;
-                }
-
-                runStart = i;
-            }
-        }
-
-        return NoTwoDeclaredRangesOverlap(distinctGroupCount);
-    }
-
-    /// <summary>
-    /// Packs a Fragment's group identity for <see cref="_fragmentGroupKey"/>: <paramref name="mode"/> in
-    /// the key's high bits, <paramref name="firstSequence"/> in its low 32 bits. Mode dominates the sort
-    /// order this key drives, so every Fragment of one mode sorts before every Fragment of the next —
-    /// two groups in different modes can never end up in the same contiguous run.
-    /// </summary>
-    private static ulong PackModeAndFirstSequence(PacketRecordMode mode, uint firstSequence) =>
-        ((ulong)(byte)mode << 32) | firstSequence;
-
-    private static byte UnpackMode(ulong modeAndFirstSequence) => (byte)(modeAndFirstSequence >> 32);
-
-    private static uint UnpackFirstSequenceFromGroupKey(ulong modeAndFirstSequence) => (uint)modeAndFirstSequence;
-
-    /// <summary>Packs a Fragment's index and count into one <c>uint</c> for <see cref="_fragmentGroupIndexAndCount"/>.</summary>
-    private static uint PackIndexAndCount(ushort index, ushort count) => ((uint)index << 16) | count;
-
-    private static ushort UnpackIndex(uint indexAndCount) => (ushort)(indexAndCount >> 16);
-
-    private static ushort UnpackCount(uint indexAndCount) => (ushort)indexAndCount;
-
-    /// <summary>
-    /// Closes the run <c>[runStart, runEnd)</c> of <see cref="_fragmentGroupKey"/> and
-    /// <see cref="_fragmentGroupIndexAndCount"/> — every Fragment the datagram's walk found that shares
-    /// one group's mode and first sequence, now contiguous in the sorted arrays (the run is what is
-    /// contiguous here, not the indices it carries) — checking that every member agrees on its declared
-    /// count and that no index appears twice. A group's Fragments disagreeing on the count they claim
-    /// makes the set's shape ambiguous, and one index claimed by two Fragments makes its content
-    /// ambiguous: neither describes a set an honest sender, which uses one count per Message and cuts
-    /// each index once, could ever produce. On success, appends one entry to
-    /// <see cref="_distinctGroupFirstSequenceAndCount"/> — mode, first sequence and declared count all
-    /// packed together — for the per-mode overlap sweep that follows.
-    /// </summary>
-    /// <remarks>
-    /// <b>The indices present need only be a subset of <c>[0, declaredCount)</c> with no duplicates, not
-    /// a gap-free run.</b> Requiring a run was right while the only way to see a gap was a forgery, but
-    /// selective retransmission produces one honestly: a Message cut into Fragments 0, 1 and 2 whose
-    /// index 1 is acked while 0 and 2 both expire packs those two into one datagram, with no index 1
-    /// anywhere in it. What this check rejects is ambiguity about which wire sequence belongs to which
-    /// group, and that lives in the <em>claimed</em> set — the declared count each Fragment carries and
-    /// the range it implies, checked here and in <see cref="NoTwoDeclaredRangesOverlap"/> — not in
-    /// which pieces of a set happen to share one datagram. The subset's upper bound is already
-    /// established before this pass: <see cref="PacketRecordCodec.TryRead"/> refuses any Fragment whose
-    /// index is at or beyond its own count and <see cref="ParseDataDatagram"/> proves every record
-    /// legal there first, so once the members agree on one declared count every index is inside it.
-    /// </remarks>
-    private bool TryCloseContiguousRun(int runStart, int runEnd, ref int distinctGroupCount)
-    {
-        ushort declaredCount = UnpackCount(_fragmentGroupIndexAndCount[runStart]);
-
-        for (int i = runStart; i < runEnd; i++)
-        {
-            if (UnpackCount(_fragmentGroupIndexAndCount[i]) != declaredCount)
-            {
-                return false;
-            }
-
-            // Cannot happen: an index at or beyond its own count already failed the read (issue #253),
-            // and every member of this run has just been proved to carry declaredCount as that count.
-            Debug.Assert(
-                UnpackIndex(_fragmentGroupIndexAndCount[i]) < declaredCount,
-                "A Fragment whose index is outside its declared count reached the set check.");
-        }
-
-        // Sorting the run by its packed index-and-count puts any repeated index beside its twin, so one
-        // further linear pass finds a duplicate — O(k log k) for a k-member group, nothing allocated, and
-        // the sort cannot disturb this group's pairing with _fragmentGroupKey: every key in the run is
-        // equal by construction, so reordering only the values leaves each pair intact.
-        Array.Sort(_fragmentGroupIndexAndCount, runStart, runEnd - runStart);
-        for (int i = runStart + 1; i < runEnd; i++)
-        {
-            if (UnpackIndex(_fragmentGroupIndexAndCount[i]) == UnpackIndex(_fragmentGroupIndexAndCount[i - 1]))
-            {
-                return false;
-            }
-        }
-
-        byte mode = UnpackMode(_fragmentGroupKey[runStart]);
-        uint firstSequence = UnpackFirstSequenceFromGroupKey(_fragmentGroupKey[runStart]);
-        _distinctGroupFirstSequenceAndCount[distinctGroupCount] =
-            PackGroupIdentity(mode, firstSequence, declaredCount);
-        distinctGroupCount++;
-        return true;
-    }
-
-    /// <summary>
-    /// Packs one distinct group's identity for <see cref="_distinctGroupFirstSequenceAndCount"/>:
-    /// <paramref name="mode"/> in bits 48-55, <paramref name="firstSequence"/> in bits 16-47, and
-    /// <paramref name="declaredCount"/> in bits 0-15.
-    /// </summary>
-    private static ulong PackGroupIdentity(byte mode, uint firstSequence, ushort declaredCount) =>
-        ((ulong)mode << 48) | ((ulong)firstSequence << 16) | declaredCount;
-
-    private static byte UnpackGroupMode(ulong groupIdentity) => (byte)(groupIdentity >> 48);
-
-    // Truncating to uint after the >>16 shift drops the mode bits above bit 31 along with it, leaving
-    // exactly the first-sequence bits PackGroupIdentity placed at 16-47.
-    private static uint UnpackFirstSequence(ulong groupIdentity) => (uint)(groupIdentity >> 16);
-
-    private static ushort UnpackDeclaredCount(ulong groupIdentity) => (ushort)groupIdentity;
-
-    /// <summary>
-    /// Sweeps <see cref="_distinctGroupFirstSequenceAndCount"/>'s first <paramref name="groupCount"/>
-    /// entries for a declared-range overlap — the second forgery the Fragment-set check rejects, judged
-    /// on each group's full <c>[firstSequence, firstSequence + declaredCount)</c> range rather than
-    /// only the sequences a Fragment has actually claimed so far (see this class's
-    /// <see cref="FragmentSetsAreWellFormed"/> remarks for why) — but only ever between two groups
-    /// sharing one mode: two groups in different modes live in different
-    /// <see cref="ReceiveWindowSpaces"/> Spaces and can never conflict, whatever their declared ranges
-    /// happen to be. Because <see cref="TryCloseContiguousRun"/> appends groups in the (mode, first
-    /// sequence) order <see cref="FragmentSetsAreWellFormed"/> sorted Fragments into, this array
-    /// already sits in contiguous per-mode slices; this method finds each slice's boundary in one
-    /// linear pass and delegates the actual sweep to
-    /// <see cref="NoTwoDeclaredRangesOverlapWithinOneMode"/> for each slice in turn.
-    /// </summary>
-    private bool NoTwoDeclaredRangesOverlap(int groupCount)
-    {
-        if (groupCount == 0)
-        {
-            return true;
-        }
-
-        int sliceStart = 0;
-        for (int i = 1; i <= groupCount; i++)
-        {
-            if (i == groupCount || UnpackGroupMode(_distinctGroupFirstSequenceAndCount[i]) != UnpackGroupMode(_distinctGroupFirstSequenceAndCount[sliceStart]))
-            {
-                if (!NoTwoDeclaredRangesOverlapWithinOneMode(sliceStart, i))
-                {
-                    return false;
-                }
-
-                sliceStart = i;
-            }
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// The declared-range overlap sweep proper, run over one mode's own contiguous slice
-    /// <c>[sliceStart, sliceEnd)</c> of <see cref="_distinctGroupFirstSequenceAndCount"/> — every group in
-    /// that slice is already known to share one mode, so comparing any two of them is meaningful. Sorts
-    /// the slice by declared range start, relative to a wrap-aware anchor, then sweeps once tracking the
-    /// furthest declared end seen so far within the slice — the standard O(k log k) interval-overlap check
-    /// for a slice of <c>k</c> groups, correct for nested as well as merely adjacent ranges, in place of an
-    /// O(k²) all-pairs comparison.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>The anchor is derived, not assumed.</b> Ordering <c>u32</c> sequences that may straddle the wrap
-    /// needs a point to measure from, and taking the slice's numerically smallest value is wrong: a hostile
-    /// peer adds one decoy group to drag that point away, which splits a genuinely overlapping pair to
-    /// opposite ends of the sorted slice, and the linear sweep then never compares them. The anchor is
-    /// therefore the slice's <em>wrap-aware</em> minimum — the value immediately after the largest circular
-    /// gap between consecutive first sequences, the wrap gap from the largest value back to the smallest
-    /// included. Every offset measured from it is then a genuine distance forward around the circle, so the
-    /// sort key is a consistent total order and the sweep compares the pairs it must.
-    /// </para>
-    /// <para>
-    /// <b>A slice too wide to order is refused, not guessed at.</b> No wrap-aware order exists over
-    /// sequences spanning more than half the space (2^31): past that, "forward around the circle" stops
-    /// being well defined, which is the same boundary <see cref="SequenceNumber"/> names. An honest sender
-    /// cannot produce such a datagram — a Peer's receive window is smaller than 2^31 by many orders of
-    /// magnitude — so a slice whose circular span exceeds it is discarded exactly as any other violation
-    /// here is. The assumption is enforced rather than relied upon, because on this path the span is a
-    /// value the attacker chooses.
-    /// </para>
-    /// <para>
-    /// Offsets are carried as <see cref="long"/> rather than <see cref="int"/>: a declared range's end is
-    /// its start plus up to <see cref="ushort.MaxValue"/>, which a slice already spanning close to 2^31
-    /// would push past <see cref="int.MaxValue"/> and wrap to a negative, defeating the very comparison the
-    /// sweep exists to make.
-    /// </para>
-    /// </remarks>
-    private bool NoTwoDeclaredRangesOverlapWithinOneMode(int sliceStart, int sliceEnd)
-    {
-        int sliceCount = sliceEnd - sliceStart;
-        if (sliceCount <= 1)
-        {
-            return true;
-        }
-
-        // The slice arrived in ascending numeric first-sequence order, and its groups are distinct, so the
-        // largest circular gap is found by one pass over adjacent pairs plus the wrap gap that closes the
-        // circle from the last value back to the first.
-        uint smallest = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[sliceStart]);
-        uint largest = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[sliceEnd - 1]);
-
-        ulong largestGap = OneSequenceSpace - largest + smallest;
-        uint anchor = smallest;
-
-        for (int i = sliceStart + 1; i < sliceEnd; i++)
-        {
-            uint previous = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i - 1]);
-            uint current = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i]);
-            ulong gap = current - previous;
-            if (gap > largestGap)
-            {
-                largestGap = gap;
-                anchor = current;
-            }
-        }
-
-        // The circular span is whatever the largest gap does not cover. At half the space or wider, no
-        // ordering of these groups is meaningful, so the datagram is refused rather than swept in an order
-        // the peer chose. The bound is "at or wider", not merely "wider": a span of exactly 2^31 puts the
-        // furthest group at an offset of 2^31 from the anchor, which is one past what the sort key below
-        // can hold, and it would wrap to a negative and sort to the wrong end — the very reordering this
-        // check exists to prevent.
-        if (OneSequenceSpace - largestGap >= OneSequenceSpace / 2)
-        {
-            return false;
-        }
-
-        for (int i = sliceStart; i < sliceEnd; i++)
-        {
-            uint firstSequence = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i]);
-            _distinctGroupSortKey[i] = unchecked((int)(firstSequence - anchor));
-        }
-
-        Array.Sort(_distinctGroupSortKey, _distinctGroupFirstSequenceAndCount, sliceStart, sliceCount);
-
-        long maxDeclaredEndSoFar = long.MinValue;
-        for (int i = sliceStart; i < sliceEnd; i++)
-        {
-            uint firstSequence = UnpackFirstSequence(_distinctGroupFirstSequenceAndCount[i]);
-            ushort declaredCount = UnpackDeclaredCount(_distinctGroupFirstSequenceAndCount[i]);
-
-            long start = unchecked(firstSequence - anchor);
-            long end = start + declaredCount - 1;
-
-            if (i > sliceStart && start <= maxDeclaredEndSoFar)
-            {
-                return false;
-            }
-
-            maxDeclaredEndSoFar = Math.Max(maxDeclaredEndSoFar, end);
-        }
-
-        return true;
     }
 
     /// <summary>
@@ -4010,14 +3584,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Remembers a Peer that just closed on a Goodbye for one effective Linger, so a resend of the remote's
-    /// Goodbye can still be acknowledged (ADR 0017, second amendment). Applies when the remote may still be
-    /// waiting for the ack of its Goodbye: a close with <see cref="DisconnectReason.PeerGoodbye"/>, or a
-    /// <see cref="DisconnectReason.LocalClose"/> of a Closing Peer, whose remote Goodbye may not have been
-    /// delivered yet. Writes one <see cref="ClosedSession"/> into the ring, overwriting the oldest entry when
-    /// it is full, and holds no capacity Slot. A Closing Peer whose remote Goodbye was delivered but not yet
-    /// acknowledged on the wire (<see cref="RemoteCloseState.AckDue"/>) has that ack sent here, since the
-    /// Pump's flush no longer reaches its Slot.
+    /// Remembers a Peer that just closed on a Goodbye in <see cref="_closedSessions"/> for one effective
+    /// Linger, so a resend of the remote's Goodbye can still be acknowledged (ADR 0017, second amendment).
+    /// Applies when the remote may still be waiting for the ack of its Goodbye: a close with
+    /// <see cref="DisconnectReason.PeerGoodbye"/>, or a <see cref="DisconnectReason.LocalClose"/> of a
+    /// Closing Peer, whose remote Goodbye may not have been delivered yet. A Closing Peer whose remote
+    /// Goodbye was delivered but not yet acknowledged on the wire (<see cref="RemoteCloseState.AckDue"/>)
+    /// has that ack sent here, since the Pump's flush no longer reaches its Slot.
     /// </summary>
     private void RememberClosedSession(PeerSlot slot, DisconnectReason reason)
     {
@@ -4028,117 +3601,54 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        int ring = _closedSessionNext;
-        _closedSessionNext = (ring + 1) % _closedSessions.Length;
-
-        uint overwritten = _closedSessions[ring].LocalSessionId;
-        if (overwritten != 0 && _closedSessionIndex.TryGetValue(overwritten, out int overwrittenRing) && overwrittenRing == ring)
-        {
-            _closedSessionIndex.Remove(overwritten);
-        }
-
         ((uint Base, uint Bits) reliableOrdered, (uint Base, uint Bits) reliableUnordered) =
             _receiveWindows[slot.Handle.Index].GenerateAckBlocks();
 
-        _closedSessions[ring] = new ClosedSession
-        {
-            LocalSessionId = slot.LocalSessionId,
-            Remote = slot.Remote,
-            RemoteSessionId = slot.RemoteSessionId,
-            ReliableOrderedBase = reliableOrdered.Base,
-            ReliableOrderedBits = reliableOrdered.Bits,
-            ReliableUnorderedBase = reliableUnordered.Base,
-            ReliableUnorderedBits = reliableUnordered.Bits,
-            ClosedTimestamp = _options.Reactor.TimeProvider.GetTimestamp(),
-            Linger = slot.EffectiveLinger,
-        };
-        _closedSessionIndex[slot.LocalSessionId] = ring;
+        ClosedSessionAck finalAck = new(
+            slot.Remote,
+            slot.RemoteSessionId,
+            reliableOrdered.Base,
+            reliableOrdered.Bits,
+            reliableUnordered.Base,
+            reliableUnordered.Bits);
+        _closedSessions.Remember(slot.LocalSessionId, finalAck, slot.EffectiveLinger);
 
         if (slot.RemoteClose == RemoteCloseState.AckDue)
         {
-            SendClosedSessionAck(slot.Link, in _closedSessions[ring]);
+            SendClosedSessionAck(slot.Link, finalAck);
         }
     }
 
     /// <summary>
     /// Answers a data datagram naming a recently closed Session with one header-only datagram carrying the
-    /// stored ack blocks, and reports whether it did (ADR 0017, second amendment). Declines, so the caller
-    /// discards as for any unknown session, unless the id has a live record inside its Linger, the source is
-    /// the stored remote endpoint, the datagram is well-formed, and it carries at least one ReliableOrdered
-    /// record. The last condition stops two closed ends answering each other's replies. The reply is the
-    /// 20-byte header alone, never larger than the datagram that triggered it, and raises no event, takes no
-    /// Slot and touches no per-Peer counter. The stored blocks acknowledge exactly one thing beyond what the
-    /// Peer had received: the remote's Goodbye, when it is the next <c>ReliableOrdered</c> sequence
-    /// (<see cref="ClosedSession.AcknowledgeGoodbye"/>). A Message is never acknowledged, since nothing is
-    /// delivered after the close, so its sender ends <see cref="DisconnectReason.LingerExpired"/> honestly.
+    /// stored ack blocks, and reports whether it did. <see cref="ClosedSessionMemory.TryReAck"/> decides
+    /// whether to answer; when it declines, the caller discards as for any unknown session. The reply is
+    /// the 20-byte header alone, never larger than the datagram that triggered it, and raises no event,
+    /// takes no Slot and touches no per-Peer counter.
     /// </summary>
     private bool TryReAckClosedSession(UdpLink link, Source source, uint session, ReadOnlySpan<byte> datagram)
     {
-        if (!_closedSessionIndex.TryGetValue(session, out int ring))
+        if (!_closedSessions.TryReAck(session, source, datagram, out ClosedSessionAck ack))
         {
             return false;
         }
 
-        ref ClosedSession closed = ref _closedSessions[ring];
-        if (_options.Reactor.TimeProvider.GetElapsedTime(closed.ClosedTimestamp) >= closed.Linger)
-        {
-            _closedSessionIndex.Remove(session);
-            closed = default;
-            return false;
-        }
-
-        if (closed.Remote != source || !DatagramHeaderCodec.TryReadHeader(datagram, out _, out _, out _, out _, out _))
-        {
-            return false;
-        }
-
-        ReadOnlySpan<byte> body = datagram[DatagramSessionProtocol.DatagramHeaderSize..];
-        bool carriesReliableRecord = false;
-        ReadOnlySpan<byte> remainder = body;
-        while (remainder.Length > 0)
-        {
-            if (!PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
-            {
-                return false;
-            }
-
-            carriesReliableRecord |= mode == PacketRecordMode.ReliableOrdered;
-            remainder = remainder[bytesConsumed..];
-        }
-
-        if (!carriesReliableRecord)
-        {
-            return false;
-        }
-
-        remainder = body;
-        while (remainder.Length > 0)
-        {
-            PacketRecordCodec.TryRead(remainder, out PacketRecordMode mode, out uint sequence, out _, out _, out _, out _, out bool isControl, out int bytesConsumed);
-            if (mode == PacketRecordMode.ReliableOrdered && isControl)
-            {
-                closed.AcknowledgeGoodbye(sequence);
-            }
-
-            remainder = remainder[bytesConsumed..];
-        }
-
-        SendClosedSessionAck(link, in closed);
+        SendClosedSessionAck(link, ack);
         return true;
     }
 
-    /// <summary>Writes and sends the header-only ack datagram for <paramref name="closed"/> to its remote endpoint.</summary>
-    private void SendClosedSessionAck(UdpLink link, in ClosedSession closed)
+    /// <summary>Writes and sends the header-only ack datagram <paramref name="ack"/> describes to its remote endpoint.</summary>
+    private void SendClosedSessionAck(UdpLink link, in ClosedSessionAck ack)
     {
         DatagramHeaderCodec.WriteHeader(
             _outboundDatagramBuffer,
-            closed.RemoteSessionId,
-            closed.ReliableOrderedBase,
-            closed.ReliableOrderedBits,
-            closed.ReliableUnorderedBase,
-            closed.ReliableUnorderedBits);
+            ack.RemoteSessionId,
+            ack.ReliableOrderedBase,
+            ack.ReliableOrderedBits,
+            ack.ReliableUnorderedBase,
+            ack.ReliableUnorderedBits);
 
-        UdpLinkSendResult result = link.SendTo(closed.Remote, _outboundDatagramBuffer.AsSpan(0, DatagramSessionProtocol.DatagramHeaderSize));
+        UdpLinkSendResult result = link.SendTo(ack.Remote, _outboundDatagramBuffer.AsSpan(0, DatagramSessionProtocol.DatagramHeaderSize));
         if (result.IsSuccess)
         {
             _counters.RecordDatagramSent();
@@ -4162,7 +3672,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             uint candidate = BitConverter.ToUInt32(bytes);
             if (candidate != DatagramSessionProtocol.ControlSession
                 && !_peersBySessionId.ContainsKey(candidate)
-                && !_closedSessionIndex.ContainsKey(candidate))
+                && !_closedSessions.Holds(candidate))
             {
                 return candidate;
             }
@@ -4325,64 +3835,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>The ack of a remote Goodbye delivered during this end's own Close has been flushed.</summary>
         Acked,
-    }
-
-    /// <summary>
-    /// What a Peer that closed on a Goodbye leaves behind for one effective Linger (ADR 0017, second
-    /// amendment), so a resent Goodbye can still be acknowledged. A fixed-size value in
-    /// <see cref="_closedSessions"/>, one entry per capacity Slot, never allocated per datagram. Both ack
-    /// blocks are the final <see cref="ReceiveWindowSpaces.GenerateAckBlocks"/> values, extended by
-    /// <see cref="AcknowledgeGoodbye"/> only when the remote's Goodbye arrives next in order.
-    /// </summary>
-    private struct ClosedSession
-    {
-        /// <summary>The session id this Reactor assigned, which the remote stamps on its datagrams. Zero marks an unused entry.</summary>
-        public uint LocalSessionId;
-
-        /// <summary>The only endpoint a reply is sent to.</summary>
-        public Source Remote;
-
-        /// <summary>The session id to stamp on the reply.</summary>
-        public uint RemoteSessionId;
-
-        public uint ReliableOrderedBase;
-
-        public uint ReliableOrderedBits;
-
-        public uint ReliableUnorderedBase;
-
-        public uint ReliableUnorderedBits;
-
-        /// <summary>When the Peer closed; the entry expires <see cref="Linger"/> later.</summary>
-        public long ClosedTimestamp;
-
-        /// <summary>The Peer's effective Linger.</summary>
-        public TimeSpan Linger;
-
-        /// <summary>
-        /// Acknowledges the remote's Goodbye at <paramref name="sequence"/>, the only thing this record may
-        /// acknowledge beyond its stored state: nothing is delivered once the Session is closed, so a Message
-        /// must never be acked. It counts only when it is exactly the next <c>ReliableOrdered</c> sequence
-        /// (<see cref="ReliableOrderedBase"/>), meaning every ordered record before it was delivered and the
-        /// ack truthfully says its Goodbye reached its turn. A Goodbye behind a hole, or one already below the
-        /// base, changes nothing. Uses the base-plus-32-bits shape of <see cref="ReceiveWindow.DescribeAsAckBlock"/>.
-        /// </summary>
-        public void AcknowledgeGoodbye(uint sequence)
-        {
-            if (sequence != ReliableOrderedBase)
-            {
-                return;
-            }
-
-            bool nextAlreadyReceived;
-            do
-            {
-                ReliableOrderedBase = unchecked(ReliableOrderedBase + 1);
-                nextAlreadyReceived = (ReliableOrderedBits & 1) != 0;
-                ReliableOrderedBits >>= 1;
-            }
-            while (nextAlreadyReceived);
-        }
     }
 
     /// <summary>
