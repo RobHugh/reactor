@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Net;
 using FluentAssertions;
 using Xunit;
+using static ReactorSockets.Tests.PacketRecordBytes;
 
 namespace ReactorSockets.Tests;
 
@@ -29,14 +30,6 @@ public class DatagramSessionFragmentGroupCapacityTests
     private const uint DialerMaxMessageSize = 4096;
     private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
     private const ulong DialerLingerMilliseconds = 30_000;
-
-    private const int DatagramHeaderSize = 20;
-    private const int UnfragmentedRecordSize = 7;
-    private const int FragmentRecordSize = 11;
-
-    private const byte ModeReliableUnordered = 0b0000_0010;
-    private const byte ModeReliableOrdered = 0b0000_0011;
-    private const byte FragmentBit = 0b0000_0100;
 
     private const int MaxMessageSize = 512;
 
@@ -360,7 +353,7 @@ public class DatagramSessionFragmentGroupCapacityTests
                 byte[][] datagrams = new byte[ReceiveWindowFragments][];
                 for (uint offset = 0; offset < ReceiveWindowFragments; offset++)
                 {
-                    datagrams[offset] = [.. BuildHeader(sessionId), .. ArbitraryFragment(random, mode, cursor + offset)];
+                    datagrams[offset] = [.. Header(sessionId), .. ArbitraryFragment(random, mode, cursor + offset)];
                 }
 
                 for (int attempt = 0; attempt < 3; attempt++)
@@ -427,7 +420,7 @@ public class DatagramSessionFragmentGroupCapacityTests
         DatagramSessionReactorHarness accepter, RawReactor client, LinkId clientLink, uint sessionId, byte[] records)
     {
         ulong received = accepter.Reactor.Counters.DatagramsReceived;
-        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), [.. BuildHeader(sessionId), .. records]);
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), [.. Header(sessionId), .. records]);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > received);
     }
 
@@ -521,40 +514,5 @@ public class DatagramSessionFragmentGroupCapacityTests
         offset += 8;
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
         return BuildControlDatagram(HelloWithCookieType, body);
-    }
-
-    /// <summary>Builds a 20-byte live-Session datagram header naming <paramref name="session"/> with both ack blocks zeroed.</summary>
-    private static byte[] BuildHeader(uint session)
-    {
-        byte[] header = new byte[DatagramHeaderSize];
-        BinaryPrimitives.WriteUInt32BigEndian(header.AsSpan(0, 4), session);
-        return header;
-    }
-
-    /// <summary>Builds one unfragmented packet record: flags, a four-byte sequence, a two-byte length, then the payload.</summary>
-    private static byte[] Record(byte modeBits, uint sequence, ReadOnlySpan<byte> payload)
-    {
-        byte[] record = new byte[UnfragmentedRecordSize + payload.Length];
-        record[0] = modeBits;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(1, 4), sequence);
-        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(5, 2), (ushort)payload.Length);
-        payload.CopyTo(record.AsSpan(UnfragmentedRecordSize));
-        return record;
-    }
-
-    /// <summary>
-    /// Builds one Fragment record: the unfragmented shape's bytes with the fragment bit set, followed by
-    /// a two-byte fragment index and a two-byte fragment count, then the payload.
-    /// </summary>
-    private static byte[] Fragment(byte modeBits, uint sequence, ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload)
-    {
-        byte[] record = new byte[FragmentRecordSize + payload.Length];
-        record[0] = (byte)(modeBits | FragmentBit);
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(1, 4), sequence);
-        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(5, 2), (ushort)payload.Length);
-        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(7, 2), fragmentIndex);
-        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(9, 2), fragmentCount);
-        payload.CopyTo(record.AsSpan(FragmentRecordSize));
-        return record;
     }
 }

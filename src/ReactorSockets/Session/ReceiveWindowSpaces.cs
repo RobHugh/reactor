@@ -259,7 +259,7 @@ internal sealed class ReceiveWindowSpaces
     /// each a cumulative base plus the 32-bit field describing the sequences above it, per
     /// <see cref="ReceiveWindow.DescribeAsAckBlock"/>.
     /// </returns>
-    public ((uint Base, uint Bits) ReliableOrdered, (uint Base, uint Bits) ReliableUnordered) GenerateAckBlocks()
+    public (AckBlock ReliableOrdered, AckBlock ReliableUnordered) GenerateAckBlocks()
     {
         return (_reliableOrdered.DescribeAsAckBlock(), _reliableUnordered.DescribeAsAckBlock());
     }
