@@ -524,20 +524,20 @@ public sealed class DatagramSessionOptions
                 $"a Linger of {Linger} closes a Session before it can retransmit its Goodbye — it must be greater than zero.");
         }
 
-        if (SendIdleInterval > Session.AnnouncedIntervalLegality.Maximum)
+        if (SendIdleInterval > Session.HandshakeLegality.MaximumInterval)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(SendIdleInterval),
                 SendIdleInterval,
-                $"a send-idle interval of {SendIdleInterval} is above the {Session.AnnouncedIntervalLegality.Maximum} a handshake may announce, so every Peer would discard this end's handshake.");
+                $"a send-idle interval of {SendIdleInterval} is above the {Session.HandshakeLegality.MaximumInterval} a handshake may announce, so every Peer would discard this end's handshake.");
         }
 
-        if (Linger > Session.AnnouncedIntervalLegality.Maximum)
+        if (Linger > Session.HandshakeLegality.MaximumInterval)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(Linger),
                 Linger,
-                $"a Linger of {Linger} is above the {Session.AnnouncedIntervalLegality.Maximum} a handshake may announce, so every Peer would discard this end's handshake.");
+                $"a Linger of {Linger} is above the {Session.HandshakeLegality.MaximumInterval} a handshake may announce, so every Peer would discard this end's handshake.");
         }
 
         ValidateEndpoints();
