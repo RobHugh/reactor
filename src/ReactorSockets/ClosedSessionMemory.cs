@@ -155,13 +155,13 @@ public sealed class ClosedSessionMemory
     /// </summary>
     private static ClosedSessionAck AcknowledgeGoodbye(ClosedSessionAck ack, uint sequence)
     {
-        if (sequence != ack.ReliableOrderedBase)
+        if (sequence != ack.ReliableOrdered.Base)
         {
             return ack;
         }
 
-        uint ackBase = ack.ReliableOrderedBase;
-        uint bits = ack.ReliableOrderedBits;
+        uint ackBase = ack.ReliableOrdered.Base;
+        uint bits = ack.ReliableOrdered.Bits;
         bool nextAlreadyReceived;
         do
         {
@@ -171,7 +171,7 @@ public sealed class ClosedSessionMemory
         }
         while (nextAlreadyReceived);
 
-        return ack with { ReliableOrderedBase = ackBase, ReliableOrderedBits = bits };
+        return ack with { ReliableOrdered = new AckBlock(ackBase, bits) };
     }
 
     /// <summary>One ring entry. A zero <see cref="LocalSessionId"/> marks it unused.</summary>
@@ -193,14 +193,10 @@ public sealed class ClosedSessionMemory
 /// </summary>
 /// <param name="Remote">The only endpoint a reply is sent to.</param>
 /// <param name="RemoteSessionId">The session id to stamp on the reply.</param>
-/// <param name="ReliableOrderedBase">The <c>ReliableOrdered</c> ack block's base.</param>
-/// <param name="ReliableOrderedBits">The <c>ReliableOrdered</c> ack block's bitfield.</param>
-/// <param name="ReliableUnorderedBase">The <c>ReliableUnordered</c> ack block's base.</param>
-/// <param name="ReliableUnorderedBits">The <c>ReliableUnordered</c> ack block's bitfield.</param>
+/// <param name="ReliableOrdered">The <c>ReliableOrdered</c> Space's ack block.</param>
+/// <param name="ReliableUnordered">The <c>ReliableUnordered</c> Space's ack block.</param>
 public readonly record struct ClosedSessionAck(
     Source Remote,
     uint RemoteSessionId,
-    uint ReliableOrderedBase,
-    uint ReliableOrderedBits,
-    uint ReliableUnorderedBase,
-    uint ReliableUnorderedBits);
+    AckBlock ReliableOrdered,
+    AckBlock ReliableUnordered);

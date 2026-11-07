@@ -1,8 +1,8 @@
-using System.Buffers.Binary;
 using System.Net;
 using FluentAssertions;
 using Microsoft.Extensions.Time.Testing;
 using Xunit;
+using static ReactorSockets.Tests.PacketRecordBytes;
 
 namespace ReactorSockets.Tests;
 
@@ -13,13 +13,6 @@ namespace ReactorSockets.Tests;
 /// </summary>
 public class ClosedSessionMemoryTests
 {
-    private const int DatagramHeaderSize = 20;
-    private const int UnfragmentedRecordSize = 7;
-
-    private const byte ModeUnreliable = 0b0000_0000;
-    private const byte ModeReliableOrdered = 0b0000_0011;
-    private const byte ControlBit = 0b0000_1000;
-
     private const uint LocalSessionId = 0x1111_1111;
     private static readonly TimeSpan _linger = TimeSpan.FromSeconds(10);
     private static readonly Source _remote = Source.FromIPEndPoint(new IPEndPoint(IPAddress.Loopback, 40_000));
@@ -29,10 +22,8 @@ public class ClosedSessionMemoryTests
     private static readonly ClosedSessionAck _finalAck = new(
         _remote,
         RemoteSessionId: 0x2222_2222,
-        ReliableOrderedBase: 5,
-        ReliableOrderedBits: 0b11,
-        ReliableUnorderedBase: 9,
-        ReliableUnorderedBits: 0);
+        ReliableOrdered: new ReactorSockets.AckBlock(Base: 5, Bits: 0b11),
+        ReliableUnordered: new ReactorSockets.AckBlock(Base: 9, Bits: 0));
 
     [Fact]
     public void TryReAck_SessionNeverRemembered_Declines()
@@ -58,7 +49,7 @@ public class ClosedSessionMemoryTests
         memory.TryReAck(LocalSessionId, _remote, Datagram(Goodbye(5)), out ClosedSessionAck ack);
 
         // Assert — 5 is the Goodbye, 6 and 7 were already held, so the next expected is 8.
-        ack.Should().Be(_finalAck with { ReliableOrderedBase = 8, ReliableOrderedBits = 0 });
+        ack.Should().Be(_finalAck with { ReliableOrdered = new ReactorSockets.AckBlock(Base: 8, Bits: 0) });
     }
 
     [Fact]
@@ -83,7 +74,7 @@ public class ClosedSessionMemoryTests
         memory.Remember(LocalSessionId, _finalAck, _linger);
 
         // Act
-        memory.TryReAck(LocalSessionId, _remote, Datagram(Record(ModeReliableOrdered, 5)), out ClosedSessionAck ack);
+        memory.TryReAck(LocalSessionId, _remote, Datagram(Record(ModeReliableOrdered, 5, [0x01])), out ClosedSessionAck ack);
 
         // Assert
         ack.Should().Be(_finalAck);
@@ -111,7 +102,7 @@ public class ClosedSessionMemoryTests
         memory.Remember(LocalSessionId, _finalAck, _linger);
 
         // Act
-        bool answered = memory.TryReAck(LocalSessionId, _remote, Datagram(Record(ModeUnreliable, 1)), out _);
+        bool answered = memory.TryReAck(LocalSessionId, _remote, Datagram(Record(ModeUnreliable, 1, [0x01])), out _);
 
         // Assert
         answered.Should().BeFalse();
@@ -223,30 +214,5 @@ public class ClosedSessionMemoryTests
     }
 
     /// <summary>Builds a data datagram: a 20-byte header naming <see cref="LocalSessionId"/>, then <paramref name="records"/>.</summary>
-    private static byte[] Datagram(byte[] records)
-    {
-        byte[] datagram = new byte[DatagramHeaderSize + records.Length];
-        BinaryPrimitives.WriteUInt32BigEndian(datagram.AsSpan(0, 4), LocalSessionId);
-        records.CopyTo(datagram.AsSpan(DatagramHeaderSize));
-        return datagram;
-    }
-
-    /// <summary>Builds a Goodbye-shaped record: <c>ReliableOrdered</c> with the control bit and no payload.</summary>
-    private static byte[] Goodbye(uint sequence)
-    {
-        byte[] record = new byte[UnfragmentedRecordSize];
-        record[0] = ModeReliableOrdered | ControlBit;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(1, 4), sequence);
-        return record;
-    }
-
-    /// <summary>Builds one unfragmented record with a one-byte payload.</summary>
-    private static byte[] Record(byte modeBits, uint sequence)
-    {
-        byte[] record = new byte[UnfragmentedRecordSize + 1];
-        record[0] = modeBits;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(1, 4), sequence);
-        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(5, 2), 1);
-        return record;
-    }
+    private static byte[] Datagram(byte[] records) => [.. Header(LocalSessionId), .. records];
 }

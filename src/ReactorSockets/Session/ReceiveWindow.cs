@@ -721,7 +721,7 @@ internal sealed class ReceiveWindow
     /// sequence numbers itself.
     /// </para>
     /// <para>
-    /// Allocation-free: the returned tuple is a value type, and the only storage touched is the
+    /// Allocation-free: the returned <see cref="AckBlock"/> is a value type, and the only storage touched is the
     /// <see cref="_admitted"/> span already backing this window.
     /// </para>
     /// </remarks>
@@ -731,7 +731,7 @@ internal sealed class ReceiveWindow
     /// <see cref="Capacity"/><c> - 1</c> sequences above the base are always clear, since the window
     /// itself cannot hold anything that far ahead.
     /// </returns>
-    internal (uint Base, uint Bits) DescribeAsAckBlock()
+    internal AckBlock DescribeAsAckBlock()
     {
         Span<byte> admitted = _admitted.Span;
         int reachable = Capacity - 1 < 32 ? Capacity - 1 : 32;
@@ -747,7 +747,7 @@ internal sealed class ReceiveWindow
             }
         }
 
-        return (Base, bits);
+        return new AckBlock(Base, bits);
     }
 
     /// <summary>

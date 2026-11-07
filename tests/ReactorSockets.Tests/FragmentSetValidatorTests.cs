@@ -1,6 +1,6 @@
-using System.Buffers.Binary;
 using FluentAssertions;
 using Xunit;
+using static ReactorSockets.Tests.PacketRecordBytes;
 
 namespace ReactorSockets.Tests;
 
@@ -12,14 +12,6 @@ namespace ReactorSockets.Tests;
 /// </summary>
 public class FragmentSetValidatorTests
 {
-    private const int UnfragmentedRecordSize = 7;
-    private const int FragmentRecordSize = 11;
-
-    private const byte ModeUnreliable = 0b0000_0000;
-    private const byte ModeReliableUnordered = 0b0000_0010;
-    private const byte ModeReliableOrdered = 0b0000_0011;
-    private const byte FragmentBit = 0b0000_0100;
-
     [Fact]
     public void AreWellFormed_EmptyBody_ReturnsTrue()
     {
@@ -38,7 +30,7 @@ public class FragmentSetValidatorTests
     {
         // Arrange
         FragmentSetValidator validator = new();
-        byte[] body = [.. Record(ModeUnreliable, 1), .. Record(ModeReliableOrdered, 1)];
+        byte[] body = [.. Record(ModeUnreliable, 1, [0x01]), .. Record(ModeReliableOrdered, 1, [0x01])];
 
         // Act
         bool wellFormed = validator.AreWellFormed(body);
@@ -54,8 +46,8 @@ public class FragmentSetValidatorTests
         FragmentSetValidator validator = new();
         byte[] body =
         [
-            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 3),
-            .. Fragment(ModeReliableOrdered, sequence: 12, index: 2, count: 3),
+            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 3, payload: [0x01]),
+            .. Fragment(ModeReliableOrdered, sequence: 12, index: 2, count: 3, payload: [0x01]),
         ];
 
         // Act
@@ -72,8 +64,8 @@ public class FragmentSetValidatorTests
         FragmentSetValidator validator = new();
         byte[] body =
         [
-            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 3),
-            .. Fragment(ModeReliableOrdered, sequence: 11, index: 1, count: 4),
+            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 3, payload: [0x01]),
+            .. Fragment(ModeReliableOrdered, sequence: 11, index: 1, count: 4, payload: [0x01]),
         ];
 
         // Act
@@ -90,8 +82,8 @@ public class FragmentSetValidatorTests
         FragmentSetValidator validator = new();
         byte[] body =
         [
-            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 3),
-            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 3),
+            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 3, payload: [0x01]),
+            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 3, payload: [0x01]),
         ];
 
         // Act
@@ -108,9 +100,9 @@ public class FragmentSetValidatorTests
         FragmentSetValidator validator = new();
         byte[] body =
         [
-            .. Fragment(ModeReliableOrdered, sequence: 100, index: 0, count: 5),
-            .. Fragment(ModeReliableOrdered, sequence: 101, index: 1, count: 5),
-            .. Fragment(ModeReliableOrdered, sequence: 103, index: 0, count: 2),
+            .. Fragment(ModeReliableOrdered, sequence: 100, index: 0, count: 5, payload: [0x01]),
+            .. Fragment(ModeReliableOrdered, sequence: 101, index: 1, count: 5, payload: [0x01]),
+            .. Fragment(ModeReliableOrdered, sequence: 103, index: 0, count: 2, payload: [0x01]),
         ];
 
         // Act
@@ -127,8 +119,8 @@ public class FragmentSetValidatorTests
         FragmentSetValidator validator = new();
         byte[] body =
         [
-            .. Fragment(ModeReliableOrdered, sequence: 100, index: 0, count: 2),
-            .. Fragment(ModeReliableOrdered, sequence: 102, index: 0, count: 2),
+            .. Fragment(ModeReliableOrdered, sequence: 100, index: 0, count: 2, payload: [0x01]),
+            .. Fragment(ModeReliableOrdered, sequence: 102, index: 0, count: 2, payload: [0x01]),
         ];
 
         // Act
@@ -145,8 +137,8 @@ public class FragmentSetValidatorTests
         FragmentSetValidator validator = new();
         byte[] body =
         [
-            .. Fragment(ModeReliableOrdered, sequence: 100, index: 0, count: 2),
-            .. Fragment(ModeReliableUnordered, sequence: 100, index: 0, count: 3),
+            .. Fragment(ModeReliableOrdered, sequence: 100, index: 0, count: 2, payload: [0x01]),
+            .. Fragment(ModeReliableUnordered, sequence: 100, index: 0, count: 3, payload: [0x01]),
         ];
 
         // Act
@@ -164,9 +156,9 @@ public class FragmentSetValidatorTests
         FragmentSetValidator validator = new();
         byte[] body =
         [
-            .. Fragment(ModeReliableOrdered, sequence: 0xFFFF_FFFE, index: 0, count: 4),
-            .. Fragment(ModeReliableOrdered, sequence: 0, index: 0, count: 2),
-            .. Fragment(ModeReliableOrdered, sequence: 0x10, index: 0, count: 2),
+            .. Fragment(ModeReliableOrdered, sequence: 0xFFFF_FFFE, index: 0, count: 4, payload: [0x01]),
+            .. Fragment(ModeReliableOrdered, sequence: 0, index: 0, count: 2, payload: [0x01]),
+            .. Fragment(ModeReliableOrdered, sequence: 0x10, index: 0, count: 2, payload: [0x01]),
         ];
 
         // Act
@@ -183,8 +175,8 @@ public class FragmentSetValidatorTests
         FragmentSetValidator validator = new();
         byte[] body =
         [
-            .. Fragment(ModeReliableOrdered, sequence: 0, index: 0, count: 2),
-            .. Fragment(ModeReliableOrdered, sequence: 0x8000_0000, index: 0, count: 2),
+            .. Fragment(ModeReliableOrdered, sequence: 0, index: 0, count: 2, payload: [0x01]),
+            .. Fragment(ModeReliableOrdered, sequence: 0x8000_0000, index: 0, count: 2, payload: [0x01]),
         ];
 
         // Act
@@ -199,7 +191,7 @@ public class FragmentSetValidatorTests
     {
         // Arrange — a declared count of zero is refused by the record codec.
         FragmentSetValidator validator = new();
-        byte[] body = Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 0);
+        byte[] body = Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 0, payload: [0x01]);
 
         // Act
         bool wellFormed = validator.AreWellFormed(body);
@@ -229,13 +221,13 @@ public class FragmentSetValidatorTests
         FragmentSetValidator validator = new();
         byte[] clean =
         [
-            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 2),
-            .. Fragment(ModeReliableOrdered, sequence: 11, index: 1, count: 2),
+            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 2, payload: [0x01]),
+            .. Fragment(ModeReliableOrdered, sequence: 11, index: 1, count: 2, payload: [0x01]),
         ];
         byte[] forged =
         [
-            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 2),
-            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 2),
+            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 2, payload: [0x01]),
+            .. Fragment(ModeReliableOrdered, sequence: 10, index: 0, count: 2, payload: [0x01]),
         ];
         validator.AreWellFormed(clean);
 
@@ -244,27 +236,5 @@ public class FragmentSetValidatorTests
 
         // Assert
         wellFormed.Should().BeFalse();
-    }
-
-    /// <summary>Builds one unfragmented record with a one-byte payload.</summary>
-    private static byte[] Record(byte modeBits, uint sequence)
-    {
-        byte[] record = new byte[UnfragmentedRecordSize + 1];
-        record[0] = modeBits;
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(1, 4), sequence);
-        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(5, 2), 1);
-        return record;
-    }
-
-    /// <summary>Builds one Fragment record with a one-byte payload.</summary>
-    private static byte[] Fragment(byte modeBits, uint sequence, ushort index, ushort count)
-    {
-        byte[] record = new byte[FragmentRecordSize + 1];
-        record[0] = (byte)(modeBits | FragmentBit);
-        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(1, 4), sequence);
-        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(5, 2), 1);
-        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(7, 2), index);
-        BinaryPrimitives.WriteUInt16BigEndian(record.AsSpan(9, 2), count);
-        return record;
     }
 }

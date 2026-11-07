@@ -1770,8 +1770,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </remarks>
     private void FlushPeer(PeerSlot slot)
     {
-        ((uint Base, uint Bits) reliableOrdered, (uint Base, uint Bits) reliableUnordered) =
-            _receiveWindows[slot.Handle.Index].GenerateAckBlocks();
+        (AckBlock reliableOrdered, AckBlock reliableUnordered) = _receiveWindows[slot.Handle.Index].GenerateAckBlocks();
 
         DatagramRecordPacker packer = new(
             _outboundDatagramBuffer,
@@ -3601,16 +3600,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        ((uint Base, uint Bits) reliableOrdered, (uint Base, uint Bits) reliableUnordered) =
-            _receiveWindows[slot.Handle.Index].GenerateAckBlocks();
+        (AckBlock reliableOrdered, AckBlock reliableUnordered) = _receiveWindows[slot.Handle.Index].GenerateAckBlocks();
 
-        ClosedSessionAck finalAck = new(
-            slot.Remote,
-            slot.RemoteSessionId,
-            reliableOrdered.Base,
-            reliableOrdered.Bits,
-            reliableUnordered.Base,
-            reliableUnordered.Bits);
+        ClosedSessionAck finalAck = new(slot.Remote, slot.RemoteSessionId, reliableOrdered, reliableUnordered);
         _closedSessions.Remember(slot.LocalSessionId, finalAck, slot.EffectiveLinger);
 
         if (slot.RemoteClose == RemoteCloseState.AckDue)
@@ -3643,10 +3635,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         DatagramHeaderCodec.WriteHeader(
             _outboundDatagramBuffer,
             ack.RemoteSessionId,
-            ack.ReliableOrderedBase,
-            ack.ReliableOrderedBits,
-            ack.ReliableUnorderedBase,
-            ack.ReliableUnorderedBits);
+            ack.ReliableOrdered.Base,
+            ack.ReliableOrdered.Bits,
+            ack.ReliableUnordered.Base,
+            ack.ReliableUnordered.Bits);
 
         UdpLinkSendResult result = link.SendTo(ack.Remote, _outboundDatagramBuffer.AsSpan(0, DatagramSessionProtocol.DatagramHeaderSize));
         if (result.IsSuccess)

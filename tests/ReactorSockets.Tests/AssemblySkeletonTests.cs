@@ -120,7 +120,8 @@ public class AssemblySkeletonTests
             nameof(FragmentGroup),
             nameof(FragmentSetValidator),
             nameof(ClosedSessionMemory),
-            nameof(ClosedSessionAck));
+            nameof(ClosedSessionAck),
+            nameof(ReactorSockets.AckBlock));
     }
 
     [Fact]
