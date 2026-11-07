@@ -171,7 +171,7 @@ public class DatagramSessionLivenessToleranceTests
     /// <summary>
     /// Sends one ReliableOrdered Message from the dialler, flushes it, and acknowledges it exactly
     /// <see cref="_seedRoundTrip"/> later through the accepter's own reply — the only way an ack block
-    /// reaches the wire — so the Peer's shared <see cref="RetransmissionTimer"/> takes its one clean first
+    /// reaches the wire — so the Peer's shared <c>RetransmissionTimer</c> takes its one clean first
     /// sample and the probe armed after this method returns inherits that estimate. Matches
     /// <see cref="DatagramSessionPingRetransmissionTests.SeedEstimator"/>'s shape.
     /// </summary>

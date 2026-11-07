@@ -8,10 +8,8 @@ namespace ReactorSockets;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Public for the same reason <see cref="PumpIntervalObserver"/> is (ADR 0015): a test pins this
-/// behaviour by constructing one directly and calling <see cref="Sample(TimeSpan)"/> with hand-picked
-/// <see cref="TimeSpan"/> values, with no <c>InternalsVisibleTo</c> and no interface invented for
-/// the purpose.
+/// Internal (ADR 0022). The recurrence and Karn's rule are proved through a live Peer, by the RTO each
+/// <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record carries after hand-timed acks.
 /// </para>
 /// <para>
 /// This type reads no clock of its own. A caller measures one round trip from monotonic
@@ -39,7 +37,7 @@ namespace ReactorSockets;
 /// <see cref="RetransmissionTimer.EffectiveTimeout"/>.
 /// </para>
 /// </remarks>
-public sealed class RoundTripEstimator
+internal sealed class RoundTripEstimator
 {
     private long _smoothedRoundTripTicks;
     private long _roundTripVarianceTicks;

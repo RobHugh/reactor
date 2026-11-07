@@ -5,9 +5,8 @@ namespace ReactorSockets;
 /// 32-bit field whose bit <c>n</c> (0-based) is set exactly when <c>Base + n + 1</c> has been received.
 /// </summary>
 /// <remarks>
-/// Public because <see cref="ClosedSessionAck"/> carries two of them, and that type is public for the
-/// reason <see cref="ClosedSessionMemory"/> gives (ADR 0015).
+/// Internal, like the <see cref="ClosedSessionAck"/> that carries two of them (ADR 0022).
 /// </remarks>
 /// <param name="Base">The next sequence not yet received in order.</param>
 /// <param name="Bits">Which of the 32 sequences above <paramref name="Base"/> have been received.</param>
-public readonly record struct AckBlock(uint Base, uint Bits);
+internal readonly record struct AckBlock(uint Base, uint Bits);

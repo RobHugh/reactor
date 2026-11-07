@@ -5,7 +5,7 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// The negative half of the fragment-size stall signature's own test, judging
-/// <see cref="FragmentStallSignature.StallRoundCount"/> against a path that is merely lossy rather than
+/// <c>FragmentStallSignature.StallRoundCount</c> against a path that is merely lossy rather than
 /// size-limited. The same <see cref="FragmentSizeDiagnosisFixture"/> the positive
 /// (<see cref="DatagramSessionFragmentSizeUnviableTests"/>) is driven through, but with the proxy's
 /// standing rule replaced: instead of a size threshold that black-holes every Fragment forever, an
@@ -28,11 +28,11 @@ namespace ReactorSockets.Tests;
 /// asks for.
 /// </para>
 /// <para>
-/// <b>Why the round budget is what it is.</b> <see cref="FragmentStallSignature.StallRoundCount"/> — four
+/// <b>Why the round budget is what it is.</b> <c>FragmentStallSignature.StallRoundCount</c> — four
 /// — is the number of consecutive retransmission rounds with no Fragment acked that the positive test
 /// needs to fire the diagnosis. At one loss in ten, the chance every Fragment of a set is lost on any one
 /// round is small, so a stall of that length essentially never accumulates before some Fragment gets
-/// through and resets the window (<see cref="FragmentStallSignature.RecordFragmentAcked"/> latches
+/// through and resets the window (<c>FragmentStallSignature.RecordFragmentAcked</c> latches
 /// permanently once it does). <see cref="MaxDeliveryRounds"/> is set to <c>StallRoundCount</c> times a
 /// wide margin — far more <see cref="FragmentSizeDiagnosisFixture.PumpRound"/> calls than four RTO
 /// expiries could plausibly need even accounting for backoff — so a run that fails to deliver within
@@ -51,11 +51,14 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
 
     /// <summary>
     /// The bounded number of <see cref="FragmentSizeDiagnosisFixture.PumpRound"/> calls the large Message
-    /// is given to complete in. A generous multiple of <see cref="FragmentStallSignature.StallRoundCount"/>
+    /// is given to complete in. A generous multiple of <c>FragmentStallSignature.StallRoundCount</c>
     /// so the run is a real test of quiet rather than one too short for a stall to have had any chance to
     /// show up.
     /// </summary>
-    private const int MaxDeliveryRounds = FragmentStallSignature.StallRoundCount * 75;
+    private const int MaxDeliveryRounds = StallRoundCount * 75;
+
+    /// <summary>The expired retransmission rounds the fragment-size diagnosis waits for (<c>FragmentStallSignature.StallRoundCount</c>).</summary>
+    private const int StallRoundCount = 4;
 
     /// <summary>How many further rounds the run continues after delivery, so the quiet assertions cover more than the moment of delivery.</summary>
     private const int MarginRounds = 50;

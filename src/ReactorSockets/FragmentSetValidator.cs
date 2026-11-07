@@ -14,10 +14,8 @@ namespace ReactorSockets;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Public for the same reason <see cref="FragmentGroup"/> and <see cref="FragmentPlan"/> are (ADR 0015):
-/// a test pins the wrap-aware overlap sweep and the per-mode group identity by handing it hand-built
-/// record bytes, with no <c>InternalsVisibleTo</c> and no interface invented for the purpose. Nothing
-/// here is reached from a consumer's request path. <see cref="DatagramSessionReactor"/> owns one
+/// Internal (ADR 0022). The wrap-aware overlap sweep and the per-mode group identity are proved through
+/// the receive path, by datagrams a hand-built client sends. <see cref="DatagramSessionReactor"/> owns one
 /// instance and calls <see cref="AreWellFormed"/> once per data datagram, after every record has proved
 /// individually legal and before any Space is touched.
 /// </para>
@@ -55,7 +53,7 @@ namespace ReactorSockets;
 /// thread-safe: the scratch is reused across calls.
 /// </para>
 /// </remarks>
-public sealed class FragmentSetValidator
+internal sealed class FragmentSetValidator
 {
     /// <summary>
     /// The longest record body this validator accepts: the largest UDP datagram

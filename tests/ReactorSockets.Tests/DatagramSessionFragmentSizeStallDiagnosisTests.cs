@@ -63,7 +63,7 @@ public class DatagramSessionFragmentSizeStallDiagnosisTests
 
     /// <summary>
     /// Rounds bounding the drive to the Peer's close: the stall signature needs
-    /// <see cref="FragmentStallSignature.StallRoundCount"/> retransmission rounds after the unfragmented
+    /// <c>FragmentStallSignature.StallRoundCount</c> retransmission rounds after the unfragmented
     /// ack, which land well inside this budget (observed at round 16 with this file's own parameters) —
     /// wide enough to leave no doubt the close is a genuine result and not a near-miss, while still bounded
     /// so a regression that stops the Peer from ever closing fails this test instead of hanging it.
@@ -84,7 +84,7 @@ public class DatagramSessionFragmentSizeStallDiagnosisTests
     /// that simply stalls without closing at all.
     /// </summary>
     /// <remarks>
-    /// <see cref="FragmentStallSignature.IsFragmentSizeStall"/> can only become true once an unfragmented
+    /// <c>FragmentStallSignature.IsFragmentSizeStall</c> can only become true once an unfragmented
     /// reliable record has been acknowledged at or after the Fragment window opened (see its own remarks).
     /// This close reason being reported at all is therefore already the observable proof that the small
     /// Message was genuinely being acked throughout the run, not merely arriving one-way — a Session that
@@ -111,7 +111,7 @@ public class DatagramSessionFragmentSizeStallDiagnosisTests
 
         // Assert — the Session closed at all, rather than merely stalling forever within the budget.
         closed.Should().BeTrue(
-            $"the stall signature's {FragmentStallSignature.StallRoundCount} retransmission rounds must complete and close the Peer well inside {RoundBudget} rounds; a Session that only stalls without closing is a failed diagnosis");
+            $"the stall signature's four retransmission rounds must complete and close the Peer well inside {RoundBudget} rounds; a Session that only stalls without closing is a failed diagnosis");
 
         // Assert — closed by name, not by a generic timeout.
         fixture.DiallerEvents.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed && e.Peer.Equals(fixture.DiallerPeer))

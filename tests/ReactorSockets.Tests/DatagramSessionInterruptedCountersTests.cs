@@ -10,7 +10,7 @@ namespace ReactorSockets.Tests;
 /// <see cref="SessionEventKind.PeerInterrupted"/> nor stop moving afterwards. Drives a real
 /// <see cref="DatagramSessionReactor"/> pair through a <see cref="LossyProxy"/> on a shared
 /// <see cref="Microsoft.Extensions.Time.Testing.FakeTimeProvider"/>, seeds the Peer's shared
-/// <see cref="RetransmissionTimer"/> with one clean round trip (mirrors
+/// <c>RetransmissionTimer</c> with one clean round trip (mirrors
 /// <see cref="DatagramSessionPingRetransmissionTests.SeedEstimator"/>), then cuts the path so a
 /// retained <c>ReliableOrdered</c> record keeps expiring into a proxy that drops every relay, both
 /// before and after the receive-idle deadline moves the Peer to Interrupted.
@@ -30,7 +30,7 @@ public class DatagramSessionInterruptedCountersTests
 
     /// <summary>
     /// The seeding round trip (the same 20ms case <see cref="DatagramSessionPingRetransmissionTests"/>
-    /// uses): seeds the shared <see cref="RetransmissionTimer"/> at a 60ms timeout, so this file's
+    /// uses): seeds the shared <c>RetransmissionTimer</c> at a 60ms timeout, so this file's
     /// retransmissions stay dense relative to the 10-minute Linger rather than waiting out an unseeded
     /// estimator's Linger-ceilinged RTO.
     /// </summary>
@@ -166,7 +166,7 @@ public class DatagramSessionInterruptedCountersTests
     /// <summary>
     /// Sends one ReliableOrdered Message, flushes it, and acknowledges it exactly
     /// <see cref="_seedRoundTrip"/> later through the accepter's own reply — the only way an ack block
-    /// reaches the wire — so the Peer's shared <see cref="RetransmissionTimer"/> takes its one clean
+    /// reaches the wire — so the Peer's shared <c>RetransmissionTimer</c> takes its one clean
     /// first sample. Matches <see cref="DatagramSessionPingRetransmissionTests.SeedEstimator"/>'s shape:
     /// a short, known timeout keeps this file's clock advances small relative to the ten-minute Linger
     /// it must stay far under.

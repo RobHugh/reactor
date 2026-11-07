@@ -473,7 +473,7 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
     /// Splits a large wait into "advance to one millisecond short, Pump once, advance the final
     /// millisecond" so the Pump immediately following this call observes a one-millisecond cadence
     /// rather than the whole wait (<see cref="DatagramSessionPingRetransmissionTests"/>'s own remarks
-    /// give the full reasoning: <see cref="RetransmissionTimer.EffectiveTimeout"/> floors the RTO at the
+    /// give the full reasoning: <c>RetransmissionTimer.EffectiveTimeout</c> floors the RTO at the
     /// observed Pump interval, so a large advance immediately before an assertion Pump would corrupt
     /// that floor for whatever timer that Pump is meant to exercise). Promoted here from that file
     /// (issue #352) because every liveness test that advances the clock by a whole idle interval needs

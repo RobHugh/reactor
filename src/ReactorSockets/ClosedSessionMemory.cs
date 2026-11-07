@@ -11,13 +11,12 @@ namespace ReactorSockets;
 /// <see cref="DisconnectReason.LingerExpired"/>.
 /// </summary>
 /// <remarks>
-/// Public for the same reason <see cref="FragmentGroup"/> is (ADR 0015): a test pins the ring's
-/// overwrite, expiry and Goodbye-acknowledgement rules directly with a fake <see cref="TimeProvider"/>
-/// and hand-built datagrams. Nothing here is reached from a consumer's request path.
+/// Internal (ADR 0022). The overwrite, expiry and Goodbye-acknowledgement rules are proved through
+/// the Reactor that owns this type, by a client that sends a freed Session crafted datagrams.
 /// <see cref="DatagramSessionReactor"/> owns one instance and does the sending: this type decides only
 /// whether to answer and with which ack blocks. Not thread-safe.
 /// </remarks>
-public sealed class ClosedSessionMemory
+internal sealed class ClosedSessionMemory
 {
     private readonly Entry[] _ring;
     private readonly Dictionary<uint, int> _indexBySession;
@@ -186,7 +185,7 @@ public sealed class ClosedSessionMemory
 /// <param name="RemoteSessionId">The session id to stamp on the reply.</param>
 /// <param name="ReliableOrdered">The <c>ReliableOrdered</c> Space's ack block.</param>
 /// <param name="ReliableUnordered">The <c>ReliableUnordered</c> Space's ack block.</param>
-public readonly record struct ClosedSessionAck(
+internal readonly record struct ClosedSessionAck(
     Source Remote,
     uint RemoteSessionId,
     AckBlock ReliableOrdered,
