@@ -88,6 +88,12 @@ public class DatagramSessionFragmentSizeUnviableTests
 
     private const int MaxMessageSize = 4096;
 
+    /// <summary>
+    /// The expired retransmission rounds the fragment-size diagnosis waits for: four, chosen and argued
+    /// on <c>FragmentStallSignature.StallRoundCount</c>.
+    /// </summary>
+    private const int StallRoundCount = 4;
+
     /// <summary>Sized so both the fragmented Message and its retransmissions, on both Peers, stay retained for the whole run.</summary>
     private const int RetentionBytes = 16384;
 
@@ -227,6 +233,120 @@ public class DatagramSessionFragmentSizeUnviableTests
     }
 
     [Fact]
+    public void Pump_ThreeExpiredRoundsThenAFourth_LeavesThePeerOpenUntilTheFourthClosesIt()
+    {
+        // Arrange — every condition of the signature holds except the round count, which stops one short.
+        using DatagramSessionReactorHarness node = NewNode();
+        using RawReactor clientA = NewClient();
+        LinkId clientALink = clientA.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionIdA = EstablishLiveSessionId(node, clientA, clientALink);
+        PeerId peerA = FindNodePeer(node);
+
+        List<byte[]> peerADatagrams = [];
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = [];
+        DriveFragmentSizeStall(node, clientA, clientALink, sessionIdA, peerA, peerADatagrams, events, rounds: StallRoundCount - 1);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> afterThreeRounds = [.. events];
+
+        // Act — the fourth round's 480ms wait.
+        AdvanceInSteps(node, clientA, peerADatagrams, events, _seededTimeout * 8, _pumpStep);
+
+        // Assert
+        afterThreeRounds.Should().NotContain(
+            e => e.Kind == SessionEventKind.PeerClosed, "three rounds are one short of the count the diagnosis needs");
+        events.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed && e.Peer.Equals(peerA))
+            .Which.Reason.Should().Be(DisconnectReason.FragmentSizeUnviable);
+    }
+
+    [Fact]
+    public void Pump_APeerThatOnceDeliveredAFragmentedMessage_IsNeverDiagnosedWhenALaterOneStalls()
+    {
+        // Arrange — the first fragmented Message is acked whole, so this path has carried a Fragment.
+        using DatagramSessionReactorHarness node = NewNode();
+        using RawReactor clientA = NewClient();
+        LinkId clientALink = clientA.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionIdA = EstablishLiveSessionId(node, clientA, clientALink);
+        PeerId peerA = FindNodePeer(node);
+
+        List<byte[]> datagrams = [];
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = [];
+        byte[] bigMessage = Enumerable.Range(0, BigMessageLength).Select(i => (byte)i).ToArray();
+
+        node.Reactor.Send(peerA, DeliveryMode.ReliableOrdered, bigMessage).Should().Be(SendOutcome.Sent);
+        PumpAndCollect(node, clientA, datagrams, events);
+        node.TimeProvider.Advance(_roundTrip);
+        SendCraftedArrivalAndCollect(
+            node,
+            clientA,
+            clientALink,
+            BuildAckDatagram(sessionIdA, HighestFragmentSequence + 1, 0, 0, 0, sequence: 50),
+            datagrams,
+            events);
+
+        // A second fragmented Message whose Fragments are never acked, then an unfragmented record acked
+        // after it, so every other condition of the signature holds for the new window.
+        node.TimeProvider.Advance(TimeSpan.FromMilliseconds(1));
+        node.Reactor.Send(peerA, DeliveryMode.ReliableOrdered, bigMessage).Should().Be(SendOutcome.Sent);
+        PumpAndCollect(node, clientA, datagrams, events);
+        node.Reactor.Send(peerA, DeliveryMode.ReliableUnordered, [0x5A]).Should().Be(SendOutcome.Sent);
+        PumpAndCollect(node, clientA, datagrams, events);
+        node.TimeProvider.Advance(_roundTrip);
+        SendCraftedArrivalAndCollect(
+            node,
+            clientA,
+            clientALink,
+            BuildAckDatagram(sessionIdA, HighestFragmentSequence + 1, 0, reliableUnorderedAckBase: 1, 0, sequence: 51),
+            datagrams,
+            events);
+
+        // Act — well past the four rounds the seeded 60ms RTO reaches in 900ms.
+        AdvanceInSteps(node, clientA, datagrams, events, TimeSpan.FromMilliseconds(950), _pumpStep);
+
+        // Assert
+        events.Should().NotContain(
+            e => e.Reason == DisconnectReason.FragmentSizeUnviable,
+            "a path that has carried a Fragment cannot be one that never carries a Fragment");
+    }
+
+    [Fact]
+    public void Pump_TheOnlyUnfragmentedAckArrivedBeforeTheFragmentsWereSent_IsNeverDiagnosed()
+    {
+        // Arrange — the unfragmented record is acked first, then the fragmented Message is sent, and
+        // nothing is acked after that.
+        using DatagramSessionReactorHarness node = NewNode();
+        using RawReactor clientA = NewClient();
+        LinkId clientALink = clientA.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionIdA = EstablishLiveSessionId(node, clientA, clientALink);
+        PeerId peerA = FindNodePeer(node);
+
+        List<byte[]> datagrams = [];
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = [];
+
+        node.Reactor.Send(peerA, DeliveryMode.ReliableUnordered, [0x5A]).Should().Be(SendOutcome.Sent);
+        PumpAndCollect(node, clientA, datagrams, events);
+        node.TimeProvider.Advance(_roundTrip);
+        SendCraftedArrivalAndCollect(
+            node,
+            clientA,
+            clientALink,
+            BuildAckDatagram(sessionIdA, 0, 0, reliableUnorderedAckBase: 1, 0, sequence: 50),
+            datagrams,
+            events);
+
+        node.TimeProvider.Advance(TimeSpan.FromMilliseconds(1));
+        byte[] bigMessage = Enumerable.Range(0, BigMessageLength).Select(i => (byte)i).ToArray();
+        node.Reactor.Send(peerA, DeliveryMode.ReliableOrdered, bigMessage).Should().Be(SendOutcome.Sent);
+        PumpAndCollect(node, clientA, datagrams, events);
+
+        // Act — well past the four rounds the seeded 60ms RTO reaches in 900ms.
+        AdvanceInSteps(node, clientA, datagrams, events, TimeSpan.FromMilliseconds(950), _pumpStep);
+
+        // Assert
+        events.Should().NotContain(
+            e => e.Reason == DisconnectReason.FragmentSizeUnviable,
+            "an unfragmented ack from before the Fragments were sent says nothing about whether they can arrive");
+    }
+
+    [Fact]
     public void Pump_ASecondPeerNeverMeetingTheSignature_KeepsItsConfiguredFragmentSizeAndStaysUsable()
     {
         // Arrange — a second Peer over its own client, established alongside the one that will be driven
@@ -362,7 +482,8 @@ public class DatagramSessionFragmentSizeUnviableTests
         uint sessionId,
         PeerId peer,
         List<byte[]> datagrams,
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events)
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events,
+        int rounds = StallRoundCount)
     {
         // A Message several times FragmentSize, cut into three Fragments; flushing opens the window.
         byte[] bigMessage = Enumerable.Range(0, BigMessageLength).Select(i => (byte)i).ToArray();
@@ -406,10 +527,10 @@ public class DatagramSessionFragmentSizeUnviableTests
         // actually fires, so the re-arm it computes reflects the seeded, doubling RTO instead.
         TimeSpan[] deadlines = [_linger, _seededTimeout * 2, _seededTimeout * 4, _seededTimeout * 8];
         deadlines.Should().HaveCount(
-            FragmentStallSignature.StallRoundCount,
-            "one deadline per retransmission round the signature counts before IsFragmentSizeStall can fire");
+            StallRoundCount,
+            "one deadline per retransmission round the signature counts before the Peer is diagnosed");
 
-        foreach (TimeSpan deadline in deadlines)
+        foreach (TimeSpan deadline in deadlines.Take(rounds))
         {
             AdvanceInSteps(node, client, datagrams, events, deadline, _pumpStep);
         }
