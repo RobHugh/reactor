@@ -30,21 +30,17 @@ internal static class HandshakeLegality
     public static bool IsLegalInterval(ulong milliseconds) => milliseconds is > 0 and <= MaximumIntervalMilliseconds;
 
     /// <summary>
-    /// Whether the values an end announces about itself in a handshake are legal. A
-    /// <paramref name="maxMessageSize"/> of zero is illegal whatever the version, as it is in the local
-    /// options. The intervals are judged by <see cref="IsLegalInterval"/> only when
+    /// Whether the limits an end announces about itself in a handshake are legal. A
+    /// <see cref="AnnouncedLimits.MaxMessageSize"/> of zero is illegal whatever the version, as it is in
+    /// the local options. The intervals are judged by <see cref="IsLegalInterval"/> only when
     /// <paramref name="speaksVersion"/> is <see langword="true"/>: a handshake of a version this end
     /// does not speak is left for the version Refusal, because this end cannot judge the fields of
     /// that version.
     /// </summary>
-    public static bool IsLegalAnnouncement(
-        bool speaksVersion,
-        uint maxMessageSize,
-        ulong sendIdleIntervalMilliseconds,
-        ulong lingerMilliseconds) =>
-        maxMessageSize != 0
+    public static bool IsLegalAnnouncement(AnnouncedLimits limits, bool speaksVersion) =>
+        limits.MaxMessageSize != 0
         && (!speaksVersion
-            || (IsLegalInterval(sendIdleIntervalMilliseconds) && IsLegalInterval(lingerMilliseconds)));
+            || (IsLegalInterval(limits.SendIdleIntervalMilliseconds) && IsLegalInterval(limits.LingerMilliseconds)));
 
     /// <summary>
     /// Whether <paramref name="reason"/> is a legal Refusal reason: one

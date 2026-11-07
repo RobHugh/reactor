@@ -126,7 +126,7 @@ internal static class ControlDatagramCodec
 
     /// <summary>
     /// Writes a <see cref="DatagramControlType.Accept"/>: the accepting end's agreement, carrying its
-    /// own <paramref name="terms"/>, the same four fields a Hello-with-cookie carries for the dialler.
+    /// own <paramref name="terms"/>, the same terms a Hello-with-cookie carries for the dialler.
     /// </summary>
     public static void WriteAccept(
         Span<byte> destination,
@@ -351,7 +351,7 @@ internal static class ControlDatagramCodec
         offset += DatagramSessionProtocol.CookieLength;
         terms = ReadTerms(datagram, ref offset);
 
-        if (!IsLegal(terms, speaksVersion: version == DatagramSessionProtocol.Version))
+        if (!HandshakeLegality.IsLegalAnnouncement(terms.Limits, speaksVersion: version == DatagramSessionProtocol.Version))
         {
             version = default;
             clientNonce = default;
@@ -391,7 +391,7 @@ internal static class ControlDatagramCodec
         offset += sizeof(ulong);
         terms = ReadTerms(datagram, ref offset);
 
-        if (!IsLegal(terms, speaksVersion: true))
+        if (!HandshakeLegality.IsLegalAnnouncement(terms.Limits, speaksVersion: true))
         {
             clientNonce = default;
             terms = default;
@@ -410,43 +410,26 @@ internal static class ControlDatagramCodec
     {
         BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], terms.SessionIdForMe);
         offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], terms.MaxMessageSize);
-        offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], terms.SendIdleIntervalMilliseconds);
-        offset += sizeof(ulong);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], terms.LingerMilliseconds);
-        offset += sizeof(ulong);
+        terms.Limits.Write(destination[offset..]);
+        offset += AnnouncedLimits.WireSize;
         return offset;
     }
 
     /// <summary>
     /// Reads the terms <see cref="WriteTerms"/> writes, starting at <paramref name="offset"/> and
-    /// advancing it past them. Judges nothing: each caller applies its own legality rule.
+    /// advancing it past them. Judges nothing: each caller applies
+    /// <see cref="HandshakeLegality.IsLegalAnnouncement"/> to the limits.
+    /// <see cref="AnnouncedSessionTerms.SessionIdForMe"/> is never judged: every value is a usable
+    /// session id.
     /// </summary>
     private static AnnouncedSessionTerms ReadTerms(ReadOnlySpan<byte> datagram, ref int offset)
     {
         uint sessionIdForMe = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
         offset += sizeof(uint);
-        uint maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
-        offset += sizeof(uint);
-        ulong sendIdleIntervalMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
-        offset += sizeof(ulong);
-        ulong lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
-        offset += sizeof(ulong);
-        return new(sessionIdForMe, maxMessageSize, sendIdleIntervalMilliseconds, lingerMilliseconds);
+        AnnouncedLimits limits = AnnouncedLimits.Read(datagram[offset..]);
+        offset += AnnouncedLimits.WireSize;
+        return new(sessionIdForMe, limits);
     }
-
-    /// <summary>
-    /// Whether <paramref name="terms"/> are a <see cref="HandshakeLegality.IsLegalAnnouncement">legal</see>
-    /// announcement. <see cref="AnnouncedSessionTerms.SessionIdForMe"/> is not judged: every value is a
-    /// usable session id.
-    /// </summary>
-    private static bool IsLegal(AnnouncedSessionTerms terms, bool speaksVersion) =>
-        HandshakeLegality.IsLegalAnnouncement(
-            speaksVersion,
-            terms.MaxMessageSize,
-            terms.SendIdleIntervalMilliseconds,
-            terms.LingerMilliseconds);
 
     /// <summary>
     /// Reads a <see cref="DatagramControlType.Resume"/>'s body. <paramref name="targetSessionId"/> routes

@@ -49,9 +49,7 @@ internal static class StreamHandshakeCodec
 {
     private const int HelloPayloadSize =
         sizeof(uint) // version
-        + sizeof(uint) // maxMessageSize
-        + sizeof(ulong) // sendIdleIntervalMilliseconds
-        + sizeof(ulong) // lingerMilliseconds
+        + AnnouncedLimits.WireSize
         + StreamSessionProtocol.ResumeSecretLength;
 
     private const int RefusalPayloadSize =
@@ -122,16 +120,13 @@ internal static class StreamHandshakeCodec
     }
 
     /// <summary>
-    /// Writes one Hello record: this end's version, its own <c>MaxMessageSize</c> announced as a
-    /// receive limit, its send-idle interval and Linger, and the resume secret it will require before
-    /// resuming this Session.
+    /// Writes one Hello record: this end's version, its announced <paramref name="limits"/>, and the
+    /// resume secret it will require before resuming this Session.
     /// </summary>
     public static void Write(
         Span<byte> destination,
         uint version,
-        uint maxMessageSize,
-        ulong sendIdleIntervalMilliseconds,
-        ulong lingerMilliseconds,
+        AnnouncedLimits limits,
         ReadOnlySpan<byte> resumeSecret)
     {
         ValidateDestinationSize(destination);
@@ -141,12 +136,8 @@ internal static class StreamHandshakeCodec
         int offset = 1;
         BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], version);
         offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], maxMessageSize);
-        offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], sendIdleIntervalMilliseconds);
-        offset += sizeof(ulong);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], lingerMilliseconds);
-        offset += sizeof(ulong);
+        limits.Write(destination[offset..]);
+        offset += AnnouncedLimits.WireSize;
         resumeSecret.CopyTo(destination.Slice(offset, StreamSessionProtocol.ResumeSecretLength));
     }
 
@@ -162,9 +153,7 @@ internal static class StreamHandshakeCodec
     public static bool TryRead(
         ReadOnlySpan<byte> record,
         out uint version,
-        out uint maxMessageSize,
-        out ulong sendIdleIntervalMilliseconds,
-        out ulong lingerMilliseconds,
+        out AnnouncedLimits limits,
         Span<byte> resumeSecret)
     {
         if (record.Length != RecordSize
@@ -172,32 +161,20 @@ internal static class StreamHandshakeCodec
             || record[0] != (byte)StreamHandshakeMessageType.Hello)
         {
             version = default;
-            maxMessageSize = default;
-            sendIdleIntervalMilliseconds = default;
-            lingerMilliseconds = default;
+            limits = default;
             return false;
         }
 
         int offset = 1;
         version = BinaryPrimitives.ReadUInt32BigEndian(record[offset..]);
         offset += sizeof(uint);
-        maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(record[offset..]);
-        offset += sizeof(uint);
-        sendIdleIntervalMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(record[offset..]);
-        offset += sizeof(ulong);
-        lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(record[offset..]);
-        offset += sizeof(ulong);
+        limits = AnnouncedLimits.Read(record[offset..]);
+        offset += AnnouncedLimits.WireSize;
 
-        if (!HandshakeLegality.IsLegalAnnouncement(
-                speaksVersion: version == StreamSessionProtocol.Version,
-                maxMessageSize,
-                sendIdleIntervalMilliseconds,
-                lingerMilliseconds))
+        if (!HandshakeLegality.IsLegalAnnouncement(limits, speaksVersion: version == StreamSessionProtocol.Version))
         {
             version = default;
-            maxMessageSize = default;
-            sendIdleIntervalMilliseconds = default;
-            lingerMilliseconds = default;
+            limits = default;
             return false;
         }
 
