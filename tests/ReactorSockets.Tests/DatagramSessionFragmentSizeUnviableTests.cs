@@ -14,7 +14,7 @@ namespace ReactorSockets.Tests;
 /// <remarks>
 /// <para>
 /// Three properties of the close are non-obvious enough to need their own proof rather than trusting
-/// <c>FragmentStallSignature</c>'s own tests (issue #294) and <c>ReportExpiredRetransmissions</c>'s
+/// the signature's own conditions, pinned further down this file, and <c>ReportExpiredRetransmissions</c>'s
 /// one call site to speak for them. <b>Once-only:</b> closing removes the Peer's Slot outright, so a
 /// consumer draining several more times after the close must never see a second
 /// <see cref="SessionEventKind.PeerClosed"/> for the same Peer — a duplicate would tell a consumer to

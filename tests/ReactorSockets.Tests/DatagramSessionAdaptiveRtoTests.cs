@@ -341,7 +341,7 @@ public class DatagramSessionAdaptiveRtoTests
         node.Reactor.Pump();
 
         // Assert — 190 is the recurrence in this order. Updating the smoothed value first would give a
-        // variance of 16.25ms and report 180; ignoring the second sample would leave the seed's 120.
+        // variance of 16.25ms and report 180. Ignoring the second sample would leave the seed's 120.
         BackedOffRecords(node, nodePeer).Should().Equal(
             [(190, 1)],
             "the second sample moved the variance from the old smoothed value, then the smoothed value itself");

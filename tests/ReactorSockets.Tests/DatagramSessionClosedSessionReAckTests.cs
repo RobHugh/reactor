@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Net;
 using FluentAssertions;
 using Xunit;
@@ -45,6 +46,9 @@ public class DatagramSessionClosedSessionReAckTests
 
     /// <summary>The ack the node sends once the client's Goodbye at sequence 0 has closed the Peer.</summary>
     private static readonly AckBlock _finalAck = new(Base: 1, Bits: 0);
+
+    /// <summary>The harness's Linger, which is shorter than the client's and so is the effective one.</summary>
+    private static readonly TimeSpan _linger = TimeSpan.FromSeconds(1);
 
     [Fact]
     public void Pump_AGoodbyeAtASequenceOtherThanTheStoredBase_IsAnsweredWithTheStoredBlocksUnchanged()
@@ -104,6 +108,38 @@ public class DatagramSessionClosedSessionReAckTests
         // Assert — had the Goodbye been applied before the body failed to parse, the base would read 2.
         replies.Should().ContainSingle("only the sentinel Goodbye was answered");
         Decode(replies[0]).ReliableOrderedAck.Should().Be(_finalAck);
+    }
+
+    [Fact]
+    public void Pump_AGoodbyeOneTickInsideTheLinger_IsStillAnswered()
+    {
+        // Arrange — the effective Linger is the harness's one second, the shorter of the two ends'.
+        using DatagramSessionReactorHarness node = new();
+        using ClosedClient client = ClosedClient.Establish(node);
+        node.TimeProvider.Advance(_linger - TimeSpan.FromTicks(1));
+
+        // Act
+        List<byte[]> replies = client.Probe(node, client.Goodbye());
+
+        // Assert
+        replies.Should().ContainSingle();
+        Decode(replies[0]).ReliableOrderedAck.Should().Be(_finalAck);
+    }
+
+    [Fact]
+    public void Pump_AGoodbyeExactlyAtTheLinger_DrawsNoReply()
+    {
+        // Arrange
+        using DatagramSessionReactorHarness node = new();
+        using ClosedClient client = ClosedClient.Establish(node);
+        node.TimeProvider.Advance(_linger);
+
+        // Act
+        client.Send(node, client.Goodbye());
+        List<byte[]> replies = client.CollectFor(node, TimeSpan.FromMilliseconds(200));
+
+        // Assert
+        replies.Should().BeEmpty("a freed Session is remembered for the Linger and not one tick longer");
     }
 
     [Fact]
@@ -235,8 +271,8 @@ public class DatagramSessionClosedSessionReAckTests
         public List<byte[]> CollectFor(DatagramSessionReactorHarness node, TimeSpan window)
         {
             List<byte[]> received = [];
-            DateTime until = DateTime.UtcNow + window;
-            while (DateTime.UtcNow < until)
+            Stopwatch elapsed = Stopwatch.StartNew();
+            while (elapsed.Elapsed < window)
             {
                 node.Reactor.Pump();
                 Collect(received);

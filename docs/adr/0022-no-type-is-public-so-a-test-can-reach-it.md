@@ -38,17 +38,21 @@ to pass when it was restored.
   there.
 - **Fragment-size stall** (`FragmentStallSignature`). `DatagramSessionFragmentSizeUnviableTests` now
   also pins the fourth round as the first that closes, the latch once any Fragment is acked, and an
-  unfragmented ack that came before the Fragments being ignored.
+  unfragmented ack that came before the Fragments being ignored. A resend reopening the window is
+  caught by the existing tests in that file, five of which fail when it does.
 - **Closed-Session re-ack** (`ClosedSessionMemory`, `ClosedSessionAck`, `AckBlock`).
   `DatagramSessionClosedSessionReAckTests` sends a freed Session crafted datagrams. A Goodbye off the
   stored base gets the stored blocks back. An ordinary ordered Message is not acked. A datagram with no
   ordered record, or with a truncated record, gets no reply. A full ring forgets the oldest Session.
+  A Goodbye one tick inside the Linger is answered, and one exactly at it is not.
 - **Cutting and refusing** (`FragmentPlan`, `FragmentPlanResult`). The record count on the wire at
   zero length, at one byte past a Fragment and at an exact multiple, plus the existing refusal tests on
   `SendOutcome`.
 - **Fragment-set legality** (`FragmentSetValidator`, `FragmentGroup`). `DatagramSessionHostileFragmentDiscardTests`
   already mirrored the rejecting cases. `DatagramSessionFragmentDeliveryTests` now also pins the two
-  accepting cases: touching ranges in one Space, and the same first sequence in two Spaces.
+  accepting cases: touching ranges in one Space, and the same first sequence in two Spaces. Every
+  rejecting case there ends with a well-formed datagram that admits, so a forged body leaves nothing
+  behind for the next one.
 
 ## Coverage given up
 
@@ -62,6 +66,15 @@ These have no test, knowingly, on the terms ADR 0015 records for the coverage `1
 - `FragmentSetValidator`'s body-length guard. One UDP datagram cannot carry a body that long.
 - `ClosedSessionMemory`'s refusal of session id 0, its handling of the same id remembered again after
   an overwrite, and `ForgetAll`, which runs only on `Dispose`.
+- `FragmentStallSignature` with nothing acked at all. A Peer that hears nothing is closed by its
+  Linger, and no test asserts the reason is not `FragmentSizeUnviable`.
+- `PumpIntervalObserver` under an irregular loop, and `EffectiveTimeout` when the cadence changes
+  between calls or exceeds Linger. The seam pins the floor at one fixed cadence only. This is the
+  `ObservedPumpInterval` entry ADR 0015 already gave up, now stated per case.
+- The zero-allocation checks on `Sample`, `BackOff`, `RecordDelivery` and `EffectiveTimeout`. The
+  steady-state Pump allocation tests take no sample and no backoff.
+- That a backoff leaves the smoothed RTT and its variance untouched. The reset test implies it, since
+  the RTO returns to the estimate, but no test asserts it alone.
 - The tests that pinned each type's public member list and null-argument checks. Those exist only for
   a public type.
 
