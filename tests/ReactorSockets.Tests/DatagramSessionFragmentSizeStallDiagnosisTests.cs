@@ -38,7 +38,7 @@ namespace ReactorSockets.Tests;
 /// <b>Why no <c>FragmentSetAbandoned</c> is expected here.</b>
 /// <see cref="DiagnosticId.FragmentSetAbandoned"/> fires only when a fresh admission clobbers a ring
 /// slot that a <em>previously admitted</em> Fragment wrote non-zero length residue into
-/// (<c>ReceiveWindow.LastAbandonedFragmentSet</c>, read by
+/// (<c>ReceiveClassification.AbandonedFragmentSet</c>, read by
 /// <see cref="DatagramSessionReactor.ClassifyRecord"/>). The declared count comes from that same
 /// residue, so nothing is ever "abandoned" at a ring slot no Fragment ever touched. With every
 /// Fragment black-holed as this file's own threshold requires, the accepter's receive window for the
@@ -171,7 +171,7 @@ public class DatagramSessionFragmentSizeStallDiagnosisTests
     /// <remarks>
     /// This is not an absence of coverage — it is the correct outcome given how
     /// <c>ReceiveWindow.Classify</c> (ReactorSockets/Session/ReceiveWindow.cs) fills
-    /// <c>LastAbandonedFragmentSet</c>: it reports a set abandoned by reading a declared Fragment count back out of ring-slot residue that
+    /// <c>ReceiveClassification.AbandonedFragmentSet</c>: it reports a set abandoned by reading a declared Fragment count back out of ring-slot residue that
     /// only a <em>previously admitted</em> Fragment could have written, then counts how many of that set's
     /// own members still hold non-zero length at the moment a fresh admission clobbers the slot. With
     /// every Fragment black-holed by this file's own size threshold, the accepter's receive window for the

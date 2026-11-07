@@ -55,7 +55,7 @@ namespace ReactorSockets.Session;
 /// <b>Reporting what a release covered.</b> <see cref="RecordSent"/> also takes whether the sequence
 /// being recorded is a Fragment, and every sequence one <see cref="ApplyAck"/> call actually releases —
 /// named by a bit or swept up by the base advancing past it, once each, matching the estimator-sampling
-/// rule above — contributes to <see cref="LastAckRelease"/> according to its stored flag. This is what
+/// rule above — contributes to the <see cref="AckRelease"/> that call returns, according to its stored flag. This is what
 /// lets a Peer's fragment-stall signature tell a Fragment ack from an unfragmented one without
 /// <see cref="ApplyAck"/> itself knowing anything about that signature.
 /// </para>
@@ -119,18 +119,6 @@ internal sealed class OutstandingReliableSequences
     public ulong HorizonDeferrals { get; private set; }
 
     /// <summary>
-    /// What the most recent <see cref="ApplyAck"/> call actually released, one Space's worth at a time:
-    /// whether any of the sequences it released was a Fragment, and whether any was an unfragmented
-    /// record. Written by every <see cref="ApplyAck"/> call, including a stale or empty one, which
-    /// writes <see langword="default"/> — <c>(false, false)</c> — rather than leaving the previous
-    /// call's value standing. One value across both reliable Spaces, since each <see cref="ApplyAck"/>
-    /// call names exactly one Space: read this immediately after the call it belongs to, mirroring
-    /// <see cref="ReceiveWindow.LastSlideLoss"/> and
-    /// <see cref="ReceiveWindow.LastAbandonedFragmentSet"/>'s own idiom.
-    /// </summary>
-    public (bool ReleasedFragment, bool ReleasedUnfragmentedRecord) LastAckRelease { get; private set; }
-
-    /// <summary>
     /// Records that <paramref name="sequence"/> was just sent on <paramref name="mode"/>'s reliable
     /// Space and is now outstanding. Arms its retransmit deadline — <paramref name="sequence"/>'s send
     /// time is not tracked, only the moment this call arms from — at <paramref name="effectiveRto"/>
@@ -147,8 +135,8 @@ internal sealed class OutstandingReliableSequences
     /// </param>
     /// <param name="isFragment">
     /// Whether <paramref name="sequence"/> names one Fragment of a cut Message rather than a whole
-    /// record. Stored against the slot so a later <see cref="ApplyAck"/> release can report it through
-    /// <see cref="LastAckRelease"/> without this tracker knowing anything about what reads that value.
+    /// record. Stored against the slot so a later <see cref="ApplyAck"/> release can report it in the
+    /// <see cref="AckRelease"/> it returns, without this tracker knowing anything about what reads that value.
     /// </param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
     public void RecordSent(PacketRecordMode mode, uint sequence, TimeSpan effectiveRto, bool isFragment)
@@ -267,32 +255,14 @@ internal sealed class OutstandingReliableSequences
     /// The effective RTO any newly-covered sequence arms at, read fresh by the caller at the moment of
     /// this call — never a value fixed at construction.
     /// </param>
-    /// <remarks>
-    /// Always writes <see cref="LastAckRelease"/>, including <see langword="default"/> for a stale or
-    /// empty block — see that property's own doc.
-    /// </remarks>
+    /// <returns>
+    /// What this call actually released on <paramref name="mode"/>'s Space. A stale or empty block
+    /// releases nothing and returns an empty release. See <see cref="AckRelease"/> for how long its
+    /// sequence span stays valid.
+    /// </returns>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
-    public void ApplyAck(PacketRecordMode mode, uint ackBase, uint ackBits, TimeSpan effectiveRto) =>
-        LastAckRelease = SpaceOf(mode).ApplyAck(ackBase, ackBits, _time, effectiveRto, _timer);
-
-    /// <summary>
-    /// The sequence numbers <paramref name="mode"/>'s reliable Space actually released, once each — by a
-    /// bit or swept up by the cumulative base advancing past it — during the most recent
-    /// <see cref="ApplyAck"/> call made for this <paramref name="mode"/>. Read this immediately after
-    /// the <see cref="ApplyAck"/> call it belongs to, mirroring <see cref="LastAckRelease"/>'s own
-    /// idiom: <see cref="ReactorSockets.Core.RetentionPool.Release"/> is what a caller feeds each entry
-    /// to, one call per sequence, to free the retention slot every released record held — nothing else
-    /// in this tracker frees one.
-    /// </summary>
-    /// <remarks>
-    /// Allocates nothing: like <see cref="CollectExpired"/>, this is a reused scratch buffer sized
-    /// alongside the Space's own ring, overwritten by every <see cref="ApplyAck"/> call including a
-    /// stale or empty one, which leaves it empty rather than the previous call's contents standing. The
-    /// span is only valid until the next <see cref="ApplyAck"/> call on this Space.
-    /// </remarks>
-    /// <param name="mode">Which reliable Space's most recent release to read.</param>
-    /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
-    public ReadOnlySpan<uint> LastAckReleasedSequences(PacketRecordMode mode) => SpaceOf(mode).LastReleasedSequences;
+    public AckRelease ApplyAck(PacketRecordMode mode, uint ackBase, uint ackBits, TimeSpan effectiveRto) =>
+        SpaceOf(mode).ApplyAck(ackBase, ackBits, _time, effectiveRto, _timer);
 
     /// <summary>
     /// Reports every sequence on <paramref name="mode"/>'s reliable Space whose retransmit deadline has
@@ -451,7 +421,7 @@ internal sealed class OutstandingReliableSequences
         /// <summary>
         /// How many entries in <see cref="_releasedSequences"/> the most recent <see cref="ApplyAck"/>
         /// call wrote. Reset to zero at the start of every <see cref="ApplyAck"/> call, including a stale
-        /// one, so <see cref="LastReleasedSequences"/> never reports a previous call's releases.
+        /// one, so an <see cref="AckRelease"/> never reports a previous call's releases.
         /// </summary>
         private int _releasedSequenceCount;
 
@@ -493,8 +463,7 @@ internal sealed class OutstandingReliableSequences
         /// <paramref name="effectiveRto"/> when the current horizon covers it. Returns whether it was
         /// deferred instead, so the caller can fold that into <see cref="HorizonDeferrals"/> without this
         /// tracker needing to know about the counter it feeds. Stores <paramref name="isFragment"/>
-        /// against the slot, read back when this sequence is released (see the enclosing type's
-        /// <c>LastAckRelease</c>).
+        /// against the slot, read back when this sequence is released (see <see cref="AckRelease"/>).
         /// </summary>
         public bool RecordSent(uint sequence, TimeProvider time, TimeSpan effectiveRto, bool isFragment)
         {
@@ -657,11 +626,10 @@ internal sealed class OutstandingReliableSequences
         /// released, sampled or armed, and the horizon does not move.
         /// </summary>
         /// <returns>
-        /// Whether any sequence this call actually released was a Fragment, and whether any was an
-        /// unfragmented record — <see langword="default"/> for a stale or empty block (see the enclosing
-        /// type's <c>LastAckRelease</c>).
+        /// What this call actually released: the sequences, over <see cref="_releasedSequences"/>, and
+        /// whether any was a Fragment or an unfragmented record. An empty release for a stale or empty block.
         /// </returns>
-        public (bool ReleasedFragment, bool ReleasedUnfragmentedRecord) ApplyAck(
+        public AckRelease ApplyAck(
             uint ackBase, uint ackBits, TimeProvider time, TimeSpan effectiveRto, RetransmissionTimer timer)
         {
             _releasedSequenceCount = 0;
@@ -669,7 +637,7 @@ internal sealed class OutstandingReliableSequences
             bool stale = ackBase != _ackBase && !SequenceNumber.IsNewerThan(ackBase, _ackBase);
             if (stale)
             {
-                return default;
+                return new AckRelease(false, false, []);
             }
 
             long now = time.GetTimestamp();
@@ -695,14 +663,9 @@ internal sealed class OutstandingReliableSequences
             _ackBase = ackBase;
             ArmNewlyCovered(time, now, effectiveRto);
 
-            return (releasedFragment, releasedUnfragmentedRecord);
+            return new AckRelease(
+                releasedFragment, releasedUnfragmentedRecord, _releasedSequences.AsSpan(0, _releasedSequenceCount));
         }
-
-        /// <summary>
-        /// The sequence numbers this Space actually released during the most recent <see cref="ApplyAck"/>
-        /// call — see the enclosing type's <c>LastAckReleasedSequences</c> for the full contract.
-        /// </summary>
-        public ReadOnlySpan<uint> LastReleasedSequences => _releasedSequences.AsSpan(0, _releasedSequenceCount);
 
         /// <summary>
         /// Releases every tracked sequence strictly below <paramref name="ackBase"/> in one step — each
@@ -856,7 +819,7 @@ internal sealed class OutstandingReliableSequences
         /// Resolves <paramref name="sequence"/> to its ring slot when it lies within
         /// <c>[_oldest, _oldest + _count)</c> — tracked and not yet released. A sequence below
         /// <see cref="_oldest"/> (already released) or at or beyond <c>_oldest + _count</c> (never sent)
-        /// reports <see langword="false"/>, mirroring <see cref="ReceiveWindow.Classify(uint)"/>'s own bounds
+        /// reports <see langword="false"/>, mirroring <see cref="ReceiveWindow.Classify"/>'s own bounds
         /// check.
         /// </summary>
         private bool TryGetSlot(uint sequence, out int slot)
@@ -938,4 +901,33 @@ internal sealed class OutstandingReliableSequences
             _headSlot = 0;
         }
     }
+}
+
+/// <summary>
+/// What one <see cref="OutstandingReliableSequences.ApplyAck"/> call actually released on one reliable
+/// Space, returned from that call so a caller never reads it back from the tracker afterward.
+/// </summary>
+/// <remarks>
+/// <see cref="Sequences"/> is a view over the Space's reused scratch buffer: it allocates nothing, and it
+/// stays valid only until the next <see cref="OutstandingReliableSequences.ApplyAck"/> call on the same
+/// Space. Being a <see langword="ref"/> struct keeps it from being stored past the caller's own frame.
+/// </remarks>
+/// <param name="releasedFragment">Whether any released sequence was a Fragment.</param>
+/// <param name="releasedUnfragmentedRecord">Whether any released sequence was an unfragmented record.</param>
+/// <param name="sequences">Every sequence released, once each.</param>
+internal readonly ref struct AckRelease(bool releasedFragment, bool releasedUnfragmentedRecord, ReadOnlySpan<uint> sequences)
+{
+    /// <summary>Whether any sequence the call released was a Fragment of a cut Message.</summary>
+    public bool ReleasedFragment { get; } = releasedFragment;
+
+    /// <summary>Whether any sequence the call released was an unfragmented record.</summary>
+    public bool ReleasedUnfragmentedRecord { get; } = releasedUnfragmentedRecord;
+
+    /// <summary>
+    /// The sequence numbers the call released, once each, whether named by a bit or swept up by the
+    /// cumulative base advancing past them. A caller feeds each to
+    /// <see cref="Core.RetentionPool.Release"/> to free the retention slot that record held: nothing in
+    /// the tracker frees one.
+    /// </summary>
+    public ReadOnlySpan<uint> Sequences { get; } = sequences;
 }

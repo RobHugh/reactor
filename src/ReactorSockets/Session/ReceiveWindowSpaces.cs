@@ -77,159 +77,30 @@ internal sealed class ReceiveWindowSpaces
     }
 
     /// <summary>
-    /// How many sequences <see cref="Classify(PacketRecordMode, uint)"/>'s most recent call retired un-admitted by sliding the
-    /// touched Space's window forward — zero unless that call touched a sliding Space
-    /// (<c>Unreliable</c> or <c>UnreliableSequenced</c>) and that Space's window slid. Mirrors
-    /// <see cref="ReceiveWindow.LastSlideLoss"/> one level up, since a caller here does not hold a
-    /// reference to whichever of the four windows <see cref="Classify(PacketRecordMode, uint)"/> touched.
+    /// <paramref name="mode"/>'s own window. Classifying against it touches that Space alone: the other
+    /// three Spaces' windows are untouched, which is what keeps the four Spaces from disturbing one
+    /// another.
     /// </summary>
-    public ulong LastSlideLoss { get; private set; }
-
-    /// <summary>
-    /// Whether <see cref="Classify(PacketRecordMode, uint, out int)"/>'s most recent call discovered an
-    /// incomplete Fragment set abandoned, and if so, how much of it was held versus how much it
-    /// declared — mirrors <see cref="ReceiveWindow.LastAbandonedFragmentSet"/> one level up, for the
-    /// same reason <see cref="LastSlideLoss"/> does: a caller here does not hold a reference to
-    /// whichever of the four windows <see cref="Classify(PacketRecordMode, uint, out int)"/> touched.
-    /// </summary>
-    public (bool Occurred, long Held, long Expected) LastAbandonedFragmentSet { get; private set; }
-
-    /// <summary>
-    /// Classifies <paramref name="sequence"/> against <paramref name="mode"/>'s Space alone — the other
-    /// three Spaces' windows are untouched by this call, which is what keeps the four Spaces from
-    /// disturbing one another. <see cref="LastSlideLoss"/> reflects whatever this call did before it
-    /// returns.
-    /// </summary>
-    /// <param name="mode">Which of the four Spaces to classify against.</param>
-    /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
-    /// <returns>The outcome <paramref name="mode"/>'s window reports for <paramref name="sequence"/>.</returns>
-    public ReceiveWindowOutcome Classify(PacketRecordMode mode, uint sequence) => Classify(mode, sequence, out _);
-
-    /// <summary>
-    /// Whether <paramref name="mode"/>'s window would admit <paramref name="sequence"/> right now —
-    /// see <see cref="ReceiveWindow.WouldAdmit"/>. Changes nothing, so <see cref="LastSlideLoss"/> and
-    /// <see cref="LastAbandonedFragmentSet"/> keep what the last <see cref="Classify(PacketRecordMode, uint)"/>
-    /// left. <paramref name="mode"/> must be <c>ReliableOrdered</c> or <c>ReliableUnordered</c>, the
-    /// two Spaces whose windows do not slide.
-    /// </summary>
-    public bool WouldAdmit(PacketRecordMode mode, uint sequence) => mode switch
+    /// <param name="mode">Which of the four Spaces' windows to reach.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a delivery mode.</exception>
+    public ReceiveWindow Window(PacketRecordMode mode) => mode switch
     {
-        PacketRecordMode.ReliableUnordered => _reliableUnordered.WouldAdmit(sequence),
-        PacketRecordMode.ReliableOrdered => _reliableOrdered.WouldAdmit(sequence),
-        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Only the two reliable Spaces' windows can be asked."),
+        PacketRecordMode.Unreliable => _unreliable,
+        PacketRecordMode.UnreliableSequenced => _unreliableSequenced,
+        PacketRecordMode.ReliableUnordered => _reliableUnordered,
+        PacketRecordMode.ReliableOrdered => _reliableOrdered,
+        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown delivery mode."),
     };
 
     /// <summary>
-    /// Whether <paramref name="sequence"/> must wait because admitting it would overwrite a held Fragment
-    /// whose group can still be delivered — see
-    /// <see cref="ReceiveWindow.WouldOverwriteDeliverableFragment"/>. The overwritten Fragment may belong to a
-    /// group waiting in <paramref name="mode"/>'s <see cref="PendingFragmentGroups"/>, or to a group a
-    /// retransmission is about to complete. Overwriting either would leave that group unable ever to
-    /// complete, and a <c>ReliableOrdered</c> Space unable ever to deliver past it. Changes nothing.
-    /// <paramref name="mode"/> must be <c>ReliableOrdered</c> or <c>ReliableUnordered</c>.
+    /// <paramref name="mode"/>'s window, restricted to the two reliable Spaces: the only two that never
+    /// slide and that ADR 0004 ever routes a Fragment into. Callers asking whether a sequence would be
+    /// admitted, or reading and writing Fragment bookkeeping, reach the window through this, so asking an
+    /// unreliable Space is refused rather than answered by a sliding window.
     /// </summary>
-    /// <param name="mode">Which reliable Space to ask about.</param>
-    /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
-    public bool MustWaitForHeldFragment(PacketRecordMode mode, uint sequence) =>
-        ReliableWindow(mode).WouldOverwriteDeliverableFragment(sequence);
-
-    /// <summary>
-    /// <see cref="Classify(PacketRecordMode, uint)"/>, additionally reporting the ring slot
-    /// <paramref name="sequence"/> resolves to in <paramref name="mode"/>'s window — see
-    /// <see cref="ReceiveWindow.Classify(uint, out int)"/>. A caller holding a Fragment's payload
-    /// passes this back into <see cref="RecordFragmentLength"/> and
-    /// <see cref="ReceiveArena.GetFragmentSlot"/> to divert it.
-    /// </summary>
-    /// <param name="mode">Which of the four Spaces to classify against.</param>
-    /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
-    /// <param name="ringSlot">The ring position <paramref name="sequence"/> resolves to; -1 for <see cref="ReceiveWindowOutcome.OutOfWindow"/>.</param>
-    /// <returns>The outcome <paramref name="mode"/>'s window reports for <paramref name="sequence"/>.</returns>
-    public ReceiveWindowOutcome Classify(PacketRecordMode mode, uint sequence, out int ringSlot)
-    {
-        ReceiveWindow window = mode switch
-        {
-            PacketRecordMode.Unreliable => _unreliable,
-            PacketRecordMode.UnreliableSequenced => _unreliableSequenced,
-            PacketRecordMode.ReliableUnordered => _reliableUnordered,
-            PacketRecordMode.ReliableOrdered => _reliableOrdered,
-            _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown delivery mode."),
-        };
-
-        ReceiveWindowOutcome outcome = window.Classify(sequence, out ringSlot);
-        LastSlideLoss = window.LastSlideLoss;
-        LastAbandonedFragmentSet = window.LastAbandonedFragmentSet;
-        return outcome;
-    }
-
-    /// <summary>
-    /// Records that the Fragment occupying ring slot <paramref name="ringSlot"/> of
-    /// <paramref name="mode"/>'s window is <paramref name="byteLength"/> bytes long — see
-    /// <see cref="ReceiveWindow.RecordFragmentLength"/>. <paramref name="mode"/> must be
-    /// <c>ReliableOrdered</c> or <c>ReliableUnordered</c>, the only two Spaces ADR 0004 ever routes a
-    /// Fragment into.
-    /// </summary>
-    public void RecordFragmentLength(PacketRecordMode mode, int ringSlot, ushort byteLength) =>
-        ReliableWindow(mode).RecordFragmentLength(ringSlot, byteLength);
-
-    /// <summary>
-    /// Records that the Fragment occupying ring slot <paramref name="ringSlot"/> of
-    /// <paramref name="mode"/>'s window belongs to the group starting at
-    /// <paramref name="groupFirstSequence"/> and declaring <paramref name="fragmentCount"/> pieces —
-    /// see <see cref="ReceiveWindow.RecordFragmentGroup"/>. <paramref name="mode"/> must be
-    /// <c>ReliableOrdered</c> or <c>ReliableUnordered</c>, the only two Spaces ADR 0004 ever routes a
-    /// Fragment into.
-    /// </summary>
-    public void RecordFragmentGroup(PacketRecordMode mode, int ringSlot, uint groupFirstSequence, ushort fragmentCount) =>
-        ReliableWindow(mode).RecordFragmentGroup(ringSlot, groupFirstSequence, fragmentCount);
-
-    /// <summary>
-    /// Reads back what <see cref="RecordFragmentLength"/> most recently recorded for ring slot
-    /// <paramref name="ringSlot"/> of <paramref name="mode"/>'s window — see
-    /// <see cref="ReceiveWindow.GetFragmentLength"/>.
-    /// </summary>
-    public ushort GetFragmentLength(PacketRecordMode mode, int ringSlot) =>
-        ReliableWindow(mode).GetFragmentLength(ringSlot);
-
-    /// <summary>
-    /// Whether every Fragment of the group starting at <paramref name="groupFirstSequence"/> and
-    /// declaring <paramref name="fragmentCount"/> pieces is currently held in <paramref name="mode"/>'s
-    /// window — see <see cref="ReceiveWindow.IsGroupComplete"/>. Reads that one window's state alone:
-    /// the other three Spaces, and every piece of ack or retransmit state, play no part.
-    /// </summary>
-    /// <param name="mode">Which reliable Space's window to test — <c>ReliableOrdered</c> or <c>ReliableUnordered</c>.</param>
-    /// <param name="groupFirstSequence">The group's first sequence — see <see cref="FragmentGroup.FirstSequenceOf"/>.</param>
-    /// <param name="fragmentCount">The group's declared Fragment count.</param>
-    public bool IsGroupComplete(PacketRecordMode mode, uint groupFirstSequence, ushort fragmentCount) =>
-        ReliableWindow(mode).IsGroupComplete(groupFirstSequence, fragmentCount);
-
-    /// <summary>
-    /// Resolves <paramref name="sequence"/> to the ring slot it occupies in <paramref name="mode"/>'s
-    /// window right now — see <see cref="ReceiveWindow.TryGetRingSlot"/>. What a caller delivering a
-    /// completed group's pieces uses to find each piece's payload slot
-    /// (<see cref="Core.ReceiveArena.GetFragmentSlot"/>) and recorded length
-    /// (<see cref="GetFragmentLength"/>) without re-deriving the window's ring arithmetic itself.
-    /// </summary>
-    /// <param name="mode">Which reliable Space's window to resolve against — <c>ReliableOrdered</c> or <c>ReliableUnordered</c>.</param>
-    /// <param name="sequence">The sequence to resolve.</param>
-    /// <param name="ringSlot">The ring position <paramref name="sequence"/> occupies; -1 if not addressable.</param>
-    public bool TryGetRingSlot(PacketRecordMode mode, uint sequence, out int ringSlot) =>
-        ReliableWindow(mode).TryGetRingSlot(sequence, out ringSlot);
-
-    /// <summary>
-    /// Releases every sequence of the group starting at <paramref name="groupFirstSequence"/> in
-    /// <paramref name="mode"/>'s window — see <see cref="ReceiveWindow.ReleaseGroup"/>. Called once a
-    /// completed group's pieces have all been copied into one delivered Message, so the window's space
-    /// is returned and a later Fragment reusing one of these ring slots is never mistaken for a
-    /// leftover of the group just delivered.
-    /// </summary>
-    /// <param name="mode">Which reliable Space's window to release from — <c>ReliableOrdered</c> or <c>ReliableUnordered</c>.</param>
-    /// <param name="groupFirstSequence">The group's first sequence — see <see cref="FragmentGroup.FirstSequenceOf"/>.</param>
-    /// <param name="fragmentCount">The group's declared Fragment count.</param>
-    public void ReleaseGroup(PacketRecordMode mode, uint groupFirstSequence, ushort fragmentCount) =>
-        ReliableWindow(mode).ReleaseGroup(groupFirstSequence, fragmentCount);
-
-    /// <summary>The reliable window <paramref name="mode"/> names, for the two Fragment-length accessors above.</summary>
-    private ReceiveWindow ReliableWindow(PacketRecordMode mode) => mode switch
+    /// <param name="mode">Which reliable Space's window to reach.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable mode.</exception>
+    public ReceiveWindow ReliableWindow(PacketRecordMode mode) => mode switch
     {
         PacketRecordMode.ReliableOrdered => _reliableOrdered,
         PacketRecordMode.ReliableUnordered => _reliableUnordered,

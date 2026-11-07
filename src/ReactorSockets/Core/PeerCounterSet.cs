@@ -85,7 +85,7 @@ internal sealed class PeerCounterSet
     /// Records <paramref name="count"/> sequences an unreliable Space's receive window retired
     /// un-admitted by sliding its base forward (ADR 0013) — a gap the window has passed by rather than
     /// one still reachable inside its span. Called from <see cref="DatagramSessionReactor"/>'s data
-    /// path once a record reports <see cref="Session.ReceiveWindow.LastSlideLoss"/> greater than zero,
+    /// path once a record reports <see cref="Session.ReceiveClassification.SlideLoss"/> greater than zero,
     /// whichever of the two unreliable Spaces it was classified against — only those two slide. A
     /// single arrival can slide the window past more than one gap at once, which is why this takes a
     /// count rather than being called once per lost sequence: adding the whole figure in one op keeps
