@@ -37,26 +37,8 @@ public class DatagramSessionHandshakeFuzzTests
     /// <summary>How many datagrams go out between Pumps, so no receive queue overflows.</summary>
     private const int BatchSize = 50;
 
-    /// <summary>
-    /// The fixed seed for every corpus: 20261107, the date this test was written, chosen only so a
-    /// failure is reproducible. Never re-rolled to make a failing case pass.
-    /// </summary>
-    private const int Seed = 20261107;
-
-    /// <summary>
-    /// The clock steps taken after the corpus, so every timer driven by an accepted announcement is
-    /// evaluated against elapsed time from a millisecond up to beyond the largest legal interval.
-    /// </summary>
-    private static readonly TimeSpan[] _clockSteps =
-    [
-        TimeSpan.FromMilliseconds(1),
-        TimeSpan.FromSeconds(1),
-        TimeSpan.FromMinutes(1),
-        TimeSpan.FromHours(1),
-        TimeSpan.FromDays(1),
-        TimeSpan.FromDays(30),
-        TimeSpan.FromDays(50),
-    ];
+    /// <summary>The largest control type byte the corpus aims at directly: PathResponse.</summary>
+    private const int LargestControlType = 8;
 
     [Fact]
     public void Pump_FuzzedHelloWithCookieCorpus_NeverThrowsAndTheReactorStaysUsable()
@@ -64,7 +46,7 @@ public class DatagramSessionHandshakeFuzzTests
         // Arrange. The largest heartbeat count, so an accepted interval meets the largest multiplier.
         using DatagramSessionReactorHarness accepter = new(capacity: Handshakes, missedHeartbeats: int.MaxValue);
         using RawCounterparty hostile = new();
-        Random random = new(Seed);
+        Random random = new(HandshakeFuzzValues.Seed);
         Source accepterSource = Source.FromIPEndPoint(accepter.Endpoint);
         Dictionary<ulong, (long Epoch, byte[] Cookie)> cookies = ObtainCookies(accepter, hostile, firstNonce: 1, count: Handshakes);
         List<byte[]> corpus = [];
@@ -72,8 +54,10 @@ public class DatagramSessionHandshakeFuzzTests
         {
             for (int i = 0; i < DatagramsPerHandshake; i++)
             {
-                byte[] helloWithCookie = BuildFuzzedHelloWithCookie(random, clientNonce, epoch, cookie);
-                corpus.Add(random.Next(5) == 0 ? HandshakeFuzzValues.Mutate(random, helloWithCookie) : helloWithCookie);
+                byte[] datagram = random.Next(6) == 0
+                    ? BuildArbitraryDatagram(random)
+                    : BuildFuzzedHelloWithCookie(random, clientNonce, epoch, cookie);
+                corpus.Add(random.Next(5) == 0 ? HandshakeFuzzValues.Mutate(random, datagram) : datagram);
             }
         }
 
@@ -110,16 +94,20 @@ public class DatagramSessionHandshakeFuzzTests
         // Arrange. One Slot beyond the dials, kept free for the genuine dial at the end.
         using DatagramSessionReactorHarness dialler = new(capacity: Handshakes + 1, bindLoopback: false, missedHeartbeats: int.MaxValue);
         using RawCounterparty hostile = new();
-        Random random = new(Seed);
+        Random random = new(HandshakeFuzzValues.Seed);
         (Source dialSource, List<ulong> clientNonces) = DialUpToAccept(dialler, hostile, Handshakes);
         List<byte[]> corpus = [];
         foreach (ulong clientNonce in clientNonces)
         {
             for (int i = 0; i < DatagramsPerHandshake; i++)
             {
-                byte[] reply = random.Next(4) == 0
-                    ? BuildFuzzedRefusal(random, clientNonce)
-                    : BuildFuzzedAccept(random, clientNonce);
+                byte[] reply = random.Next(8) switch
+                {
+                    0 => BuildArbitraryDatagram(random),
+                    1 => BuildFuzzedCookie(random, clientNonce),
+                    2 or 3 => BuildFuzzedRefusal(random, clientNonce),
+                    _ => BuildFuzzedAccept(random, clientNonce),
+                };
                 corpus.Add(random.Next(5) == 0 ? HandshakeFuzzValues.Mutate(random, reply) : reply);
             }
         }
@@ -175,12 +163,15 @@ public class DatagramSessionHandshakeFuzzTests
         }
     }
 
-    /// <summary>Advances the clock through <see cref="_clockSteps"/>, Pumping after each step.</summary>
+    /// <summary>
+    /// Advances the clock through <see cref="HandshakeFuzzValues.ClockSteps"/>, Pumping after each
+    /// step and dropping whatever reached <paramref name="counterparty"/>.
+    /// </summary>
     private static List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> AdvanceThroughClockSteps(
         DatagramSessionReactorHarness harness, RawCounterparty counterparty)
     {
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = [];
-        foreach (TimeSpan step in _clockSteps)
+        foreach (TimeSpan step in HandshakeFuzzValues.ClockSteps)
         {
             harness.TimeProvider.Advance(step);
             events.AddRange(harness.PumpAndDrainAll(2));
@@ -285,6 +276,31 @@ public class DatagramSessionHandshakeFuzzTests
         return BuildControlDatagram(AcceptType, body);
     }
 
+    /// <summary>
+    /// Noise of a random length, or a control datagram of any type up to PathResponse (or an
+    /// unlisted one) whose body is random bytes of a random length followed by zero padding.
+    /// </summary>
+    private static byte[] BuildArbitraryDatagram(Random random)
+    {
+        if (random.Next(3) == 0)
+        {
+            return HandshakeFuzzValues.NextBytes(random, random.Next(0, 600));
+        }
+
+        byte controlType = random.Next(4) == 0 ? (byte)random.Next(256) : (byte)random.Next(1, LargestControlType + 1);
+        return BuildControlDatagram(controlType, HandshakeFuzzValues.NextBytes(random, random.Next(0, ControlDatagramSize - ControlBodyOffset + 1)));
+    }
+
+    /// <summary>A Cookie carrying the dial's own nonce and a fuzzed epoch and cookie.</summary>
+    private static byte[] BuildFuzzedCookie(Random random, ulong clientNonce)
+    {
+        byte[] body = new byte[8 + 8 + CookieLength];
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(0, 8), clientNonce);
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(8, 8), HandshakeFuzzValues.NextUInt64(random));
+        random.NextBytes(body.AsSpan(16, CookieLength));
+        return BuildControlDatagram(CookieType, body);
+    }
+
     /// <summary>A Refusal carrying the dial's own nonce and a fuzzed reason and version pair.</summary>
     private static byte[] BuildFuzzedRefusal(Random random, ulong clientNonce)
     {
@@ -302,7 +318,7 @@ public class DatagramSessionHandshakeFuzzTests
     /// </summary>
     private static void WriteFuzzedTerms(Random random, Span<byte> destination)
     {
-        BinaryPrimitives.WriteUInt32BigEndian(destination[0..4], (uint)random.NextInt64(0, (long)uint.MaxValue + 1));
+        BinaryPrimitives.WriteUInt32BigEndian(destination[0..4], HandshakeFuzzValues.NextUInt32(random));
         BinaryPrimitives.WriteUInt32BigEndian(destination[4..8], HandshakeFuzzValues.NextMaxMessageSize(random));
         BinaryPrimitives.WriteUInt64BigEndian(destination[8..16], HandshakeFuzzValues.NextInterval(random));
         BinaryPrimitives.WriteUInt64BigEndian(destination[16..24], HandshakeFuzzValues.NextInterval(random));
@@ -318,12 +334,16 @@ public class DatagramSessionHandshakeFuzzTests
         private readonly RawReactor _reactor = new(new ReactorOptions { Capacity = 4 });
         private readonly LinkId _link;
 
+        /// <summary>Binds the counterparty's one Link on loopback at an ephemeral port.</summary>
         public RawCounterparty()
         {
             _link = _reactor.Bind(new IPEndPoint(IPAddress.Loopback, 0));
         }
 
+        /// <summary>The address the counterparty sends from and receives at.</summary>
         public IPEndPoint Endpoint => _reactor.LocalOf(_link);
+
+        /// <summary>Sends <paramref name="payload"/> to <paramref name="destination"/>, throwing if the send fails.</summary>
         public void SendTo(Source destination, ReadOnlySpan<byte> payload)
         {
             Result result = _reactor.SendTo(_link, destination, payload);
@@ -378,6 +398,7 @@ public class DatagramSessionHandshakeFuzzTests
             return received;
         }
 
+        /// <summary>Disposes the counterparty's Raw Reactor.</summary>
         public void Dispose() => _reactor.Dispose();
     }
 }

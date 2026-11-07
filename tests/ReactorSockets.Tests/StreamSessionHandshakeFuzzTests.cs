@@ -18,33 +18,12 @@ public class StreamSessionHandshakeFuzzTests
     /// <summary>How many hostile connections each test makes.</summary>
     private const int Connections = 64;
 
-    /// <summary>
-    /// The fixed seed for every corpus: 20261107, the date this test was written, chosen only so a
-    /// failure is reproducible. Never re-rolled to make a failing case pass.
-    /// </summary>
-    private const int Seed = 20261107;
-
-    /// <summary>
-    /// The clock steps taken after the corpus, so every timer driven by an accepted announcement is
-    /// evaluated against elapsed time from a millisecond up to beyond the largest legal interval.
-    /// </summary>
-    private static readonly TimeSpan[] _clockSteps =
-    [
-        TimeSpan.FromMilliseconds(1),
-        TimeSpan.FromSeconds(1),
-        TimeSpan.FromMinutes(1),
-        TimeSpan.FromHours(1),
-        TimeSpan.FromDays(1),
-        TimeSpan.FromDays(30),
-        TimeSpan.FromDays(50),
-    ];
-
     [Fact]
     public void Pump_FuzzedHandshakeRecordsToAnAccepter_NeverThrowAndTheReactorStaysUsable()
     {
         // Arrange. The largest heartbeat count, so an accepted interval meets the largest multiplier.
         using StreamSessionReactorHarness accepter = new(capacity: Connections, missedHeartbeats: int.MaxValue);
-        Random random = new(Seed);
+        Random random = new(HandshakeFuzzValues.Seed);
         List<Socket> hostiles = [];
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = [];
 
@@ -87,7 +66,7 @@ public class StreamSessionHandshakeFuzzTests
         listener.Listen(Connections);
         IPEndPoint listenerEndpoint = listener.LocalEndPoint as IPEndPoint
             ?? throw new InvalidOperationException("A bound IPv4 listener has an IPEndPoint.");
-        Random random = new(Seed);
+        Random random = new(HandshakeFuzzValues.Seed);
         List<Socket> hostiles = [];
         for (int i = 0; i < Connections; i++)
         {
@@ -150,8 +129,8 @@ public class StreamSessionHandshakeFuzzTests
                 HandshakeFuzzValues.NextRefusalReason(random),
                 HandshakeFuzzValues.NextVersion(random),
                 HandshakeFuzzValues.NextVersion(random)),
-            7 => StreamSessionTestRecords.BuildResume(RandomSecret(random), (ulong)random.NextInt64() | ((ulong)random.Next(2) << 63)),
-            _ => RandomBytes(random, StreamSessionTestRecords.HandshakeRecordSize),
+            7 => StreamSessionTestRecords.BuildResume(RandomSecret(random), HandshakeFuzzValues.NextUInt64(random)),
+            _ => HandshakeFuzzValues.NextBytes(random, StreamSessionTestRecords.HandshakeRecordSize),
         };
 
         if (random.Next(5) == 0)
@@ -177,14 +156,7 @@ public class StreamSessionHandshakeFuzzTests
             lingerMs: HandshakeFuzzValues.NextInterval(random),
             resumeSecret: RandomSecret(random));
 
-    private static byte[] RandomSecret(Random random) => RandomBytes(random, StreamSessionTestRecords.ResumeSecretLength);
-
-    private static byte[] RandomBytes(Random random, int length)
-    {
-        byte[] bytes = new byte[length];
-        random.NextBytes(bytes);
-        return bytes;
-    }
+    private static byte[] RandomSecret(Random random) => HandshakeFuzzValues.NextBytes(random, StreamSessionTestRecords.ResumeSecretLength);
 
     /// <summary>
     /// Pumps until every counterparty has something to read or has been closed, which is how the
@@ -238,12 +210,12 @@ public class StreamSessionHandshakeFuzzTests
         return events;
     }
 
-    /// <summary>Advances the clock through <see cref="_clockSteps"/>, Pumping after each step.</summary>
+    /// <summary>Advances the clock through <see cref="HandshakeFuzzValues.ClockSteps"/>, Pumping after each step.</summary>
     private static List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> AdvanceThroughClockSteps(
         StreamSessionReactorHarness harness)
     {
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = [];
-        foreach (TimeSpan step in _clockSteps)
+        foreach (TimeSpan step in HandshakeFuzzValues.ClockSteps)
         {
             harness.TimeProvider.Advance(step);
             events.AddRange(harness.PumpAndDrainAll(2));

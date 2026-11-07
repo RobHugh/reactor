@@ -9,8 +9,8 @@ namespace ReactorSockets.Session;
 /// </summary>
 /// <remarks>
 /// The rules here make both handshake parsers total: a read that succeeds returns only values every
-/// downstream conversion accepts without throwing, and a read that fails discards the record. The
-/// handshake fuzz tests of each Session profile hold this from outside the public surface.
+/// downstream conversion accepts without throwing, and a read that fails discards the record. Each
+/// Session profile has a handshake fuzz test that holds this through the public surface.
 /// </remarks>
 internal static class HandshakeLegality
 {
