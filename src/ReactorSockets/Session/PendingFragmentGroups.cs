@@ -28,7 +28,7 @@ namespace ReactorSockets.Session;
 /// never more than the window has slots, since the datagram parse refuses that too. Two waiting groups
 /// never share a slot, since <see cref="FragmentGroupCompleteness.IsComplete"/> counts a piece only for
 /// the group it named on arrival. A waiting group keeps its slots until it is delivered, since
-/// <see cref="ReceiveWindowSpaces.MustWaitForHeldFragment"/> turns away any record that would overwrite
+/// <see cref="ReceiveWindow.WouldOverwriteDeliverableFragment"/> turns away any record that would overwrite
 /// one and no ack covers that record, so the far end's retransmission brings it back once the group has
 /// gone. A group whose turn never comes keeps its slots for good, which stops only that Space of the
 /// Peer that sent it. <see cref="Add"/> asserts rather than grows, in the house style for an invariant

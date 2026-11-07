@@ -32,7 +32,7 @@ namespace ReactorSockets.Core;
 /// This type owns only the storage and the addressing arithmetic over it. It carries no notion of a
 /// sequence number, a fragment's offset within a Message, or which slot a given sequence belongs in —
 /// classifying a sequence into a slot is <see cref="Session.ReceiveWindow"/>'s job, and routing a
-/// parsed record's payload and length into the slot <see cref="Session.ReceiveWindow.Classify(uint)"/> names is
+/// parsed record's payload and length into the slot <see cref="Session.ReceiveWindow.Classify"/> names is
 /// the datagram parse path's. Keeping that knowledge out of this type keeps allocation and lifetime
 /// separate from classification and routing.
 /// </para>

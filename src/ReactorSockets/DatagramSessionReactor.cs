@@ -1068,12 +1068,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         slot.Counters.RecordBytesReceived((ulong)datagram.Length);
 
         TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger);
-        slot.AckTracker.ApplyAck(PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits, effectiveRto);
-        ReleaseRetentionForAck(slot, PacketRecordMode.ReliableOrdered);
-        ApplyAckToStallSignature(slot);
-        slot.AckTracker.ApplyAck(PacketRecordMode.ReliableUnordered, reliableUnorderedAckBase, reliableUnorderedAckBits, effectiveRto);
-        ReleaseRetentionForAck(slot, PacketRecordMode.ReliableUnordered);
-        ApplyAckToStallSignature(slot);
+        AckRelease orderedRelease = slot.AckTracker.ApplyAck(
+            PacketRecordMode.ReliableOrdered, reliableOrderedAckBase, reliableOrderedAckBits, effectiveRto);
+        ReleaseRetentionForAck(slot, PacketRecordMode.ReliableOrdered, orderedRelease.Sequences);
+        ApplyAckToStallSignature(slot, orderedRelease);
+        AckRelease unorderedRelease = slot.AckTracker.ApplyAck(
+            PacketRecordMode.ReliableUnordered, reliableUnorderedAckBase, reliableUnorderedAckBits, effectiveRto);
+        ReleaseRetentionForAck(slot, PacketRecordMode.ReliableUnordered, unorderedRelease.Sequences);
+        ApplyAckToStallSignature(slot, unorderedRelease);
         ReconcileHorizonDeferrals(slot);
 
         remainder = body;
@@ -1229,48 +1231,42 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered;
 
     /// <summary>
-    /// Folds the <see cref="OutstandingReliableSequences.LastAckRelease"/> left behind by the
-    /// <see cref="OutstandingReliableSequences.ApplyAck"/> call that just ran into
-    /// <paramref name="slot"/>'s <see cref="PeerSlot.StallSignature"/>: called once per
-    /// <see cref="OutstandingReliableSequences.ApplyAck"/> call, immediately after it, so each Space's
-    /// own release is read before the other Space's call overwrites
-    /// <see cref="OutstandingReliableSequences.LastAckRelease"/>.
+    /// Folds one <see cref="OutstandingReliableSequences.ApplyAck"/> call's <paramref name="release"/>
+    /// into <paramref name="slot"/>'s <see cref="PeerSlot.StallSignature"/>: called once per
+    /// <see cref="OutstandingReliableSequences.ApplyAck"/> call, with that call's own result.
     /// </summary>
-    private static void ApplyAckToStallSignature(PeerSlot slot)
+    private static void ApplyAckToStallSignature(PeerSlot slot, AckRelease release)
     {
-        (bool releasedFragment, bool releasedUnfragmentedRecord) = slot.AckTracker.LastAckRelease;
-        if (releasedFragment)
+        if (release.ReleasedFragment)
         {
             slot.StallSignature.RecordFragmentAcked();
         }
 
-        if (releasedUnfragmentedRecord)
+        if (release.ReleasedUnfragmentedRecord)
         {
             slot.StallSignature.RecordUnfragmentedRecordAcked();
         }
     }
 
     /// <summary>
-    /// Frees the retention slot of every sequence the <see cref="OutstandingReliableSequences.ApplyAck"/>
-    /// call that just ran actually released on <paramref name="mode"/>'s reliable Space: called once
-    /// per <see cref="OutstandingReliableSequences.ApplyAck"/> call, immediately after it, so each
-    /// Space's own release is read before the other Space's call overwrites
-    /// <see cref="OutstandingReliableSequences.LastAckReleasedSequences"/> — the same idiom
-    /// <see cref="ApplyAckToStallSignature"/> already follows for <see cref="OutstandingReliableSequences.LastAckRelease"/>.
+    /// Frees the retention slot of every sequence in <paramref name="released"/>, the
+    /// <see cref="AckRelease.Sequences"/> one <see cref="OutstandingReliableSequences.ApplyAck"/> call
+    /// returned for <paramref name="mode"/>'s reliable Space: called once per
+    /// <see cref="OutstandingReliableSequences.ApplyAck"/> call, with that call's own result.
     /// Without this, nothing ever freed a slot <see cref="_retention"/>'s <see cref="RetentionPool.TryAcquire"/>
     /// committed: a quiet Session's idle-triggered Pings and a Peer's reliable Sends would both hold
     /// their slots forever and every further reliable Send would eventually see
     /// <see cref="RetentionSlotOutcome.Exhausted"/>.
     /// </summary>
     /// <remarks>
-    /// Allocates nothing: <see cref="OutstandingReliableSequences.LastAckReleasedSequences"/> is a reused
+    /// Allocates nothing: <see cref="AckRelease.Sequences"/> is a reused
     /// scratch span and <c>foreach</c> over a <see cref="ReadOnlySpan{T}"/> does not allocate an
     /// enumerator, matching this whole ack path's no-allocation discipline.
     /// </remarks>
-    private void ReleaseRetentionForAck(PeerSlot slot, PacketRecordMode mode)
+    private void ReleaseRetentionForAck(PeerSlot slot, PacketRecordMode mode, ReadOnlySpan<uint> released)
     {
         int spaceIndex = ReliableSpaceIndex(mode);
-        foreach (uint sequence in slot.AckTracker.LastAckReleasedSequences(mode))
+        foreach (uint sequence in released)
         {
             _retention.Release(slot.Handle.Index, spaceIndex, sequence);
 
@@ -1919,12 +1915,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </para>
     /// <para>
     /// <b>An abandoned Fragment set is reported, never acted on</b>. The
-    /// <see cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/> call above may have
+    /// <see cref="ReceiveWindow.Classify"/> call above may have
     /// just clobbered the ring slot of an incomplete Fragment set that can never complete. That is only
     /// a set the base has passed entirely, because
-    /// <see cref="ReceiveWindowSpaces.MustWaitForHeldFragment"/> refuses to overwrite any other. The
+    /// <see cref="ReceiveWindow.WouldOverwriteDeliverableFragment"/> refuses to overwrite any other. The
     /// window itself has no <see cref="PeerId"/> to subject a Diagnostic to, so this method reads
-    /// <see cref="ReceiveWindowSpaces.LastAbandonedFragmentSet"/> right after that call and logs
+    /// <see cref="ReceiveClassification.AbandonedFragmentSet"/> from that call's result and logs
     /// <see cref="DiagnosticRecord.ForFragmentSetAbandoned"/> from it. This is accounting only, so
     /// nothing here closes, disconnects, or otherwise changes Session state — the fragment-size stall
     /// check does that, off a different signal.
@@ -1934,7 +1930,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <paramref name="isControl"/> comes from <see cref="PacketRecordCodec.TryRead"/>, which reports it
     /// only for a record that is legally a Ping: <c>ReliableUnordered</c>, unfragmented, zero length.
     /// Admission runs exactly as it does for any other record — the same <see
-    /// cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/> call above, the same
+    /// cref="ReceiveWindow.Classify"/> call above, the same
     /// duplicate and out-of-window counting, the same ack block once <see
     /// cref="ReceiveWindowSpaces.GenerateAckBlocks"/> next runs — so a Ping at sequence N is covered by
     /// the ordinary ack block exactly as a Message at N would be, and a duplicate Ping raises <see
@@ -1959,7 +1955,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         // Left unadmitted, so no ack covers it and the far end's retransmission brings it back once the
         // group holding its slot has been delivered and the slot is free (issues #423, #446).
-        if (IsReliable(mode) && windows.MustWaitForHeldFragment(mode, sequence))
+        if (IsReliable(mode) && windows.ReliableWindow(mode).WouldOverwriteDeliverableFragment(sequence))
         {
             return;
         }
@@ -1975,18 +1971,18 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        ReceiveWindowOutcome outcome = windows.Classify(mode, sequence, out int ringSlot);
+        ReceiveClassification classification = windows.Window(mode).Classify(sequence);
+        ReceiveWindowOutcome outcome = classification.Outcome;
+        int ringSlot = classification.RingSlot;
 
         // The moment a Fragment set's slot is discarded is the last moment anyone can say how much of
-        // it had arrived (issue #297): windows.Classify just clobbered such a slot if this is set. This
+        // it had arrived (issue #297): Classify just clobbered such a slot if this is set. This
         // is accounting only — it says what was lost and not why, which is exactly why it may never
         // close, disconnect, or otherwise change Session state itself.
-        if (windows.LastAbandonedFragmentSet.Occurred && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        (bool abandoned, long held, long expected) = classification.AbandonedFragmentSet;
+        if (abandoned && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
         {
-            _diagnostics.Log(DiagnosticRecord.ForFragmentSetAbandoned(
-                ToPeerId(slot.Handle),
-                windows.LastAbandonedFragmentSet.Held,
-                windows.LastAbandonedFragmentSet.Expected));
+            _diagnostics.Log(DiagnosticRecord.ForFragmentSetAbandoned(ToPeerId(slot.Handle), held, expected));
         }
 
         switch (outcome)
@@ -2044,13 +2040,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
         }
 
-        // No mode test guards this (#176): a window reports a nonzero LastSlideLoss only if it slid,
+        // No mode test guards this (#176): a window reports a nonzero SlideLoss only if it slid,
         // and only the two unreliable Spaces' windows are built to slide, so this counts both of them
         // and neither reliable Space without restating which Spaces slide. ReceiveWindowSpaces'
         // constructor stays the one place that decides that, so the two cannot drift apart.
-        if (windows.LastSlideLoss > 0)
+        if (classification.SlideLoss > 0)
         {
-            slot.Counters.RecordUnreliableLoss(windows.LastSlideLoss);
+            slot.Counters.RecordUnreliableLoss(classification.SlideLoss);
         }
     }
 
@@ -2063,7 +2059,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <remarks>
     /// A Fragment is never held by the queue, so only the receive window bounds it. A Peer whose Goodbye
     /// has been delivered holds nothing further, so what it sends is still admitted and acknowledged. A
-    /// sequence the window would not admit anyway is left for <see cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/>
+    /// sequence the window would not admit anyway is left for <see cref="ReceiveWindow.Classify"/>
     /// to count as usual.
     /// </remarks>
     /// <returns><see langword="true"/> when the record was refused and must not be classified.</returns>
@@ -2072,7 +2068,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         mode == PacketRecordMode.ReliableOrdered
         && !isFragment
         && !slot.Lifecycle.RemoteGoodbyeDelivered
-        && windows.WouldAdmit(mode, sequence)
+        && windows.ReliableWindow(mode).WouldAdmit(sequence)
         && !slot.OrderedDelivery.CanTake(sequence, payloadLength);
 
     /// <summary>
@@ -2107,7 +2103,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         };
 
         if (!deliversOnAdmission || isFragment || isControl || slot.Lifecycle.RemoteGoodbyeDelivered
-            || payloadLength > _options.MaxMessageSize || !windows.WouldAdmit(mode, sequence))
+            || payloadLength > _options.MaxMessageSize || !windows.ReliableWindow(mode).WouldAdmit(sequence))
         {
             return false;
         }
@@ -2174,7 +2170,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// sets would fill memory taken solely for that purpose — while this design lets such a sender only
     /// ever fill the same receive window an honest sender's traffic already bounds and this Reactor
     /// already defends. <paramref name="ringSlot"/> comes from
-    /// <see cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/>'s own call in
+    /// <see cref="ReceiveWindow.Classify"/>'s own call in
     /// <see cref="ClassifyRecord"/>, which is why this method takes the slot rather than re-resolving it
     /// from <paramref name="mode"/> and a sequence — the window's <see cref="ReceiveWindow.Base"/> may
     /// already have advanced past that sequence by the time this call is made.
@@ -2197,7 +2193,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <param name="slot">The Peer this Fragment arrived on.</param>
     /// <param name="mode">The Fragment's delivery mode — always <c>ReliableOrdered</c> or <c>ReliableUnordered</c> (ADR 0004).</param>
     /// <param name="sequence">The Fragment's own sequence — see <see cref="FragmentGroup.FirstSequenceOf"/>.</param>
-    /// <param name="ringSlot">The ring position the admitting <see cref="ReceiveWindowSpaces.Classify(PacketRecordMode, uint, out int)"/> call reported.</param>
+    /// <param name="ringSlot">The ring position the admitting <see cref="ReceiveWindow.Classify"/> call reported.</param>
     /// <param name="fragmentIndex">The Fragment's zero-based position within its group.</param>
     /// <param name="fragmentCount">The group's declared Fragment count.</param>
     /// <param name="payload">The Fragment's payload bytes.</param>
@@ -2225,12 +2221,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         payload.CopyTo(fragmentSlot);
-        ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
-        windows.RecordFragmentLength(mode, ringSlot, (ushort)payload.Length);
+        ReceiveWindow window = _receiveWindows[slot.Handle.Index].ReliableWindow(mode);
+        window.RecordFragmentLength(ringSlot, (ushort)payload.Length);
 
         uint groupFirstSequence = FragmentGroup.FirstSequenceOf(sequence, fragmentIndex);
-        windows.RecordFragmentGroup(mode, ringSlot, groupFirstSequence, fragmentCount);
-        return windows.IsGroupComplete(mode, groupFirstSequence, fragmentCount);
+        window.RecordFragmentGroup(ringSlot, groupFirstSequence, fragmentCount);
+        return window.IsGroupComplete(groupFirstSequence, fragmentCount);
     }
 
     /// <summary>
@@ -2278,7 +2274,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="DeliverToConsumer"/> takes for an unfragmented record, taken once for the whole group
     /// rather than once per piece, because the consumer is owed one whole Message and not
     /// <paramref name="fragmentCount"/> partial ones. Releases the group's window slots
-    /// (<see cref="ReceiveWindowSpaces.ReleaseGroup"/>) only on success: a reservation that fails
+    /// (<see cref="ReceiveWindow.ReleaseGroup"/>) only on success: a reservation that fails
     /// leaves every piece exactly where <see cref="HoldFragment"/> put it, nothing is counted as
     /// received, and the caller is responsible for retrying — see the Space's
     /// <see cref="PendingFragmentGroups"/>, the Space's <see cref="PendingFragmentGroups"/> and
@@ -2307,14 +2303,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </returns>
     private bool TryDeliverFragmentGroup(PeerSlot slot, PacketRecordMode mode, uint groupFirstSequence, ushort fragmentCount)
     {
-        ReceiveWindowSpaces windows = _receiveWindows[slot.Handle.Index];
+        ReceiveWindow window = _receiveWindows[slot.Handle.Index].ReliableWindow(mode);
         int spaceIndex = ReliableSpaceIndex(mode);
 
         int totalLength = 0;
         for (int i = 0; i < fragmentCount; i++)
         {
             uint sequence = unchecked(groupFirstSequence + (uint)i);
-            if (!windows.TryGetRingSlot(mode, sequence, out int ringSlot))
+            if (!window.TryGetRingSlot(sequence, out int ringSlot))
             {
                 // A group HoldFragment/IsGroupComplete just reported complete should always resolve
                 // every one of its own pieces; if window state ever moved out from under it before
@@ -2323,12 +2319,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 return false;
             }
 
-            totalLength += windows.GetFragmentLength(mode, ringSlot);
+            totalLength += window.GetFragmentLength(ringSlot);
         }
 
         if (RefuseOverLimit(slot, totalLength))
         {
-            windows.ReleaseGroup(mode, groupFirstSequence, fragmentCount);
+            window.ReleaseGroup(groupFirstSequence, fragmentCount);
             return true;
         }
 
@@ -2344,14 +2340,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         for (int i = 0; i < fragmentCount; i++)
         {
             uint sequence = unchecked(groupFirstSequence + (uint)i);
-            windows.TryGetRingSlot(mode, sequence, out int ringSlot);
-            int length = windows.GetFragmentLength(mode, ringSlot);
+            window.TryGetRingSlot(sequence, out int ringSlot);
+            int length = window.GetFragmentLength(ringSlot);
             ReadOnlySpan<byte> fragmentPayload = _receiveArena.GetFragmentSlot(slot.Handle.Index, spaceIndex, ringSlot)[..length];
             fragmentPayload.CopyTo(destination.Slice(destinationOffset, length));
             destinationOffset += length;
         }
 
-        windows.ReleaseGroup(mode, groupFirstSequence, fragmentCount);
+        window.ReleaseGroup(groupFirstSequence, fragmentCount);
 
         _pendingEvents.Add(new PendingEvent
         {
