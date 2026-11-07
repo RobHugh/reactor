@@ -10,7 +10,8 @@ snapshot. Nothing else.
 - **Never add `InternalsVisibleTo`.** L0 (`Core/`) and L1 (`Transports/`) are internal and
   untested-through. `AssemblySkeletonTests` fails if the attribute appears.
 - **Never insert an abstraction for testability** — no fake transport, no interface extracted so a
-  test can substitute it, no member widened to `internal` to be reached.
+  test can substitute it, no member widened to `internal` to be reached, and no type made `public` so
+  a test can reach it (ADR 0022).
 - **An L0 invariant you cannot reach through the seam is a design signal, not a testing problem.**
   Change the code until the invariant is trivially true rather than reaching past the seam to observe
   it. Generation wraparound in `ShareHolderTable<T>` is the worked example.

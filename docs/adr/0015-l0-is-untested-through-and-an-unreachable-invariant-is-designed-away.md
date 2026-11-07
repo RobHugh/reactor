@@ -104,3 +104,6 @@ argument that reopened this, and criterion 3 is the answer to it.
   configuration the escape test pins, `ShareExhausted`, the `FrameArena` guards `ReactorOptions`
   makes unreachable, and `ObservedPumpInterval`. Nothing above changes that ledger; this ADR only
   refuses to reopen the seam to recover it.
+
+> **Amended by ADR 0022.** The rule above covers L2 helpers too. A type is never made public so a test
+> can reach it, and the eleven types that were are internal again.
