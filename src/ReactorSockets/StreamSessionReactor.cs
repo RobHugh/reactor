@@ -756,7 +756,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private static bool IsHelloIllegal(PendingAdmission pending)
     {
         Span<byte> announcedSecret = stackalloc byte[StreamSessionProtocol.ResumeSecretLength];
-        return !StreamHandshakeCodec.TryRead(pending.Record, out _, out _, out _, out _, announcedSecret);
+        return !StreamHandshakeCodec.TryRead(pending.Record, out _, out _, announcedSecret);
     }
 
     /// <summary>
@@ -791,7 +791,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private bool IsHelloClaimingAReservedSession(PendingAdmission pending, out int reservationsChecked)
     {
         Span<byte> announcedSecret = stackalloc byte[StreamSessionProtocol.ResumeSecretLength];
-        if (!StreamHandshakeCodec.TryRead(pending.Record, out _, out _, out _, out _, announcedSecret))
+        if (!StreamHandshakeCodec.TryRead(pending.Record, out _, out _, announcedSecret))
         {
             reservationsChecked = 0;
             return false;
@@ -1236,9 +1236,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         StreamHandshakeCodec.Write(
             record,
             StreamSessionProtocol.Version,
-            (uint)_options.MaxMessageSize,
-            (ulong)_options.SendIdleInterval.TotalMilliseconds,
-            AnnouncedLingerMilliseconds,
+            new AnnouncedLimits(
+                (uint)_options.MaxMessageSize,
+                (ulong)_options.SendIdleInterval.TotalMilliseconds,
+                AnnouncedLingerMilliseconds),
             slot.LocalResumeSecret);
 
         SendRecordOrArm(handle, slot, record, closeReasonAfterSend: null);
@@ -2582,9 +2583,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         if (!StreamHandshakeCodec.TryRead(
                 slot.HandshakeBuffer,
                 out uint version,
-                out uint remoteMaxMessageSize,
-                out ulong remoteSendIdleIntervalMilliseconds,
-                out ulong remoteLingerMilliseconds,
+                out AnnouncedLimits remoteLimits,
                 remoteResumeSecret))
         {
             ClosePeer(handle, DisconnectReason.TransportFailed);
@@ -2597,13 +2596,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLimits.LingerMilliseconds);
         TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
         TimeSpan effectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
 
         slot.RemoteVersion = version;
-        slot.RemoteMaxMessageSize = remoteMaxMessageSize;
-        slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
+        slot.RemoteMaxMessageSize = remoteLimits.MaxMessageSize;
+        slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteLimits.SendIdleIntervalMilliseconds);
         slot.RemoteLinger = remoteLinger;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
         slot.EffectiveLinger = effectiveLinger;

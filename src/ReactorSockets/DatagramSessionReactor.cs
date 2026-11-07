@@ -2991,26 +2991,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        // ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize, send-idle
-        // interval or Linger at parse (issue #287, issue #348, issue #362), so all three values are
-        // already trusted by the time this Peer reaches Established — an internal invariant to assert
-        // rather than input to re-validate, mirroring NewAcceptedPeer's asserts on the accepting path.
+        // ControlDatagramCodec.TryReadAccept rejects illegal announced limits at parse, so they are
+        // already trusted by the time this Peer reaches Established — an internal invariant to assert rather than input to re-validate,
+        // mirroring NewAcceptedPeer's assert on the accepting path.
         Debug.Assert(
-            remoteTerms.MaxMessageSize != 0,
-            "ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize before this is called.");
-        Debug.Assert(
-            remoteTerms.SendIdleIntervalMilliseconds != 0,
-            "ControlDatagramCodec.TryReadAccept rejects a zero-announced send-idle interval before this is called.");
-        Debug.Assert(
-            remoteTerms.LingerMilliseconds != 0,
-            "ControlDatagramCodec.TryReadAccept rejects a zero-announced Linger before this is called.");
+            remoteTerms.Limits.IsLegal(speaksVersion: true),
+            "ControlDatagramCodec.TryReadAccept rejects illegal announced limits before this is called.");
 
-        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteTerms.LingerMilliseconds);
+        AnnouncedLimits remoteLimits = remoteTerms.Limits;
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLimits.LingerMilliseconds);
         TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
 
         slot.RemoteSessionId = remoteTerms.SessionIdForMe;
-        slot.RemoteMaxMessageSize = remoteTerms.MaxMessageSize;
-        slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteTerms.SendIdleIntervalMilliseconds);
+        slot.RemoteMaxMessageSize = remoteLimits.MaxMessageSize;
+        slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteLimits.SendIdleIntervalMilliseconds);
         slot.RemoteLinger = remoteLinger;
         slot.EffectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
@@ -3337,21 +3331,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ReadOnlySpan<byte> remoteResumeSecret,
         ulong clientNonce)
     {
-        // ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize,
-        // send-idle interval or Linger at parse (issue #287, issue #347, issue #361), so by the time a
-        // Peer is built here, straight into Established, all three values are already trusted — an
-        // internal invariant to assert rather than input to re-validate.
+        // ControlDatagramCodec.TryReadHelloWithCookie rejects illegal announced limits at parse, and
+        // the version Refusal handles any other version before this is called, so by the time a Peer is built here, straight into
+        // Established, the limits are already trusted — an internal invariant to assert rather than
+        // input to re-validate.
         Debug.Assert(
-            remoteTerms.MaxMessageSize != 0,
-            "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize before this is called.");
-        Debug.Assert(
-            remoteTerms.SendIdleIntervalMilliseconds != 0,
-            "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced send-idle interval before this is called.");
-        Debug.Assert(
-            remoteTerms.LingerMilliseconds != 0,
-            "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced Linger before this is called.");
+            remoteTerms.Limits.IsLegal(speaksVersion: true),
+            "ControlDatagramCodec.TryReadHelloWithCookie rejects illegal announced limits before this is called.");
 
-        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteTerms.LingerMilliseconds);
+        AnnouncedLimits remoteLimits = remoteTerms.Limits;
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLimits.LingerMilliseconds);
         TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
         RetransmissionTimer retransmitTimer = new();
         long now = _options.Reactor.TimeProvider.GetTimestamp();
@@ -3365,8 +3354,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             LocalSessionId = NextSessionId(),
             LocalResumeSecret = NextResumeSecret(),
             RemoteSessionId = remoteTerms.SessionIdForMe,
-            RemoteMaxMessageSize = remoteTerms.MaxMessageSize,
-            RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteTerms.SendIdleIntervalMilliseconds),
+            RemoteMaxMessageSize = remoteLimits.MaxMessageSize,
+            RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteLimits.SendIdleIntervalMilliseconds),
             RemoteLinger = remoteLinger,
             EffectiveLinger = effectiveLinger,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
@@ -3412,9 +3401,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private AnnouncedSessionTerms AnnouncedTermsFor(PeerSlot slot) => new(
         slot.LocalSessionId,
-        (uint)_options.MaxMessageSize,
-        AnnouncedSendIdleIntervalMilliseconds,
-        AnnouncedLingerMilliseconds);
+        new AnnouncedLimits((uint)_options.MaxMessageSize, AnnouncedSendIdleIntervalMilliseconds, AnnouncedLingerMilliseconds));
 
     /// <summary>
     /// Spends one unit of the per-Pump admission budget, or Discards. The cap bounds work rather than

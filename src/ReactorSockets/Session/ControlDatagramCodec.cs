@@ -126,7 +126,7 @@ internal static class ControlDatagramCodec
 
     /// <summary>
     /// Writes a <see cref="DatagramControlType.Accept"/>: the accepting end's agreement, carrying its
-    /// own <paramref name="terms"/>, the same four fields a Hello-with-cookie carries for the dialler.
+    /// own <paramref name="terms"/>, the same terms a Hello-with-cookie carries for the dialler.
     /// </summary>
     public static void WriteAccept(
         Span<byte> destination,
@@ -314,16 +314,8 @@ internal static class ControlDatagramCodec
     /// <summary>
     /// Reads a <see cref="DatagramControlType.HelloWithCookie"/>'s body. Fails when
     /// <paramref name="cookie"/> or <paramref name="resumeSecret"/> is not exactly its wire length,
-    /// for the same reason <see cref="TryReadCookie"/> does, and when the announced
-    /// <see cref="AnnouncedSessionTerms.MaxMessageSize"/>,
-    /// <see cref="AnnouncedSessionTerms.SendIdleIntervalMilliseconds"/> or
-    /// <see cref="AnnouncedSessionTerms.LingerMilliseconds"/> is zero — as meaningless off the wire as a local
-    /// <see cref="DatagramSessionOptions.MaxMessageSize"/>, <see cref="DatagramSessionOptions.SendIdleInterval"/>
-    /// or <see cref="DatagramSessionOptions.Linger"/> of zero is by
-    /// <see cref="DatagramSessionOptions.Validate"/>, or when either interval is above
-    /// <see cref="AnnouncedIntervalLegality.MaximumMilliseconds"/>. The interval rule applies only to
-    /// this end's <see cref="DatagramSessionProtocol.Version"/>: any other version is left for the
-    /// version Refusal, because this end cannot judge the fields of a version it does not speak.
+    /// for the same reason <see cref="TryReadCookie"/> does, and when the announced terms are not
+    /// <see cref="AnnouncedLimits.IsLegal">legal</see> for the version the record announces.
     /// </summary>
     public static bool TryReadHelloWithCookie(
         ReadOnlySpan<byte> datagram,
@@ -357,8 +349,7 @@ internal static class ControlDatagramCodec
         offset += DatagramSessionProtocol.CookieLength;
         terms = ReadTerms(datagram, ref offset);
 
-        if (terms.MaxMessageSize == 0
-            || (version == DatagramSessionProtocol.Version && !HasLegalIntervals(terms)))
+        if (!terms.Limits.IsLegal(speaksVersion: version == DatagramSessionProtocol.Version))
         {
             version = default;
             clientNonce = default;
@@ -374,12 +365,9 @@ internal static class ControlDatagramCodec
     /// <summary>
     /// Reads a <see cref="DatagramControlType.Accept"/>'s body. Fails when
     /// <paramref name="resumeSecret"/> is not exactly its wire length, for the same reason
-    /// <see cref="TryReadCookie"/> does for a cookie, and when the announced
-    /// <see cref="AnnouncedSessionTerms.MaxMessageSize"/>,
-    /// <see cref="AnnouncedSessionTerms.SendIdleIntervalMilliseconds"/> or
-    /// <see cref="AnnouncedSessionTerms.LingerMilliseconds"/> is zero, for the same reason
-    /// <see cref="TryReadHelloWithCookie"/> does, or when either interval is above
-    /// <see cref="AnnouncedIntervalLegality.MaximumMilliseconds"/>.
+    /// <see cref="TryReadCookie"/> does for a cookie, and when the announced terms are not
+    /// <see cref="AnnouncedLimits.IsLegal">legal</see>. An Accept carries no version: only
+    /// an end that speaks this end's version sends one, so its intervals are always judged.
     /// </summary>
     public static bool TryReadAccept(
         ReadOnlySpan<byte> datagram,
@@ -401,7 +389,7 @@ internal static class ControlDatagramCodec
         offset += sizeof(ulong);
         terms = ReadTerms(datagram, ref offset);
 
-        if (terms.MaxMessageSize == 0 || !HasLegalIntervals(terms))
+        if (!terms.Limits.IsLegal(speaksVersion: true))
         {
             clientNonce = default;
             terms = default;
@@ -420,39 +408,26 @@ internal static class ControlDatagramCodec
     {
         BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], terms.SessionIdForMe);
         offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], terms.MaxMessageSize);
-        offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], terms.SendIdleIntervalMilliseconds);
-        offset += sizeof(ulong);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], terms.LingerMilliseconds);
-        offset += sizeof(ulong);
+        terms.Limits.Write(destination[offset..]);
+        offset += AnnouncedLimits.WireSize;
         return offset;
     }
 
     /// <summary>
     /// Reads the terms <see cref="WriteTerms"/> writes, starting at <paramref name="offset"/> and
-    /// advancing it past them. Judges nothing: each caller applies its own legality rule.
+    /// advancing it past them. Judges nothing: each caller applies
+    /// <see cref="AnnouncedLimits.IsLegal"/> to the limits.
+    /// <see cref="AnnouncedSessionTerms.SessionIdForMe"/> is never judged: every value is a usable
+    /// session id.
     /// </summary>
     private static AnnouncedSessionTerms ReadTerms(ReadOnlySpan<byte> datagram, ref int offset)
     {
         uint sessionIdForMe = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
         offset += sizeof(uint);
-        uint maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
-        offset += sizeof(uint);
-        ulong sendIdleIntervalMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
-        offset += sizeof(ulong);
-        ulong lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
-        offset += sizeof(ulong);
-        return new(sessionIdForMe, maxMessageSize, sendIdleIntervalMilliseconds, lingerMilliseconds);
+        AnnouncedLimits limits = AnnouncedLimits.Read(datagram[offset..]);
+        offset += AnnouncedLimits.WireSize;
+        return new(sessionIdForMe, limits);
     }
-
-    /// <summary>
-    /// Whether both announced intervals in <paramref name="terms"/> are within
-    /// <see cref="AnnouncedIntervalLegality"/>'s bounds.
-    /// </summary>
-    private static bool HasLegalIntervals(AnnouncedSessionTerms terms) =>
-        AnnouncedIntervalLegality.IsLegal(terms.SendIdleIntervalMilliseconds)
-        && AnnouncedIntervalLegality.IsLegal(terms.LingerMilliseconds);
 
     /// <summary>
     /// Reads a <see cref="DatagramControlType.Resume"/>'s body. <paramref name="targetSessionId"/> routes
@@ -506,10 +481,9 @@ internal static class ControlDatagramCodec
     }
 
     /// <summary>
-    /// Reads a <see cref="DatagramControlType.Refusal"/>'s body. A reason byte that
-    /// <see cref="RefusalReasonMap.DisconnectReasonFor"/> does not understand fails the whole read —
-    /// an unreadable reason is indistinguishable from a forged Refusal, so nothing about the datagram
-    /// can be trusted, not just the reason field.
+    /// Reads a <see cref="DatagramControlType.Refusal"/>'s body. A reason byte that is not a
+    /// <see cref="HandshakeLegality.IsLegalRefusalReason">legal reason</see> fails the whole read, so
+    /// nothing about the datagram is trusted, not just the reason field.
     /// </summary>
     public static bool TryReadRefusal(
         ReadOnlySpan<byte> datagram,
@@ -536,7 +510,7 @@ internal static class ControlDatagramCodec
         offset += sizeof(uint);
         uint candidateVersionRequired = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
 
-        if (RefusalReasonMap.DisconnectReasonFor(candidateReason) is null)
+        if (!HandshakeLegality.IsLegalRefusalReason(candidateReason))
         {
             clientNonce = default;
             reason = default;

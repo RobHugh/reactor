@@ -49,9 +49,7 @@ internal static class StreamHandshakeCodec
 {
     private const int HelloPayloadSize =
         sizeof(uint) // version
-        + sizeof(uint) // maxMessageSize
-        + sizeof(ulong) // sendIdleIntervalMilliseconds
-        + sizeof(ulong) // lingerMilliseconds
+        + AnnouncedLimits.WireSize
         + StreamSessionProtocol.ResumeSecretLength;
 
     private const int RefusalPayloadSize =
@@ -122,16 +120,13 @@ internal static class StreamHandshakeCodec
     }
 
     /// <summary>
-    /// Writes one Hello record: this end's version, its own <c>MaxMessageSize</c> announced as a
-    /// receive limit, its send-idle interval and Linger, and the resume secret it will require before
-    /// resuming this Session.
+    /// Writes one Hello record: this end's version, its announced <paramref name="limits"/>, and the
+    /// resume secret it will require before resuming this Session.
     /// </summary>
     public static void Write(
         Span<byte> destination,
         uint version,
-        uint maxMessageSize,
-        ulong sendIdleIntervalMilliseconds,
-        ulong lingerMilliseconds,
+        AnnouncedLimits limits,
         ReadOnlySpan<byte> resumeSecret)
     {
         ValidateDestinationSize(destination);
@@ -141,12 +136,8 @@ internal static class StreamHandshakeCodec
         int offset = 1;
         BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], version);
         offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], maxMessageSize);
-        offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], sendIdleIntervalMilliseconds);
-        offset += sizeof(ulong);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], lingerMilliseconds);
-        offset += sizeof(ulong);
+        limits.Write(destination[offset..]);
+        offset += AnnouncedLimits.WireSize;
         resumeSecret.CopyTo(destination.Slice(offset, StreamSessionProtocol.ResumeSecretLength));
     }
 
@@ -155,20 +146,13 @@ internal static class StreamHandshakeCodec
     /// <see cref="RecordSize"/> bytes, its message type is not <see cref="StreamHandshakeMessageType.Hello"/>,
     /// or <paramref name="resumeSecret"/> is not exactly its wire length, since a caller that cannot
     /// hold a full secret could not use one correctly regardless of what the record contains. Also fails
-    /// when the announced <paramref name="maxMessageSize"/> is zero, whatever the version, and when a
-    /// Hello of this end's <see cref="StreamSessionProtocol.Version"/> announces an interval that is not
-    /// <see cref="AnnouncedIntervalLegality.IsLegal">legal</see>. Both are the rules
-    /// <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> applies, so the two profiles reject the
-    /// same malformed inputs. A Hello of any other version with a non-zero <c>MaxMessageSize</c> is
-    /// left for the version Refusal, because this end cannot judge the intervals of a version it does
-    /// not speak.
+    /// when the announced limits are not <see cref="AnnouncedLimits.IsLegal">legal</see> for the version
+    /// the record announces, the rule <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> also applies.
     /// </summary>
     public static bool TryRead(
         ReadOnlySpan<byte> record,
         out uint version,
-        out uint maxMessageSize,
-        out ulong sendIdleIntervalMilliseconds,
-        out ulong lingerMilliseconds,
+        out AnnouncedLimits limits,
         Span<byte> resumeSecret)
     {
         if (record.Length != RecordSize
@@ -176,31 +160,20 @@ internal static class StreamHandshakeCodec
             || record[0] != (byte)StreamHandshakeMessageType.Hello)
         {
             version = default;
-            maxMessageSize = default;
-            sendIdleIntervalMilliseconds = default;
-            lingerMilliseconds = default;
+            limits = default;
             return false;
         }
 
         int offset = 1;
         version = BinaryPrimitives.ReadUInt32BigEndian(record[offset..]);
         offset += sizeof(uint);
-        maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(record[offset..]);
-        offset += sizeof(uint);
-        sendIdleIntervalMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(record[offset..]);
-        offset += sizeof(ulong);
-        lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(record[offset..]);
-        offset += sizeof(ulong);
+        limits = AnnouncedLimits.Read(record[offset..]);
+        offset += AnnouncedLimits.WireSize;
 
-        if (maxMessageSize == 0
-            || (version == StreamSessionProtocol.Version
-                && (!AnnouncedIntervalLegality.IsLegal(sendIdleIntervalMilliseconds)
-                    || !AnnouncedIntervalLegality.IsLegal(lingerMilliseconds))))
+        if (!limits.IsLegal(speaksVersion: version == StreamSessionProtocol.Version))
         {
             version = default;
-            maxMessageSize = default;
-            sendIdleIntervalMilliseconds = default;
-            lingerMilliseconds = default;
+            limits = default;
             return false;
         }
 
@@ -226,17 +199,15 @@ internal static class StreamHandshakeCodec
     /// <summary>
     /// Reads one Refusal record's payload. Fails when <paramref name="record"/> is not exactly
     /// <see cref="RecordSize"/> bytes, its message type is not
-    /// <see cref="StreamHandshakeMessageType.Refusal"/>, its reason byte is one
-    /// <see cref="RefusalReasonMap.DisconnectReasonFor"/> does not understand, or its padding is not
-    /// zero. Those are the rules <see cref="ControlDatagramCodec.TryReadRefusal"/> applies: an
-    /// unreadable reason is indistinguishable from a forged Refusal, so nothing in the record can be
-    /// trusted.
+    /// <see cref="StreamHandshakeMessageType.Refusal"/>, its reason byte is not a
+    /// <see cref="HandshakeLegality.IsLegalRefusalReason">legal reason</see>, or its padding is not
+    /// zero. Those are the rules <see cref="ControlDatagramCodec.TryReadRefusal"/> applies.
     /// </summary>
     public static bool TryReadRefusal(ReadOnlySpan<byte> record, out RefusalReason reason, out uint value0, out uint value1)
     {
         if (record.Length != RecordSize
             || record[0] != (byte)StreamHandshakeMessageType.Refusal
-            || RefusalReasonMap.DisconnectReasonFor((RefusalReason)record[1]) is null
+            || !HandshakeLegality.IsLegalRefusalReason((RefusalReason)record[1])
             || !IsPaddingZero(record, RefusalPayloadSize))
         {
             reason = default;
