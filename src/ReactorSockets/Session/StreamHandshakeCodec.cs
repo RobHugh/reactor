@@ -146,9 +146,8 @@ internal static class StreamHandshakeCodec
     /// <see cref="RecordSize"/> bytes, its message type is not <see cref="StreamHandshakeMessageType.Hello"/>,
     /// or <paramref name="resumeSecret"/> is not exactly its wire length, since a caller that cannot
     /// hold a full secret could not use one correctly regardless of what the record contains. Also fails
-    /// when the announced values are not <see cref="HandshakeLegality.IsLegalAnnouncement">legal</see>,
-    /// the rule <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> also applies. The interval
-    /// rule applies only to this end's <see cref="StreamSessionProtocol.Version"/>.
+    /// when the announced limits are not <see cref="AnnouncedLimits.IsLegal">legal</see> for the version
+    /// the record announces, the rule <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> also applies.
     /// </summary>
     public static bool TryRead(
         ReadOnlySpan<byte> record,
@@ -171,7 +170,7 @@ internal static class StreamHandshakeCodec
         limits = AnnouncedLimits.Read(record[offset..]);
         offset += AnnouncedLimits.WireSize;
 
-        if (!HandshakeLegality.IsLegalAnnouncement(limits, speaksVersion: version == StreamSessionProtocol.Version))
+        if (!limits.IsLegal(speaksVersion: version == StreamSessionProtocol.Version))
         {
             version = default;
             limits = default;

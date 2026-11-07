@@ -5,9 +5,9 @@ namespace ReactorSockets.Session;
 /// <summary>
 /// The limits each end announces about itself in a handshake, in both Session profiles. A
 /// datagram Hello-with-cookie, a datagram Accept and a stream Hello all carry them as one contiguous
-/// block of <see cref="WireSize"/> bytes, written by <see cref="Write"/> and read by <see cref="Read"/>,
-/// and <see cref="HandshakeLegality.IsLegalAnnouncement"/> judges them. A field added here is encoded,
-/// decoded and judged without either codec changing.
+/// block of <see cref="WireSize"/> bytes, written by <see cref="Write"/>, read by <see cref="Read"/> and
+/// judged by <see cref="IsLegal"/>. Both codecs use these three members for the block, so its fields,
+/// encoding and legality rule are stated only here.
 /// </summary>
 /// <param name="MaxMessageSize">The largest Message the announcing end will accept, in bytes.</param>
 /// <param name="SendIdleIntervalMilliseconds">
@@ -45,7 +45,7 @@ internal readonly record struct AnnouncedLimits(
     /// <summary>
     /// Reads the limits <see cref="Write"/> writes from the start of <paramref name="source"/>, which
     /// must hold at least <see cref="WireSize"/> bytes. Judges nothing: the caller asks
-    /// <see cref="HandshakeLegality.IsLegalAnnouncement"/>.
+    /// <see cref="IsLegal"/>.
     /// </summary>
     public static AnnouncedLimits Read(ReadOnlySpan<byte> source)
     {
@@ -57,4 +57,17 @@ internal readonly record struct AnnouncedLimits(
         ulong lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(source[offset..]);
         return new(maxMessageSize, sendIdleIntervalMilliseconds, lingerMilliseconds);
     }
+
+    /// <summary>
+    /// Whether these limits are a legal announcement. A <see cref="MaxMessageSize"/> of zero is illegal
+    /// whatever the version, as it is in the local options. The intervals are judged by
+    /// <see cref="HandshakeLegality.IsLegalInterval"/> only when <paramref name="speaksVersion"/> is
+    /// <see langword="true"/>: a handshake of a version this end does not speak is left for the version
+    /// Refusal, because this end cannot judge the fields of that version.
+    /// </summary>
+    public bool IsLegal(bool speaksVersion) =>
+        MaxMessageSize != 0
+        && (!speaksVersion
+            || (HandshakeLegality.IsLegalInterval(SendIdleIntervalMilliseconds)
+                && HandshakeLegality.IsLegalInterval(LingerMilliseconds)));
 }

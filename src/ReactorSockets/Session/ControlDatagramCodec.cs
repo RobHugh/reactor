@@ -315,9 +315,7 @@ internal static class ControlDatagramCodec
     /// Reads a <see cref="DatagramControlType.HelloWithCookie"/>'s body. Fails when
     /// <paramref name="cookie"/> or <paramref name="resumeSecret"/> is not exactly its wire length,
     /// for the same reason <see cref="TryReadCookie"/> does, and when the announced terms are not
-    /// <see cref="HandshakeLegality.IsLegalAnnouncement">legal</see>. The interval rule applies only to
-    /// this end's <see cref="DatagramSessionProtocol.Version"/>, as it does for
-    /// <see cref="StreamHandshakeCodec.TryRead"/>.
+    /// <see cref="AnnouncedLimits.IsLegal">legal</see> for the version the record announces.
     /// </summary>
     public static bool TryReadHelloWithCookie(
         ReadOnlySpan<byte> datagram,
@@ -351,7 +349,7 @@ internal static class ControlDatagramCodec
         offset += DatagramSessionProtocol.CookieLength;
         terms = ReadTerms(datagram, ref offset);
 
-        if (!HandshakeLegality.IsLegalAnnouncement(terms.Limits, speaksVersion: version == DatagramSessionProtocol.Version))
+        if (!terms.Limits.IsLegal(speaksVersion: version == DatagramSessionProtocol.Version))
         {
             version = default;
             clientNonce = default;
@@ -368,7 +366,7 @@ internal static class ControlDatagramCodec
     /// Reads a <see cref="DatagramControlType.Accept"/>'s body. Fails when
     /// <paramref name="resumeSecret"/> is not exactly its wire length, for the same reason
     /// <see cref="TryReadCookie"/> does for a cookie, and when the announced terms are not
-    /// <see cref="HandshakeLegality.IsLegalAnnouncement">legal</see>. An Accept carries no version: only
+    /// <see cref="AnnouncedLimits.IsLegal">legal</see>. An Accept carries no version: only
     /// an end that speaks this end's version sends one, so its intervals are always judged.
     /// </summary>
     public static bool TryReadAccept(
@@ -391,7 +389,7 @@ internal static class ControlDatagramCodec
         offset += sizeof(ulong);
         terms = ReadTerms(datagram, ref offset);
 
-        if (!HandshakeLegality.IsLegalAnnouncement(terms.Limits, speaksVersion: true))
+        if (!terms.Limits.IsLegal(speaksVersion: true))
         {
             clientNonce = default;
             terms = default;
@@ -418,7 +416,7 @@ internal static class ControlDatagramCodec
     /// <summary>
     /// Reads the terms <see cref="WriteTerms"/> writes, starting at <paramref name="offset"/> and
     /// advancing it past them. Judges nothing: each caller applies
-    /// <see cref="HandshakeLegality.IsLegalAnnouncement"/> to the limits.
+    /// <see cref="AnnouncedLimits.IsLegal"/> to the limits.
     /// <see cref="AnnouncedSessionTerms.SessionIdForMe"/> is never judged: every value is a usable
     /// session id.
     /// </summary>

@@ -2991,12 +2991,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        // ControlDatagramCodec.TryReadAccept rejects limits HandshakeLegality does not accept at parse
-        // (issue #287, issue #348, issue #362), so they are already trusted by the time this Peer
-        // reaches Established — an internal invariant to assert rather than input to re-validate,
+        // ControlDatagramCodec.TryReadAccept rejects illegal announced limits at parse, so they are
+        // already trusted by the time this Peer reaches Established — an internal invariant to assert rather than input to re-validate,
         // mirroring NewAcceptedPeer's assert on the accepting path.
         Debug.Assert(
-            HandshakeLegality.IsLegalAnnouncement(remoteTerms.Limits, speaksVersion: true),
+            remoteTerms.Limits.IsLegal(speaksVersion: true),
             "ControlDatagramCodec.TryReadAccept rejects illegal announced limits before this is called.");
 
         AnnouncedLimits remoteLimits = remoteTerms.Limits;
@@ -3332,13 +3331,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ReadOnlySpan<byte> remoteResumeSecret,
         ulong clientNonce)
     {
-        // ControlDatagramCodec.TryReadHelloWithCookie rejects limits HandshakeLegality does not accept
-        // at parse (issue #287, issue #347, issue #361), and the version Refusal handles any other
-        // version before this is called, so by the time a Peer is built here, straight into
+        // ControlDatagramCodec.TryReadHelloWithCookie rejects illegal announced limits at parse, and
+        // the version Refusal handles any other version before this is called, so by the time a Peer is built here, straight into
         // Established, the limits are already trusted — an internal invariant to assert rather than
         // input to re-validate.
         Debug.Assert(
-            HandshakeLegality.IsLegalAnnouncement(remoteTerms.Limits, speaksVersion: true),
+            remoteTerms.Limits.IsLegal(speaksVersion: true),
             "ControlDatagramCodec.TryReadHelloWithCookie rejects illegal announced limits before this is called.");
 
         AnnouncedLimits remoteLimits = remoteTerms.Limits;

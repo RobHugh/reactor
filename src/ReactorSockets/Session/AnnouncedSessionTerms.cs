@@ -9,6 +9,6 @@ namespace ReactorSockets.Session;
 /// <param name="SessionIdForMe">The session id the announcing end wants stamped on datagrams sent to it.</param>
 /// <param name="Limits">
 /// The announcing end's limits, the same block a stream Hello carries. Once read, they are
-/// <see cref="HandshakeLegality.IsLegalAnnouncement">legal</see> for the version they arrived with.
+/// <see cref="AnnouncedLimits.IsLegal">legal</see> for the version they arrived with.
 /// </param>
 internal readonly record struct AnnouncedSessionTerms(uint SessionIdForMe, AnnouncedLimits Limits);
