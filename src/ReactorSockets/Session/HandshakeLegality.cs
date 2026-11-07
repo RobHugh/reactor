@@ -4,8 +4,8 @@ namespace ReactorSockets.Session;
 /// What counts as a legal value in a handshake, stated once for both Session profiles and for the
 /// options that produce this end's own announcements. <see cref="ControlDatagramCodec"/> and
 /// <see cref="StreamHandshakeCodec"/> each read their own wire layout and then ask this class whether
-/// the values they read are legal, so a rule changed or a validated field added here applies to both
-/// transports. Every value judged here comes from a sender nothing has authenticated.
+/// the values they read are legal, so both transports apply the rules stated here. Every value judged
+/// here comes from a sender nothing has authenticated.
 /// </summary>
 internal static class HandshakeLegality
 {
