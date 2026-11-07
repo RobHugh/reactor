@@ -1079,9 +1079,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         PacketRecordReader classify = new(body);
         while (classify.TryReadNext(out PacketRecord record))
         {
-            ClassifyRecord(
-                slot, record.Mode, record.Sequence, record.IsFragment, record.IsControl,
-                record.FragmentIndex, record.FragmentCount, record.Payload);
+            ClassifyRecord(slot, record);
         }
     }
 
@@ -1891,13 +1889,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// derives the held Fragment's group first sequence and answers whether its group is now complete;
     /// a complete group is handed to <see cref="TryDeliverOrDeferFragmentGroup"/>, which delivers it as
     /// one Message or defers it if delivery cannot happen yet. Only <c>ReliableOrdered</c> and
-    /// <c>ReliableUnordered</c> ever carry the fragment shape (ADR 0004); <paramref name="isFragment"/>
+    /// <c>ReliableUnordered</c> ever carry the fragment shape (ADR 0004); <see cref="PacketRecord.IsFragment"/>
     /// is otherwise ignored exactly as it always was, so a stray fragment bit on an unreliable-mode
     /// record changes nothing this method does. By the time this method runs at all,
     /// <see cref="ParseDataDatagram"/>'s own pass has already refused any Fragment in this datagram
     /// whose declared <c>fragmentCount</c> claims more Fragments than this Reactor's own receive
     /// window, <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>, could ever hold, so
-    /// <paramref name="fragmentCount"/> here is always a legal claim, never one this method itself
+    /// <see cref="PacketRecord.FragmentCount"/> here is always a legal claim, never one this method itself
     /// needs to bound.
     /// </para>
     /// <para>
@@ -1914,7 +1912,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </para>
     /// <para>
     /// <b>An admitted control record — a Ping — is acknowledged and never delivered</b>.
-    /// <paramref name="isControl"/> comes from <see cref="PacketRecordCodec.TryRead"/>, which reports it
+    /// <see cref="PacketRecord.IsControl"/> comes from <see cref="PacketRecordCodec.TryRead"/>, which reports it
     /// only for a record that is legally a Ping: <c>ReliableUnordered</c>, unfragmented, zero length.
     /// Admission runs exactly as it does for any other record — the same <see
     /// cref="ReceiveWindow.Classify"/> call above, the same
@@ -1927,9 +1925,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// cref="PeerCounters.MessagesReceived"/> does not rise.
     /// </para>
     /// </remarks>
-    private void ClassifyRecord(
-        PeerSlot slot, PacketRecordMode mode, uint sequence, bool isFragment, bool isControl,
-        ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload)
+    /// <param name="slot">The Peer the record arrived for.</param>
+    /// <param name="record">The record, already proved well-formed by the datagram's first pass.</param>
+    private void ClassifyRecord(PeerSlot slot, PacketRecord record)
     {
         // A Goodbye earlier in this same Datagram may have closed the Peer directly (issue #400); its
         // Slot can already belong to no one, and nothing after the Goodbye is admitted.
@@ -1942,23 +1940,27 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         // Left unadmitted, so no ack covers it and the far end's retransmission brings it back once the
         // group holding its slot has been delivered and the slot is free (issues #423, #446).
-        if (IsReliable(mode) && windows.ReliableWindow(mode).WouldOverwriteDeliverableFragment(sequence))
+        if (IsReliable(record.Mode)
+            && windows.ReliableWindow(record.Mode).WouldOverwriteDeliverableFragment(record.Sequence))
         {
             return;
         }
 
-        if (RefusesForHoldBudget(slot, windows, mode, sequence, isFragment, payload.Length))
+        if (RefusesForHoldBudget(
+                slot, windows, record.Mode, record.Sequence, record.IsFragment, record.Payload.Length))
         {
             slot.Counters.RecordOutOfWindowPacket();
             return;
         }
 
-        if (RefusesForArenaRoom(slot, windows, mode, sequence, isFragment, isControl, payload.Length))
+        if (RefusesForArenaRoom(
+                slot, windows, record.Mode, record.Sequence, record.IsFragment, record.IsControl,
+                record.Payload.Length))
         {
             return;
         }
 
-        ReceiveClassification classification = windows.Window(mode).Classify(sequence);
+        ReceiveClassification classification = windows.Window(record.Mode).Classify(record.Sequence);
         ReceiveWindowOutcome outcome = classification.Outcome;
         int ringSlot = classification.RingSlot;
 
@@ -1987,13 +1989,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // Peer whose remote has said Goodbye accepts no further Messages from it.
         bool acceptsMessages = !slot.Lifecycle.RemoteGoodbyeDelivered;
 
-        if (acceptsMessages && mode == PacketRecordMode.Unreliable)
+        if (acceptsMessages && record.Mode == PacketRecordMode.Unreliable)
         {
-            DeliverUnreliableRecord(slot, sequence, payload, alreadyCountedAsRefused: outcome != ReceiveWindowOutcome.Admitted);
+            DeliverUnreliableRecord(
+                slot, record.Sequence, record.Payload, alreadyCountedAsRefused: outcome != ReceiveWindowOutcome.Admitted);
         }
         else if (acceptsMessages && outcome == ReceiveWindowOutcome.Admitted)
         {
-            if (isControl)
+            if (record.IsControl)
             {
                 // Admitted into its Space's receive window exactly like any other record above, so the
                 // ordinary ack block covers it and a duplicate counts like any other duplicate, but it
@@ -2002,28 +2005,31 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 // one is a Goodbye (#400): it takes its turn in send order like a Message would, and
                 // acts only when delivered. The lowest sequence is kept so a second, misbehaving
                 // Goodbye can never displace an earlier one.
-                if (mode == PacketRecordMode.ReliableOrdered)
+                if (record.Mode == PacketRecordMode.ReliableOrdered)
                 {
-                    if (slot.RemoteGoodbyeSequence is not uint pending || SequenceNumber.IsNewerThan(pending, sequence))
+                    if (slot.RemoteGoodbyeSequence is not uint pending || SequenceNumber.IsNewerThan(pending, record.Sequence))
                     {
-                        slot.RemoteGoodbyeSequence = sequence;
+                        slot.RemoteGoodbyeSequence = record.Sequence;
                     }
 
-                    DeliverAdmittedRecord(slot, mode, sequence, payload);
+                    DeliverAdmittedRecord(slot, record.Mode, record.Sequence, record.Payload);
                 }
             }
-            else if (isFragment && mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
+            else if (record.IsFragment
+                && record.Mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
             {
-                bool groupComplete = HoldFragment(slot, mode, sequence, ringSlot, fragmentIndex, fragmentCount, payload);
+                bool groupComplete = HoldFragment(
+                    slot, record.Mode, record.Sequence, ringSlot, record.FragmentIndex, record.FragmentCount,
+                    record.Payload);
                 if (groupComplete)
                 {
-                    uint groupFirstSequence = FragmentGroup.FirstSequenceOf(sequence, fragmentIndex);
-                    TryDeliverOrDeferFragmentGroup(slot, mode, groupFirstSequence, fragmentCount);
+                    uint groupFirstSequence = FragmentGroup.FirstSequenceOf(record.Sequence, record.FragmentIndex);
+                    TryDeliverOrDeferFragmentGroup(slot, record.Mode, groupFirstSequence, record.FragmentCount);
                 }
             }
             else
             {
-                DeliverAdmittedRecord(slot, mode, sequence, payload);
+                DeliverAdmittedRecord(slot, record.Mode, record.Sequence, record.Payload);
             }
         }
 
