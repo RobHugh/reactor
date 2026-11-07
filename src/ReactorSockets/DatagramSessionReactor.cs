@@ -977,28 +977,29 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         ReadOnlySpan<byte> body = datagram[DatagramSessionProtocol.DatagramHeaderSize..];
 
-        ReadOnlySpan<byte> remainder = body;
-        while (remainder.Length > 0)
+        PacketRecordReader wellFormedScan = new(body);
+        while (wellFormedScan.TryReadNext(out _))
         {
-            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
-            {
-                // One refusal out of the several this read can reach is worth naming separately
-                // (issue #273): a Fragment in an unreliable mode is well-formed at every level but
-                // ADR 0004's rule, so it says the sender fragments in modes this profile does not,
-                // rather than that rubbish arrived. The malformed discard below still fires — this
-                // adds which rule broke, it does not replace the outcome.
-                if (PacketRecordLegality.RefusedAsUnreliableFragment(remainder)
-                    && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
-                {
-                    _diagnostics.Log(DiagnosticRecord.ForUnreliableFragment(
-                        source, remainder[0] & DatagramSessionProtocol.ModeMask));
-                }
+            // This pass proves only that every record parses; the passes below read the fields.
+        }
 
-                DiscardMalformedForSession(source, datagram.Length);
-                return;
+        if (!wellFormedScan.IsAtEnd)
+        {
+            // One refusal out of the several this read can reach is worth naming separately
+            // (issue #273): a Fragment in an unreliable mode is well-formed at every level but
+            // ADR 0004's rule, so it says the sender fragments in modes this profile does not,
+            // rather than that rubbish arrived. The malformed discard below still fires — this
+            // adds which rule broke, it does not replace the outcome.
+            ReadOnlySpan<byte> refused = wellFormedScan.Remaining;
+            if (PacketRecordLegality.RefusedAsUnreliableFragment(refused)
+                && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForUnreliableFragment(
+                    source, refused[0] & DatagramSessionProtocol.ModeMask));
             }
 
-            remainder = remainder[bytesConsumed..];
+            DiscardMalformedForSession(source, datagram.Length);
+            return;
         }
 
         // Every record on its own proved legal above (issue #253), but a Fragment's index and count are
@@ -1031,28 +1032,22 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // already failed the read in the first pass above (issue #273), so the mode test here and
         // ClassifyRecord's matching one now restate a guarantee rather than establish it, and stay as
         // the local statement of which modes this arm is about.
-        remainder = body;
-        while (remainder.Length > 0)
+        PacketRecordReader oversizedScan = new(body);
+        while (oversizedScan.TryReadNext(out PacketRecord record))
         {
-            PacketRecordCodec.TryRead(
-                remainder, out PacketRecordMode oversizedMode, out _, out _,
-                out bool oversizedIsFragment, out _, out ushort oversizedFragmentCount, out _, out int oversizedBytesConsumed);
-
-            if (oversizedIsFragment
-                && oversizedMode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered
-                && oversizedFragmentCount > _maxLegalFragmentCount)
+            if (record.IsFragment
+                && record.Mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered
+                && record.FragmentCount > _maxLegalFragmentCount)
             {
                 if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
                 {
                     _diagnostics.Log(DiagnosticRecord.ForOversizedFragmentSet(
-                        ToPeerId(slot.Handle), oversizedFragmentCount, _maxLegalFragmentCount));
+                        ToPeerId(slot.Handle), record.FragmentCount, _maxLegalFragmentCount));
                 }
 
                 ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
                 return;
             }
-
-            remainder = remainder[oversizedBytesConsumed..];
         }
 
         // Fully parsed and not refused above: this is what "well-formed" means for leaving Interrupted
@@ -1078,23 +1073,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ApplyAckToStallSignature(slot, unorderedRelease);
         ReconcileHorizonDeferrals(slot);
 
-        remainder = body;
-        while (remainder.Length > 0)
+        // Every record in body already proved well-formed in the first pass, so this walk reads all of
+        // them. The fragment index and count are passed on here (issue #258): a held Fragment's group
+        // first sequence, and so its completeness, is derived from them the moment it is held.
+        PacketRecordReader classify = new(body);
+        while (classify.TryReadNext(out PacketRecord record))
         {
-            // Every record in this span already proved well-formed in the pass above, so this read
-            // cannot fail — the return value is not re-checked. fragmentIndex and fragmentCount are
-            // read here (issue #258): a held Fragment's group first sequence, and so its completeness,
-            // is derived from them the moment it is held.
-            PacketRecordCodec.TryRead(
-                remainder, out PacketRecordMode mode, out uint sequence, out ushort length,
-                out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount, out bool isControl,
-                out int bytesConsumed);
-
-            // The payload is the tail of what this record consumed, so it is sliced from the record's
-            // own span rather than re-derived from a header width this method would then have to know.
-            ReadOnlySpan<byte> payload = remainder.Slice(bytesConsumed - length, length);
-            ClassifyRecord(slot, mode, sequence, isFragment, isControl, fragmentIndex, fragmentCount, payload);
-            remainder = remainder[bytesConsumed..];
+            ClassifyRecord(slot, record);
         }
     }
 
@@ -1904,13 +1889,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// derives the held Fragment's group first sequence and answers whether its group is now complete;
     /// a complete group is handed to <see cref="TryDeliverOrDeferFragmentGroup"/>, which delivers it as
     /// one Message or defers it if delivery cannot happen yet. Only <c>ReliableOrdered</c> and
-    /// <c>ReliableUnordered</c> ever carry the fragment shape (ADR 0004); <paramref name="isFragment"/>
+    /// <c>ReliableUnordered</c> ever carry the fragment shape (ADR 0004); <see cref="PacketRecord.IsFragment"/>
     /// is otherwise ignored exactly as it always was, so a stray fragment bit on an unreliable-mode
     /// record changes nothing this method does. By the time this method runs at all,
     /// <see cref="ParseDataDatagram"/>'s own pass has already refused any Fragment in this datagram
     /// whose declared <c>fragmentCount</c> claims more Fragments than this Reactor's own receive
     /// window, <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>, could ever hold, so
-    /// <paramref name="fragmentCount"/> here is always a legal claim, never one this method itself
+    /// <see cref="PacketRecord.FragmentCount"/> here is always a legal claim, never one this method itself
     /// needs to bound.
     /// </para>
     /// <para>
@@ -1927,7 +1912,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </para>
     /// <para>
     /// <b>An admitted control record — a Ping — is acknowledged and never delivered</b>.
-    /// <paramref name="isControl"/> comes from <see cref="PacketRecordCodec.TryRead"/>, which reports it
+    /// <see cref="PacketRecord.IsControl"/> comes from <see cref="PacketRecordCodec.TryRead"/>, which reports it
     /// only for a record that is legally a Ping: <c>ReliableUnordered</c>, unfragmented, zero length.
     /// Admission runs exactly as it does for any other record — the same <see
     /// cref="ReceiveWindow.Classify"/> call above, the same
@@ -1940,9 +1925,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// cref="PeerCounters.MessagesReceived"/> does not rise.
     /// </para>
     /// </remarks>
-    private void ClassifyRecord(
-        PeerSlot slot, PacketRecordMode mode, uint sequence, bool isFragment, bool isControl,
-        ushort fragmentIndex, ushort fragmentCount, ReadOnlySpan<byte> payload)
+    /// <param name="slot">The Peer the record arrived for.</param>
+    /// <param name="record">The record, already proved well-formed by the datagram's first pass.</param>
+    private void ClassifyRecord(PeerSlot slot, PacketRecord record)
     {
         // A Goodbye earlier in this same Datagram may have closed the Peer directly (issue #400); its
         // Slot can already belong to no one, and nothing after the Goodbye is admitted.
@@ -1955,23 +1940,27 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         // Left unadmitted, so no ack covers it and the far end's retransmission brings it back once the
         // group holding its slot has been delivered and the slot is free (issues #423, #446).
-        if (IsReliable(mode) && windows.ReliableWindow(mode).WouldOverwriteDeliverableFragment(sequence))
+        if (IsReliable(record.Mode)
+            && windows.ReliableWindow(record.Mode).WouldOverwriteDeliverableFragment(record.Sequence))
         {
             return;
         }
 
-        if (RefusesForHoldBudget(slot, windows, mode, sequence, isFragment, payload.Length))
+        if (RefusesForHoldBudget(
+                slot, windows, record.Mode, record.Sequence, record.IsFragment, record.Payload.Length))
         {
             slot.Counters.RecordOutOfWindowPacket();
             return;
         }
 
-        if (RefusesForArenaRoom(slot, windows, mode, sequence, isFragment, isControl, payload.Length))
+        if (RefusesForArenaRoom(
+                slot, windows, record.Mode, record.Sequence, record.IsFragment, record.IsControl,
+                record.Payload.Length))
         {
             return;
         }
 
-        ReceiveClassification classification = windows.Window(mode).Classify(sequence);
+        ReceiveClassification classification = windows.Window(record.Mode).Classify(record.Sequence);
         ReceiveWindowOutcome outcome = classification.Outcome;
         int ringSlot = classification.RingSlot;
 
@@ -2000,13 +1989,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // Peer whose remote has said Goodbye accepts no further Messages from it.
         bool acceptsMessages = !slot.Lifecycle.RemoteGoodbyeDelivered;
 
-        if (acceptsMessages && mode == PacketRecordMode.Unreliable)
+        if (acceptsMessages && record.Mode == PacketRecordMode.Unreliable)
         {
-            DeliverUnreliableRecord(slot, sequence, payload, alreadyCountedAsRefused: outcome != ReceiveWindowOutcome.Admitted);
+            DeliverUnreliableRecord(
+                slot, record.Sequence, record.Payload, alreadyCountedAsRefused: outcome != ReceiveWindowOutcome.Admitted);
         }
         else if (acceptsMessages && outcome == ReceiveWindowOutcome.Admitted)
         {
-            if (isControl)
+            if (record.IsControl)
             {
                 // Admitted into its Space's receive window exactly like any other record above, so the
                 // ordinary ack block covers it and a duplicate counts like any other duplicate, but it
@@ -2015,28 +2005,31 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 // one is a Goodbye (#400): it takes its turn in send order like a Message would, and
                 // acts only when delivered. The lowest sequence is kept so a second, misbehaving
                 // Goodbye can never displace an earlier one.
-                if (mode == PacketRecordMode.ReliableOrdered)
+                if (record.Mode == PacketRecordMode.ReliableOrdered)
                 {
-                    if (slot.RemoteGoodbyeSequence is not uint pending || SequenceNumber.IsNewerThan(pending, sequence))
+                    if (slot.RemoteGoodbyeSequence is not uint pending || SequenceNumber.IsNewerThan(pending, record.Sequence))
                     {
-                        slot.RemoteGoodbyeSequence = sequence;
+                        slot.RemoteGoodbyeSequence = record.Sequence;
                     }
 
-                    DeliverAdmittedRecord(slot, mode, sequence, payload);
+                    DeliverAdmittedRecord(slot, record.Mode, record.Sequence, record.Payload);
                 }
             }
-            else if (isFragment && mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
+            else if (record.IsFragment
+                && record.Mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
             {
-                bool groupComplete = HoldFragment(slot, mode, sequence, ringSlot, fragmentIndex, fragmentCount, payload);
+                bool groupComplete = HoldFragment(
+                    slot, record.Mode, record.Sequence, ringSlot, record.FragmentIndex, record.FragmentCount,
+                    record.Payload);
                 if (groupComplete)
                 {
-                    uint groupFirstSequence = FragmentGroup.FirstSequenceOf(sequence, fragmentIndex);
-                    TryDeliverOrDeferFragmentGroup(slot, mode, groupFirstSequence, fragmentCount);
+                    uint groupFirstSequence = FragmentGroup.FirstSequenceOf(record.Sequence, record.FragmentIndex);
+                    TryDeliverOrDeferFragmentGroup(slot, record.Mode, groupFirstSequence, record.FragmentCount);
                 }
             }
             else
             {
-                DeliverAdmittedRecord(slot, mode, sequence, payload);
+                DeliverAdmittedRecord(slot, record.Mode, record.Sequence, record.Payload);
             }
         }
 
@@ -2833,10 +2826,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out ulong clientNonce,
                 out long epoch,
                 cookie,
-                out uint remoteSessionId,
-                out uint remoteMaxMessageSize,
-                out ulong remoteSendIdleIntervalMilliseconds,
-                out ulong remoteLingerMilliseconds,
+                out AnnouncedSessionTerms remoteTerms,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2876,11 +2866,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        TimeSpan remoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
-        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
-        TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
-        if (_peers.TryAdd(NewAcceptedPeer(
-                source, link, remoteSessionId, remoteMaxMessageSize, remoteSendIdleInterval, remoteLinger, announcedLinger, remoteResumeSecret, clientNonce))
+        if (_peers.TryAdd(NewAcceptedPeer(source, link, remoteTerms, remoteResumeSecret, clientNonce))
             is not SlotHandle handle)
         {
             _capacityDiscardsThisFrame++;
@@ -2969,10 +2955,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             clientNonce,
             epoch,
             cookie,
-            slot.LocalSessionId,
-            (uint)_options.MaxMessageSize,
-            AnnouncedSendIdleIntervalMilliseconds,
-            AnnouncedLingerMilliseconds,
+            AnnouncedTermsFor(slot),
             slot.LocalResumeSecret);
         SendControl(link, source);
     }
@@ -2995,10 +2978,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         if (!ControlDatagramCodec.TryReadAccept(
                 datagram,
                 out ulong clientNonce,
-                out uint remoteSessionId,
-                out uint remoteMaxMessageSize,
-                out ulong remoteSendIdleIntervalMilliseconds,
-                out ulong remoteLingerMilliseconds,
+                out AnnouncedSessionTerms remoteTerms,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -3016,21 +2996,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // already trusted by the time this Peer reaches Established — an internal invariant to assert
         // rather than input to re-validate, mirroring NewAcceptedPeer's asserts on the accepting path.
         Debug.Assert(
-            remoteMaxMessageSize != 0,
+            remoteTerms.MaxMessageSize != 0,
             "ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize before this is called.");
         Debug.Assert(
-            remoteSendIdleIntervalMilliseconds != 0,
+            remoteTerms.SendIdleIntervalMilliseconds != 0,
             "ControlDatagramCodec.TryReadAccept rejects a zero-announced send-idle interval before this is called.");
         Debug.Assert(
-            remoteLingerMilliseconds != 0,
+            remoteTerms.LingerMilliseconds != 0,
             "ControlDatagramCodec.TryReadAccept rejects a zero-announced Linger before this is called.");
 
-        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteTerms.LingerMilliseconds);
         TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
 
-        slot.RemoteSessionId = remoteSessionId;
-        slot.RemoteMaxMessageSize = remoteMaxMessageSize;
-        slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
+        slot.RemoteSessionId = remoteTerms.SessionIdForMe;
+        slot.RemoteMaxMessageSize = remoteTerms.MaxMessageSize;
+        slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteTerms.SendIdleIntervalMilliseconds);
         slot.RemoteLinger = remoteLinger;
         slot.EffectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
@@ -3353,11 +3333,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private PeerSlot NewAcceptedPeer(
         Source source,
         UdpLink link,
-        uint remoteSessionId,
-        uint remoteMaxMessageSize,
-        TimeSpan remoteSendIdleInterval,
-        TimeSpan remoteLinger,
-        TimeSpan announcedLinger,
+        AnnouncedSessionTerms remoteTerms,
         ReadOnlySpan<byte> remoteResumeSecret,
         ulong clientNonce)
     {
@@ -3366,15 +3342,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // Peer is built here, straight into Established, all three values are already trusted — an
         // internal invariant to assert rather than input to re-validate.
         Debug.Assert(
-            remoteMaxMessageSize != 0,
+            remoteTerms.MaxMessageSize != 0,
             "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize before this is called.");
         Debug.Assert(
-            remoteSendIdleInterval > TimeSpan.Zero,
+            remoteTerms.SendIdleIntervalMilliseconds != 0,
             "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced send-idle interval before this is called.");
         Debug.Assert(
-            remoteLinger > TimeSpan.Zero,
+            remoteTerms.LingerMilliseconds != 0,
             "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced Linger before this is called.");
 
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteTerms.LingerMilliseconds);
+        TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
         RetransmissionTimer retransmitTimer = new();
         long now = _options.Reactor.TimeProvider.GetTimestamp();
         TimeSpan effectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
@@ -3386,9 +3364,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             ClientNonce = clientNonce,
             LocalSessionId = NextSessionId(),
             LocalResumeSecret = NextResumeSecret(),
-            RemoteSessionId = remoteSessionId,
-            RemoteMaxMessageSize = remoteMaxMessageSize,
-            RemoteSendIdleInterval = remoteSendIdleInterval,
+            RemoteSessionId = remoteTerms.SessionIdForMe,
+            RemoteMaxMessageSize = remoteTerms.MaxMessageSize,
+            RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteTerms.SendIdleIntervalMilliseconds),
             RemoteLinger = remoteLinger,
             EffectiveLinger = effectiveLinger,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
@@ -3423,13 +3401,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ControlDatagramCodec.WriteAccept(
             _sendBuffer,
             slot.ClientNonce,
-            slot.LocalSessionId,
-            (uint)_options.MaxMessageSize,
-            AnnouncedSendIdleIntervalMilliseconds,
-            AnnouncedLingerMilliseconds,
+            AnnouncedTermsFor(slot),
             slot.LocalResumeSecret);
         SendControl(link, destination);
     }
+
+    /// <summary>
+    /// The terms this end announces for <paramref name="slot"/> in its Hello-with-cookie or Accept:
+    /// the slot's own local session id and this Reactor's announced limits and intervals.
+    /// </summary>
+    private AnnouncedSessionTerms AnnouncedTermsFor(PeerSlot slot) => new(
+        slot.LocalSessionId,
+        (uint)_options.MaxMessageSize,
+        AnnouncedSendIdleIntervalMilliseconds,
+        AnnouncedLingerMilliseconds);
 
     /// <summary>
     /// Spends one unit of the per-Pump admission budget, or Discards. The cap bounds work rather than

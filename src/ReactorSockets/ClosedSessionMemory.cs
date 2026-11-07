@@ -107,29 +107,20 @@ public sealed class ClosedSessionMemory
         // carry an ordered record, so a datagram that is declined leaves the entry untouched.
         ClosedSessionAck candidate = entry.Ack;
         bool carriesReliableOrderedRecord = false;
-        ReadOnlySpan<byte> remainder = datagram[DatagramSessionProtocol.DatagramHeaderSize..];
-        while (remainder.Length > 0)
+        PacketRecordReader reader = new(datagram[DatagramSessionProtocol.DatagramHeaderSize..]);
+        while (reader.TryReadNext(out PacketRecord record))
         {
-            if (!PacketRecordCodec.TryRead(
-                    remainder, out PacketRecordMode mode, out uint sequence, out _, out _, out _, out _,
-                    out bool isControl, out int bytesConsumed))
-            {
-                return false;
-            }
-
-            if (mode == PacketRecordMode.ReliableOrdered)
+            if (record.Mode == PacketRecordMode.ReliableOrdered)
             {
                 carriesReliableOrderedRecord = true;
-                if (isControl)
+                if (record.IsControl)
                 {
-                    candidate = AcknowledgeGoodbye(candidate, sequence);
+                    candidate = AcknowledgeGoodbye(candidate, record.Sequence);
                 }
             }
-
-            remainder = remainder[bytesConsumed..];
         }
 
-        if (!carriesReliableOrderedRecord)
+        if (!reader.IsAtEnd || !carriesReliableOrderedRecord)
         {
             return false;
         }

@@ -95,10 +95,7 @@ internal static class ControlDatagramCodec
     /// <summary>
     /// Writes a <see cref="DatagramControlType.HelloWithCookie"/>: the Hello repeated with the Cookie
     /// echoed, carrying everything a Session needs to exist now that the round trip is paid, including
-    /// the dialler's own <paramref name="sendIdleIntervalMilliseconds"/> — the interval the accepting
-    /// end needs to compute its receive-idle deadline once it stores the value — and the dialler's own
-    /// <paramref name="lingerMilliseconds"/>, which the accepting end needs to negotiate the effective
-    /// (minimum) Linger once it stores the value.
+    /// the dialler's own <paramref name="terms"/>.
     /// </summary>
     public static void WriteHelloWithCookie(
         Span<byte> destination,
@@ -106,10 +103,7 @@ internal static class ControlDatagramCodec
         ulong clientNonce,
         long epoch,
         ReadOnlySpan<byte> cookie,
-        uint sessionIdForMe,
-        uint maxMessageSize,
-        ulong sendIdleIntervalMilliseconds,
-        ulong lingerMilliseconds,
+        AnnouncedSessionTerms terms,
         ReadOnlySpan<byte> resumeSecret)
     {
         ValidateDestinationSize(destination);
@@ -126,32 +120,18 @@ internal static class ControlDatagramCodec
         offset += sizeof(ulong);
         cookie.CopyTo(destination.Slice(offset, DatagramSessionProtocol.CookieLength));
         offset += DatagramSessionProtocol.CookieLength;
-        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], sessionIdForMe);
-        offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], maxMessageSize);
-        offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], sendIdleIntervalMilliseconds);
-        offset += sizeof(ulong);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], lingerMilliseconds);
-        offset += sizeof(ulong);
+        offset = WriteTerms(destination, offset, terms);
         resumeSecret.CopyTo(destination.Slice(offset, DatagramSessionProtocol.ResumeSecretLength));
     }
 
     /// <summary>
-    /// Writes a <see cref="DatagramControlType.Accept"/>: the accepting end's agreement, carrying the
-    /// session id it wants stamped on datagrams sent to it, along with its own
-    /// <paramref name="sendIdleIntervalMilliseconds"/> — the interval the dialling end needs to
-    /// compute its receive-idle deadline once it stores the value — and its own
-    /// <paramref name="lingerMilliseconds"/> — the value the dialling end needs to negotiate the
-    /// effective (minimum) Linger once it stores the value.
+    /// Writes a <see cref="DatagramControlType.Accept"/>: the accepting end's agreement, carrying its
+    /// own <paramref name="terms"/>, the same four fields a Hello-with-cookie carries for the dialler.
     /// </summary>
     public static void WriteAccept(
         Span<byte> destination,
         ulong clientNonce,
-        uint sessionIdForMe,
-        uint maxMessageSize,
-        ulong sendIdleIntervalMilliseconds,
-        ulong lingerMilliseconds,
+        AnnouncedSessionTerms terms,
         ReadOnlySpan<byte> resumeSecret)
     {
         ValidateDestinationSize(destination);
@@ -161,14 +141,7 @@ internal static class ControlDatagramCodec
         int offset = DatagramSessionProtocol.ControlBodyOffset;
         BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], clientNonce);
         offset += sizeof(ulong);
-        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], sessionIdForMe);
-        offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], maxMessageSize);
-        offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], sendIdleIntervalMilliseconds);
-        offset += sizeof(ulong);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], lingerMilliseconds);
-        offset += sizeof(ulong);
+        offset = WriteTerms(destination, offset, terms);
         resumeSecret.CopyTo(destination.Slice(offset, DatagramSessionProtocol.ResumeSecretLength));
     }
 
@@ -342,8 +315,9 @@ internal static class ControlDatagramCodec
     /// Reads a <see cref="DatagramControlType.HelloWithCookie"/>'s body. Fails when
     /// <paramref name="cookie"/> or <paramref name="resumeSecret"/> is not exactly its wire length,
     /// for the same reason <see cref="TryReadCookie"/> does, and when the announced
-    /// <paramref name="maxMessageSize"/>, <paramref name="sendIdleIntervalMilliseconds"/> or
-    /// <paramref name="lingerMilliseconds"/> is zero — as meaningless off the wire as a local
+    /// <see cref="AnnouncedSessionTerms.MaxMessageSize"/>,
+    /// <see cref="AnnouncedSessionTerms.SendIdleIntervalMilliseconds"/> or
+    /// <see cref="AnnouncedSessionTerms.LingerMilliseconds"/> is zero — as meaningless off the wire as a local
     /// <see cref="DatagramSessionOptions.MaxMessageSize"/>, <see cref="DatagramSessionOptions.SendIdleInterval"/>
     /// or <see cref="DatagramSessionOptions.Linger"/> of zero is by
     /// <see cref="DatagramSessionOptions.Validate"/>, or when either interval is above
@@ -357,10 +331,7 @@ internal static class ControlDatagramCodec
         out ulong clientNonce,
         out long epoch,
         Span<byte> cookie,
-        out uint sessionIdForMe,
-        out uint maxMessageSize,
-        out ulong sendIdleIntervalMilliseconds,
-        out ulong lingerMilliseconds,
+        out AnnouncedSessionTerms terms,
         Span<byte> resumeSecret)
     {
         if (cookie.Length != DatagramSessionProtocol.CookieLength
@@ -371,10 +342,7 @@ internal static class ControlDatagramCodec
             version = default;
             clientNonce = default;
             epoch = default;
-            sessionIdForMe = default;
-            maxMessageSize = default;
-            sendIdleIntervalMilliseconds = default;
-            lingerMilliseconds = default;
+            terms = default;
             return false;
         }
 
@@ -387,27 +355,15 @@ internal static class ControlDatagramCodec
         offset += sizeof(ulong);
         datagram.Slice(offset, DatagramSessionProtocol.CookieLength).CopyTo(cookie);
         offset += DatagramSessionProtocol.CookieLength;
-        sessionIdForMe = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
-        offset += sizeof(uint);
-        maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
-        offset += sizeof(uint);
-        sendIdleIntervalMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
-        offset += sizeof(ulong);
-        lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
-        offset += sizeof(ulong);
+        terms = ReadTerms(datagram, ref offset);
 
-        if (maxMessageSize == 0
-            || (version == DatagramSessionProtocol.Version
-                && (!AnnouncedIntervalLegality.IsLegal(sendIdleIntervalMilliseconds)
-                    || !AnnouncedIntervalLegality.IsLegal(lingerMilliseconds))))
+        if (terms.MaxMessageSize == 0
+            || (version == DatagramSessionProtocol.Version && !HasLegalIntervals(terms)))
         {
             version = default;
             clientNonce = default;
             epoch = default;
-            sessionIdForMe = default;
-            maxMessageSize = default;
-            sendIdleIntervalMilliseconds = default;
-            lingerMilliseconds = default;
+            terms = default;
             return false;
         }
 
@@ -419,18 +375,16 @@ internal static class ControlDatagramCodec
     /// Reads a <see cref="DatagramControlType.Accept"/>'s body. Fails when
     /// <paramref name="resumeSecret"/> is not exactly its wire length, for the same reason
     /// <see cref="TryReadCookie"/> does for a cookie, and when the announced
-    /// <paramref name="maxMessageSize"/>, <paramref name="sendIdleIntervalMilliseconds"/> or
-    /// <paramref name="lingerMilliseconds"/> is zero, for the same reason
+    /// <see cref="AnnouncedSessionTerms.MaxMessageSize"/>,
+    /// <see cref="AnnouncedSessionTerms.SendIdleIntervalMilliseconds"/> or
+    /// <see cref="AnnouncedSessionTerms.LingerMilliseconds"/> is zero, for the same reason
     /// <see cref="TryReadHelloWithCookie"/> does, or when either interval is above
     /// <see cref="AnnouncedIntervalLegality.MaximumMilliseconds"/>.
     /// </summary>
     public static bool TryReadAccept(
         ReadOnlySpan<byte> datagram,
         out ulong clientNonce,
-        out uint sessionIdForMe,
-        out uint maxMessageSize,
-        out ulong sendIdleIntervalMilliseconds,
-        out ulong lingerMilliseconds,
+        out AnnouncedSessionTerms terms,
         Span<byte> resumeSecret)
     {
         if (resumeSecret.Length != DatagramSessionProtocol.ResumeSecretLength
@@ -438,40 +392,67 @@ internal static class ControlDatagramCodec
             || type != DatagramControlType.Accept)
         {
             clientNonce = default;
-            sessionIdForMe = default;
-            maxMessageSize = default;
-            sendIdleIntervalMilliseconds = default;
-            lingerMilliseconds = default;
+            terms = default;
             return false;
         }
 
         int offset = DatagramSessionProtocol.ControlBodyOffset;
         clientNonce = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
         offset += sizeof(ulong);
-        sessionIdForMe = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
-        offset += sizeof(uint);
-        maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
-        offset += sizeof(uint);
-        sendIdleIntervalMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
-        offset += sizeof(ulong);
-        lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
-        offset += sizeof(ulong);
+        terms = ReadTerms(datagram, ref offset);
 
-        if (maxMessageSize == 0
-            || !AnnouncedIntervalLegality.IsLegal(sendIdleIntervalMilliseconds)
-            || !AnnouncedIntervalLegality.IsLegal(lingerMilliseconds))
+        if (terms.MaxMessageSize == 0 || !HasLegalIntervals(terms))
         {
             clientNonce = default;
-            sessionIdForMe = default;
-            maxMessageSize = default;
-            sendIdleIntervalMilliseconds = default;
-            lingerMilliseconds = default;
+            terms = default;
             return false;
         }
 
         datagram.Slice(offset, DatagramSessionProtocol.ResumeSecretLength).CopyTo(resumeSecret);
         return true;
     }
+
+    /// <summary>
+    /// Writes <paramref name="terms"/> at <paramref name="offset"/> in wire order and returns the
+    /// offset just past them. The one layout both a Hello-with-cookie and an Accept use.
+    /// </summary>
+    private static int WriteTerms(Span<byte> destination, int offset, AnnouncedSessionTerms terms)
+    {
+        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], terms.SessionIdForMe);
+        offset += sizeof(uint);
+        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], terms.MaxMessageSize);
+        offset += sizeof(uint);
+        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], terms.SendIdleIntervalMilliseconds);
+        offset += sizeof(ulong);
+        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], terms.LingerMilliseconds);
+        offset += sizeof(ulong);
+        return offset;
+    }
+
+    /// <summary>
+    /// Reads the terms <see cref="WriteTerms"/> writes, starting at <paramref name="offset"/> and
+    /// advancing it past them. Judges nothing: each caller applies its own legality rule.
+    /// </summary>
+    private static AnnouncedSessionTerms ReadTerms(ReadOnlySpan<byte> datagram, ref int offset)
+    {
+        uint sessionIdForMe = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
+        offset += sizeof(uint);
+        uint maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
+        offset += sizeof(uint);
+        ulong sendIdleIntervalMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
+        offset += sizeof(ulong);
+        ulong lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(datagram[offset..]);
+        offset += sizeof(ulong);
+        return new(sessionIdForMe, maxMessageSize, sendIdleIntervalMilliseconds, lingerMilliseconds);
+    }
+
+    /// <summary>
+    /// Whether both announced intervals in <paramref name="terms"/> are within
+    /// <see cref="AnnouncedIntervalLegality"/>'s bounds.
+    /// </summary>
+    private static bool HasLegalIntervals(AnnouncedSessionTerms terms) =>
+        AnnouncedIntervalLegality.IsLegal(terms.SendIdleIntervalMilliseconds)
+        && AnnouncedIntervalLegality.IsLegal(terms.LingerMilliseconds);
 
     /// <summary>
     /// Reads a <see cref="DatagramControlType.Resume"/>'s body. <paramref name="targetSessionId"/> routes
