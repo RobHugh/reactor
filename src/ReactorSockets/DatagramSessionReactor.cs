@@ -977,20 +977,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         ReadOnlySpan<byte> body = datagram[DatagramSessionProtocol.DatagramHeaderSize..];
 
-        PacketRecordReader parse = new(body);
-        while (parse.TryReadNext(out _))
+        PacketRecordReader wellFormedScan = new(body);
+        while (wellFormedScan.TryReadNext(out _))
         {
             // This pass proves only that every record parses; the passes below read the fields.
         }
 
-        if (!parse.IsAtEnd)
+        if (!wellFormedScan.IsAtEnd)
         {
             // One refusal out of the several this read can reach is worth naming separately
             // (issue #273): a Fragment in an unreliable mode is well-formed at every level but
             // ADR 0004's rule, so it says the sender fragments in modes this profile does not,
             // rather than that rubbish arrived. The malformed discard below still fires — this
             // adds which rule broke, it does not replace the outcome.
-            ReadOnlySpan<byte> refused = parse.Remaining;
+            ReadOnlySpan<byte> refused = wellFormedScan.Remaining;
             if (PacketRecordLegality.RefusedAsUnreliableFragment(refused)
                 && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
             {

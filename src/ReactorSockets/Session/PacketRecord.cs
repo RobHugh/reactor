@@ -9,7 +9,7 @@ namespace ReactorSockets.Session;
 /// </summary>
 internal readonly ref struct PacketRecord
 {
-    /// <summary>Creates a decoded record. Only <see cref="PacketRecordCodec.TryRead"/> constructs one.</summary>
+    /// <summary>Creates a decoded record. <see cref="PacketRecordCodec.TryRead"/> is the only caller.</summary>
     /// <param name="mode">The record's delivery mode.</param>
     /// <param name="sequence">The record's <c>u32</c> sequence number.</param>
     /// <param name="isFragment">Whether the record carries the fragment shape.</param>

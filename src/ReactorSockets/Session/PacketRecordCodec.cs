@@ -28,9 +28,9 @@ internal enum PacketRecordMode : byte
 /// <summary>
 /// The single place a packet record (ADR 0009) is read from or written to a datagram. A datagram is a
 /// container of as many records as fit, so this class reads or writes exactly one record positioned at
-/// the start of the span it is given and reports how many bytes it consumed or produced. The caller (<see cref="PacketRecordReader"/> for
-/// reading, <see cref="DatagramRecordPacker"/> for writing) re-slices past that count to move on to the
-/// next one.
+/// the start of the span it is given and reports how many bytes it consumed or produced. The caller
+/// (<see cref="PacketRecordReader"/> for reading, <see cref="DatagramRecordPacker"/> for writing)
+/// re-slices past that count to move on to the next one.
 /// </summary>
 /// <remarks>
 /// Allocation-free and total by construction, the same discipline <see cref="ControlDatagramCodec"/>
@@ -139,7 +139,8 @@ internal static class PacketRecordCodec
             }
         }
 
-        // The control bit (#339) is legal on exactly two combinations, stated once in
+        // The control bit (#339) is legal on exactly two combinations: unfragmented, zero length, in
+        // ReliableUnordered (a Ping) or ReliableOrdered (a Goodbye, #394). That rule is stated once in
         // PacketRecordLegality.IsLegalControlRecord (#341). Every other combination carrying the bit is
         // refused, since SpareBitsMask does not cover it and the bit would otherwise mean something
         // unproven.
