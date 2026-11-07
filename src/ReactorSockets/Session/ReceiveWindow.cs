@@ -296,12 +296,12 @@ internal sealed class ReceiveWindow
     /// </remarks>
     /// <param name="sequence">The arriving record's <c>u32</c> sequence number.</param>
     /// <returns>
-    /// The outcome — <see cref="ReceiveWindowOutcome.Admitted"/> the first time a sequence inside the
-    /// window is seen, including one admitted by a slide; <see cref="ReceiveWindowOutcome.Duplicate"/>
-    /// if it was already recorded; <see cref="ReceiveWindowOutcome.OutOfWindow"/> if it lies below
-    /// <see cref="Base"/>, or, only for a window built with <c>slides: false</c>, at or beyond the
-    /// window's far edge — together with the ring slot, slide loss and abandoned Fragment set this call
-    /// produced. See <see cref="ReceiveClassification"/>.
+    /// The outcome, ring slot, slide loss and abandoned Fragment set this call produced. The outcome is
+    /// <see cref="ReceiveWindowOutcome.Admitted"/> the first time a sequence inside the window is seen,
+    /// including one admitted by a slide. It is <see cref="ReceiveWindowOutcome.Duplicate"/> if the
+    /// sequence was already recorded. It is <see cref="ReceiveWindowOutcome.OutOfWindow"/> if the
+    /// sequence lies below <see cref="Base"/>, or, only for a window built with <c>slides: false</c>, at
+    /// or beyond the window's far edge.
     /// </returns>
     internal ReceiveClassification Classify(uint sequence)
     {
@@ -749,8 +749,7 @@ internal sealed class ReceiveWindow
     /// it: a Slot a new Peer reuses must classify from a clean window, not inherit whatever the
     /// previous occupant had admitted or held. Mirrors the division
     /// <see cref="Core.ReceiveArena.GetFragmentSlot"/> already draws — the arena keeps the bytes, the
-    /// occupant clears them. Reports no abandoned Fragment set: the Session is over and there is no Peer
-    /// left to subject a Diagnostic to.
+    /// occupant clears them.
     /// </summary>
     internal void Reset()
     {
