@@ -977,28 +977,29 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         ReadOnlySpan<byte> body = datagram[DatagramSessionProtocol.DatagramHeaderSize..];
 
-        ReadOnlySpan<byte> remainder = body;
-        while (remainder.Length > 0)
+        PacketRecordReader parse = new(body);
+        while (parse.TryReadNext(out _))
         {
-            if (!PacketRecordCodec.TryRead(remainder, out _, out _, out _, out _, out _, out _, out _, out int bytesConsumed))
-            {
-                // One refusal out of the several this read can reach is worth naming separately
-                // (issue #273): a Fragment in an unreliable mode is well-formed at every level but
-                // ADR 0004's rule, so it says the sender fragments in modes this profile does not,
-                // rather than that rubbish arrived. The malformed discard below still fires — this
-                // adds which rule broke, it does not replace the outcome.
-                if (PacketRecordLegality.RefusedAsUnreliableFragment(remainder)
-                    && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
-                {
-                    _diagnostics.Log(DiagnosticRecord.ForUnreliableFragment(
-                        source, remainder[0] & DatagramSessionProtocol.ModeMask));
-                }
+            // This pass proves only that every record parses; the passes below read the fields.
+        }
 
-                DiscardMalformedForSession(source, datagram.Length);
-                return;
+        if (!parse.IsAtEnd)
+        {
+            // One refusal out of the several this read can reach is worth naming separately
+            // (issue #273): a Fragment in an unreliable mode is well-formed at every level but
+            // ADR 0004's rule, so it says the sender fragments in modes this profile does not,
+            // rather than that rubbish arrived. The malformed discard below still fires — this
+            // adds which rule broke, it does not replace the outcome.
+            ReadOnlySpan<byte> refused = parse.Remaining;
+            if (PacketRecordLegality.RefusedAsUnreliableFragment(refused)
+                && _diagnostics.IsEnabled(DiagnosticLevel.Warn))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForUnreliableFragment(
+                    source, refused[0] & DatagramSessionProtocol.ModeMask));
             }
 
-            remainder = remainder[bytesConsumed..];
+            DiscardMalformedForSession(source, datagram.Length);
+            return;
         }
 
         // Every record on its own proved legal above (issue #253), but a Fragment's index and count are
@@ -1031,28 +1032,22 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // already failed the read in the first pass above (issue #273), so the mode test here and
         // ClassifyRecord's matching one now restate a guarantee rather than establish it, and stay as
         // the local statement of which modes this arm is about.
-        remainder = body;
-        while (remainder.Length > 0)
+        PacketRecordReader oversizedScan = new(body);
+        while (oversizedScan.TryReadNext(out PacketRecord record))
         {
-            PacketRecordCodec.TryRead(
-                remainder, out PacketRecordMode oversizedMode, out _, out _,
-                out bool oversizedIsFragment, out _, out ushort oversizedFragmentCount, out _, out int oversizedBytesConsumed);
-
-            if (oversizedIsFragment
-                && oversizedMode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered
-                && oversizedFragmentCount > _maxLegalFragmentCount)
+            if (record.IsFragment
+                && record.Mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered
+                && record.FragmentCount > _maxLegalFragmentCount)
             {
                 if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
                 {
                     _diagnostics.Log(DiagnosticRecord.ForOversizedFragmentSet(
-                        ToPeerId(slot.Handle), oversizedFragmentCount, _maxLegalFragmentCount));
+                        ToPeerId(slot.Handle), record.FragmentCount, _maxLegalFragmentCount));
                 }
 
                 ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
                 return;
             }
-
-            remainder = remainder[oversizedBytesConsumed..];
         }
 
         // Fully parsed and not refused above: this is what "well-formed" means for leaving Interrupted
@@ -1078,23 +1073,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ApplyAckToStallSignature(slot, unorderedRelease);
         ReconcileHorizonDeferrals(slot);
 
-        remainder = body;
-        while (remainder.Length > 0)
+        // Every record in body already proved well-formed in the first pass, so this walk reads all of
+        // them. The fragment index and count are passed on here (issue #258): a held Fragment's group
+        // first sequence, and so its completeness, is derived from them the moment it is held.
+        PacketRecordReader classify = new(body);
+        while (classify.TryReadNext(out PacketRecord record))
         {
-            // Every record in this span already proved well-formed in the pass above, so this read
-            // cannot fail — the return value is not re-checked. fragmentIndex and fragmentCount are
-            // read here (issue #258): a held Fragment's group first sequence, and so its completeness,
-            // is derived from them the moment it is held.
-            PacketRecordCodec.TryRead(
-                remainder, out PacketRecordMode mode, out uint sequence, out ushort length,
-                out bool isFragment, out ushort fragmentIndex, out ushort fragmentCount, out bool isControl,
-                out int bytesConsumed);
-
-            // The payload is the tail of what this record consumed, so it is sliced from the record's
-            // own span rather than re-derived from a header width this method would then have to know.
-            ReadOnlySpan<byte> payload = remainder.Slice(bytesConsumed - length, length);
-            ClassifyRecord(slot, mode, sequence, isFragment, isControl, fragmentIndex, fragmentCount, payload);
-            remainder = remainder[bytesConsumed..];
+            ClassifyRecord(
+                slot, record.Mode, record.Sequence, record.IsFragment, record.IsControl,
+                record.FragmentIndex, record.FragmentCount, record.Payload);
         }
     }
 

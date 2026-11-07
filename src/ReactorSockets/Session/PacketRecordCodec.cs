@@ -28,9 +28,9 @@ internal enum PacketRecordMode : byte
 /// <summary>
 /// The single place a packet record (ADR 0009) is read from or written to a datagram. A datagram is a
 /// container of as many records as fit, so this class reads or writes exactly one record positioned at
-/// the start of the span it is given and reports how many bytes it consumed or produced — the caller
-/// (<see cref="DatagramRecordPacker"/> for writing) re-slices past that count to move on to the next
-/// one.
+/// the start of the span it is given and reports how many bytes it consumed or produced. The caller (<see cref="PacketRecordReader"/> for
+/// reading, <see cref="DatagramRecordPacker"/> for writing) re-slices past that count to move on to the
+/// next one.
 /// </summary>
 /// <remarks>
 /// Allocation-free and total by construction, the same discipline <see cref="ControlDatagramCodec"/>
@@ -51,94 +51,39 @@ internal static class PacketRecordCodec
 {
     /// <summary>
     /// Reads one packet record from the start of <paramref name="record"/>, which is positioned at
-    /// the record's first byte and extends to the end of the bytes remaining in the datagram —
-    /// callers do not pass a separate remaining-length parameter because <paramref name="record"/>'s
-    /// own length already is that count. Reads either wire shape (<see cref="PacketRecordLegality"/>):
-    /// an unfragmented record, whose <paramref name="isFragment"/> comes back <see langword="false"/>
-    /// with <paramref name="fragmentIndex"/> and <paramref name="fragmentCount"/> left unset, since a
-    /// complete Message has no fragment to index into; or a Fragment, whose two extra fields are read
-    /// and reported alongside it. This method reads the shape and, for a Fragment, judges whether its
-    /// index and count describe a set that could ever legally exist: an index at or beyond its count
-    /// names a piece outside the set it claims; a count of zero has no valid index at all; and a count
-    /// of one is refused too, because a one-piece Message is unfragmented and should never have carried
-    /// the fragment shape — treating it as a degenerate but legal set would let the fragment bit mean
-    /// two different things for the same content. This method also judges <see
-    /// cref="DatagramSessionProtocol.ControlBit"/>: the bit is legal only on a record that is otherwise
-    /// unfragmented, zero length, and either <c>ReliableUnordered</c> (a Ping) or
-    /// <c>ReliableOrdered</c> (a Goodbye) — and <paramref name="isControl"/> reports it only for those
-    /// two combinations. Every other combination carrying the bit (another mode, the fragment bit, or a
-    /// nonzero length) fails the read exactly as a spare bit would, judged by
-    /// <see cref="PacketRecordLegality.IsLegalControlRecord"/>. Fails without reading past
-    /// <paramref name="record"/> when: any spare bit (<see
-    /// cref="DatagramSessionProtocol.SpareBitsMask"/>) is set; the flags byte names the Fragment shape
-    /// in one of the two unreliable modes, which ADR 0004 forbids and
-    /// <see cref="PacketRecordLegality.ShapeOf"/> therefore refuses; fewer bytes remain than the
-    /// record's shape needs; <paramref name="length"/> would exceed the bytes left in the datagram
-    /// after the record header; a Fragment's index and count form one of the impossible combinations
-    /// above; or the control bit is set on a record that is not a legal Ping or Goodbye. A malformed
-    /// Fragment or a malformed control record fails exactly as a record too short for its shape does —
-    /// the caller has no new failure case to handle. A caller that wants to tell the
-    /// unreliable-Fragment refusal apart from the rest, to report which rule broke, asks
-    /// <see cref="PacketRecordLegality.RefusedAsUnreliableFragment"/> after the fact rather than being
-    /// handed a reason this method's other callers would have to ignore.
+    /// the record's first byte and extends to the end of the bytes remaining in the datagram, so its
+    /// own length bounds the record's declared length. Reads either wire shape
+    /// (<see cref="PacketRecordLegality"/>): an unfragmented record, a complete Message with no fragment
+    /// index or count; or a Fragment, whose two extra fields are read alongside it. For a Fragment this
+    /// method also judges whether its index and count describe a set that could ever legally exist: an
+    /// index at or beyond its count names a piece outside the set it claims; a count of zero has no
+    /// valid index at all; and a count of one is refused too, because a one-piece Message is
+    /// unfragmented and should never have carried the fragment shape. It judges
+    /// <see cref="DatagramSessionProtocol.ControlBit"/> as well: the bit is legal only on a record that is
+    /// otherwise unfragmented, zero length, and either <c>ReliableUnordered</c> (a Ping) or
+    /// <c>ReliableOrdered</c> (a Goodbye), as <see cref="PacketRecordLegality.IsLegalControlRecord"/>
+    /// states. Fails without reading past <paramref name="record"/> when: any spare bit
+    /// (<see cref="DatagramSessionProtocol.SpareBitsMask"/>) is set; the flags byte names the Fragment
+    /// shape in one of the two unreliable modes, which ADR 0004 forbids and
+    /// <see cref="PacketRecordLegality.ShapeOf"/> therefore refuses; fewer bytes remain than the record's
+    /// shape needs; the declared length would exceed the bytes left after the record header; a
+    /// Fragment's index and count form one of the impossible combinations above; or the control bit is
+    /// set on a record that is not a legal Ping or Goodbye. Every one of these fails the same way, so the
+    /// caller has one failure case to handle. A caller that wants to tell the unreliable-Fragment refusal
+    /// apart from the rest asks <see cref="PacketRecordLegality.RefusedAsUnreliableFragment"/> after the
+    /// fact.
     /// </summary>
     /// <param name="record">
     /// The datagram's bytes from this record's first byte onward. Its length is the bytes remaining
-    /// in the datagram, which is also what bounds <paramref name="length"/>.
+    /// in the datagram.
     /// </param>
-    /// <param name="mode">The record's delivery mode, valid only when this method returns <see langword="true"/>.</param>
-    /// <param name="sequence">The record's <c>u32</c> sequence number, valid only when this method returns <see langword="true"/>.</param>
-    /// <param name="length">The record's declared payload length in bytes, valid only when this method returns <see langword="true"/>.</param>
-    /// <param name="isFragment">
-    /// Whether this record carries the fragment shape, valid only when this method returns
-    /// <see langword="true"/>. <see langword="false"/> for an unfragmented record.
+    /// <param name="decoded">
+    /// The record read, with its payload sliced from <paramref name="record"/>. Valid only when this
+    /// method returns <see langword="true"/>, and <see langword="default"/> otherwise.
     /// </param>
-    /// <param name="fragmentIndex">
-    /// The record's <c>u16</c> fragment index, valid only when this method returns
-    /// <see langword="true"/> and <paramref name="isFragment"/> is <see langword="true"/>. Unset — and
-    /// meaningless — for an unfragmented record. Always less than <paramref name="fragmentCount"/> when
-    /// valid: a record whose index is at or beyond its count fails the read instead.
-    /// </param>
-    /// <param name="fragmentCount">
-    /// The record's <c>u16</c> fragment count, valid only when this method returns
-    /// <see langword="true"/> and <paramref name="isFragment"/> is <see langword="true"/>. Unset — and
-    /// meaningless — for an unfragmented record. Always at least 2 when valid: a count of zero has no
-    /// index that could describe a piece of it, and a count of one describes a Message that is whole in
-    /// one piece — i.e. unfragmented — so the fragment shape should never have been used to carry it; a
-    /// record claiming either fails the read rather than being treated as a degenerate one-piece set.
-    /// </param>
-    /// <param name="isControl">
-    /// Whether this record is an in-Session control record — the wire shape a Ping or a Goodbye uses —
-    /// valid only when this method returns <see langword="true"/>. <see langword="false"/> for an
-    /// ordinary Message record. Always accompanied by <c>mode</c> of <c>ReliableUnordered</c> or
-    /// <c>ReliableOrdered</c>, <c>isFragment == false</c> and <c>length == 0</c> when
-    /// <see langword="true"/>: those are the only terms <see cref="DatagramSessionProtocol.ControlBit"/> is legal under, so a record carrying the
-    /// bit under any other terms fails the read instead of reaching here with it set.
-    /// </param>
-    /// <param name="bytesConsumed">
-    /// The total bytes this record occupies in the datagram — its header plus its payload — so the
-    /// caller can slice past it to read the next record. Valid only when this method returns
-    /// <see langword="true"/>.
-    /// </param>
-    public static bool TryRead(
-        ReadOnlySpan<byte> record,
-        out PacketRecordMode mode,
-        out uint sequence,
-        out ushort length,
-        out bool isFragment,
-        out ushort fragmentIndex,
-        out ushort fragmentCount,
-        out bool isControl,
-        out int bytesConsumed)
+    public static bool TryRead(ReadOnlySpan<byte> record, out PacketRecord decoded)
     {
-        mode = default;
-        sequence = default;
-        length = default;
-        isFragment = default;
-        fragmentIndex = default;
-        fragmentCount = default;
-        isControl = default;
-        bytesConsumed = default;
+        decoded = default;
 
         // Nothing to read the shape from: a record needs at least its flags byte before the legality
         // table can say how long it is.
@@ -165,63 +110,54 @@ internal static class PacketRecordCodec
 
         // The declared length is bounded against what is actually left before a single payload byte is
         // touched, so a length a stranger chose can never move a read past the received bytes.
-        ushort candidateLength = BinaryPrimitives.ReadUInt16BigEndian(record[DatagramSessionProtocol.RecordLengthOffset..]);
-        if (candidateLength > record.Length - shape.RecordSize)
+        ushort length = BinaryPrimitives.ReadUInt16BigEndian(record[DatagramSessionProtocol.RecordLengthOffset..]);
+        if (length > record.Length - shape.RecordSize)
         {
             return false;
         }
 
-        mode = (PacketRecordMode)(flags & DatagramSessionProtocol.ModeMask);
-        sequence = BinaryPrimitives.ReadUInt32BigEndian(record[DatagramSessionProtocol.RecordSequenceOffset..]);
-        length = candidateLength;
+        PacketRecordMode mode = (PacketRecordMode)(flags & DatagramSessionProtocol.ModeMask);
+        uint sequence = BinaryPrimitives.ReadUInt32BigEndian(record[DatagramSessionProtocol.RecordSequenceOffset..]);
 
         // The fragment fields exist only on the longer shape, so they are read only when the flags
-        // byte claims it — reading them off an unfragmented record would read into its payload.
-        isFragment = (flags & DatagramSessionProtocol.FragmentBit) != 0;
+        // byte claims it. Reading them off an unfragmented record would read into its payload.
+        bool isFragment = (flags & DatagramSessionProtocol.FragmentBit) != 0;
+        ushort fragmentIndex = 0;
+        ushort fragmentCount = 0;
         if (isFragment)
         {
-            ushort candidateFragmentIndex = BinaryPrimitives.ReadUInt16BigEndian(record[DatagramSessionProtocol.RecordFragmentIndexOffset..]);
-            ushort candidateFragmentCount = BinaryPrimitives.ReadUInt16BigEndian(record[DatagramSessionProtocol.RecordFragmentCountOffset..]);
+            fragmentIndex = BinaryPrimitives.ReadUInt16BigEndian(record[DatagramSessionProtocol.RecordFragmentIndexOffset..]);
+            fragmentCount = BinaryPrimitives.ReadUInt16BigEndian(record[DatagramSessionProtocol.RecordFragmentCountOffset..]);
 
-            // A count of zero has no index that could be valid; an index at or beyond its count names a
-            // piece outside the set it claims to belong to; and a count of one is a set with nothing to
-            // be contiguous with, i.e. a complete Message that should never have carried the fragment
-            // shape at all — issue #253 refuses all three rather than let a stranger's impossible
-            // metadata reach the contiguity logic downstream. Reset here first so a caller cannot read
-            // an isFragment left true alongside default'd-but-uninspected index and count.
-            if (candidateFragmentCount <= 1 || candidateFragmentIndex >= candidateFragmentCount)
+            // A count of zero has no index that could be valid, an index at or beyond its count names a
+            // piece outside the set it claims to belong to, and a count of one is a complete Message that
+            // should never have carried the fragment shape. Issue #253 refuses all three rather than let
+            // a stranger's impossible metadata reach the contiguity logic downstream.
+            if (fragmentCount <= 1 || fragmentIndex >= fragmentCount)
             {
-                isFragment = default;
-                mode = default;
-                sequence = default;
-                length = default;
                 return false;
             }
-
-            fragmentIndex = candidateFragmentIndex;
-            fragmentCount = candidateFragmentCount;
         }
 
-        // The control bit (#339) is legal on exactly two combinations — unfragmented, zero length, in
-        // ReliableUnordered (a Ping) or ReliableOrdered (a Goodbye, #394) — stated once in PacketRecordLegality.IsLegalControlRecord (#341) rather
-        // than restated here. Every other combination carrying the bit is refused rather than treated as
-        // a spare bit, since SpareBitsMask no longer covers it: another mode, the fragment bit, or a
-        // nonzero length would let the bit mean something unproven, so this method fails the read
-        // instead of letting it reach the caller.
-        isControl = (flags & DatagramSessionProtocol.ControlBit) != 0;
+        // The control bit (#339) is legal on exactly two combinations, stated once in
+        // PacketRecordLegality.IsLegalControlRecord (#341). Every other combination carrying the bit is
+        // refused, since SpareBitsMask does not cover it and the bit would otherwise mean something
+        // unproven.
+        bool isControl = (flags & DatagramSessionProtocol.ControlBit) != 0;
         if (isControl && !PacketRecordLegality.IsLegalControlRecord(mode, isFragment, length))
         {
-            mode = default;
-            sequence = default;
-            length = default;
-            isFragment = default;
-            fragmentIndex = default;
-            fragmentCount = default;
-            isControl = default;
             return false;
         }
 
-        bytesConsumed = shape.RecordSize + candidateLength;
+        decoded = new PacketRecord(
+            mode,
+            sequence,
+            isFragment,
+            fragmentIndex,
+            fragmentCount,
+            isControl,
+            record.Slice(shape.RecordSize, length),
+            shape.RecordSize + length);
         return true;
     }
 

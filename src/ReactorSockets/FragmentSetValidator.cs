@@ -99,28 +99,25 @@ public sealed class FragmentSetValidator
         }
 
         int fragmentCount = 0;
-        ReadOnlySpan<byte> remainder = body;
-        while (remainder.Length > 0)
+        PacketRecordReader reader = new(body);
+        while (reader.TryReadNext(out PacketRecord record))
         {
-            if (!PacketRecordCodec.TryRead(
-                    remainder, out PacketRecordMode mode, out uint sequence, out _, out bool isFragment,
-                    out ushort index, out ushort count, out _, out int bytesConsumed))
-            {
-                return false;
-            }
-
-            if (isFragment)
+            if (record.IsFragment)
             {
                 // Cannot happen: MaxFragmentRecords is MaxBodySize divided by the smallest Fragment
                 // record, and a longer body was refused above.
                 Debug.Assert(fragmentCount < MaxFragmentRecords, "More Fragments than the scratch was sized for.");
 
-                _fragmentGroupKey[fragmentCount] = PackFragmentGroupKey((byte)mode, FragmentGroup.FirstSequenceOf(sequence, index));
-                _fragmentIndexAndCount[fragmentCount] = ((uint)index << 16) | count;
+                _fragmentGroupKey[fragmentCount] = PackFragmentGroupKey(
+                    (byte)record.Mode, FragmentGroup.FirstSequenceOf(record.Sequence, record.FragmentIndex));
+                _fragmentIndexAndCount[fragmentCount] = ((uint)record.FragmentIndex << 16) | record.FragmentCount;
                 fragmentCount++;
             }
+        }
 
-            remainder = remainder[bytesConsumed..];
+        if (!reader.IsAtEnd)
+        {
+            return false;
         }
 
         if (fragmentCount == 0)
