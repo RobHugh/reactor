@@ -2826,10 +2826,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 out ulong clientNonce,
                 out long epoch,
                 cookie,
-                out uint remoteSessionId,
-                out uint remoteMaxMessageSize,
-                out ulong remoteSendIdleIntervalMilliseconds,
-                out ulong remoteLingerMilliseconds,
+                out AnnouncedSessionTerms remoteTerms,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -2869,11 +2866,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        TimeSpan remoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
-        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
-        TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
-        if (_peers.TryAdd(NewAcceptedPeer(
-                source, link, remoteSessionId, remoteMaxMessageSize, remoteSendIdleInterval, remoteLinger, announcedLinger, remoteResumeSecret, clientNonce))
+        if (_peers.TryAdd(NewAcceptedPeer(source, link, remoteTerms, remoteResumeSecret, clientNonce))
             is not SlotHandle handle)
         {
             _capacityDiscardsThisFrame++;
@@ -2962,10 +2955,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             clientNonce,
             epoch,
             cookie,
-            slot.LocalSessionId,
-            (uint)_options.MaxMessageSize,
-            AnnouncedSendIdleIntervalMilliseconds,
-            AnnouncedLingerMilliseconds,
+            AnnouncedTermsFor(slot),
             slot.LocalResumeSecret);
         SendControl(link, source);
     }
@@ -2988,10 +2978,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         if (!ControlDatagramCodec.TryReadAccept(
                 datagram,
                 out ulong clientNonce,
-                out uint remoteSessionId,
-                out uint remoteMaxMessageSize,
-                out ulong remoteSendIdleIntervalMilliseconds,
-                out ulong remoteLingerMilliseconds,
+                out AnnouncedSessionTerms remoteTerms,
                 remoteResumeSecret))
         {
             DiscardMalformed(source, datagram.Length);
@@ -3009,21 +2996,21 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // already trusted by the time this Peer reaches Established — an internal invariant to assert
         // rather than input to re-validate, mirroring NewAcceptedPeer's asserts on the accepting path.
         Debug.Assert(
-            remoteMaxMessageSize != 0,
+            remoteTerms.MaxMessageSize != 0,
             "ControlDatagramCodec.TryReadAccept rejects a zero-announced maxMessageSize before this is called.");
         Debug.Assert(
-            remoteSendIdleIntervalMilliseconds != 0,
+            remoteTerms.SendIdleIntervalMilliseconds != 0,
             "ControlDatagramCodec.TryReadAccept rejects a zero-announced send-idle interval before this is called.");
         Debug.Assert(
-            remoteLingerMilliseconds != 0,
+            remoteTerms.LingerMilliseconds != 0,
             "ControlDatagramCodec.TryReadAccept rejects a zero-announced Linger before this is called.");
 
-        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteLingerMilliseconds);
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteTerms.LingerMilliseconds);
         TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
 
-        slot.RemoteSessionId = remoteSessionId;
-        slot.RemoteMaxMessageSize = remoteMaxMessageSize;
-        slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteSendIdleIntervalMilliseconds);
+        slot.RemoteSessionId = remoteTerms.SessionIdForMe;
+        slot.RemoteMaxMessageSize = remoteTerms.MaxMessageSize;
+        slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteTerms.SendIdleIntervalMilliseconds);
         slot.RemoteLinger = remoteLinger;
         slot.EffectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
@@ -3346,11 +3333,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private PeerSlot NewAcceptedPeer(
         Source source,
         UdpLink link,
-        uint remoteSessionId,
-        uint remoteMaxMessageSize,
-        TimeSpan remoteSendIdleInterval,
-        TimeSpan remoteLinger,
-        TimeSpan announcedLinger,
+        AnnouncedSessionTerms remoteTerms,
         ReadOnlySpan<byte> remoteResumeSecret,
         ulong clientNonce)
     {
@@ -3359,15 +3342,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // Peer is built here, straight into Established, all three values are already trusted — an
         // internal invariant to assert rather than input to re-validate.
         Debug.Assert(
-            remoteMaxMessageSize != 0,
+            remoteTerms.MaxMessageSize != 0,
             "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced maxMessageSize before this is called.");
         Debug.Assert(
-            remoteSendIdleInterval > TimeSpan.Zero,
+            remoteTerms.SendIdleIntervalMilliseconds != 0,
             "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced send-idle interval before this is called.");
         Debug.Assert(
-            remoteLinger > TimeSpan.Zero,
+            remoteTerms.LingerMilliseconds != 0,
             "ControlDatagramCodec.TryReadHelloWithCookie rejects a zero-announced Linger before this is called.");
 
+        TimeSpan remoteLinger = TimeSpan.FromMilliseconds(remoteTerms.LingerMilliseconds);
+        TimeSpan announcedLinger = TimeSpan.FromMilliseconds(AnnouncedLingerMilliseconds);
         RetransmissionTimer retransmitTimer = new();
         long now = _options.Reactor.TimeProvider.GetTimestamp();
         TimeSpan effectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
@@ -3379,9 +3364,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             ClientNonce = clientNonce,
             LocalSessionId = NextSessionId(),
             LocalResumeSecret = NextResumeSecret(),
-            RemoteSessionId = remoteSessionId,
-            RemoteMaxMessageSize = remoteMaxMessageSize,
-            RemoteSendIdleInterval = remoteSendIdleInterval,
+            RemoteSessionId = remoteTerms.SessionIdForMe,
+            RemoteMaxMessageSize = remoteTerms.MaxMessageSize,
+            RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteTerms.SendIdleIntervalMilliseconds),
             RemoteLinger = remoteLinger,
             EffectiveLinger = effectiveLinger,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
@@ -3416,13 +3401,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ControlDatagramCodec.WriteAccept(
             _sendBuffer,
             slot.ClientNonce,
-            slot.LocalSessionId,
-            (uint)_options.MaxMessageSize,
-            AnnouncedSendIdleIntervalMilliseconds,
-            AnnouncedLingerMilliseconds,
+            AnnouncedTermsFor(slot),
             slot.LocalResumeSecret);
         SendControl(link, destination);
     }
+
+    /// <summary>
+    /// The terms this end announces for <paramref name="slot"/> in its Hello-with-cookie or Accept:
+    /// the slot's own local session id and this Reactor's announced limits and intervals.
+    /// </summary>
+    private AnnouncedSessionTerms AnnouncedTermsFor(PeerSlot slot) => new(
+        slot.LocalSessionId,
+        (uint)_options.MaxMessageSize,
+        AnnouncedSendIdleIntervalMilliseconds,
+        AnnouncedLingerMilliseconds);
 
     /// <summary>
     /// Spends one unit of the per-Pump admission budget, or Discards. The cap bounds work rather than
