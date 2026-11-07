@@ -1443,9 +1443,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Whether an <see cref="PeerPhase.Interrupted"/> Peer's effective Linger
+    /// Whether an Interrupted or Closing Peer's effective Linger
     /// (<see cref="PeerSlot.EffectiveLinger"/>, negotiated at handshake and already reported via
-    /// <c>LingerNegotiated</c>) has run out since <see cref="PeerLifecycle.LingerStartTimestamp"/> — the
+    /// <c>LingerNegotiated</c>) has run out since <see cref="PeerLifecycle.LingerStartTimestamp"/>, which is
+    /// the interruption for an Interrupted Peer and <see cref="Close"/> for a Closing one. Always
+    /// <see langword="false"/> for a Peer in any other phase. The Interrupted case is the
     /// datagram twin of <see cref="StreamSessionReactor.HasExceededLinger"/>. Linger is what closes an
     /// Interrupted Peer, not the transport loss that produced it — the loss already happened,
     /// potentially long before this check ever runs (<see cref="EnforceReceiveIdleTimer"/> stamped
@@ -3715,8 +3717,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Where one Peer is in its life on this end: dialling, Established and live, Interrupted, or Closing
     /// through its own <see cref="Close"/>. One value rather than independent flags, so a Peer cannot be
-    /// Interrupted and Closing at once, nor either before it is Established. Every phase from
-    /// <see cref="Open"/> on is Established. Moved only by <see cref="PeerLifecycle"/>.
+    /// Interrupted and Closing at once, nor either before it is Established. Declaration order is part of
+    /// the contract: every phase from <see cref="Open"/> on is Established and every phase from
+    /// <see cref="GoodbyeDeferred"/> on is Closing, which <see cref="PeerLifecycle.IsEstablished"/> and
+    /// <see cref="PeerLifecycle.IsClosing"/> compare against. Moved only by <see cref="PeerLifecycle"/>.
     /// </summary>
     private enum PeerPhase
     {
@@ -3961,9 +3965,17 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// Otherwise the Peer moves to <see cref="RemoteCloseState.Closing"/> while Messages are still
         /// undelivered, or straight to <see cref="RemoteCloseState.CloseDue"/>.
         /// </summary>
-        /// <returns>The state the remote's Goodbye is now in.</returns>
+        /// <returns>
+        /// The state the remote's Goodbye is now in. A Peer not yet Established, or one whose remote Goodbye
+        /// already arrived, is untouched and its current state is returned.
+        /// </returns>
         public RemoteCloseState RemoteGoodbyeArrived(bool hasUndeliveredMessages)
         {
+            if (!IsEstablished || RemoteGoodbyeDelivered)
+            {
+                return RemoteClose;
+            }
+
             RemoteClose = IsClosing ? RemoteCloseState.AckDue
                 : hasUndeliveredMessages ? RemoteCloseState.Closing
                 : RemoteCloseState.CloseDue;
