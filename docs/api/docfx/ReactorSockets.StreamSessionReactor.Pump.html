@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_StreamSessionReactor_Pump_.md&amp;value=---%0Auid%3A%20ReactorSockets.StreamSessionReactor.Pump*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_StreamSessionReactor_Pump_.md&amp;value=---%0Auid%3A%20ReactorSockets.StreamSessionReactor.Pump*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_StreamSessionReactor_Pump_" data-uid="ReactorSockets.StreamSessionReactor.Pump*" class="text-break">
-Method Pump  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/StreamSessionReactor.cs/#L190"><i class="bi bi-code-slash"></i></a>
+Method Pump  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionReactor.cs/#L203"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,36 +107,35 @@ Method Pump  <a class="header-action link-secondary" title="View source" href="h
 
 <h3 id="ReactorSockets_StreamSessionReactor_Pump" data-uid="ReactorSockets.StreamSessionReactor.Pump">
   Pump()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/StreamSessionReactor.cs/#L190"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionReactor.cs/#L203"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>One synchronous advance: records this call's arrival against the last one
-(<span class="xref">ReactorSockets.StreamSessionReactor.ObservedPumpInterval</span>, issue #112) before anything else, then wipes the previous
-Frame's events — which is also the moment a Peer
-still <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosing">PeerClosing</a> only because the last Frame's Messages had not
-been drained past yet becomes eligible to close (<span class="xref">ReactorSockets.StreamSessionReactor.RetryPeersPendingClose()</span>) — then
-admits ready connections, advances every in-flight dial and reads whatever bound socket is
-ready right now, running the handshake for everything that arrived. Every Peer whose received
-count advanced somewhere in that work — this Frame's own reads, or a held-back Message finally
-delivered by <span class="xref">ReactorSockets.StreamSessionReactor.RetryPeersWithBufferedMessages()</span> — then has its delivery counter emitted
-exactly once (<span class="xref">ReactorSockets.StreamSessionReactor.EmitDeliveryCounters()</span>, issue #116/#25's second trigger), before every
-Peer's queued retention bytes are flushed exactly once
-(<span class="xref">ReactorSockets.StreamSessionReactor.FlushPendingRetentionWrites()</span>, #90/3.6.2) regardless of how many <a class="xref" href="ReactorSockets.StreamSessionReactor.Send.html#ReactorSockets_StreamSessionReactor_Send_ReactorSockets_PeerId_System_ReadOnlySpan_System_Byte__">Send(PeerId, ReadOnlySpan&lt;byte&gt;)</a>
-calls queued them. Finally, every established Peer's two independent idle timers (#26) are
-enforced in one scan (<span class="xref">ReactorSockets.StreamSessionReactor.EnforceIdleTimers()</span>): a Peer from which nothing has been
-received for <span class="xref">ReactorSockets.StreamSessionReactor.PeerSlot.RemoteSendIdleInterval</span> × <a class="xref" href="ReactorSockets.StreamSessionOptions.ResolvedMissedHeartbeats.html#ReactorSockets_StreamSessionOptions_ResolvedMissedHeartbeats">ResolvedMissedHeartbeats</a>
-moves to <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerInterrupted">PeerInterrupted</a> (issue #117, revised by issue #119), an
-already-Interrupted Peer instead closes with <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_LingerExpired">LingerExpired</a> once
-its effective Linger has elapsed since the interruption (issue #121), and every surviving Peer
-that has written nothing
-to the wire — including whatever this Frame's own flush just carried — for at least
+(<span class="xref">ReactorSockets.StreamSessionReactor.ObservedPumpInterval</span>) before anything else, then wipes the previous Frame's
+events — which is also the moment a Peer still <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosing">PeerClosing</a> only
+because the last Frame's Messages had not been drained past yet becomes eligible to close
+(<span class="xref">ReactorSockets.StreamSessionReactor.RetryPeersPendingClose()</span>) — then admits ready connections, advances every in-flight
+dial and reads whatever bound socket is ready right now, running the handshake for everything
+that arrived. Every Peer whose received count advanced somewhere in that work — this Frame's own
+reads, or a held-back Message finally delivered by <span class="xref">ReactorSockets.StreamSessionReactor.RetryPeersWithBufferedMessages()</span>
+— then has its delivery counter emitted exactly once (<span class="xref">ReactorSockets.StreamSessionReactor.EmitDeliveryCounters()</span>),
+before every Peer's queued retention bytes are flushed exactly once
+(<span class="xref">ReactorSockets.StreamSessionReactor.FlushPendingRetentionWrites()</span>) regardless of how many <a class="xref" href="ReactorSockets.StreamSessionReactor.Send.html#ReactorSockets_StreamSessionReactor_Send_ReactorSockets_PeerId_System_ReadOnlySpan_System_Byte__">Send(PeerId, ReadOnlySpan&lt;byte&gt;)</a> calls
+queued them. Finally, every established Peer's two independent idle timers are enforced in one
+scan (<span class="xref">ReactorSockets.StreamSessionReactor.EnforceIdleTimers()</span>): a Peer from which nothing has been received for
+<span class="xref">ReactorSockets.StreamSessionReactor.PeerSlot.RemoteSendIdleInterval</span> ×
+<a class="xref" href="ReactorSockets.StreamSessionOptions.ResolvedMissedHeartbeats.html#ReactorSockets_StreamSessionOptions_ResolvedMissedHeartbeats">ResolvedMissedHeartbeats</a> moves to
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerInterrupted">PeerInterrupted</a>, an already-Interrupted Peer instead closes with
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_LingerExpired">LingerExpired</a> once its effective Linger has elapsed since the
+interruption, and every surviving Peer that has written nothing to the wire — including whatever
+this Frame's own flush just carried — for at least
 <a class="xref" href="ReactorSockets.StreamSessionOptions.SendIdleInterval.html#ReactorSockets_StreamSessionOptions_SendIdleInterval">SendIdleInterval</a> sends the same delivery-counter record as a
-heartbeat (issue #114/#26's first idle timer), unconditionally and regardless of whether anything
-was ever received from it. Once idle timers may have closed an Interrupted Peer on Linger expiry
-(issue #121), every Interrupted Peer this Reactor itself dialled is given its re-dial attempt for
-this Frame (<span class="xref">ReactorSockets.StreamSessionReactor.ProcessRedials()</span>, issue #125) — a schedule derived from the observed Pump
-interval just recorded above and the effective Linger, never a separate attempt-count knob, so a
-Peer whose Linger closed it this same Frame is never also given one. Throws
+heartbeat, unconditionally and regardless of whether anything was ever received from it. Once
+idle timers may have closed an Interrupted Peer on Linger expiry, every Interrupted Peer this
+Reactor itself dialled is given its re-dial attempt for this Frame
+(<span class="xref">ReactorSockets.StreamSessionReactor.ProcessRedials()</span>) — a schedule derived from the observed Pump interval just
+recorded above and the effective Linger, never a separate attempt-count knob, so a Peer whose
+Linger closed it this same Frame is never also given one. Throws
 <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.invalidoperationexception">InvalidOperationException</a> if called from any thread other than the one that
 constructed this Reactor, or from inside a Pump already in progress.</p>
 </div>

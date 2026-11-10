@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_DatagramSessionReactor_Connect_.md&amp;value=---%0Auid%3A%20ReactorSockets.DatagramSessionReactor.Connect*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_DatagramSessionReactor_Connect_.md&amp;value=---%0Auid%3A%20ReactorSockets.DatagramSessionReactor.Connect*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_DatagramSessionReactor_Connect_" data-uid="ReactorSockets.DatagramSessionReactor.Connect*" class="text-break">
-Method Connect  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DatagramSessionReactor.cs/#L220"><i class="bi bi-code-slash"></i></a>
+Method Connect  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionReactor.cs/#L365"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,7 +107,7 @@ Method Connect  <a class="header-action link-secondary" title="View source" href
 
 <h3 id="ReactorSockets_DatagramSessionReactor_Connect_System_Net_IPEndPoint_" data-uid="ReactorSockets.DatagramSessionReactor.Connect(System.Net.IPEndPoint)">
   Connect(IPEndPoint)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DatagramSessionReactor.cs/#L220"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionReactor.cs/#L365"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>Begins a Session with <code class="paramref">destination</code>, returning the <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> that
@@ -142,9 +142,14 @@ round trip. <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSo
 
 
 <h4 class="section" id="ReactorSockets_DatagramSessionReactor_Connect_System_Net_IPEndPoint__remarks">Remarks</h4>
-<div class="markdown level1 remarks"><p>The Hello is sent once. Retransmitting it when a reply never comes is liveness, which belongs
-with the heartbeat and the missed-heartbeat count in the slice that implements them; until
-then, a dial whose Hello or Cookie is lost simply stays pending until the consumer closes it.</p>
+<div class="markdown level1 remarks"><p>While the dial is pending, a Pump resends its current flight: the Hello while it awaits a Cookie,
+and the Hello-with-cookie while it awaits an Accept. The delay starts at the observed Pump
+interval, doubles, stops at this Reactor's <a class="xref" href="ReactorSockets.DatagramSessionOptions.Linger.html#ReactorSockets_DatagramSessionOptions_Linger">Linger</a> and is
+drawn with full jitter, the same schedule the stream profile re-dials on. A dial whose cookie is
+one epoch old restarts from a fresh Hello. A dial still pending one
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.Linger.html#ReactorSockets_DatagramSessionOptions_Linger">Linger</a> after this call ends with
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_TransportFailed">TransportFailed</a> and frees its Slot. <a class="xref" href="ReactorSockets.DatagramSessionReactor.Close.html#ReactorSockets_DatagramSessionReactor_Close_ReactorSockets_PeerId_">Close(PeerId)</a> ends it
+sooner and stops the resends. Nothing is resent while the clock has not moved since the last send.</p>
 </div>
 
 

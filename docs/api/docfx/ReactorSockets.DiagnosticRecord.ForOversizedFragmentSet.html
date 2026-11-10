@@ -2,9 +2,9 @@
 <html>
   <head>
     <meta charset="utf-8">
-      <title>Property ReadShareExhaustions | ReactorSockets API reference </title>
+      <title>Method ForOversizedFragmentSet | ReactorSockets API reference </title>
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <meta name="title" content="Property ReadShareExhaustions | ReactorSockets API reference ">
+      <meta name="title" content="Method ForOversizedFragmentSet | ReactorSockets API reference ">
       
       
       <link rel="icon" href="favicon.ico">
@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_LinkCounters_ReadShareExhaustions_.md&amp;value=---%0Auid%3A%20ReactorSockets.LinkCounters.ReadShareExhaustions*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_DiagnosticRecord_ForOversizedFragmentSet_.md&amp;value=---%0Auid%3A%20ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -70,14 +70,14 @@
           <nav id="breadcrumb"></nav>
         </div>
 
-        <article data-uid="ReactorSockets.LinkCounters.ReadShareExhaustions*">
+        <article data-uid="ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet*">
 
 
 
 
 
-<h1 id="ReactorSockets_LinkCounters_ReadShareExhaustions_" data-uid="ReactorSockets.LinkCounters.ReadShareExhaustions*" class="text-break">
-Property ReadShareExhaustions  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/LinkCounters.cs/#L11"><i class="bi bi-code-slash"></i></a>
+<h1 id="ReactorSockets_DiagnosticRecord_ForOversizedFragmentSet_" data-uid="ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet*" class="text-break">
+Method ForOversizedFragmentSet  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DiagnosticRecord.cs/#L153"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -103,29 +103,41 @@ Property ReadShareExhaustions  <a class="header-action link-secondary" title="Vi
 
 
 
-<a id="ReactorSockets_LinkCounters_ReadShareExhaustions_" data-uid="ReactorSockets.LinkCounters.ReadShareExhaustions*"></a>
+<a id="ReactorSockets_DiagnosticRecord_ForOversizedFragmentSet_" data-uid="ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet*"></a>
 
-<h3 id="ReactorSockets_LinkCounters_ReadShareExhaustions" data-uid="ReactorSockets.LinkCounters.ReadShareExhaustions">
-  ReadShareExhaustions
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/LinkCounters.cs/#L11"><i class="bi bi-code-slash"></i></a>
+<h3 id="ReactorSockets_DiagnosticRecord_ForOversizedFragmentSet_ReactorSockets_PeerId_System_Int64_System_Int64_" data-uid="ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet(ReactorSockets.PeerId,System.Int64,System.Int64)">
+  ForOversizedFragmentSet(PeerId, long, long)
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DiagnosticRecord.cs/#L153"><i class="bi bi-code-slash"></i></a>
 </h3>
 
-<div class="markdown level1 summary"></div>
+<div class="markdown level1 summary"><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_OversizedFragmentSet">OversizedFragmentSet</a> record for the Peer whose Fragment
+declared a <code>fragmentCount</code> larger than this Reactor's own receive window could ever hold,
+carrying the declared count and the largest legal count.</p>
+</div>
 <div class="markdown level1 conceptual"></div>
 
 <div class="codewrapper">
-  <pre><code class="lang-csharp hljs">public ulong ReadShareExhaustions { get; init; }</code></pre>
+  <pre><code class="lang-csharp hljs">public static DiagnosticRecord ForOversizedFragmentSet(PeerId peer, long declaredFragmentCount, long maxLegalFragmentCount)</code></pre>
 </div>
 
-
-
-
-
-<h4 class="section">Property Value</h4>
+<h4 class="section">Parameters</h4>
 <dl class="parameters">
-  <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.uint64">ulong</a></dt>
+  <dt><code>peer</code> <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a></dt>
+  <dd></dd>
+  <dt><code>declaredFragmentCount</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int64">long</a></dt>
+  <dd></dd>
+  <dt><code>maxLegalFragmentCount</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int64">long</a></dt>
   <dd></dd>
 </dl>
+
+<h4 class="section">Returns</h4>
+<dl class="parameters">
+  <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.html">DiagnosticRecord</a></dt>
+  <dd></dd>
+</dl>
+
+
+
 
 
 

@@ -6,7 +6,7 @@
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <meta name="title" content="Class DatagramSessionReactor | ReactorSockets API reference ">
       
-      <meta name="description" content="The datagram Session profile (ADR 0009): Sessions established over UDP, addressed as Peers, driven by a single synchronous  from the consumer&#39;s own loop. This slice builds the handshake and everything that guards it — the stateless cookie, the amplification bound, version and capacity refusals, session identity and demultiplexing. It does not yet carry data; the packet records, the four sequence Spaces, fragmentation and the acknowledgement machinery land in the slices that follow, and  grows with them.">
+      <meta name="description" content="The datagram Session profile (ADR 0009): Sessions established over UDP, addressed as Peers, driven by a single synchronous  from the consumer&#39;s own loop. It carries the handshake and everything that guards it — the stateless cookie, the amplification bound, version and capacity refusals, session identity and demultiplexing — and the data plane behind it: packet records in four sequence Spaces, one per , fragmentation of reliable Messages, acknowledgement and retransmission, heartbeats, Goodbye, interruption and Resume.">
       <link rel="icon" href="favicon.ico">
       <link rel="stylesheet" href="public/docfx.min.css">
       <link rel="stylesheet" href="public/main.css">
@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_DatagramSessionReactor.md&amp;value=---%0Auid%3A%20ReactorSockets.DatagramSessionReactor%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_DatagramSessionReactor.md&amp;value=---%0Auid%3A%20ReactorSockets.DatagramSessionReactor%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -75,7 +75,7 @@
 
 
   <h1 id="ReactorSockets_DatagramSessionReactor" data-uid="ReactorSockets.DatagramSessionReactor" class="text-break">
-Class DatagramSessionReactor  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DatagramSessionReactor.cs/#L54"><i class="bi bi-code-slash"></i></a>
+Class DatagramSessionReactor  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionReactor.cs/#L55"><i class="bi bi-code-slash"></i></a>
   </h1>
 
   <div class="facts text-secondary">
@@ -84,11 +84,11 @@ Class DatagramSessionReactor  <a class="header-action link-secondary" title="Vie
   </div>
 
   <div class="markdown summary"><p>The datagram Session profile (ADR 0009): Sessions established over UDP, addressed as Peers, driven
-by a single synchronous <a class="xref" href="ReactorSockets.DatagramSessionReactor.Pump.html#ReactorSockets_DatagramSessionReactor_Pump">Pump()</a> from the consumer's own loop. This slice builds the
-handshake and everything that guards it — the stateless cookie, the amplification bound, version
-and capacity refusals, session identity and demultiplexing. It does not yet carry data; the packet
-records, the four sequence Spaces, fragmentation and the acknowledgement machinery land in the
-slices that follow, and <a class="xref" href="ReactorSockets.SessionEventKind.html">SessionEventKind</a> grows with them.</p>
+by a single synchronous <a class="xref" href="ReactorSockets.DatagramSessionReactor.Pump.html#ReactorSockets_DatagramSessionReactor_Pump">Pump()</a> from the consumer's own loop. It carries the handshake
+and everything that guards it — the stateless cookie, the amplification bound, version and
+capacity refusals, session identity and demultiplexing — and the data plane behind it: packet
+records in four sequence Spaces, one per <a class="xref" href="ReactorSockets.DeliveryMode.html">DeliveryMode</a>, fragmentation of reliable
+Messages, acknowledgement and retransmission, heartbeats, Goodbye, interruption and Resume.</p>
 </div>
   <div class="markdown conceptual"></div>
 
@@ -212,10 +212,14 @@ that binds another.</p>
 
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DatagramSessionReactor.Close.html#ReactorSockets_DatagramSessionReactor_Close_ReactorSockets_PeerId_">Close(PeerId)</a></dt>
-    <dd><p>Ends the Session with <code class="paramref">peer</code> and queues a
-<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> carrying <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_LocalClose">LocalClose</a>.
-Idempotent: a stale <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> is a no-op, because a Peer closing under a caller is an
-ordinary race rather than a programmer error.</p>
+    <dd><p>Ends the Session with <code class="paramref">peer</code>. On an Established, non-Interrupted Peer this queues a
+Goodbye in the Peer's <code>ReliableOrdered</code> Space and puts the Peer in Closing: later
+<a class="xref" href="ReactorSockets.DatagramSessionReactor.Send.html#ReactorSockets_DatagramSessionReactor_Send_ReactorSockets_PeerId_ReactorSockets_DeliveryMode_System_ReadOnlySpan_System_Byte__">Send(PeerId, DeliveryMode, ReadOnlySpan&lt;byte&gt;)</a> calls return <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_Closed">Closed</a> and no
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> is raised yet. On any other Peer (dialling or Interrupted)
+it queues a <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> carrying <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_LocalClose">LocalClose</a>
+at once. Idempotent: a stale <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> is a no-op, because a Peer closing under a caller
+is an ordinary race rather than a programmer error, and a second call on a Closing Peer queues no
+second Goodbye.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -226,6 +230,24 @@ does in <a class="xref" href="ReactorSockets.RawReactor.html">RawReactor</a>: th
 otherwise would let a consumer dial past capacity and discover it only on the far side of a
 round trip. <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerConnected">PeerConnected</a> or
 <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> resolves it on a later Pump.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionReactor.CountersOf.html#ReactorSockets_DatagramSessionReactor_CountersOf_ReactorSockets_PeerId_">CountersOf(PeerId)</a></dt>
+    <dd><p>A point-in-time snapshot of one Peer's counters (ADR 0013). Throws if the Peer is not open,
+matching <a class="xref" href="ReactorSockets.StreamSessionReactor.CountersOf.html#ReactorSockets_StreamSessionReactor_CountersOf_ReactorSockets_PeerId_">CountersOf(PeerId)</a>'s shape for the stream profile —
+the datagram profile had no per-Peer counter reader until this member.
+<a class="xref" href="ReactorSockets.PeerCounters.OutOfWindowPackets.html#ReactorSockets_PeerCounters_OutOfWindowPackets">OutOfWindowPackets</a> and <a class="xref" href="ReactorSockets.PeerCounters.DuplicatePackets.html#ReactorSockets_PeerCounters_DuplicatePackets">DuplicatePackets</a>
+now reflect what the four per-Space receive windows have refused;
+<a class="xref" href="ReactorSockets.PeerCounters.UnreliableLossPackets.html#ReactorSockets_PeerCounters_UnreliableLossPackets">UnreliableLossPackets</a> reflects gaps either unreliable Space's window
+has slid past. <a class="xref" href="ReactorSockets.PeerCounters.MessagesReceived.html#ReactorSockets_PeerCounters_MessagesReceived">MessagesReceived</a> counts whole Messages handed to the
+frame arena for delivery, and not a Message the arena refused.
+<a class="xref" href="ReactorSockets.PeerCounters.Resumes.html#ReactorSockets_PeerCounters_Resumes">Resumes</a> counts the Peer's resumes: once per
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerResumed">PeerResumed</a> raised for it, on the accepting end when a matching
+Resume moves it out of Interrupted and on the dialling end when it hears its session again after
+sending a Resume, and never reset by one (ADR 0013).
+<a class="xref" href="ReactorSockets.PeerCounters.RetentionHighWaterBytes.html#ReactorSockets_PeerCounters_RetentionHighWaterBytes">RetentionHighWaterBytes</a> reads the true per-Peer figure — summed
+across both reliable Spaces — from <span class="xref">ReactorSockets.DatagramSessionReactor._retention</span>.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -245,10 +267,47 @@ produced.</p>
   </dl>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DatagramSessionReactor.Pump.html#ReactorSockets_DatagramSessionReactor_Pump">Pump()</a></dt>
-    <dd><p>One synchronous advance: wipes the previous Frame's events and arena, then reads whatever bound
-socket is ready right now, running the handshake for everything that arrived. Throws
-<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.invalidoperationexception">InvalidOperationException</a> if called from any thread other than the one that
-constructed this Reactor, or from inside a Pump already in progress.</p>
+    <dd><p>One synchronous advance: records this call's arrival against the last one
+(<span class="xref">ReactorSockets.DatagramSessionReactor.ObservedPumpInterval</span>) before anything else, then wipes the previous Frame's
+events and arena, then reads whatever bound socket is ready right now, running the handshake for
+everything that arrived. Throws <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.invalidoperationexception">InvalidOperationException</a> if called from any
+thread other than the one that constructed this Reactor, or from inside a Pump already in
+progress.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionReactor.Send.html#ReactorSockets_DatagramSessionReactor_Send_ReactorSockets_PeerId_ReactorSockets_DeliveryMode_System_ReadOnlySpan_System_Byte__">Send(PeerId, DeliveryMode, ReadOnlySpan&lt;byte&gt;)</a></dt>
+    <dd><p>Sends <code class="paramref">message</code> to <code class="paramref">peer</code> under <code class="paramref">mode</code> (ADR
+0009). A Message too wide for its mode to carry is refused before any work is done on it: no
+sequence is allocated and no retention is taken, so a rejected Send leaves no trace on the
+Session. How wide is too wide depends on the mode and is decided by
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32">Resolve(int, int, DeliveryMode, int)</a>, the one place the rule is stated: an unreliable mode is capped
+at a single Datagram and refused above it as <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_MessageTooLarge">MessageTooLarge</a>, a reliable
+mode fragments, and every mode is refused above a second cap as
+<a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RemoteMessageTooLarge">RemoteMessageTooLarge</a> (ADR 0004). That second cap is
+<code class="paramref">peer</code>'s own announced receive limit, captured on its Slot at handshake, not this
+Reactor's own <a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxMessageSize.html#ReactorSockets_DatagramSessionOptions_MaxMessageSize">MaxMessageSize</a>: <code>Send</code> is therefore not
+purely local to this Reactor's configuration, because the same payload can be accepted for one
+Peer and refused for another whose handshake announced a smaller limit. That gate sits behind
+the <code class="paramref">peer</code> lookup rather than in front of it, because both caps it measures
+against, fragment size and remote max message size alike, are the Peer's own captured values; a
+Peer this Reactor is not holding open returns <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_Closed">Closed</a> whatever the
+Message's width. Past that gate, a reliable mode allocates the next sequence in its own Space
+and retains the Message whole there, returning <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RetentionExhausted">RetentionExhausted</a> once
+that Space has no slot left — and that refusal spends nothing either: the sequence is claimed
+only once retention has committed, so a refused reliable Send leaves the Space's next sequence
+exactly where it was, rather than opening a gap the receiver's window would wait on for a record
+that is never sent; <a class="xref" href="ReactorSockets.DeliveryMode.html#ReactorSockets_DeliveryMode_Unreliable">Unreliable</a> and
+<a class="xref" href="ReactorSockets.DeliveryMode.html#ReactorSockets_DeliveryMode_UnreliableSequenced">UnreliableSequenced</a> still allocate a sequence — every mode gets one,
+the same as every other (<span class="xref">ReactorSockets.Session.OutboundSequenceSpaces</span>) — but retain nothing, because
+nothing unreliable is ever retransmitted. A Message this call accepts is queued on
+<code class="paramref">peer</code>'s Slot (<span class="xref">ReactorSockets.DatagramSessionReactor.PeerSlot.PendingSends</span>) and leaves as one packet
+record inside the next <a class="xref" href="ReactorSockets.DatagramSessionReactor.Pump.html#ReactorSockets_DatagramSessionReactor_Pump">Pump()</a>'s single coalesced Datagram to that Peer, in Send
+order (<span class="xref">ReactorSockets.DatagramSessionReactor.FlushOutboundDatagrams()</span>) — nothing reaches the wire before that Pump runs,
+and a <code>Send</code> with no following Pump puts nothing on the wire at all. That next Pump is only
+the first one this record is <em>eligible</em> to leave in: if this Peer already has more queued
+than one Datagram holds, a record queued behind the boundary waits for however many further
+Pumps it takes to reach the front, still in the order it was Sent.</p>
 </dd>
   </dl>
 

@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_LinkCounters.md&amp;value=---%0Auid%3A%20ReactorSockets.LinkCounters%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_LinkCounters.md&amp;value=---%0Auid%3A%20ReactorSockets.LinkCounters%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -75,7 +75,7 @@
 
 
   <h1 id="ReactorSockets_LinkCounters" data-uid="ReactorSockets.LinkCounters" class="text-break">
-Struct LinkCounters  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/LinkCounters.cs/#L8"><i class="bi bi-code-slash"></i></a>
+Struct LinkCounters  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/LinkCounters.cs/#L21"><i class="bi bi-code-slash"></i></a>
   </h1>
 
   <div class="facts text-secondary">
@@ -131,12 +131,17 @@ no accessor that enumerates every Link's counters in one call.</p>
 
 
 
+  <h2 id="ReactorSockets_LinkCounters_remarks">Remarks</h2>
+  <div class="markdown level0 remarks"><p>There is no read-share figure here, unlike <a class="xref" href="ReactorSockets.PeerCounters.html">PeerCounters</a>. The Raw profile reads a
+ready Link once per Pump, so a Link never reaches a second reservation in one Frame and its read
+share can never be exhausted. A field that could only ever read zero fails ADR 0013's counter test.</p>
+</div>
 
   <h2 class="section" id="constructors">Constructors
 </h2>
 
   <dl class="jumplist">
-    <dt><a class="xref" href="ReactorSockets.LinkCounters.-ctor.html#ReactorSockets_LinkCounters__ctor_System_UInt64_System_UInt64_System_UInt64_">LinkCounters(ulong, ulong, ulong)</a></dt>
+    <dt><a class="xref" href="ReactorSockets.LinkCounters.-ctor.html#ReactorSockets_LinkCounters__ctor_System_UInt64_System_UInt64_">LinkCounters(ulong, ulong)</a></dt>
     <dd><p>A point-in-time snapshot of one Link's counters (ADR 0013): monotonic figures running from that
 Link's registration, with no reset, fetched by value and keyed by <a class="xref" href="ReactorSockets.LinkId.html">LinkId</a> — there is
 no accessor that enumerates every Link's counters in one call.</p>
@@ -148,15 +153,15 @@ no accessor that enumerates every Link's counters in one call.</p>
 
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.LinkCounters.BytesReceived.html#ReactorSockets_LinkCounters_BytesReceived">BytesReceived</a></dt>
-    <dd></dd>
+    <dd><p>Bytes delivered from this Link into the Arena. Not derivable: no other figure attributes received
+bytes to one Link, and the Arena high-water is a per-Frame peak rather than a running total.</p>
+</dd>
   </dl>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.LinkCounters.BytesSent.html#ReactorSockets_LinkCounters_BytesSent">BytesSent</a></dt>
-    <dd></dd>
-  </dl>
-  <dl class="jumplist">
-    <dt><a class="xref" href="ReactorSockets.LinkCounters.ReadShareExhaustions.html#ReactorSockets_LinkCounters_ReadShareExhaustions">ReadShareExhaustions</a></dt>
-    <dd></dd>
+    <dd><p>Bytes the transport accepted for sending on this Link. Not derivable: the Reactor-scope datagram
+figures count datagrams rather than bytes, cover every Link at once, and never see a stream Link.</p>
+</dd>
   </dl>
 
 

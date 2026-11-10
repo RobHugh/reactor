@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_DatagramSessionOptions_FragmentSize_.md&amp;value=---%0Auid%3A%20ReactorSockets.DatagramSessionOptions.FragmentSize*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_DatagramSessionOptions_FragmentSize_.md&amp;value=---%0Auid%3A%20ReactorSockets.DatagramSessionOptions.FragmentSize*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_DatagramSessionOptions_FragmentSize_" data-uid="ReactorSockets.DatagramSessionOptions.FragmentSize*" class="text-break">
-Property FragmentSize  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DatagramSessionOptions.cs/#L135"><i class="bi bi-code-slash"></i></a>
+Property FragmentSize  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L289"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,13 +107,13 @@ Property FragmentSize  <a class="header-action link-secondary" title="View sourc
 
 <h3 id="ReactorSockets_DatagramSessionOptions_FragmentSize" data-uid="ReactorSockets.DatagramSessionOptions.FragmentSize">
   FragmentSize
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DatagramSessionOptions.cs/#L135"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L289"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>The bytes a fragment carries, and therefore the unit every buffer here is measured in.
-Defaults to 1200 — QUIC's floor beneath the 1280-byte IPv6 minimum MTU — which is the one
-value with citable provenance for surviving an arbitrary path. Must lie between 576 (RFC 791's
-guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).</p>
+Defaults to 1200. Provenance: QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000),
+the one value with citable provenance for surviving an arbitrary path. Must lie between 576
+(RFC 791's guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 
@@ -134,6 +134,15 @@ guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).</p>
 
 
 
+<h4 class="section" id="ReactorSockets_DatagramSessionOptions_FragmentSize_remarks">Remarks</h4>
+<div class="markdown level1 remarks"><p>Unilateral and per-direction (ADR 0004): each side of a Session cuts its own outbound Messages
+by its own configured value, and the two directions need not agree. It is never announced in
+the handshake, because a receiver reassembles a Fragment set from <code>fragmentIndex</code> and
+<code>fragmentCount</code> alone and never needs to know the sender's choice — so two Sessions
+configured with different values still interoperate, each cutting by its own. This value is
+resolved once per Peer, at admission, onto that Peer's own slot; a later change to this options
+instance never reaches a Peer already open. See <a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a>.</p>
+</div>
 
 
 

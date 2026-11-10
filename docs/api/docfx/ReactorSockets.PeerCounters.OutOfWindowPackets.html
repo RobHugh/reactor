@@ -2,9 +2,9 @@
 <html>
   <head>
     <meta charset="utf-8">
-      <title>Method Observe | ReactorSockets API reference </title>
+      <title>Property OutOfWindowPackets | ReactorSockets API reference </title>
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <meta name="title" content="Method Observe | ReactorSockets API reference ">
+      <meta name="title" content="Property OutOfWindowPackets | ReactorSockets API reference ">
       
       
       <link rel="icon" href="favicon.ico">
@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_PumpIntervalObserver_Observe_.md&amp;value=---%0Auid%3A%20ReactorSockets.PumpIntervalObserver.Observe*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_PeerCounters_OutOfWindowPackets_.md&amp;value=---%0Auid%3A%20ReactorSockets.PeerCounters.OutOfWindowPackets*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -70,14 +70,14 @@
           <nav id="breadcrumb"></nav>
         </div>
 
-        <article data-uid="ReactorSockets.PumpIntervalObserver.Observe*">
+        <article data-uid="ReactorSockets.PeerCounters.OutOfWindowPackets*">
 
 
 
 
 
-<h1 id="ReactorSockets_PumpIntervalObserver_Observe_" data-uid="ReactorSockets.PumpIntervalObserver.Observe*" class="text-break">
-Method Observe  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/PumpIntervalObserver.cs/#L61"><i class="bi bi-code-slash"></i></a>
+<h1 id="ReactorSockets_PeerCounters_OutOfWindowPackets_" data-uid="ReactorSockets.PeerCounters.OutOfWindowPackets*" class="text-break">
+Property OutOfWindowPackets  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/PeerCounters.cs/#L189"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -103,26 +103,40 @@ Method Observe  <a class="header-action link-secondary" title="View source" href
 
 
 
-<a id="ReactorSockets_PumpIntervalObserver_Observe_" data-uid="ReactorSockets.PumpIntervalObserver.Observe*"></a>
+<a id="ReactorSockets_PeerCounters_OutOfWindowPackets_" data-uid="ReactorSockets.PeerCounters.OutOfWindowPackets*"></a>
 
-<h3 id="ReactorSockets_PumpIntervalObserver_Observe" data-uid="ReactorSockets.PumpIntervalObserver.Observe">
-  Observe()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/PumpIntervalObserver.cs/#L61"><i class="bi bi-code-slash"></i></a>
+<h3 id="ReactorSockets_PeerCounters_OutOfWindowPackets" data-uid="ReactorSockets.PeerCounters.OutOfWindowPackets">
+  OutOfWindowPackets
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/PeerCounters.cs/#L189"><i class="bi bi-code-slash"></i></a>
 </h3>
 
-<div class="markdown level1 summary"><p>Records one Pump's timestamp and, once a previous one exists, updates <a class="xref" href="ReactorSockets.PumpIntervalObserver.Interval.html#ReactorSockets_PumpIntervalObserver_Interval">Interval</a>
-to the elapsed time since it. Intended to be called exactly once per Pump.</p>
+<div class="markdown level1 summary"><p>How many packet records this Peer's per-Space receive window has classified as out of window —
+a sequence number too far ahead of, or behind, that Space's receive window base
+to be tracked against it (ADR 0013). Recurs every Pump under sustained loss or reordering, which is
+exactly why it is a Counter and never a Diagnostic. Incremented by the parse loop's classification
+of each arriving record; a freshly connected Peer reads zero. Note that only the two reliable Spaces
+raise this on a far-ahead arrival: the unreliable Spaces slide their window forward instead and
+count the retirement as loss, so for those Spaces out-of-window means a sequence below the base
+alone. A <code>ReliableOrdered</code> record the window would admit but the Space will not hold behind a
+gap counts here too, because it is refused the same way and comes back by retransmission. Moves only
+on the datagram profile. Not derivable: bytes received counts these records together with admitted
+ones, and no other figure separates reordering beyond the window from repeats.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 
 <div class="codewrapper">
-  <pre><code class="lang-csharp hljs">public void Observe()</code></pre>
+  <pre><code class="lang-csharp hljs">public ulong OutOfWindowPackets { get; init; }</code></pre>
 </div>
 
 
 
 
 
+<h4 class="section">Property Value</h4>
+<dl class="parameters">
+  <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.uint64">ulong</a></dt>
+  <dd></dd>
+</dl>
 
 
 

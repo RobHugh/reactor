@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_DatagramSessionOptions.md&amp;value=---%0Auid%3A%20ReactorSockets.DatagramSessionOptions%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_DatagramSessionOptions.md&amp;value=---%0Auid%3A%20ReactorSockets.DatagramSessionOptions%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -75,7 +75,7 @@
 
 
   <h1 id="ReactorSockets_DatagramSessionOptions" data-uid="ReactorSockets.DatagramSessionOptions" class="text-break">
-Class DatagramSessionOptions  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DatagramSessionOptions.cs/#L51"><i class="bi bi-code-slash"></i></a>
+Class DatagramSessionOptions  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L86"><i class="bi bi-code-slash"></i></a>
   </h1>
 
   <div class="facts text-secondary">
@@ -161,9 +161,44 @@ send: <code>Capacity × 2 × RetentionBytes</code> — the same two Spaces retai
 it is acknowledged, per Peer.
 </li></ul>
 <p>
+<code>FragmentSize</code> is in one line and not the other because the window counts packets and retention
+counts bytes. Neither line has a traffic term: both are allocated at construction and never grow.
+Each line also carries a few bytes of bookkeeping per fragment slot, which
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.ReceiveBudgetBytes.html#ReactorSockets_DatagramSessionOptions_ReceiveBudgetBytes">ReceiveBudgetBytes</a> and <a class="xref" href="ReactorSockets.DatagramSessionOptions.SendBudgetBytes.html#ReactorSockets_DatagramSessionOptions_SendBudgetBytes">SendBudgetBytes</a> include exactly — under 2% at the
+default fragment size.
+</p>
+<p>
 The frame arena (<a class="xref" href="ReactorSockets.ReactorOptions.ArenaSize.html#ReactorSockets_ReactorOptions_ArenaSize">ArenaSize</a>) is over and above those two lines and is
-shared across the whole Reactor rather than multiplied by capacity. Every check below is
-deterministic and entirely the caller's, so failures throw at construction —
+shared across the whole Reactor rather than multiplied by capacity.
+</p>
+<p>
+One further cost is allocated only under traffic: ordinary <code>ReliableOrdered</code> records waiting
+behind a gap. It has a ceiling of its own, <a class="xref" href="ReactorSockets.DatagramSessionOptions.HeldRecordBudgetBytes.html#ReactorSockets_DatagramSessionOptions_HeldRecordBudgetBytes">HeldRecordBudgetBytes</a>, and reaching it refuses
+further records rather than growing.
+</p>
+<p>
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxMessageSize.html#ReactorSockets_DatagramSessionOptions_MaxMessageSize">MaxMessageSize</a> reaches three places at once: it is announced to the remote as a
+receive limit, it floors the receive window at the fragments one maximum Message occupies
+(<a class="xref" href="ReactorSockets.DatagramSessionOptions.ReceiveWindowFloor.html#ReactorSockets_DatagramSessionOptions_ReceiveWindowFloor">ReceiveWindowFloor</a>), and it floors the frame arena, because an arena that cannot
+hold one maximum Message could never deliver one. The limit is enforced as well as announced: a
+completed Message above it is discarded rather than delivered, with
+<a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_OversizedMessage">OversizedMessage</a>. Careless enlargement grows memory in
+two directions rather than one: the window floor is per Peer, so the receive line above rises
+with it multiplied by capacity and by the Spaces, and the shared arena is pushed up alongside.
+Retention is the exception this profile makes. <a class="xref" href="ReactorSockets.DatagramSessionOptions.RetentionBytes.html#ReactorSockets_DatagramSessionOptions_RetentionBytes">RetentionBytes</a> is floored by
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a> rather than by <a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxMessageSize.html#ReactorSockets_DatagramSessionOptions_MaxMessageSize">MaxMessageSize</a>, because a
+reliable Space retransmits fragment by fragment and needs only one fragment to have something to
+resend.
+</p>
+<p>
+<b>Security.</b> The session field on every datagram is a demultiplexing token, not an
+authenticator: it makes blind off-path injection a 32-bit guess, and does nothing against anyone who
+has seen one datagram of the Session. This library does not encrypt, and on-path attackers are out
+of scope (ADR 0009). A consumer who needs confidentiality or integrity against an on-path attacker
+provides it themselves, inside the Message.
+</p>
+<p>
+Every check below is deterministic and entirely the caller's, so failures throw at construction —
 <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.argumentoutofrangeexception">ArgumentOutOfRangeException</a> for a single bad value and
 <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.argumentexception">ArgumentException</a> for a combination that cannot work — rather than being reported
 through a <code>Result</code>.
@@ -178,7 +213,9 @@ through a <code>Result</code>.
     <dd><p>The endpoints to bind at construction, in the order supplied; possibly empty. Declared once
 and never rebound (ADR 0014) — a Session's addresses are part of what it is, not something it
 acquires later. An empty set binds nothing until the first dial, which binds a single
-wildcard, port-zero socket in the destination's address family.</p>
+wildcard, port-zero socket in the destination's address family. Provenance: empty is the
+absence of a declaration, not a chosen address — the dial-only socket's family and port are
+derived from the destination and the OS, never configured.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -186,37 +223,72 @@ wildcard, port-zero socket in the destination's address family.</p>
     <dd><p>The entropy the cookie secrets, session ids and resume secrets are drawn from. A construction
 knob in ADR 0012's sense — the consumer's own resource, and a consumer with a hardware source
 or a policy about which generator may be used is entitled to supply it. It carries a default
-only because that default is derived rather than guessed: the platform's own CSPRNG is the
-citable provenance.</p>
+only because that default is derived rather than guessed. Provenance: the platform's own CSPRNG.</p>
 </dd>
   </dl>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.FragmentSize.html#ReactorSockets_DatagramSessionOptions_FragmentSize">FragmentSize</a></dt>
     <dd><p>The bytes a fragment carries, and therefore the unit every buffer here is measured in.
-Defaults to 1200 — QUIC's floor beneath the 1280-byte IPv6 minimum MTU — which is the one
-value with citable provenance for surviving an arbitrary path. Must lie between 576 (RFC 791's
-guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).</p>
+Defaults to 1200. Provenance: QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000),
+the one value with citable provenance for surviving an arbitrary path. Must lie between 576
+(RFC 791's guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.HeldRecordBudgetBytes.html#ReactorSockets_DatagramSessionOptions_HeldRecordBudgetBytes">HeldRecordBudgetBytes</a></dt>
+    <dd><p>The most heap, in bytes, a Reactor's <code>ReliableOrdered</code> Spaces can hold in ordinary records
+waiting behind a gap, across all its Peers: <code>Capacity × 2 × ReceiveWindowFragments ×
+FragmentSize</code>, with each slot's bookkeeping.</p>
 </dd>
   </dl>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.Linger.html#ReactorSockets_DatagramSessionOptions_Linger">Linger</a></dt>
     <dd><p>How long a closing Session stays alive to retransmit its Goodbye and absorb what is still in
 flight. Required, for the same reason as <a class="xref" href="ReactorSockets.DatagramSessionOptions.SendIdleInterval.html#ReactorSockets_DatagramSessionOptions_SendIdleInterval">SendIdleInterval</a>: it trades a prompt
-teardown against a clean one.</p>
+teardown against a clean one. At most 2^32 - 1 milliseconds (about 49.7 days), the most a handshake
+may announce.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxDatagramsPerPump.html#ReactorSockets_DatagramSessionOptions_MaxDatagramsPerPump">MaxDatagramsPerPump</a></dt>
+    <dd><p>The most reads one Pump makes on each bound socket, so a flood cannot keep a Pump from
+returning. Defaults to <a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedMaxDatagramsPerPump.html#ReactorSockets_DatagramSessionOptions_ResolvedMaxDatagramsPerPump">ResolvedMaxDatagramsPerPump</a>. Provenance: derived from a
+full Reactor's worth of traffic, as <a class="xref" href="ReactorSockets.ReactorOptions.AdmissionCap.html#ReactorSockets_ReactorOptions_AdmissionCap">AdmissionCap</a> is (ADR 0012). At
+least 1.</p>
 </dd>
   </dl>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxMessageSize.html#ReactorSockets_DatagramSessionOptions_MaxMessageSize">MaxMessageSize</a></dt>
     <dd><p>The largest Message, in bytes, this Reactor will accept or deliver. Required: it is a
-statement about the consumer's own protocol that nothing here can derive. It is also the
-frame arena's floor — an arena that cannot hold one maximum Message could never deliver one.</p>
+statement about the consumer's own protocol that nothing here can derive. It is also the knob
+that multiplies this profile's memory bill in more than one direction — the class remarks on
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.html">DatagramSessionOptions</a> say what it floors and what raising it costs.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress.html#ReactorSockets_DatagramSessionOptions_MaxPeersPerAddress">MaxPeersPerAddress</a></dt>
+    <dd><p>The most accepted Peers one address may hold at once, so one reachable address cannot occupy
+every capacity Slot. Defaults to <a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedMaxPeersPerAddress.html#ReactorSockets_DatagramSessionOptions_ResolvedMaxPeersPerAddress">ResolvedMaxPeersPerAddress</a>, one fewer than
+<a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a>. Provenance: derived from capacity, as the largest limit that
+still keeps one address from holding every Slot (ADR 0014). How many Peers legitimately share an
+address depends on the NATs and proxies in front of this Reactor, so set it lower when strangers can
+reach it. At least 1. A value of <a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a> or above sets no limit, which
+is what the default is at a capacity of 1.</p>
 </dd>
   </dl>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.MissedHeartbeats.html#ReactorSockets_DatagramSessionOptions_MissedHeartbeats">MissedHeartbeats</a></dt>
     <dd><p>How many consecutive heartbeat intervals may pass in silence before a Peer is declared gone.
-Defaults to 3, RFC 4271's hold-time multiple. Must be at least 2, because a count of 1 makes a
-single lost datagram fatal and no network is that reliable.</p>
+Defaults to 3. Provenance: RFC 4271's hold time, three times the keepalive interval. Must be at
+least 2, because a count of 1 makes a single lost datagram fatal and no network is that reliable.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.PeerLimitIPv6PrefixLength.html#ReactorSockets_DatagramSessionOptions_PeerLimitIPv6PrefixLength">PeerLimitIPv6PrefixLength</a></dt>
+    <dd><p>How many leading bits of an IPv6 address form the key for <a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress.html#ReactorSockets_DatagramSessionOptions_MaxPeersPerAddress">MaxPeersPerAddress</a>, so
+every address in one prefix shares one limit. Defaults to <a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedPeerLimitIPv6PrefixLength.html#ReactorSockets_DatagramSessionOptions_ResolvedPeerLimitIPv6PrefixLength">ResolvedPeerLimitIPv6PrefixLength</a>,
+64. Provenance: RFC 4291 §2.5.1 fixes the interface identifier of a unicast address at 64 bits, so a
+/64 is one link (ADR 0014). From 1 to 128. A value of 128 counts each address on its own.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -242,9 +314,12 @@ fragments one maximum Message occupies.</p>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.ReceiveWindowFragments.html#ReactorSockets_DatagramSessionOptions_ReceiveWindowFragments">ReceiveWindowFragments</a></dt>
     <dd><p>The fragments each reliable Space may have outstanding per Peer. Defaults to exactly the
-number a maximum Message occupies, which is ADR 0004's deadlock floor rather than a
-performance choice: a window narrower than one whole Message can never deliver one, so it can
-never advance, so the sender can never send the rest.</p>
+number a maximum Message occupies. Provenance: derived from <a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxMessageSize.html#ReactorSockets_DatagramSessionOptions_MaxMessageSize">MaxMessageSize</a> and
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.FragmentSize.html#ReactorSockets_DatagramSessionOptions_FragmentSize">FragmentSize</a> — ADR 0004's deadlock floor rather than a performance choice: a window narrower than one whole Message can never deliver one, so it can
+never advance, so the sender can never send the rest. This resolved value is also the inbound
+bound a declared Fragment <code>fragmentCount</code> is checked against: a set larger than the window
+can never be reassembled, since there is no slot to hold every one of its pieces at once, so
+<a class="xref" href="ReactorSockets.DatagramSessionReactor.html">DatagramSessionReactor</a> closes it before any is held.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -253,8 +328,25 @@ never advance, so the sender can never send the rest.</p>
 </dd>
   </dl>
   <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedMaxDatagramsPerPump.html#ReactorSockets_DatagramSessionOptions_ResolvedMaxDatagramsPerPump">ResolvedMaxDatagramsPerPump</a></dt>
+    <dd><p>The resolved per-socket read limit: <a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxDatagramsPerPump.html#ReactorSockets_DatagramSessionOptions_MaxDatagramsPerPump">MaxDatagramsPerPump</a> if set, otherwise one receive
+window for every Space of every Peer, plus every handshake the admission cap allows in one Pump.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedMaxPeersPerAddress.html#ReactorSockets_DatagramSessionOptions_ResolvedMaxPeersPerAddress">ResolvedMaxPeersPerAddress</a></dt>
+    <dd><p>The resolved per-address limit: <a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress.html#ReactorSockets_DatagramSessionOptions_MaxPeersPerAddress">MaxPeersPerAddress</a> if set, otherwise one fewer than
+<a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a>, and at least 1.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedMissedHeartbeats.html#ReactorSockets_DatagramSessionOptions_ResolvedMissedHeartbeats">ResolvedMissedHeartbeats</a></dt>
     <dd><p>The resolved missed-heartbeat count: <a class="xref" href="ReactorSockets.DatagramSessionOptions.MissedHeartbeats.html#ReactorSockets_DatagramSessionOptions_MissedHeartbeats">MissedHeartbeats</a> if set, otherwise 3.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedPeerLimitIPv6PrefixLength.html#ReactorSockets_DatagramSessionOptions_ResolvedPeerLimitIPv6PrefixLength">ResolvedPeerLimitIPv6PrefixLength</a></dt>
+    <dd><p>The resolved IPv6 grouping length: <a class="xref" href="ReactorSockets.DatagramSessionOptions.PeerLimitIPv6PrefixLength.html#ReactorSockets_DatagramSessionOptions_PeerLimitIPv6PrefixLength">PeerLimitIPv6PrefixLength</a> if set, otherwise 64.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -270,15 +362,30 @@ stalling on loss, and the right answer depends on their traffic, not on anything
 </dd>
   </dl>
   <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.RetentionSlots.html#ReactorSockets_DatagramSessionOptions_RetentionSlots">RetentionSlots</a></dt>
+    <dd><p>The uniform retention slots one reliable Space holds per Peer: <a class="xref" href="ReactorSockets.DatagramSessionOptions.RetentionBytes.html#ReactorSockets_DatagramSessionOptions_RetentionBytes">RetentionBytes</a>
+divided by <a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a>, truncating any remainder. Stays derived from the
+byte bound rather than a knob of its own (ADR 0012) so it cannot drift from
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.RetentionBytes.html#ReactorSockets_DatagramSessionOptions_RetentionBytes">RetentionBytes</a> when the fragment size changes. <span class="xref">ReactorSockets.DatagramSessionOptions.Validate()</span> already
+requires retention to hold at least one fragment, so this is always at least 1.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.SendBudgetBytes.html#ReactorSockets_DatagramSessionOptions_SendBudgetBytes">SendBudgetBytes</a></dt>
-    <dd><p>The send line of the memory bill in bytes, reported the same way.</p>
+    <dd><p>The send line of the memory bill in bytes, reported the same way: <a class="xref" href="ReactorSockets.DatagramSessionOptions.RetentionSlots.html#ReactorSockets_DatagramSessionOptions_RetentionSlots">RetentionSlots</a>
+whole fragment slots per reliable Space per Peer, each priced at its payload plus the 15 bytes
+of bookkeeping that records what it holds. Exact, like the receive line, so it can be below
+<code>Capacity × 2 × RetentionBytes</code> when retention is not a whole number of fragments.</p>
 </dd>
   </dl>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.SendIdleInterval.html#ReactorSockets_DatagramSessionOptions_SendIdleInterval">SendIdleInterval</a></dt>
-    <dd><p>How long a Session may go without sending before it sends a heartbeat instead. Required:
-shorter costs bandwidth on an idle link, longer costs time to notice a dead Peer, and only the
-consumer knows which they would rather spend.</p>
+    <dd><p>How long a Session may go without sending before it sends a Ping instead. Required: shorter
+costs bandwidth on an idle link, longer costs time to notice a dead Peer, and only the consumer
+knows which they would rather spend. There is no option to disable this: every Established Peer
+that has sent no data datagram for this long is always sent one seven-byte control record,
+whatever else it did or did not receive. At most 2^32 - 1 milliseconds (about 49.7 days), the
+most a handshake may announce.</p>
 </dd>
   </dl>
 

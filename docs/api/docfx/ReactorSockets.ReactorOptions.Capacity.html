@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_ReactorOptions_Capacity_.md&amp;value=---%0Auid%3A%20ReactorSockets.ReactorOptions.Capacity*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_ReactorOptions_Capacity_.md&amp;value=---%0Auid%3A%20ReactorSockets.ReactorOptions.Capacity*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_ReactorOptions_Capacity_" data-uid="ReactorSockets.ReactorOptions.Capacity*" class="text-break">
-Property Capacity  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/ReactorOptions.cs/#L26"><i class="bi bi-code-slash"></i></a>
+Property Capacity  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/ReactorOptions.cs/#L45"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,18 +107,18 @@ Property Capacity  <a class="header-action link-secondary" title="View source" h
 
 <h3 id="ReactorSockets_ReactorOptions_Capacity" data-uid="ReactorSockets.ReactorOptions.Capacity">
   Capacity
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/ReactorOptions.cs/#L26"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/ReactorOptions.cs/#L45"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>The number of share-holders this Reactor admits — Links in Raw, Peers in a Session
 (ADR 0014) — and the multiplier on every preallocation. Required; there is no default
 derivable from anything the library owns (ADR 0011, superseding ADR 0001's &quot;default 64&quot;).
-Left unset it defaults to 0, which <span class="xref">ReactorSockets.ReactorOptions.Validate()</span> rejects.</p>
+Must be at least 1.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 
 <div class="codewrapper">
-  <pre><code class="lang-csharp hljs">public int Capacity { get; init; }</code></pre>
+  <pre><code class="lang-csharp hljs">public required int Capacity { get; init; }</code></pre>
 </div>
 
 
@@ -134,6 +134,12 @@ Left unset it defaults to 0, which <span class="xref">ReactorSockets.ReactorOpti
 
 
 
+<h4 class="section" id="ReactorSockets_ReactorOptions_Capacity_remarks">Remarks</h4>
+<div class="markdown level1 remarks"><p>The library is designed for capacity in the tens and is unsuitable above the low hundreds; 64
+survives as that statement of intent (ADR 0011), not as a default. It is not capped: a cap would
+be permanent, would defend a number with no derivation behind it, and would refuse a consumer who
+has measured their own case. A capacity too large to allocate fails at construction instead.</p>
+</div>
 
 
 

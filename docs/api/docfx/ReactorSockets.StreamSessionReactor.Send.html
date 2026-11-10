@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_StreamSessionReactor_Send_.md&amp;value=---%0Auid%3A%20ReactorSockets.StreamSessionReactor.Send*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_StreamSessionReactor_Send_.md&amp;value=---%0Auid%3A%20ReactorSockets.StreamSessionReactor.Send*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_StreamSessionReactor_Send_" data-uid="ReactorSockets.StreamSessionReactor.Send*" class="text-break">
-Method Send  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/StreamSessionReactor.cs/#L440"><i class="bi bi-code-slash"></i></a>
+Method Send  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionReactor.cs/#L456"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,13 +107,13 @@ Method Send  <a class="header-action link-secondary" title="View source" href="h
 
 <h3 id="ReactorSockets_StreamSessionReactor_Send_ReactorSockets_PeerId_System_ReadOnlySpan_System_Byte__" data-uid="ReactorSockets.StreamSessionReactor.Send(ReactorSockets.PeerId,System.ReadOnlySpan{System.Byte})">
   Send(PeerId, ReadOnlySpan&lt;byte&gt;)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/StreamSessionReactor.cs/#L440"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionReactor.cs/#L456"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>Frames <code class="paramref">message</code> as a <code>u32</code> big-endian length prefix followed by its
 bytes (<span class="xref">ReactorSockets.Session.MessageFramingCodec</span>, ADR 0010) and appends the framed bytes to
-<code class="paramref">peer</code>'s retention region. Nothing is written to the socket here, ever (#90,
-3.6.2 write batching) — a successful append only sets this Peer's pending-write marker
+<code class="paramref">peer</code>'s retention region. Nothing is written to the socket here, ever (write
+batching) — a successful append only sets this Peer's pending-write marker
 (<span class="xref">ReactorSockets.StreamSessionReactor.PeerSlot.HasPendingRetentionWrite</span>), which the next <a class="xref" href="ReactorSockets.StreamSessionReactor.Pump.html#ReactorSockets_StreamSessionReactor_Pump">Pump()</a>'s explicit
 flush step (<span class="xref">ReactorSockets.StreamSessionReactor.FlushPendingRetentionWrites()</span>) drains in a single write carrying
 everything queued, including whatever was already sitting there. A Send with no following Pump
@@ -121,8 +121,11 @@ call puts nothing on the wire. Refuses once a Goodbye has passed in either direc
 end's own (<span class="xref">ReactorSockets.StreamSessionReactor.PeerSlot.LocalGoodbyeSent</span>) or the far end's arrived and this Peer is
 already <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosing">PeerClosing</a> or on its way to
 <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> (<span class="xref">ReactorSockets.StreamSessionReactor.PeerSlot.PendingCloseReasonAfterRetentionDrains</span>)
-— since a Message queued after a Goodbye is not one the far end has any business receiving
-(issue #23).</p>
+— since a Message queued after a Goodbye is not one the far end has any business receiving. Also
+refuses a Peer whose handshake has not reached <span class="xref">ReactorSockets.StreamSessionReactor.HandshakeState.Established</span> with
+<a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_NotEstablished">NotEstablished</a>: flushing that Message would write to a socket whose
+connect has not resolved, closing the Peer with <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_TransportFailed">TransportFailed</a>,
+or send it before the far end's handshake record has been read.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 
@@ -136,9 +139,9 @@ already <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSocket
   <dd><p>The Peer to send to. Throws if not open, matching <a class="xref" href="ReactorSockets.StreamSessionReactor.CountersOf.html#ReactorSockets_StreamSessionReactor_CountersOf_ReactorSockets_PeerId_">CountersOf(PeerId)</a>.</p>
 </dd>
   <dt><code>message</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.readonlyspan-1">ReadOnlySpan</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.byte">byte</a>&gt;</dt>
-  <dd><p>The Message payload, unframed. Throws if longer than <a class="xref" href="ReactorSockets.StreamSessionOptions.MaxMessageSize.html#ReactorSockets_StreamSessionOptions_MaxMessageSize">MaxMessageSize</a> —
-the same floor the receive side enforces, so this can never frame a Message the far end's
-announced limit would reject.</p>
+  <dd><p>The Message payload, unframed. Throws if empty or longer than
+<a class="xref" href="ReactorSockets.StreamSessionOptions.MaxMessageSize.html#ReactorSockets_StreamSessionOptions_MaxMessageSize">MaxMessageSize</a> — the same bounds the receive side enforces, so
+this can never frame a Message the far end would reject.</p>
 </dd>
 </dl>
 
@@ -156,16 +159,16 @@ announced limit would reject.</p>
 
 <h4 class="section" id="ReactorSockets_StreamSessionReactor_Send_ReactorSockets_PeerId_System_ReadOnlySpan_System_Byte___remarks">Remarks</h4>
 <div class="markdown level1 remarks"><p><span class="xref">ReactorSockets.StreamSessionReactor.PeerSlot.IsInterrupted</span> is deliberately not one of the refusal conditions above
-(issue #120, ADR 0010's backpressure rule): a Send against an Interrupted Peer is exactly as
-welcome as one against a live Peer, because holding retention across the interruption for a
-possible Resume is the entire point of not closing the Peer in the first place. The append
-behaves identically either way — the difference is only downstream, in
-<span class="xref">ReactorSockets.StreamSessionReactor.FlushRetention(ReactorSockets.Core.SlotHandle, ReactorSockets.StreamSessionReactor.PeerSlot)</span>'s own <code>IsInterrupted</code> guard, which leaves these bytes queued
-rather than attempting a dead socket. Once the ring genuinely has no room,
-<span class="xref">ReactorSockets.Core.RetentionOutcome.Exhausted</span> reports the same way it would for a live Peer — the
-ring does not know or care why nothing has drained it — so an interruption that outlasts the
-send rate reaches <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RetentionExhausted">RetentionExhausted</a> exactly like a single oversized
-Message or a sustained rate would, the third of the three paths ADR 0010 names to it.</p>
+(ADR 0010's backpressure rule): a Send against an Interrupted Peer is exactly as welcome as one
+against a live Peer, because holding retention across the interruption for a possible Resume is
+the entire point of not closing the Peer in the first place. The append behaves identically
+either way — the difference is only downstream, in <span class="xref">ReactorSockets.StreamSessionReactor.FlushRetention(ReactorSockets.Core.SlotHandle, ReactorSockets.StreamSessionReactor.PeerSlot)</span>'s own
+<code>IsInterrupted</code> guard, which leaves these bytes queued rather than attempting a dead
+socket. Once the ring genuinely has no room, <span class="xref">ReactorSockets.Core.RetentionOutcome.Exhausted</span> reports
+the same way it would for a live Peer — the ring does not know or care why nothing has drained
+it — so an interruption that outlasts the send rate reaches
+<a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RetentionExhausted">RetentionExhausted</a> exactly like a single oversized Message or a
+sustained rate would, the third of the three paths ADR 0010 names to it.</p>
 </div>
 
 

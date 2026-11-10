@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_DatagramSessionReactor_Close_.md&amp;value=---%0Auid%3A%20ReactorSockets.DatagramSessionReactor.Close*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_DatagramSessionReactor_Close_.md&amp;value=---%0Auid%3A%20ReactorSockets.DatagramSessionReactor.Close*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_DatagramSessionReactor_Close_" data-uid="ReactorSockets.DatagramSessionReactor.Close*" class="text-break">
-Method Close  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DatagramSessionReactor.cs/#L262"><i class="bi bi-code-slash"></i></a>
+Method Close  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionReactor.cs/#L428"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,13 +107,17 @@ Method Close  <a class="header-action link-secondary" title="View source" href="
 
 <h3 id="ReactorSockets_DatagramSessionReactor_Close_ReactorSockets_PeerId_" data-uid="ReactorSockets.DatagramSessionReactor.Close(ReactorSockets.PeerId)">
   Close(PeerId)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DatagramSessionReactor.cs/#L262"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionReactor.cs/#L428"><i class="bi bi-code-slash"></i></a>
 </h3>
 
-<div class="markdown level1 summary"><p>Ends the Session with <code class="paramref">peer</code> and queues a
-<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> carrying <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_LocalClose">LocalClose</a>.
-Idempotent: a stale <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> is a no-op, because a Peer closing under a caller is an
-ordinary race rather than a programmer error.</p>
+<div class="markdown level1 summary"><p>Ends the Session with <code class="paramref">peer</code>. On an Established, non-Interrupted Peer this queues a
+Goodbye in the Peer's <code>ReliableOrdered</code> Space and puts the Peer in Closing: later
+<a class="xref" href="ReactorSockets.DatagramSessionReactor.Send.html#ReactorSockets_DatagramSessionReactor_Send_ReactorSockets_PeerId_ReactorSockets_DeliveryMode_System_ReadOnlySpan_System_Byte__">Send(PeerId, DeliveryMode, ReadOnlySpan&lt;byte&gt;)</a> calls return <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_Closed">Closed</a> and no
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> is raised yet. On any other Peer (dialling or Interrupted)
+it queues a <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a> carrying <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_LocalClose">LocalClose</a>
+at once. Idempotent: a stale <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> is a no-op, because a Peer closing under a caller
+is an ordinary race rather than a programmer error, and a second call on a Closing Peer queues no
+second Goodbye.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 
@@ -135,9 +139,15 @@ ordinary race rather than a programmer error.</p>
 
 
 <h4 class="section" id="ReactorSockets_DatagramSessionReactor_Close_ReactorSockets_PeerId__remarks">Remarks</h4>
-<div class="markdown level1 remarks"><p>This slice closes locally and says nothing to the remote. The Goodbye exchange, and the Linger
-that lets it be retransmitted, belong to the slice that implements them; until then a closed
-Peer is discovered on the far side by its silence.</p>
+<div class="markdown level1 remarks"><p>A Closing Peer ends with <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_LocalClose">LocalClose</a> once the Goodbye and every
+<code>ReliableOrdered</code> record before it are acknowledged, or <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_LingerExpired">LingerExpired</a> once its effective Linger has elapsed since this
+call with the Goodbye still unacknowledged. It is never Interrupted and never sends a Resume.
+When both ends Close at once, each ends with <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_LocalClose">LocalClose</a>: a Closing Peer
+that receives the remote's Goodbye acknowledges it and raises neither
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosing">PeerClosing</a> nor <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_PeerGoodbye">PeerGoodbye</a>.
+Accepted gap: the Goodbye is ordered only within <code>ReliableOrdered</code>, so a
+<code>ReliableUnordered</code> Message sent before this call can still arrive after the Goodbye, and
+the remote, already closed or Closing, does not deliver it.</p>
 </div>
 
 

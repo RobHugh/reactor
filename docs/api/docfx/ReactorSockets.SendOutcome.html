@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_SendOutcome.md&amp;value=---%0Auid%3A%20ReactorSockets.SendOutcome%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_SendOutcome.md&amp;value=---%0Auid%3A%20ReactorSockets.SendOutcome%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -76,7 +76,7 @@
 
 
   <h1 id="ReactorSockets_SendOutcome" data-uid="ReactorSockets.SendOutcome" class="text-break">
-Enum SendOutcome  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/SendOutcome.cs/#L21"><i class="bi bi-code-slash"></i></a>
+Enum SendOutcome  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/SendOutcome.cs/#L21"><i class="bi bi-code-slash"></i></a>
   </h1>
 
   <div class="facts text-secondary">
@@ -118,10 +118,37 @@ about the Session changed — the caller may retry once bytes have been released
     <dt id="ReactorSockets_SendOutcome_Closed"><code>Closed = 2</code></dt>
   
   <dd><p>A Goodbye for this Peer has already passed in one direction or the other — this end sent its
-own (<code>Close</code>, issue #23), or the far end's arrived and the Peer is <code>Closing</code>. Either
-way the Session is ending and nothing was copied: a Message queued after a Goodbye would have
-to either jump it in retention or follow it, and neither is a Message the far end has any
-business receiving.</p>
+own (<code>Close</code>), or the far end's arrived and the Peer is <code>Closing</code>. Either way the
+Session is ending and nothing was copied: a Message queued after a Goodbye would have to either
+jump it in retention or follow it, and neither is a Message the far end has any business
+receiving.</p>
+</dd>
+    <dt id="ReactorSockets_SendOutcome_MessageTooLarge"><code>MessageTooLarge = 3</code></dt>
+  
+  <dd><p>The Message is wider than one Datagram can carry, and the Space it was sent on cannot
+fragment it. Nothing was copied. Deliberately its own value rather than folded into
+<a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RetentionExhausted">RetentionExhausted</a>: retention exhaustion is backpressure the caller can retry
+once bytes are released, while an oversized Message will never fit however long the caller
+waits — a consumer that cannot tell the two apart cannot tell &quot;retry later&quot; from &quot;split it or
+use a reliable mode&quot;.</p>
+</dd>
+    <dt id="ReactorSockets_SendOutcome_RemoteMessageTooLarge"><code>RemoteMessageTooLarge = 4</code></dt>
+  
+  <dd><p>A Message, in any delivery mode, exceeds the <code>MaxMessageSize</code> the remote end announced during
+the handshake. Nothing was copied, and the caller may retry immediately with a smaller payload.
+An unreliable Message over both limits reports <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_MessageTooLarge">MessageTooLarge</a> instead. Distinct
+from <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_MessageTooLarge">MessageTooLarge</a> purely by whose limit was exceeded: that value means a local
+configuration fact the caller's own settings could have predicted (the single-Datagram cap an
+unreliable mode cannot exceed); this one means the far end's announced receive limit, which the
+caller has no way to know in advance.</p>
+</dd>
+    <dt id="ReactorSockets_SendOutcome_NotEstablished"><code>NotEstablished = 5</code></dt>
+  
+  <dd><p>The Peer's handshake has not completed: a dial is still connecting, or waiting for the far end's
+handshake record. Nothing was copied and nothing about the Session changed. Wait for
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerConnected">PeerConnected</a> for this Peer before Sending. Refusing here rather
+than queueing keeps a Message from reaching a socket whose connect has not resolved, or going
+out before this end knows the far end's version and announced <code>MaxMessageSize</code>.</p>
 </dd>
   </dl>
 

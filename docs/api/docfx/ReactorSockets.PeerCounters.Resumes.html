@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_PeerCounters_Resumes_.md&amp;value=---%0Auid%3A%20ReactorSockets.PeerCounters.Resumes*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_PeerCounters_Resumes_.md&amp;value=---%0Auid%3A%20ReactorSockets.PeerCounters.Resumes*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_PeerCounters_Resumes_" data-uid="ReactorSockets.PeerCounters.Resumes*" class="text-break">
-Property Resumes  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/PeerCounters.cs/#L33"><i class="bi bi-code-slash"></i></a>
+Property Resumes  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/PeerCounters.cs/#L188"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,18 +107,19 @@ Property Resumes  <a class="header-action link-secondary" title="View source" hr
 
 <h3 id="ReactorSockets_PeerCounters_Resumes" data-uid="ReactorSockets.PeerCounters.Resumes">
   Resumes
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/PeerCounters.cs/#L33"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/PeerCounters.cs/#L188"><i class="bi bi-code-slash"></i></a>
 </h3>
 
-<div class="markdown level1 summary"><p>How many times this Peer's transport has been successfully resumed after an Interruption (issue
-#128, ADR 0013). Incremented once per <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerResumed">PeerResumed</a> raised for this
-Peer, on both the listening and dialling sides, and never on a refused resume. Earns its own
-member rather than being derived by the consumer counting <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerResumed">PeerResumed</a>
-Events: a Session profile drains Events into whatever cadence the consumer chooses, so counting
-them back out is not generally possible once drained, while this figure is a Counter — read fresh
-by value at any time, the same as every other figure here. Monotonic and never reset: a resume
-carries no counter's history away with it, so a retransmission count spanning several resumes is
-how a flapping path shows itself instead of being hidden by a zeroing on every reconnect.</p>
+<div class="markdown level1 summary"><p>How many times this Peer's transport has been successfully resumed after an Interruption (ADR 0013).
+Incremented once per <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerResumed">PeerResumed</a> raised for this Peer, on both the
+listening and dialling sides, and never on a refused resume. Earns its own member rather than being
+derived by the consumer counting <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerResumed">PeerResumed</a> Events: a Session
+profile drains Events into whatever cadence the consumer chooses, so counting them back out is not
+generally possible once drained, while this figure is a Counter — read fresh by value at any time,
+the same as every other figure here. Monotonic and never reset: a resume carries no counter's
+history away with it, so a retransmission count spanning several resumes is how a flapping path
+shows itself instead of being hidden by a zeroing on every reconnect. Not derivable: no other
+counter moves only on a Resume.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 

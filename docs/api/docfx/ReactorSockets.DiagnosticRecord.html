@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_DiagnosticRecord.md&amp;value=---%0Auid%3A%20ReactorSockets.DiagnosticRecord%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_DiagnosticRecord.md&amp;value=---%0Auid%3A%20ReactorSockets.DiagnosticRecord%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -75,7 +75,7 @@
 
 
   <h1 id="ReactorSockets_DiagnosticRecord" data-uid="ReactorSockets.DiagnosticRecord" class="text-break">
-Struct DiagnosticRecord  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DiagnosticRecord.cs/#L12"><i class="bi bi-code-slash"></i></a>
+Struct DiagnosticRecord  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DiagnosticRecord.cs/#L12"><i class="bi bi-code-slash"></i></a>
   </h1>
 
   <div class="facts text-secondary">
@@ -185,6 +185,13 @@ lives on the stack and is built only after <a class="xref" href="ReactorSockets.
 </h2>
 
   <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForAddressPeerLimitReached.html#ReactorSockets_DiagnosticRecord_ForAddressPeerLimitReached_ReactorSockets_Source_System_Int32_System_Int32_">ForAddressPeerLimitReached(Source, int, int)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_AddressPeerLimitReached">AddressPeerLimitReached</a> record for the claimed Source whose
+handshake was refused, carrying the per-address limit and the prefix length its address was
+counted by: 32 for IPv4, and the IPv6 grouping length for IPv6 (ADR 0014).</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForAdmissionCapReached.html#ReactorSockets_DiagnosticRecord_ForAdmissionCapReached_System_Int32_System_Int32_">ForAdmissionCapReached(int, int)</a></dt>
     <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_AdmissionCapReached">AdmissionCapReached</a> record. No subject.
 <code class="paramref">declined</code> counts declinings where the work waits out of reach and pieces of
@@ -230,6 +237,12 @@ the number of bytes that arrived.</p>
 </dd>
   </dl>
   <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForDatagramReadLimitReached.html#ReactorSockets_DiagnosticRecord_ForDatagramReadLimitReached_System_Int32_System_Int32_">ForDatagramReadLimitReached(int, int)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DatagramReadLimitReached">DatagramReadLimitReached</a> record. No subject. Carries the per-socket
+read limit and the socket's index in <a class="xref" href="ReactorSockets.DatagramSessionReactor.BoundEndpoints.html#ReactorSockets_DatagramSessionReactor_BoundEndpoints">BoundEndpoints</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForDatagramTruncated.html#ReactorSockets_DiagnosticRecord_ForDatagramTruncated_ReactorSockets_Source_System_Int32_">ForDatagramTruncated(Source, int)</a></dt>
     <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DatagramTruncated">DatagramTruncated</a> record for the claimed Source, carrying
 the scratch buffer size the datagram was truncated to.</p>
@@ -250,10 +263,18 @@ to this Peer's retention.</p>
 </dd>
   </dl>
   <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForFragmentSetAbandoned.html#ReactorSockets_DiagnosticRecord_ForFragmentSetAbandoned_ReactorSockets_PeerId_System_Int64_System_Int64_">ForFragmentSetAbandoned(PeerId, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_FragmentSetAbandoned">FragmentSetAbandoned</a> record for the Peer whose Fragment set
+was abandoned before it ever completed, carrying the fragments actually held and the number the
+set's own metadata declared.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForLingerNegotiated.html#ReactorSockets_DiagnosticRecord_ForLingerNegotiated_ReactorSockets_PeerId_System_Int64_System_Int64_">ForLingerNegotiated(PeerId, long, long)</a></dt>
     <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_LingerNegotiated">LingerNegotiated</a> record for the newly established
-<code class="paramref">peer</code>. <code>Value0</code> is this end's own Linger in milliseconds; <code>Value1</code>
-is the effective (minimum of the two ends') Linger in milliseconds.</p>
+<code class="paramref">peer</code>, on either profile — stream or datagram. <code>Value0</code> is this end's own
+Linger in milliseconds; <code>Value1</code> is the effective (minimum of the two ends') Linger in
+milliseconds.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -267,6 +288,20 @@ is the effective (minimum of the two ends') Linger in milliseconds.</p>
     <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_MalformedFraming">MalformedFraming</a> record for the Peer whose framing broke
 this profile's rules. <code>Value0</code> is the offending length prefix — 0 for a truncation, where
 no full prefix was ever read; <code>Value1</code> is this Reactor's own <code>MaxMessageSize</code>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet.html#ReactorSockets_DiagnosticRecord_ForOversizedFragmentSet_ReactorSockets_PeerId_System_Int64_System_Int64_">ForOversizedFragmentSet(PeerId, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_OversizedFragmentSet">OversizedFragmentSet</a> record for the Peer whose Fragment
+declared a <code>fragmentCount</code> larger than this Reactor's own receive window could ever hold,
+carrying the declared count and the largest legal count.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForOversizedMessage.html#ReactorSockets_DiagnosticRecord_ForOversizedMessage_ReactorSockets_PeerId_System_Int64_System_Int64_">ForOversizedMessage(PeerId, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_OversizedMessage">OversizedMessage</a> record for the Peer whose completed Message
+was larger than this Reactor's own <code>MaxMessageSize</code>, carrying the Message's length and that
+limit.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -311,6 +346,20 @@ matched back onto. <code>Value0</code> is the number of retained outbound bytes 
 connection that claimed an existing Session and was refused rather than resumed.
 <code>Value0</code> is the number of Interrupted Peers the claim was checked against;
 <code>Value1</code> is the wire record type the claim arrived as.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForRetransmissionTimerBackedOff.html#ReactorSockets_DiagnosticRecord_ForRetransmissionTimerBackedOff_ReactorSockets_PeerId_System_Int64_System_Int64_">ForRetransmissionTimerBackedOff(PeerId, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_RetransmissionTimerBackedOff">RetransmissionTimerBackedOff</a> record for the Peer whose
+<span class="xref">ReactorSockets.RetransmissionTimer</span> just backed off. <code>Value0</code> is the new RTO in milliseconds;
+<code>Value1</code> is the consecutive backoff count after this backoff.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForUnreliableFragment.html#ReactorSockets_DiagnosticRecord_ForUnreliableFragment_ReactorSockets_Source_System_Int64_">ForUnreliableFragment(Source, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_UnreliableFragment">UnreliableFragment</a> record for the claimed Source that put a
+Fragment on the wire in an unreliable mode, carrying the mode it claimed as the two mode bits'
+wire value. <code>Value1</code> is unused: the rule has no threshold to report against.</p>
 </dd>
   </dl>
   <dl class="jumplist">

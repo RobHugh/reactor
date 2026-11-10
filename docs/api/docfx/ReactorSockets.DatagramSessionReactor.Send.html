@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Method Send | ReactorSockets API reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Method Send | ReactorSockets API reference ">
+      
+      
+      <link rel="icon" href="favicon.ico">
+      <link rel="stylesheet" href="public/docfx.min.css">
+      <link rel="stylesheet" href="public/main.css">
+      <meta name="docfx:navrel" content="toc.html">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      <meta name="docfx:rel" content="">
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_DatagramSessionReactor_Send_.md&amp;value=---%0Auid%3A%20ReactorSockets.DatagramSessionReactor.Send*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="index.html">
+            <img id="logo" class="svg" src="logo.svg" alt="ReactorSockets">
+            ReactorSockets
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+              <form class="search" role="search" id="search">
+                <i class="bi bi-search"></i>
+                <input class="form-control" id="search-query" type="search" disabled placeholder="Search" autocomplete="off" aria-label="Search">
+              </form>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+
+      <div class="content">
+        <div class="actionbar">
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="ReactorSockets.DatagramSessionReactor.Send*">
+
+
+
+
+
+<h1 id="ReactorSockets_DatagramSessionReactor_Send_" data-uid="ReactorSockets.DatagramSessionReactor.Send*" class="text-break">
+Method Send  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionReactor.cs/#L568"><i class="bi bi-code-slash"></i></a>
+</h1>
+
+<div class="facts text-secondary">
+  <dl><dt>Namespace</dt><dd><a class="xref" href="ReactorSockets.html">ReactorSockets</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>ReactorSockets.dll</dd></dl>
+</div>
+
+<div class="markdown summary"></div>
+<div class="markdown conceptual"></div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<a id="ReactorSockets_DatagramSessionReactor_Send_" data-uid="ReactorSockets.DatagramSessionReactor.Send*"></a>
+
+<h3 id="ReactorSockets_DatagramSessionReactor_Send_ReactorSockets_PeerId_ReactorSockets_DeliveryMode_System_ReadOnlySpan_System_Byte__" data-uid="ReactorSockets.DatagramSessionReactor.Send(ReactorSockets.PeerId,ReactorSockets.DeliveryMode,System.ReadOnlySpan{System.Byte})">
+  Send(PeerId, DeliveryMode, ReadOnlySpan&lt;byte&gt;)
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionReactor.cs/#L568"><i class="bi bi-code-slash"></i></a>
+</h3>
+
+<div class="markdown level1 summary"><p>Sends <code class="paramref">message</code> to <code class="paramref">peer</code> under <code class="paramref">mode</code> (ADR
+0009). A Message too wide for its mode to carry is refused before any work is done on it: no
+sequence is allocated and no retention is taken, so a rejected Send leaves no trace on the
+Session. How wide is too wide depends on the mode and is decided by
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32">Resolve(int, int, DeliveryMode, int)</a>, the one place the rule is stated: an unreliable mode is capped
+at a single Datagram and refused above it as <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_MessageTooLarge">MessageTooLarge</a>, a reliable
+mode fragments, and every mode is refused above a second cap as
+<a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RemoteMessageTooLarge">RemoteMessageTooLarge</a> (ADR 0004). That second cap is
+<code class="paramref">peer</code>'s own announced receive limit, captured on its Slot at handshake, not this
+Reactor's own <a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxMessageSize.html#ReactorSockets_DatagramSessionOptions_MaxMessageSize">MaxMessageSize</a>: <code>Send</code> is therefore not
+purely local to this Reactor's configuration, because the same payload can be accepted for one
+Peer and refused for another whose handshake announced a smaller limit. That gate sits behind
+the <code class="paramref">peer</code> lookup rather than in front of it, because both caps it measures
+against, fragment size and remote max message size alike, are the Peer's own captured values; a
+Peer this Reactor is not holding open returns <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_Closed">Closed</a> whatever the
+Message's width. Past that gate, a reliable mode allocates the next sequence in its own Space
+and retains the Message whole there, returning <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RetentionExhausted">RetentionExhausted</a> once
+that Space has no slot left — and that refusal spends nothing either: the sequence is claimed
+only once retention has committed, so a refused reliable Send leaves the Space's next sequence
+exactly where it was, rather than opening a gap the receiver's window would wait on for a record
+that is never sent; <a class="xref" href="ReactorSockets.DeliveryMode.html#ReactorSockets_DeliveryMode_Unreliable">Unreliable</a> and
+<a class="xref" href="ReactorSockets.DeliveryMode.html#ReactorSockets_DeliveryMode_UnreliableSequenced">UnreliableSequenced</a> still allocate a sequence — every mode gets one,
+the same as every other (<span class="xref">ReactorSockets.Session.OutboundSequenceSpaces</span>) — but retain nothing, because
+nothing unreliable is ever retransmitted. A Message this call accepts is queued on
+<code class="paramref">peer</code>'s Slot (<span class="xref">ReactorSockets.DatagramSessionReactor.PeerSlot.PendingSends</span>) and leaves as one packet
+record inside the next <a class="xref" href="ReactorSockets.DatagramSessionReactor.Pump.html#ReactorSockets_DatagramSessionReactor_Pump">Pump()</a>'s single coalesced Datagram to that Peer, in Send
+order (<span class="xref">ReactorSockets.DatagramSessionReactor.FlushOutboundDatagrams()</span>) — nothing reaches the wire before that Pump runs,
+and a <code>Send</code> with no following Pump puts nothing on the wire at all. That next Pump is only
+the first one this record is <em>eligible</em> to leave in: if this Peer already has more queued
+than one Datagram holds, a record queued behind the boundary waits for however many further
+Pumps it takes to reach the front, still in the order it was Sent.</p>
+</div>
+<div class="markdown level1 conceptual"></div>
+
+<div class="codewrapper">
+  <pre><code class="lang-csharp hljs">public SendOutcome Send(PeerId peer, DeliveryMode mode, ReadOnlySpan&lt;byte&gt; message)</code></pre>
+</div>
+
+<h4 class="section">Parameters</h4>
+<dl class="parameters">
+  <dt><code>peer</code> <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a></dt>
+  <dd><p>The Peer to send to.</p>
+</dd>
+  <dt><code>mode</code> <a class="xref" href="ReactorSockets.DeliveryMode.html">DeliveryMode</a></dt>
+  <dd><p>Which of the four delivery modes carries this Message; see <code>docs/delivery-modes.md</code>.</p>
+</dd>
+  <dt><code>message</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.readonlyspan-1">ReadOnlySpan</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.byte">byte</a>&gt;</dt>
+  <dd><p>The Message payload, unframed. The bytes are copied before this call returns — into
+<span class="xref">ReactorSockets.DatagramSessionReactor._retention</span> for a reliable mode, into the queued record for an unreliable one — so
+the caller owns its buffer again the instant <code>Send</code> returns and may overwrite or reuse it
+without changing what is eventually put on the wire. A Message wider than
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a> cannot fit in one Datagram, and for
+<a class="xref" href="ReactorSockets.DeliveryMode.html#ReactorSockets_DeliveryMode_Unreliable">Unreliable</a> and <a class="xref" href="ReactorSockets.DeliveryMode.html#ReactorSockets_DeliveryMode_UnreliableSequenced">UnreliableSequenced</a> that cap
+is reported back as <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_MessageTooLarge">MessageTooLarge</a> rather than thrown, and it is
+permanent — no option lifts it: you may only fragment what you can retransmit (ADR 0004), because
+fragmenting what cannot be repaired multiplies the failure rate by the number of pieces — a
+ten-Fragment unreliable Message on a path losing 1% of Datagrams arrives about 90% of the time,
+having spent ten Datagrams of bandwidth on a coin flip (<code>docs/delivery-modes.md</code>). A Message
+within that cap but wider than <code class="paramref">peer</code>'s own announced <code>MaxMessageSize</code> is
+refused with <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RemoteMessageTooLarge">RemoteMessageTooLarge</a>, because the far end would discard it
+on arrival; a Message over both caps reports <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_MessageTooLarge">MessageTooLarge</a>. For
+<a class="xref" href="ReactorSockets.DeliveryMode.html#ReactorSockets_DeliveryMode_ReliableOrdered">ReliableOrdered</a> and <a class="xref" href="ReactorSockets.DeliveryMode.html#ReactorSockets_DeliveryMode_ReliableUnordered">ReliableUnordered</a> the
+single-Datagram cap does not apply: a Message up to <code class="paramref">peer</code>'s own announced
+<code>MaxMessageSize</code> (see the summary above) is cut into <code>ceil(length / fragmentSize)</code>
+Fragments, each retained and sequenced as its own ordinary reliable packet, and only a Message
+wider than that remote limit is refused with <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RemoteMessageTooLarge">RemoteMessageTooLarge</a>.
+That <code>fragmentSize</code> is this Peer's own <span class="xref">ReactorSockets.DatagramSessionReactor.PeerSlot.FragmentSize</span>, captured from
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a> once when the Peer was admitted — not
+re-read from options on this or any later call. Fragment size is unilateral, per-direction, and
+decided once, at <code>Send</code> (ADR 0004): a retransmit re-sends bytes already cut rather than
+re-deciding anything, so two Messages sent to the same Peer at different times, and every
+retransmit of either, are always cut with the same size. It is never announced in the handshake,
+because a receiver reassembles a Fragment set by <code>fragmentIndex</code> and <code>fragmentCount</code>
+alone and never needs to know the sender's choice.</p>
+</dd>
+</dl>
+
+<h4 class="section">Returns</h4>
+<dl class="parameters">
+  <dt><a class="xref" href="ReactorSockets.SendOutcome.html">SendOutcome</a></dt>
+  <dd></dd>
+</dl>
+
+
+
+
+
+
+
+<h4 class="section" id="ReactorSockets_DatagramSessionReactor_Send_ReactorSockets_PeerId_ReactorSockets_DeliveryMode_System_ReadOnlySpan_System_Byte___remarks">Remarks</h4>
+<div class="markdown level1 remarks"><p><b><a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RetentionExhausted">RetentionExhausted</a> is reachable from one <code>Send</code> call</b> (ADR
+0004's &quot;one Message can fill the send window alone&quot;): the retention budget is sized in
+Fragments, not Messages, so a single Message cut into more Fragments than its Space has free
+slots for exhausts that Space by itself, with nothing else needing to have sent anything first.
+The refusal is whole, not partial — this checks the Space's free-slot count against the Fragment
+count the Message needs <em>before</em> retaining or sequencing a single Fragment, so a refused
+Send leaves retention holding no Fragment of that Message and leaves the Space's next sequence
+exactly where <a class="xref" href="ReactorSockets.DatagramSessionReactor.Send.html#ReactorSockets_DatagramSessionReactor_Send_ReactorSockets_PeerId_ReactorSockets_DeliveryMode_System_ReadOnlySpan_System_Byte__">Send(PeerId, DeliveryMode, ReadOnlySpan&lt;byte&gt;)</a> found it, the same &quot;spend nothing on a refusal&quot; contract a
+whole small Message keeps. A half-retained Message would be unrepairable: the receiver's
+reassembly waits forever for a set that was never cut in full. A smaller Message that fits the
+Space's free slots still succeeds afterward — the refusal costs the Space nothing.</p>
+<p>
+Sending to a <code class="paramref">peer</code> this Reactor is not currently holding open — unknown, or
+already closed — returns <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_Closed">Closed</a> rather than throwing, unlike
+<a class="xref" href="ReactorSockets.DatagramSessionReactor.CountersOf.html#ReactorSockets_DatagramSessionReactor_CountersOf_ReactorSockets_PeerId_">CountersOf(PeerId)</a>: a Peer closing under a caller is an ordinary race, the same reason
+<a class="xref" href="ReactorSockets.DatagramSessionReactor.Close.html#ReactorSockets_DatagramSessionReactor_Close_ReactorSockets_PeerId_">Close(PeerId)</a> tolerates a stale <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a>.
+</p>
+<p>
+Sending to a <code class="paramref">peer</code> whose handshake has not reached
+<span class="xref">ReactorSockets.DatagramSessionReactor.PeerPhase.Open</span> returns <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_NotEstablished">NotEstablished</a> under
+every mode, checked before any width gate. Before the handshake the Peer has no remote-announced
+<code>MaxMessageSize</code>, so a Send would otherwise be misreported as
+<a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RemoteMessageTooLarge">RemoteMessageTooLarge</a>.
+</p>
+</div>
+
+
+
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+    <div class="container-xxl search-results" id="search-results"></div>
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          <span>Made with <a href="https://dotnet.github.io/docfx">docfx</a></span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

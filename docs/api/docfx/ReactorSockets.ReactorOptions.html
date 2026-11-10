@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_ReactorOptions.md&amp;value=---%0Auid%3A%20ReactorSockets.ReactorOptions%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_ReactorOptions.md&amp;value=---%0Auid%3A%20ReactorSockets.ReactorOptions%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -75,7 +75,7 @@
 
 
   <h1 id="ReactorSockets_ReactorOptions" data-uid="ReactorSockets.ReactorOptions" class="text-break">
-Class ReactorOptions  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/ReactorOptions.cs/#L18"><i class="bi bi-code-slash"></i></a>
+Class ReactorOptions  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/ReactorOptions.cs/#L31"><i class="bi bi-code-slash"></i></a>
   </h1>
 
   <div class="facts text-secondary">
@@ -134,13 +134,26 @@ into the base class ADR 0011 refused.</p>
 
 
   <h2 id="ReactorSockets_ReactorOptions_remarks">Remarks</h2>
-  <div class="markdown level0 remarks"><p>A knob carries a default only when that default is derived — from machinery the library owns,
+  <div class="markdown level0 remarks"><p>
+A knob carries a default only when that default is derived — from machinery the library owns,
 from another knob, or from a citable standard (ADR 0011, ADR 0012). <a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a> has
 no such derivation and is therefore required, with no default. Construction throws
 <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.argumentoutofrangeexception">ArgumentOutOfRangeException</a> for a single bad value and <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.argumentexception">ArgumentException</a>
 for a combination that cannot work, because every check here is deterministic and entirely the
 caller's — unlike <code>Send</code>, whose failures belong to the remote end or the network and are reported
-through a <code>Result</code> instead.</p>
+through a <code>Result</code> instead.
+</p>
+<p>
+<b>Every per-Pump cost a remote party can inflate is bounded at construction</b> (ADR 0012). Reading
+is bounded by each share-holder's share of the arena — <a class="xref" href="ReactorSockets.ReactorOptions.ArenaSize.html#ReactorSockets_ReactorOptions_ArenaSize">ArenaSize</a> divided by
+<a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a>, with one whole unit always allowed — and accepts and handshakes are both
+bounded by <a class="xref" href="ReactorSockets.ReactorOptions.AdmissionCap.html#ReactorSockets_ReactorOptions_AdmissionCap">AdmissionCap</a>. Three mechanisms with one reason, and the checklist for
+anything added later: a cost a remote party can raise inside one Pump, on the consumer's thread,
+needs a bound fixed here, because the failure is invisible until someone points a load generator
+at it. The datagram profile adds a fourth on its own options,
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxDatagramsPerPump.html#ReactorSockets_DatagramSessionOptions_MaxDatagramsPerPump">MaxDatagramsPerPump</a>, because the arena share does not see
+control traffic.
+</p>
 </div>
 
   <h2 class="section" id="properties">Properties
@@ -148,17 +161,17 @@ through a <code>Result</code> instead.</p>
 
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.ReactorOptions.AdmissionCap.html#ReactorSockets_ReactorOptions_AdmissionCap">AdmissionCap</a></dt>
-    <dd><p>The per-Pump bound on accepts and handshakes alike. Defaults to <a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a>:
-one Pump never spends more admission work than a full Reactor's worth, and the remainder
-waits in the OS backlog or is dropped (ADR 0012).</p>
+    <dd><p>The per-Pump bound on accepts and handshakes alike. Defaults to <a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a>.
+Provenance: derived from <a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a> — one Pump never spends more admission work
+than a full Reactor's worth, and the remainder waits in the OS backlog or is dropped (ADR 0012).</p>
 </dd>
   </dl>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.ReactorOptions.ArenaSize.html#ReactorSockets_ReactorOptions_ArenaSize">ArenaSize</a></dt>
-    <dd><p>The frame arena's size in bytes. Left unset, a Reactor defaults it to its own profile
-floor — one maximum deliverable unit, since the floor is profile-specific and only the
-profile's constructor knows what it must exceed (ADR 0012). A value below that floor throws
-at construction, naming the arithmetic.</p>
+    <dd><p>The frame arena's size in bytes. Left unset, a Reactor defaults it to its own profile floor.
+Provenance: derived from the profile — one maximum deliverable unit, since below it that unit
+could never be delivered, and only the profile's constructor knows what it must exceed
+(ADR 0012). A value below that floor throws at construction, naming the arithmetic.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -166,14 +179,15 @@ at construction, naming the arithmetic.</p>
     <dd><p>The number of share-holders this Reactor admits — Links in Raw, Peers in a Session
 (ADR 0014) — and the multiplier on every preallocation. Required; there is no default
 derivable from anything the library owns (ADR 0011, superseding ADR 0001's &quot;default 64&quot;).
-Left unset it defaults to 0, which <span class="xref">ReactorSockets.ReactorOptions.Validate()</span> rejects.</p>
+Must be at least 1.</p>
 </dd>
   </dl>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.ReactorOptions.MinimumLevel.html#ReactorSockets_ReactorOptions_MinimumLevel">MinimumLevel</a></dt>
     <dd><p>The minimum <a class="xref" href="ReactorSockets.DiagnosticLevel.html">DiagnosticLevel</a> the installed <a class="xref" href="ReactorSockets.ReactorOptions.Sink.html#ReactorSockets_ReactorOptions_Sink">Sink</a> receives.
 Must be supplied together with <a class="xref" href="ReactorSockets.ReactorOptions.Sink.html#ReactorSockets_ReactorOptions_Sink">Sink</a> — neither carries a default, since a
-default level would be a guess at how much diagnostic volume the consumer wants.</p>
+default level would be a guess at how much diagnostic volume the consumer wants. Provenance:
+absent only alongside an absent <a class="xref" href="ReactorSockets.ReactorOptions.Sink.html#ReactorSockets_ReactorOptions_Sink">Sink</a>, where no level can matter (ADR 0012).</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -185,15 +199,16 @@ default level would be a guess at how much diagnostic volume the consumer wants.
     <dt><a class="xref" href="ReactorSockets.ReactorOptions.Sink.html#ReactorSockets_ReactorOptions_Sink">Sink</a></dt>
     <dd><p>The Diagnostic Sink records are sent to, or <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/null">null</a> to disable diagnostics
 entirely. Must be supplied together with <a class="xref" href="ReactorSockets.ReactorOptions.MinimumLevel.html#ReactorSockets_ReactorOptions_MinimumLevel">MinimumLevel</a> — both present or both
-absent — because with no Sink there is nowhere for a record to go, so no level can matter
-(ADR 0012).</p>
+absent. Provenance: absent means off, which is derived rather than chosen — with no Sink there
+is nowhere for a record to go, so no level can matter (ADR 0012).</p>
 </dd>
   </dl>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.ReactorOptions.TimeProvider.html#ReactorSockets_ReactorOptions_TimeProvider">TimeProvider</a></dt>
     <dd><p>The source of monotonic time for every duration this library measures. Defaults to
 <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.timeprovider.system">System</a>; only <code>GetTimestamp</code>/<code>GetElapsedTime</code>
-are ever consulted, never <code>GetUtcNow</code>.</p>
+are ever consulted, never <code>GetUtcNow</code>. Provenance: the framework's own clock, and the only
+requirement on it is that reads be monotonic, which <code>GetTimestamp</code> is (ADR 0012).</p>
 </dd>
   </dl>
 

@@ -2,9 +2,9 @@
 <html>
   <head>
     <meta charset="utf-8">
-      <title>Property UnknownSourceDiscards | ReactorSockets API reference </title>
+      <title>Property ReadShareExhaustions | ReactorSockets API reference </title>
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <meta name="title" content="Property UnknownSourceDiscards | ReactorSockets API reference ">
+      <meta name="title" content="Property ReadShareExhaustions | ReactorSockets API reference ">
       
       
       <link rel="icon" href="favicon.ico">
@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_ReactorCounters_UnknownSourceDiscards_.md&amp;value=---%0Auid%3A%20ReactorSockets.ReactorCounters.UnknownSourceDiscards*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_PeerCounters_ReadShareExhaustions_.md&amp;value=---%0Auid%3A%20ReactorSockets.PeerCounters.ReadShareExhaustions*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -70,14 +70,14 @@
           <nav id="breadcrumb"></nav>
         </div>
 
-        <article data-uid="ReactorSockets.ReactorCounters.UnknownSourceDiscards*">
+        <article data-uid="ReactorSockets.PeerCounters.ReadShareExhaustions*">
 
 
 
 
 
-<h1 id="ReactorSockets_ReactorCounters_UnknownSourceDiscards_" data-uid="ReactorSockets.ReactorCounters.UnknownSourceDiscards*" class="text-break">
-Property UnknownSourceDiscards  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/ReactorCounters.cs/#L52"><i class="bi bi-code-slash"></i></a>
+<h1 id="ReactorSockets_PeerCounters_ReadShareExhaustions_" data-uid="ReactorSockets.PeerCounters.ReadShareExhaustions*" class="text-break">
+Property ReadShareExhaustions  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/PeerCounters.cs/#L197"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -103,24 +103,30 @@ Property UnknownSourceDiscards  <a class="header-action link-secondary" title="V
 
 
 
-<a id="ReactorSockets_ReactorCounters_UnknownSourceDiscards_" data-uid="ReactorSockets.ReactorCounters.UnknownSourceDiscards*"></a>
+<a id="ReactorSockets_PeerCounters_ReadShareExhaustions_" data-uid="ReactorSockets.PeerCounters.ReadShareExhaustions*"></a>
 
-<h3 id="ReactorSockets_ReactorCounters_UnknownSourceDiscards" data-uid="ReactorSockets.ReactorCounters.UnknownSourceDiscards">
-  UnknownSourceDiscards
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/ReactorCounters.cs/#L52"><i class="bi bi-code-slash"></i></a>
+<h3 id="ReactorSockets_PeerCounters_ReadShareExhaustions" data-uid="ReactorSockets.PeerCounters.ReadShareExhaustions">
+  ReadShareExhaustions
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/PeerCounters.cs/#L197"><i class="bi bi-code-slash"></i></a>
 </h3>
 
-<div class="markdown level1 summary"><p>Datagrams taken from the transport and thrown away because nothing could be attributed to a Peer:
-a malformed control datagram, or a session id naming no Session. Reactor-scope rather than
-per-Peer precisely because there is no Peer to charge them to — the whole point of the member is
-the traffic that failed to name one. Moves only on the datagram Session profile. A rising figure
-on a Reactor that is otherwise healthy is a scan or a flood, not a fault, which is why the
-matching Diagnostics are <a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>.</p>
+<div class="markdown level1 summary"><p>How many times this Peer had a whole Message ready and was refused Arena room because it had
+already used its read share for the Frame (ADR 0013, where <code>ReadShareReached</code> became this
+counter). Counted once per refused reservation. What becomes of the Message differs by profile. The
+stream profile keeps it buffered and delivers it on a later Pump. On the datagram profile an
+unreliable record is lost. A reliable one is delivered on a later Pump: a record still held for send
+order or reassembly is retried from where it is held, and any other is left unacknowledged so the
+far end retransmits it. Recurs every Pump while one Peer outpaces its share, which is why it is a
+Counter and not a Diagnostic. Moves on both Session profiles. Monotonic and never reset, exactly
+like <a class="xref" href="ReactorSockets.PeerCounters.HorizonDeferrals.html#ReactorSockets_PeerCounters_HorizonDeferrals">HorizonDeferrals</a>: its lifetime is the Peer's, not the transport's, so a Resume
+does not zero it. Not derivable: bytes received and <a class="xref" href="ReactorSockets.PeerCounters.MessagesReceived.html#ReactorSockets_PeerCounters_MessagesReceived">MessagesReceived</a> show that
+delivery lagged arrival, but not that the read share was the cause rather than the Arena itself
+running out.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 
 <div class="codewrapper">
-  <pre><code class="lang-csharp hljs">public ulong UnknownSourceDiscards { get; init; }</code></pre>
+  <pre><code class="lang-csharp hljs">public ulong ReadShareExhaustions { get; init; }</code></pre>
 </div>
 
 

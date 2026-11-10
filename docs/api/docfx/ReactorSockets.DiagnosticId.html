@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_DiagnosticId.md&amp;value=---%0Auid%3A%20ReactorSockets.DiagnosticId%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_DiagnosticId.md&amp;value=---%0Auid%3A%20ReactorSockets.DiagnosticId%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -76,7 +76,7 @@
 
 
   <h1 id="ReactorSockets_DiagnosticId" data-uid="ReactorSockets.DiagnosticId" class="text-break">
-Enum DiagnosticId  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/DiagnosticId.cs/#L10"><i class="bi bi-code-slash"></i></a>
+Enum DiagnosticId  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DiagnosticId.cs/#L30"><i class="bi bi-code-slash"></i></a>
   </h1>
 
   <div class="facts text-secondary">
@@ -120,7 +120,8 @@ Discarded.</p>
     <dt id="ReactorSockets_DiagnosticId_ArenaExhausted"><code>ArenaExhausted = 2</code></dt>
   
   <dd><p>The frame arena had no room left for a request, regardless of the read-share escape.
-Subject is the Link that made the request. <code>Value0</code> is the bytes requested,
+Subject is the Link that made the request on Raw, and the Peer whose Message could not be
+reserved on either session profile (ADR 0014). <code>Value0</code> is the bytes requested,
 <code>Value1</code> is the arena's bytes free at the moment of the request.</p>
 </dd>
     <dt id="ReactorSockets_DiagnosticId_CapacityExhausted"><code>CapacityExhausted = 3</code></dt>
@@ -181,6 +182,103 @@ Reactor answers at all — a bare Hello is answered with a Cookie and nothing el
 version it claimed.</p>
 </dd>
   
+    <dt id="ReactorSockets_DiagnosticId_FragmentSetAbandoned"><code>FragmentSetAbandoned = 203</code></dt>
+  <dd><p>A Fragment set for an established Peer was abandoned before it ever completed. Subject is the
+Peer, not the claimed Source: an incomplete set belongs to the Session that was receiving it,
+not to a bare source address. <code>Value0</code> is the number of fragments actually held for the
+set at the moment it was abandoned; <code>Value1</code> is the number the set's own metadata
+declared it would need. Held against expected is the pair a consumer can act on — one of forty
+held is a path dropping almost everything of that size, thirty-nine of forty is ordinary loss
+on a set that was nearly there, and the two want different responses.</p>
+<p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>, not <a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Error">Error</a>: nothing local is
+broken, an abandoned set is loss on a lossy transport working as designed, and the level's job
+is to answer whether a consumer wants to see this, not whether this Reactor is at fault.</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_RetransmissionTimerBackedOff"><code>RetransmissionTimerBackedOff = 204</code></dt>
+  <dd><p>This Peer's <span class="xref">ReactorSockets.RetransmissionTimer</span> backed off: a Pump's expiry sweep
+(<span class="xref">ReactorSockets.Session.OutstandingReliableSequences.CollectExpired(ReactorSockets.Session.PacketRecordMode)</span>) found at least one overdue
+sequence on either reliable Space, so <span class="xref">ReactorSockets.RetransmissionTimer.BackOff()</span> was called once
+for the Peer and every sequence the sweep reported re-armed at the single resulting RTO. Subject
+is the Peer. <code>Value0</code> is the new RTO in milliseconds —
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.timespan">EffectiveTimeout(TimeSpan, TimeSpan)</a> at the moment of the backoff; <code>Value1</code> is
+<span class="xref">ReactorSockets.RetransmissionTimer.ConsecutiveBackoffs</span> after this backoff.</p>
+<p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Trace">Trace</a>, not <a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>: this is protocol
+machinery working correctly, not a fault. A lossy path emits it continuously — every Pump that
+finds an overdue sequence backs off again — and raising it above <code>Trace</code> would train a
+consumer to ignore the level it sits at.</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_OversizedFragmentSet"><code>OversizedFragmentSet = 205</code></dt>
+  <dd><p>An established Peer's Fragment declared a <code>fragmentCount</code> larger than this Reactor's own
+receive window could ever hold, and the Session was closed with
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_ProtocolViolation">ProtocolViolation</a> on that Fragment's first appearance, before any
+receive-window slot or Fragment-group bookkeeping was created for its set. Subject is the Peer.
+<code>Value0</code> is the declared <code>fragmentCount</code>; <code>Value1</code> is the largest legal count
+this Reactor's <a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedReceiveWindowFragments.html#ReactorSockets_DatagramSessionOptions_ResolvedReceiveWindowFragments">ResolvedReceiveWindowFragments</a> allows.</p>
+<p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>, for the same reason as <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DatagramMalformed">DatagramMalformed</a>: a
+remote can produce this at will by lying about how many Fragments a Message needs.</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_UnreliableFragment"><code>UnreliableFragment = 206</code></dt>
+  <dd><p>A packet record carried the fragment shape in one of the two unreliable modes, which ADR 0004
+forbids — you may only fragment what you can retransmit — and the read failed outright, taking
+the whole Datagram with it. Subject is the claimed Source, not the Peer, matching the
+<a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DatagramMalformed">DatagramMalformed</a> that is raised alongside it: a discarded Datagram is never
+attributed to the Session it named, and no byte of it is counted against that Peer.
+<code>Value0</code> is the mode the record claimed, as the two mode bits' wire value — 0 for
+<code>Unreliable</code>, 1 for <code>UnreliableSequenced</code>; <code>Value1</code> is unused.</p>
+<p>
+<a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>, for the same reason as <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DatagramMalformed">DatagramMalformed</a>: a
+remote can produce this at will, and nothing is wrong with this Reactor.
+</p>
+<p>
+Distinct from <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DatagramMalformed">DatagramMalformed</a> rather than folded into it because the two say
+different things to a consumer. A malformed Datagram is rubbish from anywhere; this one is
+well-formed at every level but the rule, which means the sender is running a build that
+fragments in modes this profile does not — a misconfiguration a consumer can act on, and the
+send path already refuses to produce.
+</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_OversizedMessage"><code>OversizedMessage = 207</code></dt>
+  <dd><p>A completed Message, whole or reassembled from its Fragments, was larger than this Reactor's own
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxMessageSize.html#ReactorSockets_DatagramSessionOptions_MaxMessageSize">MaxMessageSize</a> and was discarded instead of delivered.
+Subject is the Peer. <code>Value0</code> is the Message's length in bytes; <code>Value1</code> is this
+Reactor's <code>MaxMessageSize</code>. The Session stays open, and a discarded reliable Message stays
+acknowledged, so the far end does not resend it and later Messages are unaffected.</p>
+<p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>, for the same reason as <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DatagramMalformed">DatagramMalformed</a>: a
+remote can produce this at will, and nothing is wrong with this Reactor.</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_AddressPeerLimitReached"><code>AddressPeerLimitReached = 208</code></dt>
+  <dd><p>A verified handshake, or on the stream profile an accepted connection, was refused because its
+address already holds <a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress.html#ReactorSockets_DatagramSessionOptions_MaxPeersPerAddress">MaxPeersPerAddress</a> or
+<a class="xref" href="ReactorSockets.StreamSessionOptions.MaxPeersPerAddress.html#ReactorSockets_StreamSessionOptions_MaxPeersPerAddress">MaxPeersPerAddress</a> accepted Peers while other capacity Slots
+were free. Subject is the claimed Source. <code>Value0</code> is the limit; <code>Value1</code> is the prefix
+length the address was counted by: 32 for IPv4, and
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.PeerLimitIPv6PrefixLength.html#ReactorSockets_DatagramSessionOptions_PeerLimitIPv6PrefixLength">PeerLimitIPv6PrefixLength</a> or
+<a class="xref" href="ReactorSockets.StreamSessionOptions.PeerLimitIPv6PrefixLength.html#ReactorSockets_StreamSessionOptions_PeerLimitIPv6PrefixLength">PeerLimitIPv6PrefixLength</a> for IPv6, so every address in that
+prefix shares the limit.
+One record per refusal, because it names the address and the admission cap already bounds how
+many refusals a Pump can make. A full Reactor reports <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_CapacityExhausted">CapacityExhausted</a> on the
+datagram profile and <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_PeerRefused">PeerRefused</a> on the stream profile instead.</p>
+<p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>: a remote can produce this at will, and a consumer can act on it
+by raising the limit if the address is a NAT or proxy, or by blocking it if it is not. Defined by
+the datagram profile and shared by the stream profile, because it is one condition (ADR 0020).</p>
+</dd>
+  
+    <dt id="ReactorSockets_DiagnosticId_DatagramReadLimitReached"><code>DatagramReadLimitReached = 209</code></dt>
+  <dd><p>A Pump made <a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxDatagramsPerPump.html#ReactorSockets_DatagramSessionOptions_MaxDatagramsPerPump">MaxDatagramsPerPump</a> reads on one bound socket and
+stopped. What was left, if anything, waits for a later Pump. No subject. <code>Value0</code> is the
+limit; <code>Value1</code> is the socket's index in
+<a class="xref" href="ReactorSockets.DatagramSessionReactor.BoundEndpoints.html#ReactorSockets_DatagramSessionReactor_BoundEndpoints">BoundEndpoints</a>. At most one record per bound socket per Pump.</p>
+<p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>: a remote can produce this at will, and it names a configured
+bound a consumer can act on. A queued socket error spends a read, so not every read was a datagram.
+The socket's queue depth cannot be read past queued errors, so a Pump that read exactly the last
+queued datagram also reports this.</p>
+</dd>
+  
     <dt id="ReactorSockets_DiagnosticId_PeerRefused"><code>PeerRefused = 300</code></dt>
   <dd><p>A dialler was refused in-protocol during the stream handshake, either because it announced a
 different protocol version or because every capacity Slot was occupied. Subject is the claimed
@@ -194,9 +292,10 @@ this profile, not conditions a consumer needs to act on.</p>
   
     <dt id="ReactorSockets_DiagnosticId_LingerNegotiated"><code>LingerNegotiated = 301</code></dt>
   
-  <dd><p>A stream handshake completed and the two ends' announced Linger values were negotiated to their
-minimum (ADR 0011). Subject is the newly established Peer. <code>Value0</code> is this end's own
-Linger in milliseconds; <code>Value1</code> is the effective (minimum) Linger in milliseconds.</p>
+  <dd><p>A Session established — on either profile, stream or datagram — and the two ends' announced
+Linger values were negotiated to their minimum (ADR 0011). Subject is the newly established
+Peer. <code>Value0</code> is this end's own Linger in milliseconds; <code>Value1</code> is the effective
+(minimum) Linger in milliseconds.</p>
 </dd>
     <dt id="ReactorSockets_DiagnosticId_MalformedFraming"><code>MalformedFraming = 302</code></dt>
   <dd><p>An established Peer's Message framing broke this profile's rules and the Session was closed
@@ -211,9 +310,9 @@ rather than an Event on the consumer's own stream.</p>
   
     <dt id="ReactorSockets_DiagnosticId_DataAfterGoodbye"><code>DataAfterGoodbye = 303</code></dt>
   <dd><p>An established Peer sent Message bytes after its own Goodbye had already been received, and
-the Session was closed with <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_ProtocolViolation">ProtocolViolation</a> (issue #93).
-Subject is the Peer. Carries no claimed length — <span class="xref">ReactorSockets.Session.MessageFramingLegality</span> reaches
-this outcome before ever reading a prefix, so there is nothing to report but the contradiction
+the Session was closed with <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_ProtocolViolation">ProtocolViolation</a>. Subject is the
+Peer. Carries no claimed length — <span class="xref">ReactorSockets.Session.MessageFramingLegality</span> reaches this
+outcome before ever reading a prefix, so there is nothing to report but the contradiction
 itself. <code>Value0</code> and <code>Value1</code> are unused.</p>
 <p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>, for the same reason as <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_MalformedFraming">MalformedFraming</a>: a
 remote can produce this at will by ignoring the Goodbye it just sent.</p>
@@ -222,24 +321,26 @@ remote can produce this at will by ignoring the Goodbye it just sent.</p>
     <dt id="ReactorSockets_DiagnosticId_ResumeMatched"><code>ResumeMatched = 304</code></dt>
   <dd><p>A connection presenting a valid resume secret was matched onto the Interrupted Peer whose Slot
 was reserving the Session it named, and that Session continued over the replacement transport
-rather than a new one being established (issue #123, ADR 0011). Subject is the resumed Peer —
-the same <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a>, generation included, the Session had before the interruption,
-since nothing about a Peer's identity is renewed by a Resume. <code>Value0</code> is the number of
-retained outbound bytes the match rewound to the counter the Resume reported; <code>Value1</code> is
-unused.</p>
+rather than a new one being established (ADR 0011). Subject is the resumed Peer — the same
+<a class="xref" href="ReactorSockets.PeerId.html">PeerId</a>, generation included, the Session had before the interruption, since
+nothing about a Peer's identity is renewed by a Resume. <code>Value0</code> is the number of retained
+outbound bytes the match rewound to the counter the Resume reported; <code>Value1</code> is unused. On
+the datagram profile it is logged when a Resume control datagram matches the Peer on the
+accepting end (session id and secret), and when an Interrupted dialling end that has sent a
+Resume hears its session again. Nothing is rewound, because retransmission already re-sends
+anything unacknowledged, so <code>Value0</code> is 0 and <code>Value1</code> is unused.</p>
 <p>
 <a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Info">Info</a>: a reconnection is the outcome reserving a Slot exists to
 produce, not a condition a consumer needs to act on.
 </p>
 <p>
-<code>Value0</code> reads 0 until issue #127 supplies the rewind: this slice matches the Resume and
-reads the counter it reports without acting on it, so no bytes have been rewound yet and 0 is
-what the match can honestly report.
+Shared with the datagram session profile rather than duplicated in the datagram block, as are
+<a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_LingerNegotiated">LingerNegotiated</a> and <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_ResumeUnmatched">ResumeUnmatched</a> (ADR 0020).
 </p>
 <p>
-Numbered 304 rather than the 302 the slice-4 spec named: 302 and 303 were taken by
-<a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_MalformedFraming">MalformedFraming</a> and <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DataAfterGoodbye">DataAfterGoodbye</a> (issues #92 and #106) after
-that spec was written, and a value published in a closed permanent enum is never renumbered.
+Numbered 304 because 302 and 303 belong to <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_MalformedFraming">MalformedFraming</a> and
+<a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DataAfterGoodbye">DataAfterGoodbye</a>, and a value published in a closed permanent enum is never
+renumbered.
 </p>
 </dd>
   
@@ -267,22 +368,29 @@ the record it arrived in re-announces parameters — <code>Value1</code> is what
 closed on without being told anything, so it learns neither the count nor which of the three
 refusals it met.
 </p>
+<p>
+The datagram profile reports a Resume control datagram the same way, with <code>Value1</code> 6 (the
+Resume control type, <code>DatagramControlType.Resume</code>). <code>Value0</code> is 0 when the target
+session id names no Peer the Reactor holds, or names a dialled Peer (never a Resume target, since only
+the dialling end sends Resume), and 1 when it names a Peer but the presented secret
+does not equal the one that Peer issued.
+</p>
 </dd>
   
     <dt id="ReactorSockets_DiagnosticId_RedialAttempted"><code>RedialAttempted = 306</code></dt>
-  <dd><p>A dialling-side Peer began a fresh re-dial attempt after its transport was lost (issue #125,
-ADR 0011). Subject is the Peer. <code>Value0</code> is the attempt number, starting at 1 and rising by
-one per attempt; <code>Value1</code> is the delay in milliseconds this attempt actually waited before
-dialling — the jittered figure <span class="xref">ReactorSockets.Session.RedialSchedule.NextDelay()</span> drew, so
-what actually elapsed is observable rather than only the computed figure before jitter.</p>
+  <dd><p>A dialling-side Peer began a fresh re-dial attempt after its transport was lost (ADR 0011).
+Subject is the Peer. <code>Value0</code> is the attempt number, starting at 1 and rising by one per
+attempt; <code>Value1</code> is the delay in milliseconds this attempt actually waited before dialling
+— the jittered figure <span class="xref">ReactorSockets.Session.RedialSchedule.NextDelay()</span> drew, so what actually
+elapsed is observable rather than only the computed figure before jitter.</p>
 <p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Info">Info</a>: a re-dial is the ordinary behaviour of a dialling Peer that
 lost its transport, not a condition a consumer needs to act on.</p>
 </dd>
   
     <dt id="ReactorSockets_DiagnosticId_RedialFailed"><code>RedialFailed = 307</code></dt>
-  <dd><p>A re-dial attempt could not connect (issue #125, ADR 0011). Subject is the Peer, which this
-never closes — it stays Interrupted and waits out the schedule's next delay, leaving Linger,
-not an attempt count, the only thing that ever closes it. <code>Value0</code> carries the platform
+  <dd><p>A re-dial attempt could not connect (ADR 0011). Subject is the Peer, which this never closes —
+it stays Interrupted and waits out the schedule's next delay, leaving Linger, not an attempt
+count, the only thing that ever closes it. <code>Value0</code> carries the platform
 <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> as its underlying integer value; <code>Value1</code> is
 the attempt number that failed.</p>
 <p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Info">Info</a> rather than <a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>: under this
@@ -291,12 +399,12 @@ to Warn would train a consumer to ignore Warn.</p>
 </dd>
   
     <dt id="ReactorSockets_DiagnosticId_DeliveryCounterRefused"><code>DeliveryCounterRefused = 308</code></dt>
-  <dd><p>An established Peer's delivery-counter record (issue #109) claimed to have received more
-Messages than this end has ever sent it, and the Session was closed with
-<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_ProtocolViolation">ProtocolViolation</a> (issue #113) — the peer is confirming Messages
-this end never queued, rather than merely repeating a count it already reported. Subject is the
-Peer. <code>Value0</code> is the claimed cumulative count; <code>Value1</code> is the count of Messages (and,
-if this end's own Goodbye has already been queued for this Peer, that too) this end has actually
+  <dd><p>An established Peer's delivery-counter record claimed to have received more Messages than this
+end has ever sent it, and the Session was closed with
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_ProtocolViolation">ProtocolViolation</a> — the peer is confirming Messages this end
+never queued, rather than merely repeating a count it already reported. Subject is the Peer.
+<code>Value0</code> is the claimed cumulative count; <code>Value1</code> is the count of Messages (and, if
+this end's own Goodbye has already been queued for this Peer, that too) this end has actually
 appended to this Peer's retention — the largest count a legitimate confirmation could ever sit
 at or below.</p>
 <p>
@@ -304,16 +412,36 @@ at or below.</p>
 remote can produce this at will by inflating its own counter.
 </p>
 <p>
-Numbered 308 rather than the next free 304: ADR 0013's roster, as amended for this slice, reserves
-304-307 for the rest of slice 4 (<a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_ResumeMatched">ResumeMatched</a> and <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_ResumeUnmatched">ResumeUnmatched</a>,
-which issue #124 has since taken, then RedialAttempted and RedialFailed), and a value published
-in a closed permanent enum cannot be moved later to make room.
+Numbered 308 rather than the next free 304: ADR 0013's roster reserves 304-307 for the Resume
+and redial Diagnostics (<a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_ResumeMatched">ResumeMatched</a> and <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_ResumeUnmatched">ResumeUnmatched</a>, then
+RedialAttempted and RedialFailed), and a value published in a closed permanent enum cannot be
+moved later to make room.
 </p>
 </dd>
   
   </dl>
 
 
+  <h2 id="ReactorSockets_DiagnosticId_remarks">Remarks</h2>
+  <div class="markdown level0 remarks"><p>
+<b>Supported Sink style: range-check the blocks.</b> The enum grows inside its blocks, so a Sink
+that classifies an id by the block it sits in, or that switches on members it cares about with a
+default arm for the rest, keeps working when a member is added. A Sink whose <code>switch</code> assumes
+it lists every member is not supported: the next additive release breaks it.
+</p>
+<p>
+<b>A block names the profile that defined a condition, not the profile that emitted a record</b>
+(ADR 0020). <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_LingerNegotiated">LingerNegotiated</a>, <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_ResumeMatched">ResumeMatched</a> and
+<a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_ResumeUnmatched">ResumeUnmatched</a> sit in the stream block and are emitted by the datagram session
+profile too, because each is one condition and a member names a condition. A Raw-only Sink's
+range check over 100-199 is exact, since nothing outside Raw shares that block. A Sink that needs
+to know which profile emitted a record knows which Reactor it was given to.
+</p>
+<p>
+Each member's documentation is the authority on its subject and value slots. ADR 0013's roster table
+is the one place to check them side by side and is kept in step with these docs.
+</p>
+</div>
 
 </article>
 

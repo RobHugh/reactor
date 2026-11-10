@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_LinkCounters__ctor_.md&amp;value=---%0Auid%3A%20ReactorSockets.LinkCounters.%23ctor*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_LinkCounters__ctor_.md&amp;value=---%0Auid%3A%20ReactorSockets.LinkCounters.%23ctor*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_LinkCounters__ctor_" data-uid="ReactorSockets.LinkCounters.#ctor*" class="text-break">
-Constructor LinkCounters  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/LinkCounters.cs/#L8"><i class="bi bi-code-slash"></i></a>
+Constructor LinkCounters  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/LinkCounters.cs/#L21"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -105,9 +105,9 @@ Constructor LinkCounters  <a class="header-action link-secondary" title="View so
 
 <a id="ReactorSockets_LinkCounters__ctor_" data-uid="ReactorSockets.LinkCounters.#ctor*"></a>
 
-<h3 id="ReactorSockets_LinkCounters__ctor_System_UInt64_System_UInt64_System_UInt64_" data-uid="ReactorSockets.LinkCounters.#ctor(System.UInt64,System.UInt64,System.UInt64)">
-  LinkCounters(ulong, ulong, ulong)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/LinkCounters.cs/#L8"><i class="bi bi-code-slash"></i></a>
+<h3 id="ReactorSockets_LinkCounters__ctor_System_UInt64_System_UInt64_" data-uid="ReactorSockets.LinkCounters.#ctor(System.UInt64,System.UInt64)">
+  LinkCounters(ulong, ulong)
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/LinkCounters.cs/#L21"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>A point-in-time snapshot of one Link's counters (ADR 0013): monotonic figures running from that
@@ -117,17 +117,19 @@ no accessor that enumerates every Link's counters in one call.</p>
 <div class="markdown level1 conceptual"></div>
 
 <div class="codewrapper">
-  <pre><code class="lang-csharp hljs">public LinkCounters(ulong BytesSent, ulong BytesReceived, ulong ReadShareExhaustions)</code></pre>
+  <pre><code class="lang-csharp hljs">public LinkCounters(ulong BytesSent, ulong BytesReceived)</code></pre>
 </div>
 
 <h4 class="section">Parameters</h4>
 <dl class="parameters">
   <dt><code>BytesSent</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.uint64">ulong</a></dt>
-  <dd></dd>
+  <dd><p>Bytes the transport accepted for sending on this Link. Not derivable: the Reactor-scope datagram
+figures count datagrams rather than bytes, cover every Link at once, and never see a stream Link.</p>
+</dd>
   <dt><code>BytesReceived</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.uint64">ulong</a></dt>
-  <dd></dd>
-  <dt><code>ReadShareExhaustions</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.uint64">ulong</a></dt>
-  <dd></dd>
+  <dd><p>Bytes delivered from this Link into the Arena. Not derivable: no other figure attributes received
+bytes to one Link, and the Arena high-water is a per-Frame peak rather than a running total.</p>
+</dd>
 </dl>
 
 
@@ -137,6 +139,11 @@ no accessor that enumerates every Link's counters in one call.</p>
 
 
 
+<h4 class="section" id="ReactorSockets_LinkCounters__ctor_System_UInt64_System_UInt64__remarks">Remarks</h4>
+<div class="markdown level1 remarks"><p>There is no read-share figure here, unlike <a class="xref" href="ReactorSockets.PeerCounters.html">PeerCounters</a>. The Raw profile reads a
+ready Link once per Pump, so a Link never reaches a second reservation in one Frame and its read
+share can never be exhausted. A field that could only ever read zero fails ADR 0013's counter test.</p>
+</div>
 
 
 

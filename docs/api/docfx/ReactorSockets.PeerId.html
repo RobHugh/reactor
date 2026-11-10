@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_PeerId.md&amp;value=---%0Auid%3A%20ReactorSockets.PeerId%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_PeerId.md&amp;value=---%0Auid%3A%20ReactorSockets.PeerId%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -75,7 +75,7 @@
 
 
   <h1 id="ReactorSockets_PeerId" data-uid="ReactorSockets.PeerId" class="text-break">
-Struct PeerId  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/PeerId.cs/#L37"><i class="bi bi-code-slash"></i></a>
+Struct PeerId  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/PeerId.cs/#L39"><i class="bi bi-code-slash"></i></a>
   </h1>
 
   <div class="facts text-secondary">
@@ -155,7 +155,7 @@ always meant here.
 </h2>
 
   <dl class="jumplist">
-    <dt><a class="xref" href="ReactorSockets.PeerId.-ctor.html#ReactorSockets_PeerId__ctor_System_UInt64_System_Int32_System_UInt64_">PeerId(ulong, int, ulong)</a></dt>
+    <dt><a class="xref" href="ReactorSockets.PeerId.-ctor.html#ReactorSockets_PeerId__ctor_System_UInt32_System_Int32_System_UInt64_">PeerId(uint, int, ulong)</a></dt>
     <dd><p>A Peer's identity inside this process: the Reactor that issued it, a zero-based Slot index, and a
 generation counter that increments when the Slot is reused, so a stale <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> held
 past a Peer's close compares unequal to whatever now occupies that Slot (ADR 0007) rather than
@@ -181,8 +181,10 @@ Raw profile's.</p>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.PeerId.Origin.html#ReactorSockets_PeerId_Origin">Origin</a></dt>
     <dd><p>Which Reactor issued this <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a>. Opaque and process-local — it is compared for
-equality and nothing else, orders nothing, and never appears on the wire. Not a
-<a class="xref" href="ReactorSockets.Source.html">Source</a>, which names a remote address; this names a Reactor of this process.</p>
+equality and nothing else, orders nothing, and never appears on the wire. Never 0: that value is
+reserved and no Reactor is ever issued it, so a <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/default">default</a> <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a>
+addresses nothing twice over. Not a <a class="xref" href="ReactorSockets.Source.html">Source</a>, which names a remote address; this
+names a Reactor of this process.</p>
 </dd>
   </dl>
 

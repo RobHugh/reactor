@@ -2,9 +2,9 @@
 <html>
   <head>
     <meta charset="utf-8">
-      <title>Property Interval | ReactorSockets API reference </title>
+      <title>Property BytesReceived | ReactorSockets API reference </title>
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <meta name="title" content="Property Interval | ReactorSockets API reference ">
+      <meta name="title" content="Property BytesReceived | ReactorSockets API reference ">
       
       
       <link rel="icon" href="favicon.ico">
@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/dev/apiSpec/new?filename=ReactorSockets_PumpIntervalObserver_Interval_.md&amp;value=---%0Auid%3A%20ReactorSockets.PumpIntervalObserver.Interval*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_PeerCounters_BytesReceived_.md&amp;value=---%0Auid%3A%20ReactorSockets.PeerCounters.BytesReceived*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -70,14 +70,14 @@
           <nav id="breadcrumb"></nav>
         </div>
 
-        <article data-uid="ReactorSockets.PumpIntervalObserver.Interval*">
+        <article data-uid="ReactorSockets.PeerCounters.BytesReceived*">
 
 
 
 
 
-<h1 id="ReactorSockets_PumpIntervalObserver_Interval_" data-uid="ReactorSockets.PumpIntervalObserver.Interval*" class="text-break">
-Property Interval  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/PumpIntervalObserver.cs/#L55"><i class="bi bi-code-slash"></i></a>
+<h1 id="ReactorSockets_PeerCounters_BytesReceived_" data-uid="ReactorSockets.PeerCounters.BytesReceived*" class="text-break">
+Property BytesReceived  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/PeerCounters.cs/#L195"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -103,19 +103,34 @@ Property Interval  <a class="header-action link-secondary" title="View source" h
 
 
 
-<a id="ReactorSockets_PumpIntervalObserver_Interval_" data-uid="ReactorSockets.PumpIntervalObserver.Interval*"></a>
+<a id="ReactorSockets_PeerCounters_BytesReceived_" data-uid="ReactorSockets.PeerCounters.BytesReceived*"></a>
 
-<h3 id="ReactorSockets_PumpIntervalObserver_Interval" data-uid="ReactorSockets.PumpIntervalObserver.Interval">
-  Interval
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/dev/src/ReactorSockets/PumpIntervalObserver.cs/#L55"><i class="bi bi-code-slash"></i></a>
+<h3 id="ReactorSockets_PeerCounters_BytesReceived" data-uid="ReactorSockets.PeerCounters.BytesReceived">
+  BytesReceived
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/PeerCounters.cs/#L195"><i class="bi bi-code-slash"></i></a>
 </h3>
 
-<div class="markdown level1 summary"><p>The interval between the two most recent <a class="xref" href="ReactorSockets.PumpIntervalObserver.Observe.html#ReactorSockets_PumpIntervalObserver_Observe">Observe()</a> calls.</p>
+<div class="markdown level1 summary"><p>On the datagram profile, the datagram bytes attributed to this Peer on arrival (ADR 0013).
+Incremented once per data Datagram that both names an established Peer's session id and proves
+well-formed — the same proof that gates ack application and record classification — at the whole
+Datagram's length, header included, mirroring <a class="xref" href="ReactorSockets.PeerCounters.BytesSent.html#ReactorSockets_PeerCounters_BytesSent">BytesSent</a>. A Datagram naming no Session,
+or one so malformed it cannot be attributed to the Peer it claims, charges no Peer: it lands on a
+Reactor-scope figure instead. A handshake's control datagrams are never counted here either, for the
+same reason as <a class="xref" href="ReactorSockets.PeerCounters.BytesSent.html#ReactorSockets_PeerCounters_BytesSent">BytesSent</a>: at the point one arrives, no Peer's session id has been
+assigned yet for it to name. A Resume that matches this Peer is counted at its fixed 256 bytes,
+because a Peer exists to charge. A Resume naming no Peer, or presenting the wrong secret, charges
+none. On the stream profile, every byte read from this Peer's connection, framing and handshake
+records included. The first record on an accepted connection is charged once it is admitted as this
+Peer or matched as its Resume. A connection refused or never matched charges no Peer. Monotonic and
+never reset, exactly like <a class="xref" href="ReactorSockets.PeerCounters.HorizonDeferrals.html#ReactorSockets_PeerCounters_HorizonDeferrals">HorizonDeferrals</a>: its lifetime is the Peer's, not the
+transport's, so a Resume does not zero it. A freshly connected datagram Peer reads zero. Not
+derivable: <a class="xref" href="ReactorSockets.PeerCounters.MessagesReceived.html#ReactorSockets_PeerCounters_MessagesReceived">MessagesReceived</a> counts Messages rather than bytes, and the Reactor-scope
+figures neither attribute bytes to a Peer nor see a stream connection.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 
 <div class="codewrapper">
-  <pre><code class="lang-csharp hljs">public TimeSpan Interval { get; }</code></pre>
+  <pre><code class="lang-csharp hljs">public ulong BytesReceived { get; init; }</code></pre>
 </div>
 
 
@@ -124,23 +139,13 @@ Property Interval  <a class="header-action link-secondary" title="View source" h
 
 <h4 class="section">Property Value</h4>
 <dl class="parameters">
-  <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.timespan">TimeSpan</a></dt>
+  <dt><a class="xref" href="https://learn.microsoft.com/dotnet/api/system.uint64">ulong</a></dt>
   <dd></dd>
 </dl>
 
 
 
 
-<h4 class="section" id="ReactorSockets_PumpIntervalObserver_Interval_remarks">Remarks</h4>
-<div class="markdown level1 remarks"><p>Before a second call this reads <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.timespan.maxvalue">MaxValue</a> — deliberately, and documented
-rather than left to fall out of a default. There is no cadence to report yet, and the one thing
-this value is for is flooring <span class="xref">ReactorSockets.Session.RedialSchedule</span>'s first computed delay
-(<code>Math.Min(pumpInterval, linger)</code>): reporting the largest possible interval defers entirely
-to that schedule's own ceiling, the effective Linger, rather than inventing a cadence that has
-never actually been observed. Zero would have done the opposite — floor every delay at
-immediately, the one value <span class="xref">ReactorSockets.Session.RedialSchedule</span>'s own constructor already refuses to
-accept.</p>
-</div>
 
 
 
