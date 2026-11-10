@@ -63,6 +63,8 @@ public enum DisconnectReason
     /// length prefix or the Message body it named had fully arrived, or bytes arriving behind a
     /// Goodbye already received from that Peer — a Peer that announced it was leaving and then kept
     /// sending is contradicting its own announcement, so it is disconnected rather than believed.
+    /// On the stream profile it also ends a dial the far end refused for sending more than one
+    /// further handshake record's worth of bytes behind its first record before it was answered.
     /// Distinct from <see cref="TransportFailed"/>: the byte stream itself survived long enough to
     /// carry the violation, and what is wrong is the bytes it carried rather than the transport
     /// underneath it. Distinct from <see cref="PeerGoodbye"/>, which is reserved for an ending that

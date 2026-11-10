@@ -21,6 +21,14 @@ internal enum RefusalReason : byte
     /// <see cref="StreamSessionOptions.MaxPeersPerAddress"/> Peers. Says nothing about versions.
     /// </summary>
     Capacity = 2,
+
+    /// <summary>
+    /// The dialler sent more than one further handshake record's worth of bytes behind its first
+    /// record before it was answered, which a conforming dialler never does. The first value names
+    /// that limit in bytes. Sent only by the stream profile, in place of <see cref="Capacity"/>, by a
+    /// Reactor that was refusing the connection for capacity (issue #455).
+    /// </summary>
+    ProtocolViolation = 3,
 }
 
 /// <summary>
@@ -39,6 +47,7 @@ internal static class RefusalReasonMap
     {
         RefusalReason.Version => DisconnectReason.VersionMismatch,
         RefusalReason.Capacity => DisconnectReason.RemoteAtCapacity,
+        RefusalReason.ProtocolViolation => DisconnectReason.ProtocolViolation,
 
         // The discard arm refuses.
         _ => null,
