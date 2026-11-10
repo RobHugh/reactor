@@ -1,6 +1,6 @@
 # Changelog
 
-This log covers the closed pull requests up to the 1.0 release on `main` (2026-11-10). It describes
+This log covers the closed pull requests up to the 1.0.0 release on `main` (2026-11-10). It describes
 the code as it stands now. Where a later change replaced earlier behaviour, only the current
 behaviour is listed. The risks section lists what the pull requests left open and the current code
 still shows.
