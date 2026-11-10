@@ -46,7 +46,7 @@ appears that is not in the audited list below.
 | `Reactor` | required | |
 | `MaxMessageSize` | required | A statement about your protocol. |
 | `RetentionBytes` | required | Your memory against your tolerance for stalling on loss. |
-| `MaxPeersPerAddress` | required | How many Peers one address may legitimately hold against how many Slots one reachable address may take. `Reactor.Capacity` or above sets no limit. At least 1. |
+| `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | `Capacity`. The largest limit that still keeps one address from holding every Slot. Set it lower if strangers can reach the Reactor. `Reactor.Capacity` or above sets no limit. At least 1. |
 | `SendIdleInterval` | required | Bandwidth on an idle link against time to notice a dead Peer. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Linger` | required | A prompt teardown against a clean one. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Endpoints` | empty | No declaration. The first dial binds a wildcard, port-zero socket. |
@@ -63,6 +63,7 @@ appears that is not in the audited list below.
 | `Reactor` | required | |
 | `MaxMessageSize` | required | A statement about your protocol. |
 | `RetentionBytes` | required | Your memory against your tolerance for a stalled Peer. |
+| `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | As for the datagram profile. A Resume is never refused by it. |
 | `SendIdleInterval` | required | As for the datagram profile. |
 | `Linger` | required | As for the datagram profile. |
 | `Endpoints` | empty | No declaration. Dial-only. |

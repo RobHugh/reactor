@@ -50,6 +50,7 @@ public class OptionsSurfaceTests
         "StreamSessionOptions.Reactor",
         "StreamSessionOptions.MaxMessageSize",
         "StreamSessionOptions.RetentionBytes",
+        "StreamSessionOptions.MaxPeersPerAddress",
         "StreamSessionOptions.SendIdleInterval",
         "StreamSessionOptions.Linger",
         "StreamSessionOptions.Endpoints",

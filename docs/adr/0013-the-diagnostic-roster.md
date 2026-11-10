@@ -225,6 +225,10 @@ refusals, but no counter names the address, which is what a consumer needs in or
 or block the address. It emits one record per refusal rather than one per Frame like
 `CapacityExhausted`, because each record has its own subject, and the admission cap bounds the volume.
 
+**Amended (issue #452).** The stream profile emits `AddressPeerLimitReached` too, under ADR 0020's rule
+that one condition is one member. No stream admission counter moves for it, so the record is the only
+place the refusal shows.
+
 **Amended (issue #428).** `DatagramReadLimitReached` takes 209, under the configured-bound class. What a
 count cannot carry is the identity of the socket that spent `MaxDatagramsPerPump`, as an index in
 `BoundEndpoints`, which tells a consumer which address is flooded. It emits at most one record per bound

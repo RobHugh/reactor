@@ -21,6 +21,7 @@ one would be guessing at your application.
 | Knob | Default | Where the default comes from |
 |---|---|---|
 | `Reactor.AdmissionCap` | `Capacity` | One Pump never does more admission work than a full Reactor's worth. |
+| `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | The largest limit that still keeps one address from holding every Slot. |
 | `Reactor.ArenaSize` | `MaxMessageSize` | An arena too small for one Message could never deliver one. |
 | `Reactor.TimeProvider` | `TimeProvider.System` | Only monotonic reads are ever taken. |
 | `ReceiveBufferSize` | `MaxMessageSize + 4` | One incomplete maximum Message plus its length prefix. |
@@ -50,6 +51,22 @@ A dial-only Reactor supplies no endpoints. TCP's own connect binds an ephemeral 
 Capacity is the number of Peers, but interrupted and closing Peers still hold their Slots for up to
 `Linger`. Size capacity for the peak Peer count *plus* the reconnect churn you expect within a
 Linger window, or fresh dials get refused while a departed Peer's Slot is still reserved.
+
+## Choosing the per-address limit
+
+`MaxPeersPerAddress` stops one reachable address holding every Slot. The default, one fewer than
+`Capacity`, guarantees only that one Slot stays free for other addresses. Set it above the number of
+Peers you expect behind one NAT or proxy, and well below `Capacity` if strangers can reach this Reactor.
+If every Peer shares one address, for example behind one proxy, set it to `Capacity`, or the default
+leaves one Slot unused.
+
+The limit counts addresses, not ports, because one host can connect from many ports. It does not group
+IPv6 addresses by prefix. Peers this Reactor dialled do not count, and a Resume is never refused by it,
+because the Peer it names already owns its Slot.
+
+A Peer counts against the address its connection was accepted from until its Slot is released.
+Interrupted and Closing Peers still count, so a client that restarts with a fresh Hello can be refused
+for up to Linger. A Peer that resumed from another address also still counts against its first one.
 
 ## Choosing retention
 

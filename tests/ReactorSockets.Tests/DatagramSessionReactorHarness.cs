@@ -31,6 +31,7 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
         int capacity = 4,
         int? admissionCap = null,
         int? maxPeersPerAddress = null,
+        bool defaultMaxPeersPerAddress = false,
         int? maxDatagramsPerPump = null,
         int maxMessageSize = 4096,
         int retentionBytes = 4096,
@@ -64,8 +65,8 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
             },
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
-            // Defaults to no limit: every party in a test shares the loopback address.
-            MaxPeersPerAddress = maxPeersPerAddress ?? capacity,
+            // No limit unless asked: every party in a test shares the loopback address.
+            MaxPeersPerAddress = defaultMaxPeersPerAddress ? null : maxPeersPerAddress ?? capacity,
             FragmentSize = fragmentSize,
             ReceiveWindowFragments = receiveWindowFragments,
             MissedHeartbeats = missedHeartbeats,

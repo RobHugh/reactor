@@ -39,8 +39,9 @@ public enum DisconnectReason
     /// <summary>
     /// The remote end had no capacity Slot free for this Session and said so. Distinct from silence:
     /// a Reactor at capacity answers a Hello it received rather than dropping it, so the dialler learns
-    /// the difference between "full" and "gone". On the datagram profile it also means this address is at
-    /// the far end's <see cref="DatagramSessionOptions.MaxPeersPerAddress"/>, so other Slots may be free.
+    /// the difference between "full" and "gone". It also means this address may be at the far end's
+    /// <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> or
+    /// <see cref="StreamSessionOptions.MaxPeersPerAddress"/>, so other Slots may be free.
     /// </summary>
     RemoteAtCapacity = 2,
 
