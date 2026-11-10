@@ -701,7 +701,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// A record naming no known type is dropped here too, ahead of the capacity check, so the discard
     /// arm still refuses rather than answering it with a Refusal that implies it was understood. A
     /// Hello announcing an illegal interval is dropped there for the same reason, before it can take a
-    /// Slot. A Hello announcing a secret a reservation is holding is refused ahead of the capacity
+    /// Slot. The per-address limit runs after the capacity check, so a Resume never meets it and a full
+    /// Reactor reports <see cref="DiagnosticId.PeerRefused"/> rather than
+    /// <see cref="DiagnosticId.AddressPeerLimitReached"/>. A Hello announcing a secret a reservation is holding is refused ahead of the capacity
     /// check as well, since it is a claim on that reserved Session and not a request for a Slot
     /// (<see cref="IsHelloClaimingAReservedSession"/>). Everything else — an ordinary Hello, a Refusal,
     /// and how each is answered — reaches <see cref="OnHandshakeRecordFilled"/> through
@@ -745,7 +747,35 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
-        AdmitPendingAdmission(pending);
+        // A full Reactor took the arm above and reported PeerRefused, so a limit of Capacity never fires.
+        Source remote = Source.FromIPEndPoint(pending.Link.RemoteEndPoint);
+        if (AcceptedPeersAtAddressOf(remote) >= _options.MaxPeersPerAddress)
+        {
+            RefuseForAddressPeerLimit(pending, remote);
+            return;
+        }
+
+        AdmitPendingAdmission(pending, remote);
+    }
+
+    /// <summary>
+    /// How many accepted Peers hold a Slot on a connection accepted from <paramref name="remote"/>'s
+    /// address (issue #452). Counted from the Slots rather than kept as a separate tally, so it cannot
+    /// drift from the Peers it describes. It costs one walk of capacity entries, on a path the admission
+    /// cap already bounds per Pump.
+    /// </summary>
+    private int AcceptedPeersAtAddressOf(Source remote)
+    {
+        int count = 0;
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is PeerSlot { AcceptedFrom: Source acceptedFrom } && acceptedFrom.HasSameAddressAs(remote))
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     /// <summary>
@@ -805,12 +835,15 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// holding: this end's own Hello goes out first, then the record already read is dispatched exactly
     /// as it would have been had it arrived after the Slot existed.
     /// </summary>
-    private void AdmitPendingAdmission(PendingAdmission pending)
+    /// <param name="pending">The held connection being admitted.</param>
+    /// <param name="remote">The address it was accepted from, which the Peer is charged to until its Slot is released.</param>
+    private void AdmitPendingAdmission(PendingAdmission pending, Source remote)
     {
         TcpLink link = ReleasePendingAdmission(pending);
         PeerSlot slot = new()
         {
             Link = link,
+            AcceptedFrom = remote,
             LocalResumeSecret = NextResumeSecret(),
             State = HandshakeState.AwaitingPeerHandshake,
             ReceiveBuffer = new byte[_options.ResolvedReceiveBufferSize],
@@ -1101,6 +1134,32 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             _diagnostics.Log(DiagnosticRecord.ForPeerRefusedCapacity(remote, _peers.Capacity));
         }
 
+        SendCapacityRefusal(link);
+    }
+
+    /// <summary>
+    /// Refuses a held connection whose address already holds <see cref="StreamSessionOptions.MaxPeersPerAddress"/>
+    /// accepted Peers while other Slots are free (issue #452). The wire carries the same capacity Refusal
+    /// as a full Reactor, so the dialler cannot tell whether Slots are free (ADR 0014). Neither admission
+    /// counter moves, as for <see cref="RefuseForCapacity"/>.
+    /// </summary>
+    private void RefuseForAddressPeerLimit(PendingAdmission pending, Source remote)
+    {
+        TcpLink link = ReleasePendingAdmission(pending);
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForAddressPeerLimitReached(remote, _options.MaxPeersPerAddress));
+        }
+
+        SendCapacityRefusal(link);
+    }
+
+    /// <summary>
+    /// Hands a released connection to a <see cref="RefusalSlot"/>, drains what it has already sent, and
+    /// sends it the capacity Refusal naming this Reactor's configured capacity.
+    /// </summary>
+    private void SendCapacityRefusal(TcpLink link)
+    {
         RefusalSlot refusal = new() { Link = link };
         _refusals.Add(refusal);
         _dispatcher.Register(link.Socket, () => DrainRefusal(refusal), () => OnRefusalWritable(refusal));
@@ -3020,6 +3079,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>The secret this Reactor will require to be presented before it resumes this Session.</summary>
         public required byte[] LocalResumeSecret { get; init; }
+
+        /// <summary>
+        /// The address this Peer's connection was accepted from, which it is charged to against
+        /// <see cref="StreamSessionOptions.MaxPeersPerAddress"/> until its Slot is released (issue #452).
+        /// Unchanged by a Resume, so moving Peers to another address frees no room. <see langword="null"/>
+        /// for a Peer this Reactor dialled, which is not charged.
+        /// </summary>
+        public Source? AcceptedFrom { get; init; }
 
         /// <summary>How far through the handshake this Peer has got.</summary>
         public required HandshakeState State { get; set; }

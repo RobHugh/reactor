@@ -17,7 +17,8 @@ internal enum RefusalReason : byte
 
     /// <summary>
     /// No capacity Slot was available to this handshake: every Slot was occupied, or its address held
-    /// <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> Peers. Says nothing about versions.
+    /// <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> or
+    /// <see cref="StreamSessionOptions.MaxPeersPerAddress"/> Peers. Says nothing about versions.
     /// </summary>
     Capacity = 2,
 }

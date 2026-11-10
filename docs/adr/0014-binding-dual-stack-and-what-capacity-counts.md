@@ -188,6 +188,19 @@ anyone who never read about it. `Capacity` or above is the explicit way to set n
 
 The stream profile has no such limit: this amendment covers the datagram profile only.
 
+**Amended (issue #452): the stream profile takes the same limit.** One address could open connections
+and complete the Hello exchange until it held every Slot. `StreamSessionOptions` gains a required
+`MaxPeersPerAddress`, for the same reasons as the datagram knob, and the key, the charge and the wire
+refusal follow the datagram rules above. A Peer is charged to the address its connection was accepted
+from, and a Resume on a new connection does not move it. Two points are specific to the stream profile:
+
+- **A Resume never meets the limit.** The resume match runs before the capacity check (ADR 0011), and the
+  limit runs after it, so a reconnecting Peer whose address is at the limit still resumes.
+- **The refusal reuses `AddressPeerLimitReached` (208).** It is one condition on both profiles, so under
+  ADR 0020 the stream profile shares the datagram member. A full Reactor still reports `PeerRefused`
+  (300), so a limit of `Capacity` never fires. Neither admission counter moves, as for every stream
+  refusal.
+
 ## Reading back what was bound
 
 Exclusive binding makes port zero the normal way to bind in a test, so the assigned address must be

@@ -19,6 +19,7 @@ public class StreamSessionOptionsTests
         int? admissionCap = null,
         int maxMessageSize = 4096,
         int retentionBytes = 4100,
+        int maxPeersPerAddress = 1,
         int? receiveBufferSize = null,
         int? sendBufferSize = null,
         int? missedHeartbeats = null,
@@ -38,6 +39,7 @@ public class StreamSessionOptionsTests
             },
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
+            MaxPeersPerAddress = maxPeersPerAddress,
             ReceiveBufferSize = receiveBufferSize,
             SendBufferSize = sendBufferSize,
             MissedHeartbeats = missedHeartbeats,
@@ -88,6 +90,21 @@ public class StreamSessionOptionsTests
 
         // Assert
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.MaxMessageSize));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_MaxPeersPerAddressBelowOne_ThrowsArgumentOutOfRangeException(int maxPeersPerAddress)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(maxPeersPerAddress: maxPeersPerAddress);
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.MaxPeersPerAddress));
     }
 
     [Fact]

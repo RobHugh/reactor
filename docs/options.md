@@ -63,6 +63,7 @@ appears that is not in the audited list below.
 | `Reactor` | required | |
 | `MaxMessageSize` | required | A statement about your protocol. |
 | `RetentionBytes` | required | Your memory against your tolerance for a stalled Peer. |
+| `MaxPeersPerAddress` | required | As for the datagram profile. A Resume is never refused by it. |
 | `SendIdleInterval` | required | As for the datagram profile. |
 | `Linger` | required | As for the datagram profile. |
 | `Endpoints` | empty | No declaration. Dial-only. |

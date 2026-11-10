@@ -13,6 +13,7 @@ one would be guessing at your application.
 | `Reactor.Capacity` | How many Peers this Reactor admits. Multiplies every preallocation. |
 | `MaxMessageSize` | The largest Message you will send or accept, in bytes. |
 | `RetentionBytes` | Bytes held per Peer for the send path. Your backpressure budget. |
+| `MaxPeersPerAddress` | The most accepted Peers one address may hold at once. `Reactor.Capacity` or above sets no limit. |
 | `SendIdleInterval` | How long a Session may stay silent before it heartbeats. |
 | `Linger` | How long a closing or interrupted Session stays alive. |
 
@@ -50,6 +51,20 @@ A dial-only Reactor supplies no endpoints. TCP's own connect binds an ephemeral 
 Capacity is the number of Peers, but interrupted and closing Peers still hold their Slots for up to
 `Linger`. Size capacity for the peak Peer count *plus* the reconnect churn you expect within a
 Linger window, or fresh dials get refused while a departed Peer's Slot is still reserved.
+
+## Choosing the per-address limit
+
+`MaxPeersPerAddress` stops one reachable address holding every Slot. Set it above the number of Peers
+you expect behind one NAT or proxy, and below `Capacity` if strangers can reach this Reactor. If every
+Peer shares one address, for example behind one proxy, set it to `Capacity`.
+
+The limit counts addresses, not ports, because one host can connect from many ports. It does not group
+IPv6 addresses by prefix. Peers this Reactor dialled do not count, and a Resume is never refused by it,
+because the Peer it names already owns its Slot.
+
+A Peer counts against the address its connection was accepted from until its Slot is released.
+Interrupted and Closing Peers still count, so a client that restarts with a fresh Hello can be refused
+for up to Linger. A Peer that resumed from another address also still counts against its first one.
 
 ## Choosing retention
 

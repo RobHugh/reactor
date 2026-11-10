@@ -73,6 +73,7 @@ public class DiagnosticIdTests
         new(DiagnosticId.UnreliableFragment, typeof(DatagramSessionHostileFragmentDiscardTests), nameof(DatagramSessionHostileFragmentDiscardTests.Pump_HostileFragmentInAnUnreliableMode_DiscardsWholeDatagramAndReportsTheRefusal)),
         new(DiagnosticId.OversizedMessage, typeof(DatagramSessionInboundMessageLimitTests), nameof(DatagramSessionInboundMessageLimitTests.Pump_FragmentSetAssemblingPastTheLimit_DiscardsItAndReportsItsLengthAgainstTheLimit)),
         new(DiagnosticId.AddressPeerLimitReached, typeof(DatagramSessionRefusalTests), nameof(DatagramSessionRefusalTests.OnHelloWithCookie_AddressAtItsPeerLimit_CountsADiscardAndLogsAddressPeerLimitReached)),
+        new(DiagnosticId.AddressPeerLimitReached, typeof(StreamSessionPerAddressLimitTests), nameof(StreamSessionPerAddressLimitTests.AttemptFreshConnection_AddressAtItsPeerLimit_LogsAddressPeerLimitReachedRatherThanPeerRefused)),
         new(DiagnosticId.DatagramReadLimitReached, typeof(DatagramSessionReadLimitTests), nameof(DatagramSessionReadLimitTests.Pump_SpendingTheWholeLimit_LogsDatagramReadLimitReachedCarryingTheLimit)),
         new(DiagnosticId.PeerRefused, typeof(StreamSessionHandshakeGuardTests), nameof(StreamSessionHandshakeGuardTests.Connect_OfferingAVersionTheReactorDoesNotSpeak_LogsPeerRefusedAtInfoWithTheSourceSubject)),
         new(DiagnosticId.LingerNegotiated, typeof(StreamSessionNegotiatedLingerTests), nameof(StreamSessionNegotiatedLingerTests.Pump_BothRolesInterrupted_WithFractionalMillisecondOwnLinger_RoundUpOnceAndCloseAtTheRoundedInstant)),

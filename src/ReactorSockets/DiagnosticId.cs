@@ -205,14 +205,17 @@ public enum DiagnosticId
 
     /// <summary>
     /// A verified handshake was refused because its address already holds
-    /// <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> accepted Peers while other capacity Slots
+    /// <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> or
+    /// <see cref="StreamSessionOptions.MaxPeersPerAddress"/> accepted Peers while other capacity Slots
     /// were free. Subject is the claimed Source. <c>Value0</c> is the limit; <c>Value1</c> is unused.
     /// One record per refusal, because it names the address and the admission cap already bounds how
-    /// many refusals a Pump can make. A full Reactor reports <see cref="CapacityExhausted"/> instead.
+    /// many refusals a Pump can make. A full Reactor reports <see cref="CapacityExhausted"/> on the
+    /// datagram profile and <see cref="PeerRefused"/> on the stream profile instead.
     /// </summary>
     /// <remarks>
     /// <see cref="DiagnosticLevel.Warn"/>: a remote can produce this at will, and a consumer can act on it
-    /// by raising the limit if the address is a NAT or proxy, or by blocking it if it is not.
+    /// by raising the limit if the address is a NAT or proxy, or by blocking it if it is not. Defined by
+    /// the datagram profile and shared by the stream profile, because it is one condition (ADR 0020).
     /// </remarks>
     AddressPeerLimitReached = 208,
 

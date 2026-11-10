@@ -27,8 +27,8 @@ Interrupted Peer, right up to the close.
 `MalformedSessionDatagrams` stay at zero here. They are true zeros, not gaps — this profile carries no datagram transport, and it answers a
 refused connection in protocol rather than discarding it.
 
-A capacity refusal touches neither admission counter. Read `PeerRefused` (300) for those; it names
-the remote, which a counter cannot.
+A capacity or per-address refusal touches neither admission counter. Read `PeerRefused` (300) and
+`AddressPeerLimitReached` (208) for those. They name the remote, which a counter cannot.
 
 ### Peer counters
 
@@ -87,6 +87,7 @@ Source or none) and two numeric slots whose meaning is documented per id.
 |---|---|---|---|
 | `AdmissionCapReached` (1) | Warn | — | A Pump hit its admission cap with work still waiting. `Value0` the cap, `Value1` the declinings. |
 | `ArenaExhausted` (2) | Warn | Peer | The arena had no room for a Message, which is held for a later Pump. `Value0` bytes requested, `Value1` bytes free. |
+| `AddressPeerLimitReached` (208) | Warn | Source | A Hello was refused because its address holds `MaxPeersPerAddress` Peers while Slots are free. `Value0` the limit. |
 | `PeerRefused` (300) | Info | Source | A dialler was refused: version (`Value0` offered, `Value1` required) or capacity (`Value0` = capacity). |
 | `LingerNegotiated` (301) | Info | Peer | A handshake completed. `Value0` your Linger in ms, `Value1` the effective one. |
 | `MalformedFraming` (302) | Warn | Peer | A framing violation closed a Session. `Value0` the offending prefix, `Value1` your `MaxMessageSize`. |
@@ -107,4 +108,6 @@ Neither re-dial record closes a Peer. Only Linger does.
 - Rising `Resumes` on one Peer — a flapping path, not a healthy connection.
 - `PeerRefused` with a capacity value — you are turning peers away; check for Slots held by
   interrupted Peers.
+- `AddressPeerLimitReached` — one address is asking for more than its share. Raise the limit if it is a
+  NAT or proxy, or block it.
 - Any `SinkFaulted` at all — you are blind from that point on.

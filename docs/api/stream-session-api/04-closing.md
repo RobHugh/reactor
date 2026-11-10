@@ -56,8 +56,11 @@ a new generation, so a stale id can never alias a new Peer.
 `VersionMismatch` and `RemoteAtCapacity` are answers, not silence. A Reactor at capacity replies to a
 Hello rather than dropping it, so you learn the difference between "full" and "gone".
 
-Both are routine. The far end logs them as `PeerRefused` (300) at `Info`, and neither touches an
-admission counter.
+`RemoteAtCapacity` also means your address may be at the far end's `MaxPeersPerAddress`, so other
+Slots may be free.
+
+The far end logs a version or full-Reactor refusal as `PeerRefused` (300) at `Info`, and a
+per-address refusal as `AddressPeerLimitReached` (208) at `Warn`. None touches an admission counter.
 
 ## Shutting down
 

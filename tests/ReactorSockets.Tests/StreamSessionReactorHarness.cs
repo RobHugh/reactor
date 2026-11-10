@@ -17,6 +17,7 @@ internal sealed class StreamSessionReactorHarness : IDisposable
 {
     public StreamSessionReactorHarness(
         int capacity = 4,
+        int? maxPeersPerAddress = null,
         int? admissionCap = null,
         int maxMessageSize = 4096,
         int retentionBytes = 4100,
@@ -53,6 +54,7 @@ internal sealed class StreamSessionReactorHarness : IDisposable
             },
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
+            MaxPeersPerAddress = maxPeersPerAddress ?? capacity,
             ReceiveBufferSize = receiveBufferSize,
             SendBufferSize = sendBufferSize,
             MissedHeartbeats = missedHeartbeats,
@@ -348,9 +350,10 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// refusal cannot be mistaken for a capacity refusal (issue #124). The caller owns disposing the
     /// counterparty, exactly as with <see cref="FillToCapacity"/>.
     /// </summary>
-    public HeldPeer EstablishOnePeer()
+    /// <param name="localAddress">The address the counterparty connects from, loopback when null.</param>
+    public HeldPeer EstablishOnePeer(IPAddress? localAddress = null)
     {
-        RawStreamPeer counterparty = new(Endpoint);
+        RawStreamPeer counterparty = new(Endpoint, localAddress);
         PeerId id = StreamSessionTestRecords.EstablishSession(this, counterparty.Send);
         byte[] hello = counterparty.Receive(StreamSessionTestRecords.HandshakeRecordSize);
         return new HeldPeer(id, counterparty, StreamSessionTestRecords.ReadResumeSecretFromHello(hello));
@@ -396,12 +399,14 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// carry a once-valid secret rather than the zeroed default (issue #124's second refusal path).
     /// Left null, the Hello announces a zeroed secret, which matches no reservation.
     /// </param>
+    /// <param name="localAddress">The address the dial connects from, loopback when null.</param>
     public InboundAttemptResult AttemptFreshConnection(
         int maxPumps = 20,
         int perPumpTimeoutMs = 100,
-        byte[]? resumeSecret = null)
+        byte[]? resumeSecret = null,
+        IPAddress? localAddress = null)
     {
-        RawStreamPeer counterparty = new(Endpoint);
+        RawStreamPeer counterparty = new(Endpoint, localAddress);
         counterparty.Send(StreamSessionTestRecords.BuildHello(resumeSecret: resumeSecret));
 
         // Unlike the loops above, this one already waits on a clock rather than only on a Pump count:
@@ -493,14 +498,26 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         private readonly Socket _socket;
 
         /// <param name="destination">The Reactor's bound endpoint to connect to.</param>
-        public RawStreamPeer(IPEndPoint destination)
+        /// <param name="localAddress">
+        /// The address to connect from, on an ephemeral port. Null leaves the choice to the OS, which
+        /// for a loopback destination is loopback.
+        /// </param>
+        public RawStreamPeer(IPEndPoint destination, IPAddress? localAddress = null)
         {
             _socket = new Socket(destination.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
             {
                 ReceiveTimeout = 5000,
             };
+            if (localAddress is not null)
+            {
+                _socket.Bind(new IPEndPoint(localAddress, 0));
+            }
+
             _socket.Connect(destination);
         }
+
+        /// <summary>The address and port this counterparty connected from.</summary>
+        public IPEndPoint LocalEndPoint => (IPEndPoint)_socket.LocalEndPoint!;
 
         /// <summary>Sends every byte of <paramref name="bytes"/> in a single write.</summary>
         public void Send(byte[] bytes) => _socket.Send(bytes);
