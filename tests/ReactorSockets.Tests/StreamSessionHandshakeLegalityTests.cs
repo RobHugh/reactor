@@ -16,6 +16,7 @@ namespace ReactorSockets.Tests;
 public class StreamSessionHandshakeLegalityTests
 {
     private const byte RefusalReasonCapacity = 2;
+    private const byte RefusalReasonProtocolViolation = 3;
 
     /// <summary>
     /// A zero <c>MaxMessageSize</c> is malformed whatever version the Hello offers, as it is in the
@@ -25,7 +26,7 @@ public class StreamSessionHandshakeLegalityTests
         new() { StreamSessionTestRecords.ProtocolVersion, 2 };
 
     /// <summary>Reason bytes no member of the wire roster names: below, just above and far above it.</summary>
-    public static TheoryData<byte> UnknownReasons => new() { 0, 3, byte.MaxValue };
+    public static TheoryData<byte> UnknownReasons => new() { 0, 4, byte.MaxValue };
 
     [Theory]
     [MemberData(nameof(VersionsAZeroMaxMessageSizeIsMalformedFor))]
@@ -81,6 +82,24 @@ public class StreamSessionHandshakeLegalityTests
         // Assert
         events.Should().ContainSingle(evt => evt.Kind == SessionEventKind.PeerClosed)
             .Which.Reason.Should().Be(DisconnectReason.TransportFailed);
+    }
+
+    [Fact]
+    public void Pump_RefusalNamingAProtocolViolation_ClosesThePeerAsProtocolViolation()
+    {
+        // Arrange
+        using StreamSessionReactorHarness dialler = new(bindLoopback: false);
+        using Socket listener = Listen();
+        using Socket refuser = AcceptDialFrom(dialler, listener);
+
+        // Act
+        refuser.Send(StreamSessionTestRecords.BuildRefusal(RefusalReasonProtocolViolation, value0: StreamSessionTestRecords.HandshakeRecordSize));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events =
+            dialler.PumpUntilDrained(drained => drained.Any(evt => evt.Kind == SessionEventKind.PeerClosed));
+
+        // Assert
+        events.Should().ContainSingle(evt => evt.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.ProtocolViolation);
     }
 
     [Fact]
