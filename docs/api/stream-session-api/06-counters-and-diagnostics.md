@@ -87,7 +87,7 @@ Source or none) and two numeric slots whose meaning is documented per id.
 |---|---|---|---|
 | `AdmissionCapReached` (1) | Warn | — | A Pump hit its admission cap with work still waiting. `Value0` the cap, `Value1` the declinings. |
 | `ArenaExhausted` (2) | Warn | Peer | The arena had no room for a Message, which is held for a later Pump. `Value0` bytes requested, `Value1` bytes free. |
-| `AddressPeerLimitReached` (208) | Warn | Source | A connection was refused because its address holds `MaxPeersPerAddress` Peers while Slots are free. `Value0` the limit. |
+| `AddressPeerLimitReached` (208) | Warn | Source | A connection was refused because its address holds `MaxPeersPerAddress` Peers while Slots are free. `Value0` the limit, `Value1` the prefix length the address was counted by: 32 for IPv4, `PeerLimitIPv6PrefixLength` for IPv6. |
 | `PeerRefused` (300) | Info | Source | A dialler was refused: version (`Value0` offered, `Value1` required) or capacity (`Value0` = capacity). |
 | `LingerNegotiated` (301) | Info | Peer | A handshake completed. `Value0` your Linger in ms, `Value1` the effective one. |
 | `MalformedFraming` (302) | Warn | Peer | A framing violation closed a Session. `Value0` the offending prefix, `Value1` your `MaxMessageSize`. |

@@ -208,8 +208,9 @@ public sealed class DatagramSessionOptions
     /// <para>
     /// The count is by address, without the port: a host can answer a Cookie from as many ports as it can
     /// bind, so a limit that counted ports would limit nothing. The address family and IPv6 scope stay in
-    /// the key, because they distinguish hosts (ADR 0014). An IPv6 host holding a whole prefix is as many
-    /// addresses as it can bind, and this limit does not group them.
+    /// the key, because they distinguish hosts (ADR 0014). IPv6 addresses are counted by the prefix
+    /// <see cref="PeerLimitIPv6PrefixLength"/> sets, so a host that can bind a whole prefix gets the limit
+    /// once. IPv4 addresses are counted whole.
     /// </para>
     /// <para>
     /// A Peer is charged to the address its handshake came from for as long as it holds its Slot, including
@@ -219,6 +220,20 @@ public sealed class DatagramSessionOptions
     /// </para>
     /// </remarks>
     public int? MaxPeersPerAddress { get; init; }
+
+    /// <summary>
+    /// How many leading bits of an IPv6 address form the key for <see cref="MaxPeersPerAddress"/>, so
+    /// every address in one prefix shares one limit. Defaults to <see cref="ResolvedPeerLimitIPv6PrefixLength"/>,
+    /// 64. Provenance: RFC 4291 §2.5.1 fixes the interface identifier of a unicast address at 64 bits, so a
+    /// /64 is one link (ADR 0014). From 1 to 128. A value of 128 counts each address on its own.
+    /// </summary>
+    /// <remarks>
+    /// Every on-link host on an IPv6 LAN shares one /64, so at the default those Peers share one limit.
+    /// Set 128 when Peers legitimately arrive from one link. A shorter length groups more of a customer's
+    /// delegated prefix, at the cost of grouping unrelated customers. The scope stays in the key, so
+    /// link-local addresses are grouped per interface. IPv4 addresses are never grouped.
+    /// </remarks>
+    public int? PeerLimitIPv6PrefixLength { get; init; }
 
     /// <summary>
     /// How long a Session may go without sending before it sends a Ping instead. Required: shorter
@@ -358,6 +373,11 @@ public sealed class DatagramSessionOptions
     /// </summary>
     public int ResolvedMaxPeersPerAddress => MaxPeersPerAddress ?? Math.Max(1, Reactor.Capacity - 1);
 
+    /// <summary>
+    /// The resolved IPv6 grouping length: <see cref="PeerLimitIPv6PrefixLength"/> if set, otherwise 64.
+    /// </summary>
+    public int ResolvedPeerLimitIPv6PrefixLength => PeerLimitIPv6PrefixLength ?? Source.DefaultPeerLimitIPv6PrefixLength;
+
     /// <summary>The resolved missed-heartbeat count: <see cref="MissedHeartbeats"/> if set, otherwise 3.</summary>
     public int ResolvedMissedHeartbeats => MissedHeartbeats ?? DefaultMissedHeartbeats;
 
@@ -458,6 +478,8 @@ public sealed class DatagramSessionOptions
                 maxPeersPerAddress,
                 $"a per-address limit of {maxPeersPerAddress} refuses every handshake, so nothing could ever connect to this Reactor — it must be at least 1.");
         }
+
+        Source.ValidatePeerLimitIPv6PrefixLength(PeerLimitIPv6PrefixLength, nameof(PeerLimitIPv6PrefixLength));
 
         if (MaxMessageSize < 1)
         {

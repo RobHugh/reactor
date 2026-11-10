@@ -22,6 +22,7 @@ one would be guessing at your application.
 |---|---|---|
 | `Reactor.AdmissionCap` | `Capacity` | One Pump never does more admission work than a full Reactor's worth. |
 | `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | The largest limit that still keeps one address from holding every Slot. |
+| `PeerLimitIPv6PrefixLength` | `64` | RFC 4291 §2.5.1: a unicast interface identifier is 64 bits, so a /64 is one link. From 1 to 128. |
 | `Reactor.ArenaSize` | `MaxMessageSize` | An arena too small for one Message could never deliver one. |
 | `Reactor.TimeProvider` | `TimeProvider.System` | Only monotonic reads are ever taken. |
 | `ReceiveBufferSize` | `MaxMessageSize + 4` | One incomplete maximum Message plus its length prefix. |
@@ -60,9 +61,15 @@ Peers you expect behind one NAT or proxy, and well below `Capacity` if strangers
 If every Peer shares one address, for example behind one proxy, set it to `Capacity`, or the default
 leaves one Slot unused.
 
-The limit counts addresses, not ports, because one host can connect from many ports. It does not group
-IPv6 addresses by prefix. Peers this Reactor dialled do not count, and a Resume is never refused by it,
-because the Peer it names already owns its Slot.
+The limit counts addresses, not ports, because one host can connect from many ports. Peers this
+Reactor dialled do not count, and a Resume is never refused by it, because the Peer it names already
+owns its Slot.
+
+IPv6 addresses are counted by prefix. `PeerLimitIPv6PrefixLength`, 64 by default, sets how many leading
+bits form the key, so every address in one /64 shares one limit. Every on-link host on an IPv6 LAN is
+in one /64, so set it to 128 when Peers legitimately arrive from one link. A shorter length groups more
+of a customer's delegated prefix, at the cost of grouping unrelated customers. IPv4 addresses are
+always counted whole.
 
 A Peer counts against the address its connection was accepted from until its Slot is released.
 Interrupted and Closing Peers still count, so a client that restarts with a fresh Hello can be refused

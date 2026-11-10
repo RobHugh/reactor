@@ -2861,7 +2861,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // A full Reactor skips this and reports CapacityExhausted, so a limit of Capacity never fires.
         if (_peers.HasFreeSlot && AcceptedPeersAtAddressOf(source) >= _options.ResolvedMaxPeersPerAddress)
         {
-            _diagnostics.Log(DiagnosticRecord.ForAddressPeerLimitReached(source, _options.ResolvedMaxPeersPerAddress));
+            _diagnostics.Log(DiagnosticRecord.ForAddressPeerLimitReached(
+                source, _options.ResolvedMaxPeersPerAddress, source.PeerLimitPrefixLength(_options.ResolvedPeerLimitIPv6PrefixLength)));
             RefuseForCapacity(link, source, clientNonce);
             return;
         }
@@ -2897,7 +2898,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// How many accepted Peers hold a Slot on a handshake from <paramref name="source"/>'s address.
+    /// How many accepted Peers hold a Slot on a handshake from <paramref name="source"/>'s address, or
+    /// for IPv6 from its prefix (ADR 0014).
     /// Counted from <see cref="_acceptedHandshakes"/> rather than kept as a separate tally, so it
     /// cannot drift from the Peers it describes. It costs one walk of at most capacity entries, after a
     /// cookie HMAC, on a path the admission cap already bounds per Pump.
@@ -2907,7 +2909,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         int count = 0;
         foreach ((Source handshakeSource, _) in _acceptedHandshakes.Keys)
         {
-            if (handshakeSource.HasSameAddressAs(source))
+            if (handshakeSource.SharesPeerLimitWith(source, _options.ResolvedPeerLimitIPv6PrefixLength))
             {
                 count++;
             }

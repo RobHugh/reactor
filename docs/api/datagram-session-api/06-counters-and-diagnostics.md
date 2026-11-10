@@ -101,7 +101,7 @@ Source or none) and two numeric slots whose meaning is documented per id.
 | `OversizedFragmentSet` (205) | Warn | Peer | A Fragment set claimed more Fragments than your window holds, closing the Session. `Value0` declared, `Value1` the largest legal count. |
 | `UnreliableFragment` (206) | Warn | Source | A Fragment arrived in an unreliable mode. `Value0` the mode (0 `Unreliable`, 1 `UnreliableSequenced`). |
 | `OversizedMessage` (207) | Warn | Peer | A completed Message was larger than your `MaxMessageSize` and was discarded. `Value0` its length, `Value1` your limit. |
-| `AddressPeerLimitReached` (208) | Warn | Source | A verified handshake was refused because its address holds `MaxPeersPerAddress` accepted Peers. `Value0` the limit. |
+| `AddressPeerLimitReached` (208) | Warn | Source | A verified handshake was refused because its address holds `MaxPeersPerAddress` accepted Peers. `Value0` the limit, `Value1` the prefix length the address was counted by: 32 for IPv4, `PeerLimitIPv6PrefixLength` for IPv6. |
 | `DatagramReadLimitReached` (209) | Warn | — | A Pump made `MaxDatagramsPerPump` reads on one bound socket and stopped, whether or not more were queued. At most one per bound socket per Pump. `Value0` the limit, `Value1` the socket's index in `BoundEndpoints`. |
 | `LingerNegotiated` (301) | Info | Peer | A handshake completed. `Value0` your Linger in ms, `Value1` the effective one. |
 | `ResumeMatched` (304) | Info | Peer | A Resume matched, or the dialling end heard its Session again. `Value0` always 0 here. |

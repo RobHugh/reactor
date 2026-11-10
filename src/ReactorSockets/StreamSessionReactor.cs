@@ -767,7 +767,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// How many accepted Peers hold a Slot on a connection accepted from <paramref name="remote"/>'s
-    /// address (issue #452). Counted from the Slots rather than kept as a separate tally, so it cannot
+    /// address, or for IPv6 from its prefix (issues #452 and #453). Counted from the Slots rather than kept as a separate tally, so it cannot
     /// drift from the Peers it describes. It costs one walk of capacity entries, on a path the admission
     /// cap already bounds per Pump.
     /// </summary>
@@ -776,7 +776,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         int count = 0;
         for (int index = 0; index < _peers.Capacity; index++)
         {
-            if (_peers.OccupantAt(index) is PeerSlot { AcceptedFrom: Source acceptedFrom } && acceptedFrom.HasSameAddressAs(remote))
+            if (_peers.OccupantAt(index) is PeerSlot { AcceptedFrom: Source acceptedFrom } && acceptedFrom.SharesPeerLimitWith(remote, _options.ResolvedPeerLimitIPv6PrefixLength))
             {
                 count++;
             }
@@ -1155,7 +1155,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         TcpLink link = ReleasePendingAdmission(pending);
         if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
         {
-            _diagnostics.Log(DiagnosticRecord.ForAddressPeerLimitReached(remote, _options.ResolvedMaxPeersPerAddress));
+            _diagnostics.Log(DiagnosticRecord.ForAddressPeerLimitReached(
+                remote, _options.ResolvedMaxPeersPerAddress, remote.PeerLimitPrefixLength(_options.ResolvedPeerLimitIPv6PrefixLength)));
         }
 
         SendCapacityRefusal(link);
