@@ -47,6 +47,7 @@ appears that is not in the audited list below.
 | `MaxMessageSize` | required | A statement about your protocol. |
 | `RetentionBytes` | required | Your memory against your tolerance for stalling on loss. |
 | `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | `Capacity`. The largest limit that still keeps one address from holding every Slot. Set it lower if strangers can reach the Reactor. `Reactor.Capacity` or above sets no limit. At least 1. |
+| `PeerLimitIPv6PrefixLength` | 64 | RFC 4291 §2.5.1 fixes a unicast interface identifier at 64 bits, so a /64 is one link. The leading bits of an IPv6 address that `MaxPeersPerAddress` counts as one address. IPv4 is always counted whole. Range 1 to 128. |
 | `SendIdleInterval` | required | Bandwidth on an idle link against time to notice a dead Peer. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Linger` | required | A prompt teardown against a clean one. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Endpoints` | empty | No declaration. The first dial binds a wildcard, port-zero socket. |
@@ -64,6 +65,7 @@ appears that is not in the audited list below.
 | `MaxMessageSize` | required | A statement about your protocol. |
 | `RetentionBytes` | required | Your memory against your tolerance for a stalled Peer. |
 | `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | As for the datagram profile. A Resume is never refused by it. |
+| `PeerLimitIPv6PrefixLength` | 64 | As for the datagram profile. |
 | `SendIdleInterval` | required | As for the datagram profile. |
 | `Linger` | required | As for the datagram profile. |
 | `Endpoints` | empty | No declaration. Dial-only. |
@@ -84,7 +86,9 @@ keep consistent with them.
 | Value | Derived from |
 |---|---|
 | Receive-idle deadline | The remote's announced `SendIdleInterval` × your `MissedHeartbeats` |
-| Re-dial schedule | Starts at the observed Pump interval, doubles, stops at the effective Linger, with full jitter |
+| Re-dial schedule (stream) | Starts at the observed Pump interval, doubles, stops at the effective Linger, with full jitter |
+| Handshake resend schedule (datagram) | The re-dial schedule's rule, with this end's `Linger` as the ceiling. A pending dial resends its Hello or Hello-with-cookie on it |
+| Pending dial timeout (datagram) | This end's `Linger` after `Connect`. The dial closes with `TransportFailed` |
 | Per-share-holder read cap | `ArenaSize ÷ Capacity` bytes per Pump, with one whole unit always allowed |
 | RTO floor and ceiling | The observed Pump interval and the effective Linger |
 | Dial-only socket's family and port | The destination's family and an OS-assigned port |
@@ -157,14 +161,19 @@ fragment. On both, `MaxMessageSize` also floors the shared arena.
 
 ## Every per-Pump cost a remote party can inflate is bounded at construction
 
-One property, three mechanisms.
+One property, five mechanisms.
 
 1. **Reading** is bounded by each share-holder's share of the arena.
 2. **Admission**, a TCP accept, is bounded by `AdmissionCap`.
 3. **Handshakes**, each costing an HMAC, are bounded by the same `AdmissionCap`.
+4. **Datagram reads** on the datagram profile are bounded per bound socket by `MaxDatagramsPerPump`,
+   whatever the datagrams carry.
+5. **Refused stream diallers** are drained to at most one handshake record each, counted across
+   Pumps. A dialler that sends more is sent a `ProtocolViolation` Refusal and closed
+   ([ADR 0023](adr/0023-a-refused-stream-dialler-is-drained-to-one-record.md)).
 
-Control traffic never reaches the arena, so the read share cannot bound handshakes. That is why
-admission has its own cap. Anything added later that a remote party can make more expensive inside one
+Control traffic never reaches the arena, so the read share cannot bound handshakes or control
+datagrams. That is why admission and datagram reads have their own caps. Anything added later that a remote party can make more expensive inside one
 Pump needs a bound fixed at construction too. The failure these prevent is the same each time, and it is
 invisible until someone points a load generator at the Reactor.
 

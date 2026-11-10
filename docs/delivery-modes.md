@@ -38,7 +38,7 @@ window of 64 Messages; a duplicate delayed longer than that is delivered twice.
 **4. Is a single Message larger than one Datagram?**
 
 Only the reliable modes fragment. `Unreliable` and `UnreliableSequenced` are capped at a single
-Datagram, and `Send` returns `MessageTooLarge` above it.
+Datagram, `FragmentSize` bytes of Message, and `Send` returns `MessageTooLarge` above it.
 
 This is not an oversight. Fragmenting what cannot be retransmitted multiplies the failure rate by the
 number of pieces: a ten-Fragment Message on a path losing 1% of Datagrams arrives about 90% of the time,
@@ -58,6 +58,26 @@ Message blocks every later Message in that ordering domain until all its Fragmen
 inherent to ordered delivery, not to fragmentation, but fragmentation makes the stall proportionally
 longer: the wait is now the time to deliver the whole Message, not one Datagram. It is the strongest
 practical argument for `ReliableUnordered`, which is the answer for bulk transfer.
+
+While a `ReliableOrdered` Space waits on a gap, the receiver holds at most two receive windows of later
+records. A record past that, or wider than `FragmentSize`, is refused unacknowledged and counted on
+`OutOfWindowPackets`, and the sender retransmits it. A long stall therefore costs retransmissions, not
+unbounded memory.
+
+## What `Send` refuses
+
+`Send` copies nothing when it refuses, so a refused Message leaves no trace on the Session.
+
+| Outcome | Modes | Meaning |
+|---|---|---|
+| `NotEstablished` | all | The Peer's handshake has not finished. |
+| `MessageTooLarge` | `Unreliable`, `UnreliableSequenced` | Wider than one Datagram. Split it or use a reliable mode. |
+| `RemoteMessageTooLarge` | all | Wider than the `MaxMessageSize` this Peer announced at handshake. Another Peer may accept it. |
+| `RetentionExhausted` | `ReliableOrdered`, `ReliableUnordered` | The mode's Space has no `RetentionBytes` left. This is backpressure: retry after the Peer acknowledges. |
+| `Closed` | all | The Session is ending: a Goodbye has passed in either direction, or the Reactor no longer holds the Peer. |
+
+Each reliable Space has its own retention, so a full `ReliableOrdered` Space does not refuse a
+`ReliableUnordered` Send.
 
 ## Modes do not interfere with each other
 
