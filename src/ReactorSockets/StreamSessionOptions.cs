@@ -94,9 +94,12 @@ public sealed class StreamSessionOptions
 
     /// <summary>
     /// The most accepted Peers one address may hold at once (issue #452), so one reachable address
-    /// cannot occupy every capacity Slot. Required: how many Peers legitimately share an address depends on
-    /// the NATs and proxies in front of this Reactor, which nothing here can derive. At least 1. A value of
-    /// <see cref="ReactorOptions.Capacity"/> or above sets no limit.
+    /// cannot occupy every capacity Slot. Defaults to <see cref="ResolvedMaxPeersPerAddress"/>, one fewer
+    /// than <see cref="ReactorOptions.Capacity"/>. Provenance: derived from capacity, as the largest limit
+    /// that still keeps one address from holding every Slot (ADR 0014). How many Peers legitimately share
+    /// an address depends on the NATs and proxies in front of this Reactor, so set it lower when strangers
+    /// can reach it. At least 1. A value of <see cref="ReactorOptions.Capacity"/> or above sets no limit,
+    /// which is what the default is at a capacity of 1.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -113,7 +116,7 @@ public sealed class StreamSessionOptions
     /// one at a full Reactor, and reported with <see cref="DiagnosticId.AddressPeerLimitReached"/>.
     /// </para>
     /// </remarks>
-    public required int MaxPeersPerAddress { get; init; }
+    public int? MaxPeersPerAddress { get; init; }
 
     /// <summary>
     /// How long a Session may go without sending before it sends a heartbeat instead. Required:
@@ -199,6 +202,12 @@ public sealed class StreamSessionOptions
     /// <summary>The resolved receive buffer: <see cref="ReceiveBufferSize"/> if set, otherwise <see cref="ReceiveBufferFloor"/>.</summary>
     public int ResolvedReceiveBufferSize => ReceiveBufferSize ?? ReceiveBufferFloor;
 
+    /// <summary>
+    /// The resolved per-address limit: <see cref="MaxPeersPerAddress"/> if set, otherwise one fewer than
+    /// <see cref="ReactorOptions.Capacity"/>, and at least 1.
+    /// </summary>
+    public int ResolvedMaxPeersPerAddress => MaxPeersPerAddress ?? Math.Max(1, Reactor.Capacity - 1);
+
     /// <summary>The resolved missed-heartbeat count: <see cref="MissedHeartbeats"/> if set, otherwise 3.</summary>
     public int ResolvedMissedHeartbeats => MissedHeartbeats ?? DefaultMissedHeartbeats;
 
@@ -239,12 +248,12 @@ public sealed class StreamSessionOptions
     {
         Reactor.Validate();
 
-        if (MaxPeersPerAddress < 1)
+        if (MaxPeersPerAddress is int maxPeersPerAddress && maxPeersPerAddress < 1)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(MaxPeersPerAddress),
-                MaxPeersPerAddress,
-                $"a per-address limit of {MaxPeersPerAddress} refuses every Hello, so nothing could ever connect to this Reactor — it must be at least 1.");
+                maxPeersPerAddress,
+                $"a per-address limit of {maxPeersPerAddress} refuses every Hello, so nothing could ever connect to this Reactor — it must be at least 1.");
         }
 
         if (MaxMessageSize < 1)

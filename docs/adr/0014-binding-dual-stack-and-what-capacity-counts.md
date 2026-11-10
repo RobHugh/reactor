@@ -189,9 +189,8 @@ anyone who never read about it. `Capacity` or above is the explicit way to set n
 The stream profile has no such limit: this amendment covers the datagram profile only.
 
 **Amended (issue #452): the stream profile takes the same limit.** One address could open connections
-and complete the Hello exchange until it held every Slot. `StreamSessionOptions` gains a required
-`MaxPeersPerAddress`, for the same reasons as the datagram knob, and the key, the charge and the wire
-refusal follow the datagram rules above. A Peer is charged to the address its connection was accepted
+and complete the Hello exchange until it held every Slot. `StreamSessionOptions` gains
+`MaxPeersPerAddress`, and the key, the charge and the wire refusal follow the datagram rules above. A Peer is charged to the address its connection was accepted
 from, and a Resume on a new connection does not move it. Two points are specific to the stream profile:
 
 - **A Resume never meets the limit.** The resume match runs before the capacity check (ADR 0011), and the
@@ -200,6 +199,18 @@ from, and a Resume on a new connection does not move it. Two points are specific
   ADR 0020 the stream profile shares the datagram member. A full Reactor still reports `PeerRefused`
   (300), so a limit of `Capacity` never fires. Neither admission counter moves, as for every stream
   refusal.
+
+**Both profiles default the limit to `Capacity - 1`, at least 1.** This supersedes the #427 amendment's
+decision to make the datagram knob required. ADR 0011 allows a default derived from another knob, and
+`Capacity - 1` is derived from the failure itself: it is the largest limit under which one address can
+never hold every Slot. Any lower default would be a guess about how many Peers share a NAT, which is the
+guess ADR 0011 forbids. The #427 objection was to a default of `Capacity`, which leaves the limit off.
+This one is on, but weak: it stops one address taking the last Slot, not one address taking all but one.
+
+- **Existing code keeps compiling.** An options value that never sets the knob gets the default.
+- **A Reactor whose Peers all share one address loses one Slot** until it sets the limit to `Capacity`.
+  Nothing reports this except `AddressPeerLimitReached` when that last Slot is refused.
+- **At a capacity of 1 the default is 1, which is no limit.** One Slot cannot be split between addresses.
 
 ## Reading back what was bound
 

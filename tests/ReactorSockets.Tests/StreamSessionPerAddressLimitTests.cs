@@ -39,6 +39,24 @@ public class StreamSessionPerAddressLimitTests
     }
 
     [Fact]
+    public void AttemptFreshConnection_LimitLeftAtItsDefault_KeepsTheLastSlotForAnotherAddress()
+    {
+        // Arrange — the default is one below capacity, so one address cannot take every Slot.
+        using StreamSessionReactorHarness accepter = new(capacity: 3, defaultMaxPeersPerAddress: true);
+        List<StreamSessionReactorHarness.HeldPeer> held = [accepter.EstablishOnePeer(), accepter.EstablishOnePeer()];
+        using StreamSessionReactorHarness.InboundAttemptResult refused = accepter.AttemptFreshConnection();
+
+        // Act
+        using StreamSessionReactorHarness.InboundAttemptResult other =
+            accepter.AttemptFreshConnection(localAddress: _otherAddress);
+
+        // Assert
+        refused.Admitted.Should().BeFalse();
+        other.Admitted.Should().BeTrue();
+        DisposeAll(held);
+    }
+
+    [Fact]
     public void AttemptFreshConnection_AddressAtItsPeerLimit_IsRefusedForCapacity()
     {
         // Arrange

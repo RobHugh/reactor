@@ -154,7 +154,6 @@ public sealed class LoggerSinkStreamTests : IDisposable
         Reactor = ReactorOptions(sink),
         MaxMessageSize = 4096,
         RetentionBytes = 8192,
-        MaxPeersPerAddress = 1,
         SendIdleInterval = TimeSpan.FromHours(1),
         Linger = TimeSpan.FromSeconds(1),
         Endpoints = bindLoopback ? [new IPEndPoint(IPAddress.Loopback, 0)] : [],

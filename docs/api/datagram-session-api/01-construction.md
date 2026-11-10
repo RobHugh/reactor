@@ -13,7 +13,6 @@ one would be guessing at your application.
 | `Reactor.Capacity` | How many Peers this Reactor admits. Multiplies every preallocation. |
 | `MaxMessageSize` | The largest Message you will send or accept, in bytes. |
 | `RetentionBytes` | Bytes each reliable Space retains per Peer until acknowledged. Your backpressure budget. |
-| `MaxPeersPerAddress` | The most accepted Peers one address may hold at once. `Reactor.Capacity` or above sets no limit. |
 | `SendIdleInterval` | How long a Session may go without sending before it sends a Ping. |
 | `Linger` | How long a closing or interrupted Session stays alive. |
 
@@ -22,6 +21,7 @@ one would be guessing at your application.
 | Knob | Default | Where the default comes from |
 |---|---|---|
 | `Reactor.AdmissionCap` | `Capacity` | One Pump never does more handshake work than a full Reactor's worth. |
+| `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | The largest limit that still keeps one address from holding every Slot. |
 | `Reactor.ArenaSize` | `MaxMessageSize` | An arena too small for one Message could never deliver one. |
 | `Reactor.TimeProvider` | `TimeProvider.System` | Only monotonic reads are ever taken. |
 | `FragmentSize` | `1200` | QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000). |
@@ -80,9 +80,11 @@ once, or fresh handshakes are refused while those Slots are still held.
 
 ## Choosing the per-address limit
 
-`MaxPeersPerAddress` stops one reachable address holding every Slot. Set it above the number of Peers
-you expect behind one NAT or proxy, and below `Capacity` if strangers can reach this Reactor. If every
-Peer shares one address, for example behind one proxy, set it to `Capacity`.
+`MaxPeersPerAddress` stops one reachable address holding every Slot. The default, one fewer than
+`Capacity`, guarantees only that one Slot stays free for other addresses. Set it above the number of
+Peers you expect behind one NAT or proxy, and well below `Capacity` if strangers can reach this Reactor.
+If every Peer shares one address, for example behind one proxy, set it to `Capacity`, or the default
+leaves one Slot unused.
 
 The limit counts addresses, not ports, because one host can use many ports. It does not group IPv6
 addresses by prefix, so a host that can bind a whole prefix gets the limit once per address. Peers

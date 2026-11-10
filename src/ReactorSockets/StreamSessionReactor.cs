@@ -749,7 +749,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         // A full Reactor took the arm above and reported PeerRefused, so a limit of Capacity never fires.
         Source remote = Source.FromIPEndPoint(pending.Link.RemoteEndPoint);
-        if (AcceptedPeersAtAddressOf(remote) >= _options.MaxPeersPerAddress)
+        if (AcceptedPeersAtAddressOf(remote) >= _options.ResolvedMaxPeersPerAddress)
         {
             RefuseForAddressPeerLimit(pending, remote);
             return;
@@ -1148,7 +1148,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         TcpLink link = ReleasePendingAdmission(pending);
         if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
         {
-            _diagnostics.Log(DiagnosticRecord.ForAddressPeerLimitReached(remote, _options.MaxPeersPerAddress));
+            _diagnostics.Log(DiagnosticRecord.ForAddressPeerLimitReached(remote, _options.ResolvedMaxPeersPerAddress));
         }
 
         SendCapacityRefusal(link);

@@ -2859,9 +2859,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         // A full Reactor skips this and reports CapacityExhausted, so a limit of Capacity never fires.
-        if (_peers.HasFreeSlot && AcceptedPeersAtAddressOf(source) >= _options.MaxPeersPerAddress)
+        if (_peers.HasFreeSlot && AcceptedPeersAtAddressOf(source) >= _options.ResolvedMaxPeersPerAddress)
         {
-            _diagnostics.Log(DiagnosticRecord.ForAddressPeerLimitReached(source, _options.MaxPeersPerAddress));
+            _diagnostics.Log(DiagnosticRecord.ForAddressPeerLimitReached(source, _options.ResolvedMaxPeersPerAddress));
             RefuseForCapacity(link, source, clientNonce);
             return;
         }

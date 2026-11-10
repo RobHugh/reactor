@@ -740,6 +740,25 @@ public class DatagramSessionRefusalTests
     }
 
     [Fact]
+    public void OnHelloWithCookie_LimitLeftAtItsDefault_KeepsTheLastSlotForAnotherAddress()
+    {
+        // Arrange — the default is one below capacity, so one address cannot take every Slot.
+        using DatagramSessionReactorHarness accepter = new(capacity: 3, defaultMaxPeersPerAddress: true);
+        using RawPeer greedy = new();
+        using RawPeer other = new(IPAddress.Parse("127.0.0.2"));
+        CompleteHandshake(accepter, greedy, 0x0000_0000_0000_00E1UL);
+        CompleteHandshake(accepter, greedy, 0x0000_0000_0000_00E2UL);
+        byte[] refused = ReplyToHandshake(accepter, greedy, 0x0000_0000_0000_00E3UL);
+
+        // Act
+        ReplyToHandshake(accepter, other, 0x0000_0000_0000_00E4UL);
+
+        // Assert
+        refused[4].Should().Be(RefusalType);
+        accepter.DrainToList().Should().ContainSingle(evt => evt.Kind == SessionEventKind.PeerConnected);
+    }
+
+    [Fact]
     public void OnHelloWithCookie_ANewPortOnAnAddressAtItsPeerLimit_IsRefused()
     {
         // Arrange — a cookie is minted per port, so a limit that counted ports would limit nothing.

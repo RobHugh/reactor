@@ -13,7 +13,6 @@ one would be guessing at your application.
 | `Reactor.Capacity` | How many Peers this Reactor admits. Multiplies every preallocation. |
 | `MaxMessageSize` | The largest Message you will send or accept, in bytes. |
 | `RetentionBytes` | Bytes held per Peer for the send path. Your backpressure budget. |
-| `MaxPeersPerAddress` | The most accepted Peers one address may hold at once. `Reactor.Capacity` or above sets no limit. |
 | `SendIdleInterval` | How long a Session may stay silent before it heartbeats. |
 | `Linger` | How long a closing or interrupted Session stays alive. |
 
@@ -22,6 +21,7 @@ one would be guessing at your application.
 | Knob | Default | Where the default comes from |
 |---|---|---|
 | `Reactor.AdmissionCap` | `Capacity` | One Pump never does more admission work than a full Reactor's worth. |
+| `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | The largest limit that still keeps one address from holding every Slot. |
 | `Reactor.ArenaSize` | `MaxMessageSize` | An arena too small for one Message could never deliver one. |
 | `Reactor.TimeProvider` | `TimeProvider.System` | Only monotonic reads are ever taken. |
 | `ReceiveBufferSize` | `MaxMessageSize + 4` | One incomplete maximum Message plus its length prefix. |
@@ -54,9 +54,11 @@ Linger window, or fresh dials get refused while a departed Peer's Slot is still 
 
 ## Choosing the per-address limit
 
-`MaxPeersPerAddress` stops one reachable address holding every Slot. Set it above the number of Peers
-you expect behind one NAT or proxy, and below `Capacity` if strangers can reach this Reactor. If every
-Peer shares one address, for example behind one proxy, set it to `Capacity`.
+`MaxPeersPerAddress` stops one reachable address holding every Slot. The default, one fewer than
+`Capacity`, guarantees only that one Slot stays free for other addresses. Set it above the number of
+Peers you expect behind one NAT or proxy, and well below `Capacity` if strangers can reach this Reactor.
+If every Peer shares one address, for example behind one proxy, set it to `Capacity`, or the default
+leaves one Slot unused.
 
 The limit counts addresses, not ports, because one host can connect from many ports. It does not group
 IPv6 addresses by prefix. Peers this Reactor dialled do not count, and a Resume is never refused by it,

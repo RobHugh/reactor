@@ -18,6 +18,7 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     public StreamSessionReactorHarness(
         int capacity = 4,
         int? maxPeersPerAddress = null,
+        bool defaultMaxPeersPerAddress = false,
         int? admissionCap = null,
         int maxMessageSize = 4096,
         int retentionBytes = 4100,
@@ -54,7 +55,8 @@ internal sealed class StreamSessionReactorHarness : IDisposable
             },
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
-            MaxPeersPerAddress = maxPeersPerAddress ?? capacity,
+            // No limit unless asked: every counterparty in a test shares the loopback address.
+            MaxPeersPerAddress = defaultMaxPeersPerAddress ? null : maxPeersPerAddress ?? capacity,
             ReceiveBufferSize = receiveBufferSize,
             SendBufferSize = sendBufferSize,
             MissedHeartbeats = missedHeartbeats,

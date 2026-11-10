@@ -156,7 +156,6 @@ public class MemoryBillTests
             Reactor = new ReactorOptions { Capacity = MeasurementCapacity },
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
-            MaxPeersPerAddress = MeasurementCapacity,
             ReceiveBufferSize = receiveBufferSize,
             SendIdleInterval = TimeSpan.FromSeconds(1),
             Linger = TimeSpan.FromSeconds(1),
