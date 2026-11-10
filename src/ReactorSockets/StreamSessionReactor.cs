@@ -38,8 +38,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// The most bytes a refused connection may have sent behind its first record before the drain
     /// stops reading it (issue #455). The drain exists so the close does not race an unread Hello into
-    /// a reset, so the limit is one handshake record. A conforming dialler sends nothing behind its
-    /// first record until it is answered, so it never reaches the limit.
+    /// a reset, so the limit is one handshake record. What happens past it is on <see cref="DrainRefusal"/>.
     /// </summary>
     private const int RefusalDrainLimitBytes = StreamHandshakeCodec.RecordSize;
 
@@ -1164,13 +1163,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// Hands a released connection to a <see cref="RefusalSlot"/>, drains what it has already sent, and
-    /// sends it the capacity Refusal naming this Reactor's configured capacity.
+    /// sends it the capacity Refusal naming this Reactor's configured capacity, or the
+    /// <see cref="RefusalReason.ProtocolViolation"/> Refusal naming <see cref="RefusalDrainLimitBytes"/>
+    /// when the drain found it past that limit.
     /// </summary>
-    /// <remarks>
-    /// A dialler that sent more than <see cref="RefusalDrainLimitBytes"/> behind its first record is
-    /// sent a <see cref="RefusalReason.ProtocolViolation"/> Refusal naming that limit instead, so it
-    /// learns what it did rather than that this Reactor is full.
-    /// </remarks>
     private void SendCapacityRefusal(TcpLink link)
     {
         RefusalSlot refusal = new() { Link = link };
@@ -1226,14 +1222,15 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Drains a refused connection that became readable while its Refusal record was still flushing,
-    /// and closes it at once if that takes it past <see cref="RefusalDrainLimitBytes"/>. The record
-    /// already in flight cannot be rewritten, so the remote sees the connection end, usually as a
-    /// reset, without a Refusal that names the limit.
+    /// Drains a refused connection that became readable while its Refusal record was still flushing.
+    /// A connection this call takes past <see cref="RefusalDrainLimitBytes"/> is closed at once,
+    /// because its Capacity record in flight cannot be rewritten to name the limit. A connection
+    /// already past it was sent the record that names the limit, so it is left to finish flushing.
     /// </summary>
     private void OnRefusalReadable(RefusalSlot refusal)
     {
-        if (DrainRefusal(refusal))
+        bool wasOverLimit = refusal.BytesDrained > RefusalDrainLimitBytes;
+        if (DrainRefusal(refusal) && !wasOverLimit)
         {
             CloseRefusal(refusal);
         }
