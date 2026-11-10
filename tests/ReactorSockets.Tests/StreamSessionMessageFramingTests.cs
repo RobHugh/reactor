@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 3.4.1 (issue #79): the per-Peer receive buffer and whole-Message delivery through the frame
+/// The per-Peer receive buffer and whole-Message delivery through the frame
 /// arena. The counterparty in every test here is a hand-built raw TCP peer writing framed bytes
 /// on the wire — never a second <see cref="StreamSessionReactor"/> — mirroring
 /// <see cref="StreamSessionHandshakeGuardTests"/>'s <c>RawTcpPeer</c>, the house pattern for this shape

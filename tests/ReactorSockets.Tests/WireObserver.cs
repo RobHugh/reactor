@@ -4,8 +4,7 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// A passive counterparty that records exactly the bytes a Session Reactor actually put on the
-/// network, so a later slice's tests can assert encoding without reaching inside the type doing the
-/// encoding — the second instrument the parent slice spec's Further Notes calls for. Built entirely
+/// network, so tests can assert encoding without reaching inside the type doing the encoding. Built entirely
 /// from the public Raw surface: this is an ordinary <see cref="RawReactor"/> consumer that binds or
 /// listens, Pumps, and copies out whatever arrives before the next Pump invalidates it.
 /// </summary>

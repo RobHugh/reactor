@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 3.5.6 (issue #88): confirms a Peer that never completes a clean handshake still has its
+/// Confirms a Peer that never completes a clean handshake still has its
 /// Slot — and, per #84's wiring in <c>ClosePeer</c>, its retention region — reclaimed, exactly as a
 /// Peer that does complete the handshake and later disconnects would. <see cref="HostilePeer"/>
 /// plays the hostile counterparty, built entirely from the public Raw surface, following the house

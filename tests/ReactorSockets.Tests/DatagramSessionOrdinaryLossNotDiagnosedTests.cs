@@ -4,8 +4,8 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #306 (parent #271): the negative half of the fragment-size stall signature's own test, judging
-/// <see cref="FragmentStallSignature.StallRoundCount"/> against a path that is merely lossy rather than
+/// The negative half of the fragment-size stall signature's own test, judging
+/// <c>FragmentStallSignature.StallRoundCount</c> against a path that is merely lossy rather than
 /// size-limited. The same <see cref="FragmentSizeDiagnosisFixture"/> the positive
 /// (<see cref="DatagramSessionFragmentSizeUnviableTests"/>) is driven through, but with the proxy's
 /// standing rule replaced: instead of a size threshold that black-holes every Fragment forever, an
@@ -28,11 +28,11 @@ namespace ReactorSockets.Tests;
 /// asks for.
 /// </para>
 /// <para>
-/// <b>Why the round budget is what it is.</b> <see cref="FragmentStallSignature.StallRoundCount"/> — four
+/// <b>Why the round budget is what it is.</b> <c>FragmentStallSignature.StallRoundCount</c> — four
 /// — is the number of consecutive retransmission rounds with no Fragment acked that the positive test
 /// needs to fire the diagnosis. At one loss in ten, the chance every Fragment of a set is lost on any one
 /// round is small, so a stall of that length essentially never accumulates before some Fragment gets
-/// through and resets the window (<see cref="FragmentStallSignature.RecordFragmentAcked"/> latches
+/// through and resets the window (<c>FragmentStallSignature.RecordFragmentAcked</c> latches
 /// permanently once it does). <see cref="MaxDeliveryRounds"/> is set to <c>StallRoundCount</c> times a
 /// wide margin — far more <see cref="FragmentSizeDiagnosisFixture.PumpRound"/> calls than four RTO
 /// expiries could plausibly need even accounting for backoff — so a run that fails to deliver within
@@ -51,11 +51,14 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
 
     /// <summary>
     /// The bounded number of <see cref="FragmentSizeDiagnosisFixture.PumpRound"/> calls the large Message
-    /// is given to complete in. A generous multiple of <see cref="FragmentStallSignature.StallRoundCount"/>
+    /// is given to complete in. A generous multiple of <c>FragmentStallSignature.StallRoundCount</c>
     /// so the run is a real test of quiet rather than one too short for a stall to have had any chance to
     /// show up.
     /// </summary>
-    private const int MaxDeliveryRounds = FragmentStallSignature.StallRoundCount * 75;
+    private const int MaxDeliveryRounds = StallRoundCount * 75;
+
+    /// <summary>The expired retransmission rounds the fragment-size diagnosis waits for (<c>FragmentStallSignature.StallRoundCount</c>).</summary>
+    private const int StallRoundCount = 4;
 
     /// <summary>How many further rounds the run continues after delivery, so the quiet assertions cover more than the moment of delivery.</summary>
     private const int MarginRounds = 50;
@@ -121,14 +124,12 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
     }
 
     /// <summary>
-    /// <see cref="DiagnosticId.FragmentSetAbandoned"/> fires only when an incomplete Fragment set's
-    /// receive-window ring slot is clobbered by a later one before it completes (see
-    /// <c>DatagramSessionReactor.ClassifyRecord</c>'s own remarks) — it needs two Fragment sets
-    /// contending for the same slot, not merely a lossy path. This fixture's dialler sends exactly one
-    /// large Message, so there is never a second set to cause that collision and this run does not
-    /// observe the diagnostic fire. The assertions below hold regardless — they are written to catch a
-    /// disturbance if the diagnostic ever does fire, per issue #306's own "may well fire" framing, not to
-    /// force it to.
+    /// <see cref="DiagnosticId.FragmentSetAbandoned"/> fires only when a later record reaches the
+    /// receive-window ring slot of a Fragment set that can never complete (issue #446) — one the base has
+    /// passed entirely without it completing. Loss never leaves one; a sender's other records at the
+    /// set's sequences or a Fragment larger than this end's slot can. This run does not
+    /// observe the diagnostic fire. The assertions below are written to catch a disturbance if a
+    /// regression ever makes it fire here, not to force it to.
     /// </summary>
     [Fact]
     public void Run_WithOrdinaryEveryNthLossOnBothDirections_AnyFragmentSetAbandonedDoesNotDisturbTheSession()
@@ -139,10 +140,10 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
         // Act
         RunBoundedScenario(fixture);
 
-        // Assert — FragmentSetAbandoned reports what ordinary loss took; it is expected here and is not
-        // itself a problem. What would be a problem is that emitting it ever closed or otherwise disturbed
-        // the Session — it never diagnoses why a set was lost, which is exactly why it cannot be the
-        // trigger for closing anything (issue #268's own framing).
+        // Assert — FragmentSetAbandoned reports what was lost and is not itself a problem. What would be
+        // a problem is that emitting it ever closed or otherwise disturbed the Session — it never
+        // diagnoses why a set was lost, which is exactly why it cannot be the trigger for closing
+        // anything (issue #268's own framing).
         fixture.AccepterEvents.Should().NotContain(
             e => e.Kind == SessionEventKind.PeerClosed,
             "FragmentSetAbandoned reports loss, it never diagnoses cause, so it must never be the reason a Session closes");
@@ -152,7 +153,7 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
     }
 
     /// <summary>
-    /// Issue #307: across the whole negative run, no datagram beyond this fixture's own two Messages and
+    /// Across the whole negative run, no datagram beyond this fixture's own two Messages and
     /// the accepter's keep-alive ever reaches the wire. Ordinary loss recovers the large Message through
     /// retransmission alone — the same shared check the positive run uses
     /// (<see cref="DatagramSessionFragmentSizeStallDiagnosisTests"/>'s own equivalent Fact) proves that
@@ -173,7 +174,7 @@ public class DatagramSessionOrdinaryLossNotDiagnosedTests
     }
 
     /// <summary>
-    /// Issue #307: across the whole negative run, both ends' configured fragment size is unchanged.
+    /// Across the whole negative run, both ends' configured fragment size is unchanged.
     /// Ordinary loss recovers the large Message through retransmission alone, never by touching the
     /// setting — the same shared check the positive run uses
     /// (<see cref="DatagramSessionFragmentSizeStallDiagnosisTests"/>'s own equivalent Fact), which is the

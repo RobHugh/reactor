@@ -23,6 +23,9 @@ public class DatagramSessionOptionsTests
         int? admissionCap = null,
         int maxMessageSize = 4096,
         int retentionBytes = 4096,
+        int? maxPeersPerAddress = null,
+        int? peerLimitIPv6PrefixLength = null,
+        int? maxDatagramsPerPump = null,
         int? fragmentSize = null,
         int? receiveWindowFragments = null,
         int? missedHeartbeats = null,
@@ -43,6 +46,9 @@ public class DatagramSessionOptionsTests
             },
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
+            MaxPeersPerAddress = maxPeersPerAddress,
+            PeerLimitIPv6PrefixLength = peerLimitIPv6PrefixLength,
+            MaxDatagramsPerPump = maxDatagramsPerPump,
             FragmentSize = fragmentSize,
             ReceiveWindowFragments = receiveWindowFragments,
             MissedHeartbeats = missedHeartbeats,
@@ -64,6 +70,148 @@ public class DatagramSessionOptionsTests
 
         // Assert
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(ReactorOptions.Capacity));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_MaxDatagramsPerPumpBelowOne_ThrowsArgumentOutOfRangeException(int maxDatagramsPerPump)
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(maxDatagramsPerPump: maxDatagramsPerPump);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(DatagramSessionOptions.MaxDatagramsPerPump));
+    }
+
+    [Fact]
+    public void ResolvedMaxDatagramsPerPump_Unset_IsOneWindowForEverySpaceOfEveryPeerPlusTheAdmissionCap()
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(capacity: 8, admissionCap: 5, receiveWindowFragments: 10);
+
+        // Act
+        int resolved = options.ResolvedMaxDatagramsPerPump;
+
+        // Assert
+        resolved.Should().Be((8 * 10 * 4) + 5);
+    }
+
+    [Fact]
+    public void ResolvedMaxDatagramsPerPump_Set_IsTheValueSet()
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(maxDatagramsPerPump: 7);
+
+        // Act
+        int resolved = options.ResolvedMaxDatagramsPerPump;
+
+        // Assert
+        resolved.Should().Be(7);
+    }
+
+    [Theory]
+    [InlineData(4, 3)]
+    [InlineData(2, 1)]
+    [InlineData(1, 1)]
+    public void ResolvedMaxPeersPerAddress_LeftUnset_IsOneBelowCapacityAndAtLeastOne(int capacity, int expected)
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(capacity: capacity);
+
+        // Act
+        int resolved = options.ResolvedMaxPeersPerAddress;
+
+        // Assert
+        resolved.Should().Be(expected);
+    }
+
+    [Fact]
+    public void ResolvedMaxPeersPerAddress_Set_IsTheValueSet()
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(capacity: 4, maxPeersPerAddress: 4);
+
+        // Act
+        int resolved = options.ResolvedMaxPeersPerAddress;
+
+        // Assert
+        resolved.Should().Be(4);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_MaxPeersPerAddressBelowOne_ThrowsArgumentOutOfRangeException(int maxPeersPerAddress)
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(maxPeersPerAddress: maxPeersPerAddress);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(DatagramSessionOptions.MaxPeersPerAddress));
+    }
+
+    [Fact]
+    public void ResolvedPeerLimitIPv6PrefixLength_LeftUnset_IsSixtyFour()
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions();
+
+        // Act
+        int resolved = options.ResolvedPeerLimitIPv6PrefixLength;
+
+        // Assert
+        resolved.Should().Be(64);
+    }
+
+    [Fact]
+    public void ResolvedPeerLimitIPv6PrefixLength_Set_IsTheValueSet()
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(peerLimitIPv6PrefixLength: 128);
+
+        // Act
+        int resolved = options.ResolvedPeerLimitIPv6PrefixLength;
+
+        // Assert
+        resolved.Should().Be(128);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(129)]
+    public void Constructor_PeerLimitIPv6PrefixLengthOutsideOneTo128_ThrowsArgumentOutOfRangeException(int prefixLength)
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(peerLimitIPv6PrefixLength: prefixLength);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(DatagramSessionOptions.PeerLimitIPv6PrefixLength));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(128)]
+    public void Constructor_PeerLimitIPv6PrefixLengthAtEitherBound_Succeeds(int prefixLength)
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(peerLimitIPv6PrefixLength: prefixLength);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().NotThrow();
     }
 
     [Theory]
@@ -280,6 +428,50 @@ public class DatagramSessionOptionsTests
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(DatagramSessionOptions.Linger));
     }
 
+    [Theory]
+    [InlineData(42_949_672_950_001L)] // one tick above uint.MaxValue milliseconds
+    [InlineData(long.MaxValue)]
+    public void Constructor_SendIdleIntervalAboveTheAnnounceableMaximum_ThrowsArgumentOutOfRangeException(long ticks)
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(sendIdleInterval: TimeSpan.FromTicks(ticks));
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(DatagramSessionOptions.SendIdleInterval));
+    }
+
+    [Theory]
+    [InlineData(42_949_672_950_001L)] // one tick above uint.MaxValue milliseconds
+    [InlineData(long.MaxValue)]
+    public void Constructor_LingerAboveTheAnnounceableMaximum_ThrowsArgumentOutOfRangeException(long ticks)
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(linger: TimeSpan.FromTicks(ticks));
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(DatagramSessionOptions.Linger));
+    }
+
+    [Fact]
+    public void Constructor_IntervalsAtTheAnnounceableMaximum_Constructs()
+    {
+        // Arrange
+        TimeSpan maximum = TimeSpan.FromTicks(42_949_672_950_000L); // exactly uint.MaxValue milliseconds
+        DatagramSessionOptions options = CreateOptions(sendIdleInterval: maximum, linger: maximum);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
     [Fact]
     public void Constructor_DuplicateEndpoints_ThrowsArgumentExceptionNamingTheEndpoint()
     {
@@ -434,6 +626,25 @@ public class DatagramSessionOptionsTests
         // Spaces (issue #257, #297), and a six-byte waiting-group entry per half-window for those same
         // two Spaces (issue #259), all scaled by Capacity and the window (issue #174).
         budget.Should().Be((3L * 2 * 5 * (1000 + 2 + 6)) + (3L * 4 * 5) + (3L * 2 * (5 / 2) * 6));
+    }
+
+    [Fact]
+    public void HeldRecordBudgetBytes_WorkedExample_CountsTwoWindowsOfSlotsWithTheirBookkeeping()
+    {
+        // Arrange — distinct numbers so a transposed factor in the formula is caught.
+        DatagramSessionOptions options = CreateOptions(
+            capacity: 3,
+            maxMessageSize: 4000,
+            fragmentSize: 1000,
+            receiveWindowFragments: 5);
+
+        // Act
+        long budget = options.HeldRecordBudgetBytes;
+
+        // Assert — one ReliableOrdered Space per Peer, two windows of held records, each a whole fragment
+        // slot plus 44 bytes: an 8-byte reference, a 4-byte length and a byte array's 32-byte ceiling of
+        // object header and padding (issue #424).
+        budget.Should().Be(3L * 2 * 5 * (1000 + 44));
     }
 
     [Fact]

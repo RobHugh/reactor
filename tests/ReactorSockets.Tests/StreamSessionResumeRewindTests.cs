@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #127 (4.6.1): the rewind. After a Resume, the sender writes from the peer's reported delivery
+/// The rewind. After a Resume, the sender writes from the peer's reported delivery
 /// counter — the bytes it writes are exactly the ones already framed and sitting in the retention ring,
 /// nothing re-framed and nothing reconstructed (<see cref="RetentionArena.RewindSentToMessageCount"/>,
 /// L0). Two directions, because a Resume record is one-way (issue #115): the listening side reads the
@@ -197,7 +197,7 @@ public class StreamSessionResumeRewindTests
         // Arrange — a ring sized to fit exactly one maximum-size frame. The first Message fills it,
         // is actually read and confirmed by the counterparty, and is released — the head now sits at
         // Message count 1. While Interrupted, a second Message re-fills the freed room, and then
-        // RetentionExhausted (issue #120) is what a third Send returns, exactly the AC1 setup: the ring
+        // RetentionExhausted is what a third Send returns: the ring
         // has genuinely overflowed during the outage before the peer ever resumes.
         using StreamSessionReactorHarness accepter =
             new(capacity: 1, maxMessageSize: RetentionGapMaxMessageSize, retentionBytes: RetentionGapRetentionBytes);
@@ -215,8 +215,8 @@ public class StreamSessionResumeRewindTests
         accepter.Reactor.Send(held[0].Peer, [1]).Should().Be(SendOutcome.RetentionExhausted);
 
         // Act — the peer resumes claiming to have received nothing at all: one Message below the
-        // released head of 1 (RetentionRewindOutcome.BelowReleasedHead, D1) — the gap case this ticket
-        // is named for, since bytes at count 0 are bytes this end no longer retains.
+        // released head of 1 (RetentionRewindOutcome.BelowReleasedHead, D1) — the gap case, since
+        // bytes at count 0 are bytes this end no longer retains.
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
         resumed.Send(StreamSessionTestRecords.BuildResume(held[0].ResumeSecret, deliveryCount: 0));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
@@ -292,7 +292,7 @@ public class StreamSessionResumeRewindTests
         accepter.InterruptHeldPeer(held[0]);
 
         // Act — the counters are read one Pump before the gap resume closes the Slot, the last moment
-        // this ticket's own acceptance criteria requires them to still answer.
+        // they are required to still answer.
         PeerCounters beforeClose = accepter.Reactor.CountersOf(held[0].Peer);
 
         using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);

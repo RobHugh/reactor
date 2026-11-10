@@ -4,14 +4,14 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.5.5 (issue #204): a retained fragment is read back by its sequence number exactly as it
+/// A retained fragment is read back by its sequence number exactly as it
 /// was written — the retained length, not the whole slot — so the retransmit path resends the bytes the
 /// original carried. The read-back itself is L0 and internal, so every assertion here is made where the
 /// seam shows it: a <see cref="LossyProxy"/> drops the only transmission of one or more reliable
 /// records, and what the receiver eventually drains is whatever came back out of retention.
 /// </summary>
 /// <remarks>
-/// The same drops also prove subtask 6.5.2's (issue #201) non-overlap claim for adjacent slots: several
+/// The same drops also prove that adjacent retention slots do not overlap: several
 /// records of deliberately different lengths, retained side by side across both reliable Spaces, each
 /// come back with their own bytes and their own length. A slot bleeding into its neighbour, or a
 /// read-back returning the slot's full width rather than the length written, changes at least one

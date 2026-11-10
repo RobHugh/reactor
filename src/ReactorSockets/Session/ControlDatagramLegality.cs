@@ -7,7 +7,7 @@ namespace ReactorSockets.Session;
 /// </summary>
 /// <param name="IsProcessed">
 /// Whether this profile does anything with a datagram of this type. A type on the roster that this
-/// slice does not implement is <see langword="false"/> here, which discards it exactly as an
+/// profile does not implement is <see langword="false"/> here, which discards it exactly as an
 /// off-roster type is discarded — the wire is not the place to advertise an unfinished feature.
 /// </param>
 /// <param name="BodyLength">
@@ -38,14 +38,12 @@ internal static class ControlDatagramLegality
         // to recompute under without having to try every one it still holds.
         DatagramControlType.Cookie => new ControlDatagramShape(true, 48),
 
-        // version(4) + clientNonce(8) + epoch(8) + mac(32) + sessionIdForMe(4) + maxMessageSize(4)
-        // + sendIdleIntervalMilliseconds(8) + lingerMilliseconds(8) + resumeSecret(16). Everything a
-        // Session needs, arriving only once the round trip is paid.
-        DatagramControlType.HelloWithCookie => new ControlDatagramShape(true, 92),
+        // version(4) + clientNonce(8) + epoch(8) + mac(32) + sessionIdForMe(4) + limits
+        // + resumeSecret(16). Everything a Session needs, arriving only once the round trip is paid.
+        DatagramControlType.HelloWithCookie => new ControlDatagramShape(true, 72 + AnnouncedLimits.WireSize),
 
-        // clientNonce(8) + sessionIdForMe(4) + maxMessageSize(4) + sendIdleIntervalMilliseconds(8)
-        // + lingerMilliseconds(8) + resumeSecret(16).
-        DatagramControlType.Accept => new ControlDatagramShape(true, 48),
+        // clientNonce(8) + sessionIdForMe(4) + limits + resumeSecret(16).
+        DatagramControlType.Accept => new ControlDatagramShape(true, 28 + AnnouncedLimits.WireSize),
 
         // clientNonce(8) + reason(1) + versionOffered(4) + versionRequired(4). The two version fields
         // are populated only for a version refusal and are zero otherwise, rather than the refusal
@@ -56,6 +54,11 @@ internal static class ControlDatagramLegality
         // dialling end sends it while Interrupted and the accepting end routes it by targetSessionId
         // and authorises it by resumeSecret.
         DatagramControlType.Resume => new ControlDatagramShape(true, 20),
+
+        // targetSessionId(4) + nonce(16), both directions (ADR 0021). The challenge is routed by the
+        // dialling end's session id and the response by the accepting end's.
+        DatagramControlType.PathChallenge => new ControlDatagramShape(true, 20),
+        DatagramControlType.PathResponse => new ControlDatagramShape(true, 20),
 
         // The discard arm refuses. An unknown control type is a protocol violation, not an extension
         // point: this profile has no forward-compatibility rule that would let it skip a body of

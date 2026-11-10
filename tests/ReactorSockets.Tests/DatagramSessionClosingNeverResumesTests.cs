@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #406 (parent #57): a dialled datagram Peer that has sent a Goodbye (Closing after a local
+/// A dialled datagram Peer that has sent a Goodbye (Closing after a local
 /// <see cref="DatagramSessionReactor.Close"/>) never sends a Resume, even when its receive-idle deadline
 /// passes. A Closing Peer does not go Interrupted at all, so it raises no
 /// <see cref="SessionEventKind.PeerInterrupted"/> either, and it ends through Linger measured from Close.

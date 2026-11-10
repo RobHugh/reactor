@@ -6,8 +6,8 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #348: Accept gains the accepting end's send-idle interval, mirroring #347's addition to
-/// Hello-with-cookie. Every assertion here is made from outside the L2 seam (tests/CLAUDE.md): a real
+/// Accept carries the accepting end's send-idle interval, as Hello-with-cookie carries the
+/// dialler's. Every assertion here is made from outside the L2 seam (tests/CLAUDE.md): a real
 /// <see cref="DatagramSessionReactorHarness"/> plays the dialling end, and a hand-built
 /// <see cref="RawReactor"/> plays a counterparty that answers with control datagrams built byte by
 /// byte from <c>ControlDatagramCodec</c>'s documented layout (read-only from this file, per

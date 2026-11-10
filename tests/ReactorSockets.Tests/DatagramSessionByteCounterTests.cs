@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.7.4 (issue #231): the datagram profile's per-Peer <see cref="PeerCounters.BytesSent"/>
+/// The datagram profile's per-Peer <see cref="PeerCounters.BytesSent"/>
 /// and <see cref="PeerCounters.BytesReceived"/>. Every assertion below reads only what the public
 /// seam allows — the value <see cref="DatagramSessionReactor.Send"/> and
 /// <see cref="DatagramSessionReactor.Pump"/> leave observable through

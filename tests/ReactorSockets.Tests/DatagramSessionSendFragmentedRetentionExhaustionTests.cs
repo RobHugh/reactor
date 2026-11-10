@@ -5,10 +5,10 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #247: a single Message cut into more Fragments than its Space has free slots for is refused
+/// A single Message cut into more Fragments than its Space has free slots for is refused
 /// whole by <see cref="DatagramSessionReactor.Send"/>, rather than leaving whatever fragments already
 /// fit behind in retention. A half-retained Message is unrepairable, the receiver's reassembly waits
-/// forever for a set that was never cut in full, and, following issue #244's house rule, the refusal
+/// forever for a set that was never cut in full, and, like any refused Send, the refusal
 /// must not burn any of the Fragments' sequence numbers either, since a burned sequence opens a hole
 /// the receiver's window would wait on for a record that is never sent.
 /// </summary>

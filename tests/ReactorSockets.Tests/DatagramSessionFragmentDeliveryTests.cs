@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #259: a completed Fragment set (issue #258's <c>IsGroupComplete</c>) is delivered as one
+/// A completed Fragment set (issue #258's <c>IsGroupComplete</c>) is delivered as one
 /// contiguous Message and its receive-window slots are released. Built the same way
 /// <see cref="DatagramSessionFragmentHoldingTests"/> is — a live Session driven by hand from a bare
 /// <see cref="RawReactor"/> — since these tests need to construct exact Fragment sequences and byte
@@ -62,6 +62,64 @@ public class DatagramSessionFragmentDeliveryTests
         delivered.Should().ContainSingle().Which.Should().Equal(new byte[] { 0x01, 0x02, 0x03, 0x04, 0x05 });
         PeerCounters after = accepter.Reactor.CountersOf(accepterPeer);
         after.MessagesReceived.Should().Be(before.MessagesReceived + 1, "the completed set is one Message, not three");
+    }
+
+    [Fact]
+    public void Pump_ADatagramCarryingTwoCompleteSetsWhoseDeclaredRangesTouch_DeliversBothMessages()
+    {
+        // Arrange — sequences 0..1 and 2..3 in one Space: the second range starts exactly one past the
+        // first one's end. Touching is not overlapping, so both sets are honest.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        FindAccepterPeer(accepter);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 2, fragmentIndex: 0, fragmentCount: 2, payload: [0x03]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 3, fragmentIndex: 1, fragmentCount: 2, payload: [0x04]),
+        ];
+
+        // Act
+        SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
+        List<byte[]> delivered = accepter.DrainPayloads();
+
+        // Assert
+        accepter.Reactor.Counters.MalformedSessionDatagrams.Should().Be(0, "adjacent declared ranges do not overlap");
+        delivered.Should().BeEquivalentTo([new byte[] { 0x01, 0x02 }, new byte[] { 0x03, 0x04 }]);
+    }
+
+    [Fact]
+    public void Pump_ADatagramCarryingCompleteSetsAtTheSameFirstSequenceInTwoReliableSpaces_DeliversBothMessages()
+    {
+        // Arrange — each reliable Space has its own sequence numbers, so the same first sequence in two
+        // Spaces names two different groups.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        FindAccepterPeer(accepter);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x01]),
+            .. BuildFragmentRecord(ModeReliableUnordered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x02]),
+            .. BuildFragmentRecord(ModeReliableOrderedProbe, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: [0x03]),
+            .. BuildFragmentRecord(ModeReliableOrderedProbe, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: [0x04]),
+        ];
+
+        // Act
+        SendAndPumpUntilReceived(accepter, client, clientLink, datagram);
+        List<byte[]> delivered = accepter.DrainPayloads();
+
+        // Assert
+        accepter.Reactor.Counters.MalformedSessionDatagrams.Should().Be(0, "groups in different Spaces are never compared");
+        delivered.Should().BeEquivalentTo([new byte[] { 0x01, 0x02 }, new byte[] { 0x03, 0x04 }]);
     }
 
     [Fact]
@@ -562,7 +620,7 @@ public class DatagramSessionFragmentDeliveryTests
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
         offset += 8;
         // The remaining ResumeSecretLength bytes are the dialler's resume secret; an all-zero one is
-        // fine, since nothing in this ticket's path ever reads it.
+        // fine, since only a Resume reads it and these tests send none.
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 

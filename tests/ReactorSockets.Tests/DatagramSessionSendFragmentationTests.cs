@@ -5,12 +5,12 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #245: <see cref="DatagramSessionReactor.Send"/> cutting a reliable Message wider than one
+/// <see cref="DatagramSessionReactor.Send"/> cutting a reliable Message wider than one
 /// Fragment into <c>ceil(size / fragmentSize)</c> Fragments, each an ordinary reliable packet with its
 /// own sequence number. Every test here drives a live Session through <see cref="WireTap"/> and decodes
 /// the captured bytes by hand — the same proof style <see cref="DatagramSessionWireFormatTests"/> uses —
 /// rather than through <see cref="DatagramDecoder"/>, which only understands the unfragmented record
-/// shape (issue #229) and is left alone here (out of this ticket's scope).
+/// shape.
 /// </summary>
 public class DatagramSessionSendFragmentationTests
 {
@@ -150,6 +150,36 @@ public class DatagramSessionSendFragmentationTests
     /// freshly connected Session pair, pumps it across a <see cref="WireTap"/>, and decodes the one
     /// captured data Datagram's records by hand.
     /// </summary>
+    [Theory]
+    [InlineData(DeliveryMode.ReliableOrdered, 0, 1, false)]
+    [InlineData(DeliveryMode.ReliableUnordered, 0, 1, false)]
+    [InlineData(DeliveryMode.ReliableOrdered, FragmentSize + 1, 2, true)]
+    [InlineData(DeliveryMode.ReliableUnordered, FragmentSize + 1, 2, true)]
+    [InlineData(DeliveryMode.ReliableOrdered, FragmentSize * 2, 2, true)]
+    [InlineData(DeliveryMode.ReliableUnordered, FragmentSize * 2, 2, true)]
+    public void Send_AMessageAtAFragmentCountBoundary_IsCutIntoTheCeilingOfItsLengthOverTheFragmentSize(
+        DeliveryMode mode, int length, int expectedRecords, bool expectedFragmented)
+    {
+        // Arrange — an empty Message is still one record rather than none, one byte past a Fragment is
+        // two, and an exact multiple is that quotient with no remainder Fragment.
+        using DatagramSessionReactorHarness dialler = new(bindLoopback: false, maxMessageSize: MaxMessageSize, retentionBytes: MaxMessageSize * 2, fragmentSize: FragmentSize);
+        using DatagramSessionReactorHarness accepter = new(maxMessageSize: MaxMessageSize, retentionBytes: MaxMessageSize * 2, fragmentSize: FragmentSize);
+        using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
+        PeerId diallerPeer = dialler.Reactor.Connect(tap.PublicEndPoint);
+        DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
+        byte[] message = Enumerable.Range(0, length).Select(i => (byte)i).ToArray();
+
+        // Act
+        dialler.Reactor.Send(diallerPeer, mode, message).Should().Be(SendOutcome.Sent);
+        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
+        List<DecodedRecord> records = DecodeRecords(FirstDataDatagram(tap));
+
+        // Assert
+        records.Should().HaveCount(expectedRecords);
+        records.Should().OnlyContain(record => record.IsFragment == expectedFragmented);
+        records.SelectMany(record => record.Payload).Should().Equal(message);
+    }
+
     private static (List<DecodedRecord> Records, byte[] Message) SendAndDecodeFragments(DeliveryMode mode)
     {
         using DatagramSessionReactorHarness dialler = new(bindLoopback: false, maxMessageSize: MaxMessageSize, retentionBytes: MaxMessageSize * 2, fragmentSize: FragmentSize);

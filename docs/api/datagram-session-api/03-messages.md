@@ -14,10 +14,13 @@ resolves on a later Pump, as one of:
 
 - `PeerConnected` — the Session is established.
 - `PeerClosed` with `VersionMismatch` or `RemoteAtCapacity` — the far end refused in protocol.
+- `PeerClosed` with `TransportFailed` — nothing answered within this Reactor's `Linger` of `Connect`.
 
-**A dial has no timeout and its handshake Datagrams are not retransmitted.** If the Hello, Cookie or
-Accept is lost, or nothing is listening, the Peer stays pending and holds its Slot. Put your own
-deadline on dials and `Close` a Peer that has not connected in time.
+A pending dial resends its handshake: the Hello until a Cookie arrives, then the Hello-with-cookie until an
+Accept or Refusal arrives. The first resend waits about one Pump interval, each later wait doubles up to
+`Linger`, and every wait is drawn at random below that, so many dials do not retry in step. A lost Hello,
+Cookie or Accept therefore costs a delay, not the dial. `Close` ends a pending dial at once and stops the
+resends. Nothing is resent while your clock has not moved.
 
 `Connect` throws `InvalidOperationException` if the Reactor is already at capacity. Check your own
 Peer count before dialling if that is reachable in your application.
@@ -44,7 +47,7 @@ Message is legal and is delivered as an empty `Payload`.
 | `Closed` | The Peer is not open, or a Goodbye has passed in one direction or the other. | Stop sending to this Peer. |
 | `NotEstablished` | The handshake has not finished. Nothing was copied. | Wait for `PeerConnected`. |
 | `MessageTooLarge` | An unreliable Message is larger than one fragment. | Split it, or use a reliable mode. |
-| `RemoteMessageTooLarge` | A reliable Message is larger than the `MaxMessageSize` the peer announced. | Send something smaller. |
+| `RemoteMessageTooLarge` | A Message in any mode is larger than the `MaxMessageSize` the peer announced. | Send something smaller. |
 
 The checks run in this order: Peer not open or peer's Goodbye delivered (`Closed`), handshake
 unfinished (`NotEstablished`), your own `Close` in progress (`Closed`), size, then retention. A
@@ -86,12 +89,13 @@ Only the reliable modes fragment. A reliable Message larger than one fragment is
 `ceil(length / FragmentSize)` Fragments, each sequenced, retained and retransmitted on its own, and
 delivered as one `MessageReceived` once all of them have arrived.
 
-- The reliable cap is the **peer's** announced `MaxMessageSize`, not yours. The same payload can be
-  accepted for one Peer and refused for another.
+- Every mode is limited by the **peer's** announced `MaxMessageSize`, not yours. The same payload can
+  be accepted for one Peer and refused for another.
 - A Message is committed whole or not at all. If its mode's Space has fewer free retention slots
   than it has Fragments, `Send` returns `RetentionExhausted` and nothing is retained.
 - The unreliable modes are capped at one fragment, permanently. Fragmenting what cannot be
-  retransmitted multiplies the loss rate by the number of pieces.
+  retransmitted multiplies the loss rate by the number of pieces. An unreliable Message above both
+  one fragment and the peer's `MaxMessageSize` returns `MessageTooLarge`.
 
 Fragmentation lengthens `ReliableOrdered` head-of-line blocking: every later Message waits for the
 whole fragmented Message, not one Datagram. For bulk transfer, prefer `ReliableUnordered`.
@@ -145,14 +149,16 @@ Message.
 
 ## What a peer can do wrong
 
-None of these throw. A remote can produce them at will, so they cost that Session or that Datagram
-and leave the Reactor untouched.
+None of these throw. A remote can produce them at will, so they cost that Session, that Datagram or
+that Message and leave the Reactor untouched.
 
 | What arrived | Result |
 |---|---|
 | A Datagram that does not parse, or names no Session | Discarded. `DatagramMalformed` (200). |
 | A Fragment in an unreliable mode | Datagram discarded. `UnreliableFragment` (206) and `DatagramMalformed` (200). |
 | A Fragment set claiming more Fragments than your receive window holds | `PeerClosed` with `ProtocolViolation`. `OversizedFragmentSet` (205). |
+| A Message larger than your `MaxMessageSize`, whole or assembled | Discarded and still acknowledged. The Session stays open. `OversizedMessage` (207). |
 | Messages after the peer's own Goodbye | Acknowledged, not delivered. |
 
-One bad record discards the whole Datagram it came in, including any good records before it.
+A record that does not parse discards the whole Datagram it came in, including any good records before
+it. A Message over your `MaxMessageSize` costs only itself.

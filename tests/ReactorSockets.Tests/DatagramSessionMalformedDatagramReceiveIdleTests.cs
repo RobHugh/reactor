@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #354 (parent #54): the malformed side of #351's rule. Only a well-formed data datagram
+/// The malformed side of #351's rule. Only a well-formed data datagram
 /// counts as hearing from the peer — a malformed one still reaches the Reactor and is counted (proof
 /// via <see cref="ReactorCounters.MalformedSessionDatagrams"/>), but must never touch
 /// <c>PeerSlot.LastReceiveTimestamp</c>, so #352's receive-idle deadline
@@ -94,7 +94,7 @@ public class DatagramSessionMalformedDatagramReceiveIdleTests
             accepter.PumpUntil(() => accepter.Reactor.Counters.MalformedSessionDatagrams >= malformedToReach);
         }
 
-        // Assert — AC2: every injected datagram is shown to have reached the Reactor via its
+        // Assert — every injected datagram is shown to have reached the Reactor via its
         // malformed-discard counter, and none of it reached the event stream.
         accepter.Reactor.Counters.MalformedSessionDatagrams.Should().Be((ulong)injectionPoints.Length);
         accepter.DrainToList().Should().NotContain(
@@ -106,7 +106,7 @@ public class DatagramSessionMalformedDatagramReceiveIdleTests
         accepter.TimeProvider.Advance(deadline - elapsed);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.PumpAndDrainAll(1);
 
-        // Assert — AC1: PeerInterrupted arrives just after peerSendIdle × 3 from the last well-formed
+        // Assert — PeerInterrupted arrives just after peerSendIdle × 3 from the last well-formed
         // datagram, exactly as if none of the malformed traffic above had ever arrived.
         events.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted && e.Peer.Equals(accepterPeer));
     }

@@ -1,14 +1,14 @@
 namespace ReactorSockets.Session;
 
 /// <summary>
-/// One Peer's four outbound sequence allocators (ADR 0009, issue #40): one independent <c>u32</c>
-/// counter per delivery mode's Space, keyed by the same <see cref="PacketRecordMode"/> a packet
-/// record's flags byte carries on the wire. Four Spaces exist, rather than one shared counter,
-/// because a receiver missing sequence 12 cannot know what mode 12 was — the flags of a packet that
-/// never arrived are not available — so whatever shares a Space shares head-of-line blocking whether
-/// or not that was intended. Plain <see cref="PacketRecordMode.Unreliable"/> gets a Space and a
-/// sequence number like every other mode; the independence costs nothing on the wire because the mode
-/// bits already identify the Space.
+/// One Peer's four outbound sequence allocators (ADR 0009): one independent <c>u32</c> counter per
+/// delivery mode's Space, keyed by the same <see cref="PacketRecordMode"/> a packet record's flags byte
+/// carries on the wire. Four Spaces exist, rather than one shared counter, because a receiver missing
+/// sequence 12 cannot know what mode 12 was — the flags of a packet that never arrived are not
+/// available — so whatever shares a Space shares head-of-line blocking whether or not that was
+/// intended. Plain <see cref="PacketRecordMode.Unreliable"/> gets a Space and a sequence number like
+/// every other mode; the independence costs nothing on the wire because the mode bits already identify
+/// the Space.
 /// </summary>
 /// <remarks>
 /// Each Space starts at zero (settled in 5.4, not a random initial sequence number) and wraps through
@@ -47,8 +47,8 @@ internal sealed class OutboundSequenceSpaces
     /// The value the next <see cref="Allocate"/> in <paramref name="mode"/>'s Space will return,
     /// without advancing anything. A caller that can still refuse the Send it is preparing needs the
     /// sequence number before it commits to spending it: a refused Send must leave the Space exactly
-    /// where it found it, or the receiver's window waits on a number nothing will ever send (issue
-    /// #244). Repeated calls return the same value until an <see cref="Allocate"/> intervenes.
+    /// where it found it, or the receiver's window waits on a number nothing will ever send. Repeated
+    /// calls return the same value until an <see cref="Allocate"/> intervenes.
     /// </summary>
     /// <param name="mode">Which of the four Spaces to read.</param>
     /// <returns>The sequence number the next allocation in that Space would claim.</returns>

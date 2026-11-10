@@ -110,14 +110,7 @@ public class AssemblySkeletonTests
             nameof(PeerCounters),
             nameof(DisconnectReason),
             nameof(SendOutcome),
-            nameof(DeliveryMode),
-            nameof(PumpIntervalObserver),
-            nameof(RoundTripEstimator),
-            nameof(RetransmissionTimer),
-            nameof(FragmentStallSignature),
-            nameof(FragmentPlan),
-            nameof(FragmentPlanResult),
-            nameof(FragmentGroup));
+            nameof(DeliveryMode));
     }
 
     [Fact]

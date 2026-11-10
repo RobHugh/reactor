@@ -25,7 +25,8 @@ namespace ReactorSockets.Core;
 /// The registered set is scanned starting from an offset that rotates by one Handle every Pump, so
 /// unfairness does not accumulate on the same Handle across many Pumps. This only spreads
 /// unfairness <i>across</i> Pumps; bounding how much of a single Pump one Handle can consume is the
-/// frame arena's fair-share job (<see cref="FrameArena"/>), not this dispatcher's.
+/// job of the frame arena's fair share (<see cref="FrameArena"/>) and, on the datagram profile,
+/// <see cref="DatagramSessionOptions.MaxDatagramsPerPump"/>, not this dispatcher's.
 /// </para>
 /// <para>
 /// The buffer passed to <c>Select</c> for readability is a single <see cref="List{T}"/> field cleared

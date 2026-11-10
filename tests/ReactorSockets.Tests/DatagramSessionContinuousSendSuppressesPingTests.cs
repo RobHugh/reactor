@@ -4,15 +4,15 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #342 (parent #53): the flip side of issue #340's send-idle Ping. A Session sending data more
+/// The flip side of the send-idle Ping. A Session sending data more
 /// often than <see cref="DatagramSessionOptions.SendIdleInterval"/> never needs a Heartbeat — every
 /// data datagram already restarts <see cref="DatagramSessionReactor.PeerSlot.LastSendTimestamp"/>
-/// (#340's <c>FlushPeer</c>), so <c>EnforceSendIdleTimer</c> never finds this Peer idle. Both tests
+/// (in <c>FlushPeer</c>), so <c>EnforceSendIdleTimer</c> never finds this Peer idle. Both tests
 /// here drive a real <see cref="DatagramSessionReactor"/> against another one through a
 /// <see cref="WireTap"/>, reading the exact bytes the tap captured off the wire, exactly as
 /// <see cref="DatagramSessionSendIdlePingTests"/> does. Traffic here is <c>Unreliable</c>: continuous
 /// reliable traffic would either exhaust the default 4096-byte retention budget or need the far end to
-/// keep acking it, neither of which this ticket's timer question needs (#340's own known traps).
+/// keep acking it, neither of which the timer question here needs.
 /// </summary>
 public class DatagramSessionContinuousSendSuppressesPingTests
 {
@@ -20,7 +20,7 @@ public class DatagramSessionContinuousSendSuppressesPingTests
     private const byte ControlBit = 0b0000_1000;
 
     // =========================================================================================
-    // AC1 — continuous traffic across at least 10 send-idle intervals puts zero control records
+    // Continuous traffic across at least 10 send-idle intervals puts zero control records
     // on the wire
     // =========================================================================================
 
@@ -71,14 +71,14 @@ public class DatagramSessionContinuousSendSuppressesPingTests
     }
 
     // =========================================================================================
-    // AC2 — once continuous traffic stops, the Ping arrives exactly one SendIdleInterval after
+    // Once continuous traffic stops, the Ping arrives exactly one SendIdleInterval after
     // the last data datagram, not before
     // =========================================================================================
 
     [Fact]
     public void Pump_SendsStopAfterContinuousTraffic_EmitsPingExactlyOneSendIdleIntervalAfterLastDatagram()
     {
-        // Arrange — same shape as AC1: continuous Unreliable traffic faster than the interval, so the
+        // Arrange — same shape as the first test: continuous Unreliable traffic faster than the interval, so the
         // timer never fires while sends continue.
         TimeSpan sendIdleInterval = TimeSpan.FromSeconds(1);
         TimeSpan sendInterval = TimeSpan.FromMilliseconds(sendIdleInterval.TotalMilliseconds / 4);

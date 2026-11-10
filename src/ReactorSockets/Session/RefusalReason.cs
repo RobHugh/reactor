@@ -15,8 +15,20 @@ internal enum RefusalReason : byte
     /// <summary>The offered version is not the one this Reactor speaks. The Refusal names both.</summary>
     Version = 1,
 
-    /// <summary>Every capacity Slot was occupied. Says nothing about versions.</summary>
+    /// <summary>
+    /// No capacity Slot was available to this handshake: every Slot was occupied, or its address held
+    /// <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> or
+    /// <see cref="StreamSessionOptions.MaxPeersPerAddress"/> Peers. Says nothing about versions.
+    /// </summary>
     Capacity = 2,
+
+    /// <summary>
+    /// The dialler sent more than one further handshake record's worth of bytes behind its first
+    /// record before it was answered, which a conforming dialler never does. The first value names
+    /// that limit in bytes. Sent only by the stream profile, in place of <see cref="Capacity"/>, by a
+    /// Reactor that was refusing the connection for capacity (issue #455).
+    /// </summary>
+    ProtocolViolation = 3,
 }
 
 /// <summary>
@@ -35,6 +47,7 @@ internal static class RefusalReasonMap
     {
         RefusalReason.Version => DisconnectReason.VersionMismatch,
         RefusalReason.Capacity => DisconnectReason.RemoteAtCapacity,
+        RefusalReason.ProtocolViolation => DisconnectReason.ProtocolViolation,
 
         // The discard arm refuses.
         _ => null,

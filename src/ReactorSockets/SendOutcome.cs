@@ -31,10 +31,10 @@ public enum SendOutcome
 
     /// <summary>
     /// A Goodbye for this Peer has already passed in one direction or the other — this end sent its
-    /// own (<c>Close</c>, issue #23), or the far end's arrived and the Peer is <c>Closing</c>. Either
-    /// way the Session is ending and nothing was copied: a Message queued after a Goodbye would have
-    /// to either jump it in retention or follow it, and neither is a Message the far end has any
-    /// business receiving.
+    /// own (<c>Close</c>), or the far end's arrived and the Peer is <c>Closing</c>. Either way the
+    /// Session is ending and nothing was copied: a Message queued after a Goodbye would have to either
+    /// jump it in retention or follow it, and neither is a Message the far end has any business
+    /// receiving.
     /// </summary>
     Closed = 2,
 
@@ -49,21 +49,22 @@ public enum SendOutcome
     MessageTooLarge = 3,
 
     /// <summary>
-    /// A reliable Message exceeds the <c>MaxMessageSize</c> the remote end announced during the
-    /// handshake. Nothing was copied, and the caller may retry immediately with a smaller payload.
-    /// Distinct from <see cref="MessageTooLarge"/> purely by whose limit was exceeded: that value means
-    /// a local configuration fact the caller's own settings could have predicted (the single-Datagram
-    /// cap an unreliable mode cannot exceed); this one means the far end's announced receive limit,
-    /// which the caller has no way to know in advance.
+    /// A Message, in any delivery mode, exceeds the <c>MaxMessageSize</c> the remote end announced during
+    /// the handshake. Nothing was copied, and the caller may retry immediately with a smaller payload.
+    /// An unreliable Message over both limits reports <see cref="MessageTooLarge"/> instead. Distinct
+    /// from <see cref="MessageTooLarge"/> purely by whose limit was exceeded: that value means a local
+    /// configuration fact the caller's own settings could have predicted (the single-Datagram cap an
+    /// unreliable mode cannot exceed); this one means the far end's announced receive limit, which the
+    /// caller has no way to know in advance.
     /// </summary>
     RemoteMessageTooLarge = 4,
 
     /// <summary>
     /// The Peer's handshake has not completed: a dial is still connecting, or waiting for the far end's
     /// handshake record. Nothing was copied and nothing about the Session changed. Wait for
-    /// <see cref="SessionEventKind.PeerConnected"/> for this Peer before Sending (issue #332). Refusing
-    /// here rather than queueing keeps a Message from reaching a socket whose connect has not resolved,
-    /// or going out before this end knows the far end's version and announced <c>MaxMessageSize</c>.
+    /// <see cref="SessionEventKind.PeerConnected"/> for this Peer before Sending. Refusing here rather
+    /// than queueing keeps a Message from reaching a socket whose connect has not resolved, or going
+    /// out before this end knows the far end's version and announced <c>MaxMessageSize</c>.
     /// </summary>
     NotEstablished = 5,
 }

@@ -5,7 +5,7 @@ using Microsoft.Extensions.Time.Testing;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// The shared instrument issue #271's two runs are built on (subtask 7.5.5.1, issue #304): two
+/// The shared instrument the fragment-size stall diagnosis tests are built on: two
 /// <see cref="DatagramSessionReactor"/>s talking through a <see cref="LossyProxy"/>, all three driven by
 /// one <see cref="FakeTimeProvider"/> so a single <see cref="PumpRound"/> call's clock advance moves every
 /// retransmission timer in the scenario together. What differs between the positive (a size threshold
@@ -20,9 +20,8 @@ namespace ReactorSockets.Tests;
 /// <see cref="FakeTimeProvider"/> per instance by default, which is right for a single-Reactor test but
 /// wrong here: the stall signature's four retransmission rounds are read off <c>RetransmissionTimer</c>
 /// deadlines on both Peers and the proxy's own delayed-relay queue, and those only stay in lockstep if
-/// they all read the same clock. The harness now accepts an injected <see cref="FakeTimeProvider"/> for
-/// exactly this reason (see its constructor remarks) — the minimal change that keeps every existing
-/// caller, which passes none, compiling and behaving exactly as before.
+/// they all read the same clock. The harness accepts an injected <see cref="FakeTimeProvider"/> for exactly
+/// this reason (see its constructor remarks). A caller that passes none gets the harness's own clock.
 /// </para>
 /// <para>
 /// <b>Why the roles are fixed.</b> The dialler is the only side that sends Messages; the accepter is the
@@ -49,7 +48,7 @@ namespace ReactorSockets.Tests;
 /// <see cref="System.Diagnostics.Stopwatch"/> budget the way the harness's own connect helpers do.
 /// Measured on issue #304 before the switch, with a throwaway probe rather than a kept test: 5000 fresh
 /// proxied handshakes on this path each completed within three rounds, none needing a wait of any kind. Every timing decision either run makes after that — RTO
-/// expiry, backoff, and the four retransmission rounds <see cref="FragmentStallSignature"/> counts — is
+/// expiry, backoff, and the four retransmission rounds <c>FragmentStallSignature</c> counts — is
 /// read off <see cref="Clock"/>, the shared <see cref="FakeTimeProvider"/>, and advanced only by
 /// <see cref="PumpRound"/>'s own <paramref name="advance"/> parameter.
 /// </para>
@@ -111,8 +110,7 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     /// one outbound Datagram as the 65 507-byte UDP maximum has room for, so a Message any smaller than
     /// this crosses the wire as a single Datagram and a network that loses that Datagram loses the whole
     /// set — all or nothing, which is issue #271's black hole and leaves nothing held to report against.
-    /// A set spanning two Datagrams is the smallest shape a real path can leave partially held, which is
-    /// what <see cref="DiagnosticId.FragmentSetAbandoned"/>'s held-against-expected figures are for.
+    /// A set spanning two Datagrams is the smallest shape a real path can leave partially held.
     /// At <see cref="FragmentSize"/> this is 110 Fragments, of which the first Datagram carries the 107
     /// that fit and the second carries the rest.
     /// </summary>
@@ -153,7 +151,6 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     private readonly byte[] _spanningPayload = Enumerable.Range(0, SpanningMessageLength).Select(i => (byte)i).ToArray();
     private readonly byte[] _keepAlivePayload = [0];
     private readonly int _wireBaselineCount;
-    private readonly int _forwardedBaselineCount;
     private int _orderedSequencesSent;
 
     /// <summary>
@@ -220,7 +217,6 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
         // handshake's own fixed-size control Datagrams, captured above during Establish, are deliberately
         // excluded from AssertNoProbeWasObserved's walk (see the type remarks).
         _wireBaselineCount = Proxy.Captures.Count;
-        _forwardedBaselineCount = Proxy.Forwarded.Count;
 
         configureProxyRule(Proxy);
     }
@@ -325,10 +321,7 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     /// <remarks>
     /// Whole Datagrams, never individual records: a Datagram carrying several Fragments is dropped
     /// entire if any one of them names a listed sequence, because that is the only loss a real path can
-    /// inflict. That is why <see cref="ForwardedFragmentSequencesOf"/> exists and why a caller reads the
-    /// held figure from it rather than from this list — what a rule was asked to drop and what the far
-    /// end actually stopped seeing are two different facts, and only the second is what a Diagnostic's
-    /// held figure has to match.
+    /// inflict.
     /// </remarks>
     public void DropFragmentsAtSequences(params uint[] sequences)
     {
@@ -337,67 +330,6 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
         Proxy.SetPayloadDropRule(
             RelayDirection.ClientToUpstream,
             datagram => DecodeRecords(datagram).Any(record => record.IsFragment && dropped.Contains(record.Sequence)));
-    }
-
-    /// <summary>
-    /// The distinct sequences of the Fragment set beginning at <paramref name="firstSequence"/> that the
-    /// proxy actually put on the wire toward the accepter, read off <see cref="LossyProxy.Forwarded"/>
-    /// rather than assumed from whatever rule was installed. Distinct, because a retransmission forwards
-    /// a sequence the accepter already holds and cannot make it hold that piece twice — which is exactly
-    /// the figure a <see cref="DiagnosticId.FragmentSetAbandoned"/> record's held count has to equal.
-    /// </summary>
-    /// <param name="firstSequence">The set's first sequence — see <see cref="FirstSequenceOfLargeMessage"/>.</param>
-    /// <param name="count">How many sequences the set spans.</param>
-    public IReadOnlyCollection<uint> ForwardedFragmentSequencesOf(uint firstSequence, int count)
-    {
-        HashSet<uint> forwarded = [];
-        foreach (RelayCapture capture in Proxy.Forwarded.Skip(_forwardedBaselineCount))
-        {
-            if (capture.Direction != RelayDirection.ClientToUpstream)
-            {
-                continue;
-            }
-
-            foreach ((byte _, uint sequence, int _, bool isFragment, ushort _, ushort _) in DecodeRecords(capture.Payload))
-            {
-                if (isFragment && unchecked(sequence - firstSequence) < (uint)count)
-                {
-                    forwarded.Add(sequence);
-                }
-            }
-        }
-
-        return forwarded;
-    }
-
-    /// <summary>
-    /// The <c>fragmentCount</c> the Fragment set beginning at <paramref name="firstSequence"/> declared
-    /// on the wire, read off the first Fragment of that set the proxy observed — the count a
-    /// <see cref="DiagnosticId.FragmentSetAbandoned"/> record's expected figure has to equal, taken from
-    /// the set's own metadata rather than from what this fixture believes it sent. Read from
-    /// <see cref="LossyProxy.Captures"/>, not <see cref="LossyProxy.Forwarded"/>: the set declared its
-    /// count when it left the dialler, whether or not that particular Fragment was allowed through.
-    /// </summary>
-    /// <returns>The declared count, or <see langword="null"/> if no Fragment of that set was ever observed.</returns>
-    public ushort? DeclaredFragmentCountOf(uint firstSequence, int count)
-    {
-        foreach (RelayCapture capture in Proxy.Captures.Skip(_wireBaselineCount))
-        {
-            if (capture.Direction != RelayDirection.ClientToUpstream)
-            {
-                continue;
-            }
-
-            foreach ((byte _, uint sequence, int _, bool isFragment, ushort _, ushort fragmentCount) in DecodeRecords(capture.Payload))
-            {
-                if (isFragment && unchecked(sequence - firstSequence) < (uint)count)
-                {
-                    return fragmentCount;
-                }
-            }
-        }
-
-        return null;
     }
 
     /// <summary>
@@ -533,7 +465,7 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     }
 
     /// <summary>
-    /// Issue #307's first shared assertion: across every datagram this fixture's proxy has observed
+    /// The first shared assertion: across every datagram this fixture's proxy has observed
     /// since the handshake completed, every record decodes as one of the three shapes this fixture's own
     /// scenario ever produces, travelling only the one direction that shape can legitimately come from —
     /// a Fragment of the large Message or the small Message's own record
@@ -608,7 +540,7 @@ internal sealed class FragmentSizeDiagnosisFixture : IDisposable
     }
 
     /// <summary>
-    /// Issue #307's second shared assertion: both ends' configured fragment size, read back off the same
+    /// The second shared assertion: both ends' configured fragment size, read back off the same
     /// <see cref="DatagramSessionOptions"/> instance each harness was constructed with
     /// (<see cref="DatagramSessionOptions.ResolvedFragmentSize"/> via
     /// <see cref="DatagramSessionReactorHarness.Options"/>), is exactly <paramref name="expectedFragmentSize"/>

@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #402 (parent #57): the ordering test, the headline deliverable of #57. Several
+/// Goodbye ordering. Several
 /// <c>ReliableOrdered</c> Messages then <see cref="DatagramSessionReactor.Close"/> cross a
 /// <see cref="LossyProxy"/> that drops the first Message's datagram. Every Message and the Goodbye go in
 /// their own datagram, so the Goodbye reaches the receiver while the first Message is still missing, and

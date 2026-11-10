@@ -94,8 +94,8 @@ internal readonly record struct DatagramDecodeResult
 /// declared payload would run past the bytes remaining, fails the whole decode via
 /// <see cref="DatagramDecodeResult.Failure"/> rather than returning whatever records were read before
 /// the truncation. Multi-byte integers are read big-endian, matching every writer in
-/// <c>src/ReactorSockets/Session</c>. This decoder does not enforce the fragment bit or the spare bits
-/// the write side never sets — those are a write-side legality concern already proven where the writer
+/// <c>src/ReactorSockets/Session</c>. This decoder does not enforce the fragment bit or the spare bits —
+/// those are a write-side legality concern already proven where the writer
 /// lives; a datagram a test hand-builds with those bits set decodes here and reports them in
 /// <see cref="DecodedPacketRecord.Flags"/> for the test itself to assert on.
 /// </remarks>

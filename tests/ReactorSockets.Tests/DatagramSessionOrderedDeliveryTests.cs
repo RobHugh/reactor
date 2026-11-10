@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtasks 6.6.9 and 6.6.10 (issues #214 and #220): the ordered delivery queue, and its wiring into
+/// The ordered delivery queue, and its wiring into
 /// the <c>ReliableOrdered</c> Space. A record whose predecessor has not arrived is held rather than
 /// drained, and the whole run behind the hole drains in send order the moment it fills. The queue
 /// itself is internal with no <c>InternalsVisibleTo</c> (ADR 0015), so every promise it makes is

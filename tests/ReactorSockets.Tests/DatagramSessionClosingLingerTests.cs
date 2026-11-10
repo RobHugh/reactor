@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #399 (parent #57): a Closing datagram Peer whose Goodbye is never acknowledged closes with
+/// A Closing datagram Peer whose Goodbye is never acknowledged closes with
 /// <see cref="DisconnectReason.LingerExpired"/> once its effective Linger has elapsed since
 /// <see cref="DatagramSessionReactor.Close"/>, and not before. If the ack arrives first, it closes with
 /// <see cref="DisconnectReason.LocalClose"/> and nothing closes it a second time. Drives a real pair

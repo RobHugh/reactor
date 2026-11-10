@@ -65,3 +65,19 @@ than as an unexplained remote disconnect part-way through a transfer.
 - Two header shapes exist on the wire, so parsing branches and both must be covered by tests.
 - Consumers on jumbo-frame LANs must configure the larger size themselves; nothing discovers it for
   them.
+
+**Amended (issue #425).** The receiver enforces `MaxMessageSize` as well as announcing it. The receive
+window is not the bound on a Message: it can be widened past the floor for a peer that cuts smaller
+Fragments, and a whole record is bounded only by its Datagram. A completed Message above the limit is
+discarded and reported with `OversizedMessage` (207). The Session stays open, and the Message stays
+acknowledged and keeps its turn in send order, so nothing behind it stalls. The check runs when a
+Fragment group is due for delivery, so a group whose turn never comes is never reported. The main cost
+is that the sending end's check still covers reliable modes only: an unreliable Message above the
+peer's limit returns `Sent` and is certain to be discarded on arrival.
+
+**Amended (issue #449).** The sending end checks the peer's limit in every mode, which removes the cost
+the #425 amendment names. An unreliable Message above the limit now returns `RemoteMessageTooLarge` and
+spends nothing, the outcome a reliable Message already gets for the same limit. The one-Datagram cap is
+checked first, so a Message over both caps still returns `MessageTooLarge`. The main cost is that the
+refusal no longer follows from the mode alone: a consumer that read `RemoteMessageTooLarge` as
+reliable-only has to handle it for unreliable Sends too.

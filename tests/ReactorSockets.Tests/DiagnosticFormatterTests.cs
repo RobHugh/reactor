@@ -70,6 +70,15 @@ public class DiagnosticFormatterTests
             DiagnosticRecord.ForUnreliableFragment(_source, modeBits: 1),
             $"Warn UnreliableFragment (206), {SourceText}: a datagram fragmenting in an unreliable mode was discarded (mode UnreliableSequenced, mode bits 1)"),
         new(
+            DiagnosticRecord.ForOversizedMessage(_peer, messageLength: 5000, maxMessageSize: 4096),
+            $"Warn OversizedMessage (207), {PeerText}: a Message larger than MaxMessageSize was discarded (bytes 5000, MaxMessageSize 4096)"),
+        new(
+            DiagnosticRecord.ForAddressPeerLimitReached(_source, limit: 2, prefixLength: 32),
+            $"Warn AddressPeerLimitReached (208), {SourceText}: a handshake was refused because its address holds as many Peers as it may (MaxPeersPerAddress 2, counted by its /32)"),
+        new(
+            DiagnosticRecord.ForDatagramReadLimitReached(limit: 3, socketIndex: 1),
+            "Warn DatagramReadLimitReached (209): a Pump made as many reads on bound socket 1 as it may (MaxDatagramsPerPump 3)"),
+        new(
             DiagnosticRecord.ForPeerRefusedCapacity(_source, capacity: 8),
             $"Info PeerRefused (300), {SourceText}: a dialler was refused because every capacity slot was occupied (capacity 8)"),
         new(

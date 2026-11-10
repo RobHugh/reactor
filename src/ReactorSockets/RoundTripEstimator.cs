@@ -2,16 +2,14 @@ namespace ReactorSockets;
 
 /// <summary>
 /// Tracks a smoothed round-trip time and its variance using the RFC 6298 recurrence, and derives a
-/// retransmission timeout from the two. Built for issue #192 (slice #42, the adaptive RTO): a fixed
-/// timeout constant is rejected because no single number is right for both a LAN and a satellite
-/// link, so the timeout has to be derived from what this link is actually doing.
+/// retransmission timeout from the two for the adaptive RTO: a fixed timeout constant is rejected
+/// because no single number is right for both a LAN and a satellite link, so the timeout has to be
+/// derived from what this link is actually doing.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Public for the same reason <see cref="PumpIntervalObserver"/> is (ADR 0015): a test pins this
-/// behaviour by constructing one directly and calling <see cref="Sample(TimeSpan)"/> with hand-picked
-/// <see cref="TimeSpan"/> values, with no <c>InternalsVisibleTo</c> and no interface invented for
-/// the purpose.
+/// Internal (ADR 0022). The recurrence and Karn's rule are proved through a live Peer, by the RTO each
+/// <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> record carries after hand-timed acks.
 /// </para>
 /// <para>
 /// This type reads no clock of its own. A caller measures one round trip from monotonic
@@ -32,14 +30,14 @@ namespace ReactorSockets;
 /// drift over the life of a link.
 /// </para>
 /// <para>
-/// Karn's rule (issue #193) — a retransmitted sequence's ack is ambiguous, so its round trip is
-/// discarded rather than folded in — is implemented on <see cref="Sample(TimeSpan, bool)"/>. Backoff
-/// (issue #194) is layered above this type instead: this estimator produces an unbounded,
-/// unbacked-off timeout from the samples it is given. The bound against a Reactor's observed Pump
-/// cadence and the Linger ceiling is issue #195's <c>RetransmissionTimer.EffectiveTimeout</c>.
+/// Karn's rule — a retransmitted sequence's ack is ambiguous, so its round trip is discarded rather
+/// than folded in — is implemented on <see cref="Sample(TimeSpan, bool)"/>. Backoff is layered above
+/// this type instead: this estimator produces an unbounded, unbacked-off timeout from the samples it is
+/// given. The bound against a Reactor's observed Pump cadence and the Linger ceiling is
+/// <see cref="RetransmissionTimer.EffectiveTimeout"/>.
 /// </para>
 /// </remarks>
-public sealed class RoundTripEstimator
+internal sealed class RoundTripEstimator
 {
     private long _smoothedRoundTripTicks;
     private long _roundTripVarianceTicks;
@@ -72,9 +70,9 @@ public sealed class RoundTripEstimator
     /// <see cref="TimeSpan.MaxValue"/> — deliberately, for the same reason
     /// <see cref="PumpIntervalObserver.Interval"/> is <see cref="TimeSpan.MaxValue"/> before a
     /// cadence exists. With nothing measured yet there is no honest timeout to report, so this
-    /// value defers entirely to whatever ceiling the caller clamps against (issue #195's Linger
-    /// bound) rather than inventing a figure — the same claim about the consumer's network this
-    /// whole estimator exists to avoid making.
+    /// value defers entirely to whatever ceiling the caller clamps against rather than inventing a
+    /// figure — the same claim about the consumer's network this whole estimator exists to avoid
+    /// making.
     /// </remarks>
     public TimeSpan Timeout => HasEstimate
         ? TimeSpan.FromTicks(SaturatingAdd(_smoothedRoundTripTicks, SaturatingQuadruple(_roundTripVarianceTicks)))
@@ -91,7 +89,7 @@ public sealed class RoundTripEstimator
     /// <summary>
     /// Records one round trip's elapsed time, measured by the caller from monotonic
     /// <see cref="TimeProvider"/> timestamps — unless <paramref name="sequenceWasRetransmitted"/> is
-    /// <see langword="true"/>, in which case the sample is discarded (Karn's algorithm, issue #193).
+    /// <see langword="true"/>, in which case the sample is discarded (Karn's algorithm).
     /// </summary>
     /// <remarks>
     /// <para>

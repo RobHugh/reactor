@@ -8,7 +8,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.5.3 (issue #125): the dialling side's own re-dial of a lost transport, during a
+/// The dialling side's own re-dial of a lost transport, during a
 /// <see cref="StreamSessionReactor.Pump"/>, on the schedule <see cref="RedialSchedule"/> (issue #111)
 /// derives from the observed Pump interval (issue #112) and this Peer's own effective Linger — never a
 /// separate attempt-count knob. Every test here drives a real dialling <see cref="StreamSessionReactor"/>
@@ -91,7 +91,7 @@ public class StreamSessionRedialTests
     }
 
     // =========================================================================================
-    // AC1 / AC6 — an Interrupted dialling-side Peer re-dials without being asked, targeting the
+    // An Interrupted dialling-side Peer re-dials without being asked, targeting the
     // endpoint originally dialled, during ordinary Pump calls with FakeTimeProvider advanced
     // =========================================================================================
 
@@ -277,7 +277,6 @@ public class StreamSessionRedialTests
 
     // =========================================================================================
     // No re-dial from the listening side: it has no address to dial, and Linger alone governs it
-    // exactly as before this ticket
     // =========================================================================================
 
     [Fact]
@@ -300,7 +299,7 @@ public class StreamSessionRedialTests
                 "a listening-side Interrupted Peer has no address to re-dial and nothing to report before Linger");
         }
 
-        // Act — the same Linger deadline as before this ticket, nothing earlier and nothing later.
+        // Act — the plain Linger deadline, nothing earlier and nothing later.
         accepter.TimeProvider.Advance(_harnessLinger - TimeSpan.FromMilliseconds(800) + TimeSpan.FromMilliseconds(1));
         accepter.Reactor.Pump();
 
@@ -363,7 +362,7 @@ public class StreamSessionRedialTests
     }
 
     // =========================================================================================
-    // Slice 4.5.4 (issue #126): RedialAttempted (306) and RedialFailed (307). Every delay assertion
+    // RedialAttempted (306) and RedialFailed (307). Every delay assertion
     // below is a bound — [0, 2ⁿ × the observed cadence] — never an exact figure, except the one test
     // that substitutes a deterministic jitter source (ADR 0011): a test asserting an exact jittered
     // delay would pass locally and flake in CI. RedialSchedule's own doubling and ceiling arithmetic,

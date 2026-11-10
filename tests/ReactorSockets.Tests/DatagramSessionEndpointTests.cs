@@ -6,12 +6,10 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 5.6 (issue #37): endpoints and binding, the Frame/Drain contract, disposal, and the
-/// arena/read-share arrangement — everything a consumer can observe about a
-/// <see cref="DatagramSessionReactor"/> before any data plane exists. The data-plane arena assertion
-/// ("many Peers deliver simultaneously and the arena fills") belongs to slice 6, once a datagram can
-/// actually reach the arena; this file only proves the arena is sized and rejected correctly at
-/// construction.
+/// Endpoints and binding, the Frame/Drain contract, disposal, and the
+/// arena/read-share arrangement of a <see cref="DatagramSessionReactor"/>, observed without sending
+/// data. This file proves the arena is sized and rejected correctly at construction. It does not
+/// assert many Peers delivering at once and filling the arena.
 /// </summary>
 public class DatagramSessionEndpointTests
 {
@@ -299,10 +297,9 @@ public class DatagramSessionEndpointTests
     [Fact]
     public void Construct_ArenaSizeEqualToMaxMessageSizeWithCapacitySixtyFour_SucceedsAndCompletesAHandshake()
     {
-        // Arrange — the read-share arithmetic (arena ÷ capacity) is not independently observable yet:
-        // this slice has no data plane, so nothing reaches the arena. What IS observable is that a
-        // Reactor built at the arena's exact floor, with a realistic capacity, constructs and completes
-        // a handshake. The "many Peers fill the arena simultaneously" assertion belongs to slice 6.
+        // Arrange — a Reactor built at the arena's exact floor, with a realistic capacity, constructs
+        // and completes a handshake. This test sends no data, so it does not exercise the read-share
+        // arithmetic (arena ÷ capacity).
         const int maxMessageSize = 4096;
         using DatagramSessionReactorHarness accepter =
             new(capacity: 64, maxMessageSize: maxMessageSize, arenaSize: maxMessageSize);

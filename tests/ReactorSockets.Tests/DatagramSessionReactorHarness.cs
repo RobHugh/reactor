@@ -30,6 +30,10 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
     public DatagramSessionReactorHarness(
         int capacity = 4,
         int? admissionCap = null,
+        int? maxPeersPerAddress = null,
+        bool defaultMaxPeersPerAddress = false,
+        int? peerLimitIPv6PrefixLength = null,
+        int? maxDatagramsPerPump = null,
         int maxMessageSize = 4096,
         int retentionBytes = 4096,
         int? fragmentSize = null,
@@ -62,9 +66,13 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
             },
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
+            // No limit unless asked: every party in a test shares the loopback address.
+            MaxPeersPerAddress = defaultMaxPeersPerAddress ? null : maxPeersPerAddress ?? capacity,
+            PeerLimitIPv6PrefixLength = peerLimitIPv6PrefixLength,
             FragmentSize = fragmentSize,
             ReceiveWindowFragments = receiveWindowFragments,
             MissedHeartbeats = missedHeartbeats,
+            MaxDatagramsPerPump = maxDatagramsPerPump,
             // Defaults far out (issue #340): a test that never mentions the send-idle timer should
             // never see a Ping arrive uninvited mid-scenario and upset a wire-count assertion it wrote
             // long before the Ping existed. Tests exercising the timer itself pass their own short value.
@@ -468,7 +476,7 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
     /// Splits a large wait into "advance to one millisecond short, Pump once, advance the final
     /// millisecond" so the Pump immediately following this call observes a one-millisecond cadence
     /// rather than the whole wait (<see cref="DatagramSessionPingRetransmissionTests"/>'s own remarks
-    /// give the full reasoning: <see cref="RetransmissionTimer.EffectiveTimeout"/> floors the RTO at the
+    /// give the full reasoning: <c>RetransmissionTimer.EffectiveTimeout</c> floors the RTO at the
     /// observed Pump interval, so a large advance immediately before an assertion Pump would corrupt
     /// that floor for whatever timer that Pump is meant to exercise). Promoted here from that file
     /// (issue #352) because every liveness test that advances the clock by a whole idle interval needs

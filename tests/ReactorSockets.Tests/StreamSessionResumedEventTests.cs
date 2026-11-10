@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #128 (4.6.2): what the consumer sees once a Resume actually completes —
+/// What the consumer sees once a Resume actually completes —
 /// <see cref="SessionEventKind.PeerInterrupted"/> followed by <see cref="SessionEventKind.PeerResumed"/>,
 /// the same <see cref="PeerId"/> throughout, and every existing per-Peer counter still accumulating
 /// rather than reset. The rewind itself (issue #127) is proven in

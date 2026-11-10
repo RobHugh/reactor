@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #343 (parent #53): a Ping (issue #340) is not a special-cased timer of its own — it is an
+/// A Ping (issue #340) is not a special-cased timer of its own — it is an
 /// ordinary <c>ReliableUnordered</c> sequence that took retention's <c>isControl</c> path at
 /// <c>QueuePing</c>, and every test here proves it inherits the adaptive timer, backoff and
 /// retransmission machinery <see cref="DatagramSessionRetransmitResendTests"/> and
@@ -14,8 +14,8 @@ namespace ReactorSockets.Tests;
 /// <see cref="Microsoft.Extensions.Time.Testing.FakeTimeProvider"/>, never a sleep.
 /// </summary>
 /// <remarks>
-/// <b>The Pump-interval floor.</b> <see cref="RetransmissionTimer.EffectiveTimeout"/> floors the RTO at
-/// <see cref="PumpIntervalObserver.Interval"/> — the gap since the Reactor's own previous Pump — so a
+/// <b>The Pump-interval floor.</b> <c>RetransmissionTimer.EffectiveTimeout</c> floors the RTO at
+/// <c>PumpIntervalObserver.Interval</c> — the gap since the Reactor's own previous Pump — so a
 /// test that advances the clock by a large amount (waiting out <see cref="DatagramSessionOptions.SendIdleInterval"/>)
 /// and then Pumps once would corrupt that floor for the very Pump that arms the Ping's retransmit
 /// deadline. <see cref="SettleThenAdvance"/> splits every such wait into "advance to one millisecond
@@ -29,13 +29,13 @@ public class DatagramSessionPingRetransmissionTests
 
     /// <summary>
     /// A send-idle interval far longer than any RTO this file's estimator ever produces (the ceiling is
-    /// the harness's own one-second Linger): AC2 needs a interval this large so a Ping's resend can only
+    /// the harness's own one-second Linger): an interval this large means a Ping's resend can only
     /// be explained by the RTO, never by a second send-idle interval quietly having elapsed too.
     /// </summary>
     private static readonly TimeSpan _sendIdleInterval = TimeSpan.FromHours(2);
 
     // =========================================================================================
-    // AC1 — a dropped Ping is resent with the same sequence, the control bit still set, length 0
+    // A dropped Ping is resent with the same sequence, the control bit still set, length 0
     // =========================================================================================
 
     [Fact]
@@ -80,7 +80,7 @@ public class DatagramSessionPingRetransmissionTests
     }
 
     // =========================================================================================
-    // AC2 — the resend happens at the effective RTO, not at SendIdleInterval
+    // The resend happens at the effective RTO, not at SendIdleInterval
     // =========================================================================================
 
     [Fact]
@@ -118,7 +118,7 @@ public class DatagramSessionPingRetransmissionTests
     }
 
     // =========================================================================================
-    // AC3 — two different RTT histories give the Ping different resend deadlines, while
+    // Two different RTT histories give the Ping different resend deadlines, while
     // SendIdleInterval stays identical in both
     // =========================================================================================
 
@@ -177,7 +177,7 @@ public class DatagramSessionPingRetransmissionTests
     }
 
     // =========================================================================================
-    // AC4 — a Ping dropped repeatedly backs off the same way a dropped data record does
+    // A Ping dropped repeatedly backs off the same way a dropped data record does
     // =========================================================================================
 
     [Fact]
@@ -252,10 +252,10 @@ public class DatagramSessionPingRetransmissionTests
     /// Sends one ReliableOrdered Message, flushes it, and acknowledges it exactly
     /// <paramref name="roundTrip"/> later through the accepter's own reply — the only way an ack block
     /// reaches the wire (a Datagram is only sent for a Peer with records queued) — so the Peer's shared
-    /// <see cref="RetransmissionTimer"/> takes its one clean first sample and the Ping this same slot
+    /// <c>RetransmissionTimer</c> takes its one clean first sample and the Ping this same slot
     /// queues afterwards inherits that estimate. Matches
     /// <see cref="DatagramSessionAdaptiveRtoTests.SeedTheEstimator"/>'s shape, at the full two-Reactor
-    /// protocol level this ticket's acceptance criteria call for rather than a hand-crafted client.
+    /// protocol level rather than through a hand-crafted client.
     /// </summary>
     private static void SeedEstimator(
         DatagramSessionReactorHarness dialler,
@@ -283,7 +283,7 @@ public class DatagramSessionPingRetransmissionTests
     /// Splits a large wait into "advance to one millisecond short, Pump once, advance the final
     /// millisecond" so the Pump that actually queues and arms the Ping — the caller's own Pump right
     /// after this call returns — observes a one-millisecond cadence rather than the whole wait. Without
-    /// this, <see cref="RetransmissionTimer.EffectiveTimeout"/>'s Pump-interval floor would read the
+    /// this, <c>RetransmissionTimer.EffectiveTimeout</c>'s Pump-interval floor would read the
     /// entire <paramref name="interval"/> and swamp the RTO every test in this file asserts on (see this
     /// class's own remarks).
     /// </summary>

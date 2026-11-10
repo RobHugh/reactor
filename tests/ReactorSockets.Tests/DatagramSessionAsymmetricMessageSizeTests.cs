@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #290: with a dialler and an accepter announcing deliberately different
+/// With a dialler and an accepter announcing deliberately different
 /// <see cref="DatagramSessionOptions.MaxMessageSize"/> values (see <see cref="MismatchedMessageSizePair"/>),
 /// each end holds the other's announced value rather than its own. There is no public accessor for the
 /// peer's announced limit, so both tests below prove it through the only seam available: what

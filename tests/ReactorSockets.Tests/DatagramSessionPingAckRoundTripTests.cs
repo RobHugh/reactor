@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #344 (parent #53): the Ping's round trip between two real <see cref="DatagramSessionReactor"/>s.
+/// The Ping's round trip between two real <see cref="DatagramSessionReactor"/>s.
 /// A Ping is admitted by the ordinary <c>ReliableUnordered</c> ack path (#339) exactly as any other
 /// reliable record is — no special-case ack exists or is needed — so once the far end's ack for it
 /// reaches the sender, the sender's own retransmission bookkeeping treats the Ping's sequence as
@@ -13,11 +13,8 @@ namespace ReactorSockets.Tests;
 /// </summary>
 /// <remarks>
 /// This file does not assert that the sender's <c>ReliableUnordered</c> retention slot is freed by the
-/// ack (the ticket's first acceptance criterion). <c>RetentionPool.Release</c> — the only thing that
-/// would free it — has no production caller anywhere in <see cref="DatagramSessionReactor"/> today: an
-/// arriving ack updates <c>OutstandingReliableSequences</c>' own bookkeeping only (what
-/// <see cref="DatagramSessionSendIdlePingTests"/>'s AC4 remark already documents as a pre-existing gap).
-/// Wiring that up is a scope decision left to the ticket's owner, not made here.
+/// ack. <see cref="DatagramSessionAckReleasesRetentionTests"/> asserts that an ack frees the retention
+/// slot of every reliable record it releases, a Ping's included.
 /// </remarks>
 public class DatagramSessionPingAckRoundTripTests
 {

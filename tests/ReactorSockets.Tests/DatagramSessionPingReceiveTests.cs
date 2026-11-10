@@ -6,12 +6,12 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #339: the receive half of the idle-triggered reliable Ping (#53). A Ping is a zero-length,
-/// unfragmented, <c>ReliableUnordered</c> control record — the wire shape <see
-/// cref="PacketRecordCodec.TryWritePingRecord"/> (#338) already writes and nothing yet sends. These
+/// The receive half of the idle-triggered reliable Ping. A Ping is a zero-length,
+/// unfragmented, <c>ReliableUnordered</c> control record, the wire shape <see
+/// cref="PacketRecordCodec.TryWritePingRecord"/> writes. These
 /// tests hand-build one and inject it into an Established Session exactly as
-/// <see cref="DatagramSessionDataDatagramParseTests"/> injects any other record, then prove the four
-/// things #339's acceptance criteria ask for: it is admitted into the <c>ReliableUnordered</c> receive
+/// <see cref="DatagramSessionDataDatagramParseTests"/> injects any other record, then prove four
+/// things: it is admitted into the <c>ReliableUnordered</c> receive
 /// window so the ordinary ack block covers it, it is never delivered, it does not disturb Messages
 /// arriving around it, and a duplicate counts exactly as a duplicate data record would.
 /// </summary>

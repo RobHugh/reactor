@@ -6,7 +6,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #385 (parent #56): a dialler and an accepter through <see cref="LossyProxy"/> on one shared clock
+/// A dialler and an accepter through <see cref="LossyProxy"/> on one shared clock
 /// both raise <see cref="SessionEventKind.PeerInterrupted"/> when the path is cut, then
 /// <see cref="SessionEventKind.PeerResumed"/> once the proxy's upstream-facing socket has moved to a new
 /// port and relaying restarts, with the same <see cref="PeerId"/> as before. The accepter then sends to

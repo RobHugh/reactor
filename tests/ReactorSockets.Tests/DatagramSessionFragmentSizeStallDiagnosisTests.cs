@@ -4,12 +4,11 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #305 (parent #271, subtask 7.5.5.2): the positive half of the stall-signature proof — a proxy
+/// The positive half of the stall-signature proof — a proxy
 /// standing rule that black-holes every Fragment while an unfragmented Message keeps crossing closes the
 /// stalled Peer by name, <see cref="DisconnectReason.FragmentSizeUnviable"/>, rather than by a generic
-/// timeout or not at all. This is the deliverable subtask #269's whole design chain exists for: a
-/// misconfigured fragment size is invisible in normal operation, so this file is what keeps the diagnosis
-/// honest against drift.
+/// timeout or not at all. A misconfigured fragment size is invisible in normal operation, so this
+/// file is what keeps the diagnosis honest against drift.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -36,24 +35,18 @@ namespace ReactorSockets.Tests;
 /// to drive: the accepter's Sink and drained Events are the only two surfaces this file may read from.
 /// </para>
 /// <para>
-/// <b>Why no <c>FragmentSetAbandoned</c> assertion appears here.</b> Acceptance criterion 4 of issue #305
-/// asks for <see cref="DiagnosticId.FragmentSetAbandoned"/> on the receiving end, with zero held against
-/// the full declared count. Tracing <see cref="DatagramSessionReactor.ClassifyRecord"/> (around line 1777)
-/// and <c>ReceiveWindow.Classify</c> (ReactorSockets/Session/ReceiveWindow.cs, the residual-length check
-/// immediately before <c>HandleFragmentSetAbandonment</c> is called) shows that Diagnostic can only fire
-/// when a fresh admission clobbers a ring slot that a <em>previously admitted</em> Fragment already wrote
-/// non-zero length residue into — <c>HandleFragmentSetAbandonment</c> reads the declared count from that
-/// same residue, so nothing is ever "abandoned" at a ring slot no Fragment ever touched. With every
+/// <b>Why no <c>FragmentSetAbandoned</c> is expected here.</b>
+/// <see cref="DiagnosticId.FragmentSetAbandoned"/> fires only when a fresh admission clobbers a ring
+/// slot that a <em>previously admitted</em> Fragment wrote non-zero length residue into
+/// (<c>ReceiveClassification.AbandonedFragmentSet</c>, read by
+/// <see cref="DatagramSessionReactor.ClassifyRecord"/>). The declared count comes from that same
+/// residue, so nothing is ever "abandoned" at a ring slot no Fragment ever touched. With every
 /// Fragment black-holed as this file's own threshold requires, the accepter's receive window for the
 /// fragmented Space never admits anything at all, so that residue is never written and the Diagnostic
 /// cannot fire — confirmed empirically here too: running this file's own drive for 400 rounds produces
-/// zero entries in <see cref="FragmentSizeDiagnosisFixture.AccepterDiagnostics"/>. Criterion 4, read
-/// literally alongside criterion 2 ("No Fragment ever lands"), asks for two things the current
-/// <c>ReceiveWindow</c> implementation cannot produce together; this file proves the other criteria and
-/// leaves criterion 4 unasserted rather than fabricate a passing check against behaviour that does not
-/// occur. Reconciling the two is a source change (either abandonment gaining a from-declared-metadata path
-/// that does not require a prior admission, or criterion 4 being reworded), which this test-only task does
-/// not make.
+/// zero entries in <see cref="FragmentSizeDiagnosisFixture.AccepterDiagnostics"/>. A Diagnostic with
+/// zero held against the full declared count cannot coexist with no Fragment ever landing, so this file
+/// asserts the Diagnostic's absence instead.
 /// </para>
 /// </remarks>
 public class DatagramSessionFragmentSizeStallDiagnosisTests
@@ -70,7 +63,7 @@ public class DatagramSessionFragmentSizeStallDiagnosisTests
 
     /// <summary>
     /// Rounds bounding the drive to the Peer's close: the stall signature needs
-    /// <see cref="FragmentStallSignature.StallRoundCount"/> retransmission rounds after the unfragmented
+    /// <c>FragmentStallSignature.StallRoundCount</c> retransmission rounds after the unfragmented
     /// ack, which land well inside this budget (observed at round 16 with this file's own parameters) —
     /// wide enough to leave no doubt the close is a genuine result and not a near-miss, while still bounded
     /// so a regression that stops the Peer from ever closing fails this test instead of hanging it.
@@ -85,13 +78,13 @@ public class DatagramSessionFragmentSizeStallDiagnosisTests
     private const int SmallSendRounds = 30;
 
     /// <summary>
-    /// Proves the acceptance criterion that is the whole point of this subtask: with every Fragment
+    /// Proves the property this file exists for: with every Fragment
     /// black-holed and the small Message still crossing and being acked, the stalled Peer closes named by
     /// <see cref="DisconnectReason.FragmentSizeUnviable"/> — never a generic timeout, and never a Session
     /// that simply stalls without closing at all.
     /// </summary>
     /// <remarks>
-    /// <see cref="FragmentStallSignature.IsFragmentSizeStall"/> can only become true once an unfragmented
+    /// <c>FragmentStallSignature.IsFragmentSizeStall</c> can only become true once an unfragmented
     /// reliable record has been acknowledged at or after the Fragment window opened (see its own remarks).
     /// This close reason being reported at all is therefore already the observable proof that the small
     /// Message was genuinely being acked throughout the run, not merely arriving one-way — a Session that
@@ -118,7 +111,7 @@ public class DatagramSessionFragmentSizeStallDiagnosisTests
 
         // Assert — the Session closed at all, rather than merely stalling forever within the budget.
         closed.Should().BeTrue(
-            $"the stall signature's {FragmentStallSignature.StallRoundCount} retransmission rounds must complete and close the Peer well inside {RoundBudget} rounds; a Session that only stalls without closing is a failed diagnosis");
+            $"the stall signature's four retransmission rounds must complete and close the Peer well inside {RoundBudget} rounds; a Session that only stalls without closing is a failed diagnosis");
 
         // Assert — closed by name, not by a generic timeout.
         fixture.DiallerEvents.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed && e.Peer.Equals(fixture.DiallerPeer))
@@ -172,22 +165,22 @@ public class DatagramSessionFragmentSizeStallDiagnosisTests
     }
 
     /// <summary>
-    /// Proves the honest, provable form of acceptance criterion 4 (see the type remarks): across the whole
+    /// Across the whole
     /// run, the accepter's Sink never records a <see cref="DiagnosticId.FragmentSetAbandoned"/> entry.
     /// </summary>
     /// <remarks>
     /// This is not an absence of coverage — it is the correct outcome given how
-    /// <c>ReceiveWindow.HandleFragmentSetAbandonment</c> (ReactorSockets/Session/ReceiveWindow.cs) works:
-    /// it reports a set abandoned by reading a declared Fragment count back out of ring-slot residue that
+    /// <c>ReceiveWindow.Classify</c> (ReactorSockets/Session/ReceiveWindow.cs) fills
+    /// <c>ReceiveClassification.AbandonedFragmentSet</c>: it reports a set abandoned by reading a declared Fragment count back out of ring-slot residue that
     /// only a <em>previously admitted</em> Fragment could have written, then counts how many of that set's
     /// own members still hold non-zero length at the moment a fresh admission clobbers the slot. With
     /// every Fragment black-holed by this file's own size threshold, the accepter's receive window for the
     /// fragmented Space never admits a single one, so that residue is never written, there is no declared
     /// count to read back, and no set for a later clobber to abandon. Zero Fragments forwarded is
     /// therefore not merely "nothing to assert" — it is zero held against nothing declared, which is
-    /// exactly "figures consistent with what the proxy actually forwarded" read honestly, rather than the
-    /// literal held-zero-against-declared-three reading criterion 4's wording suggests but the current
-    /// <c>ReceiveWindow</c> implementation cannot produce (see the type remarks). Asserting the absence
+    /// exactly "figures consistent with what the proxy actually forwarded" read honestly, rather than a
+    /// held-zero-against-declared-three record, which the <c>ReceiveWindow</c> implementation cannot
+    /// produce (see the type remarks). Asserting the absence
     /// here, filtered on <see cref="DiagnosticId.FragmentSetAbandoned"/> rather than the whole Sink, is
     /// what would catch a future change that starts fabricating this Diagnostic without ever admitting a
     /// Fragment to justify it.
@@ -211,7 +204,7 @@ public class DatagramSessionFragmentSizeStallDiagnosisTests
     }
 
     /// <summary>
-    /// Issue #307: across the whole positive run, no datagram beyond this fixture's own two Messages and
+    /// Across the whole positive run, no datagram beyond this fixture's own two Messages and
     /// the accepter's keep-alive ever reaches the wire. A probe here would be some datagram this run's
     /// own sends and retransmissions cannot account for — an extra control-shaped message, a record
     /// naming a sequence or Space outside the two Messages this fixture sends, or a known record shape
@@ -236,7 +229,7 @@ public class DatagramSessionFragmentSizeStallDiagnosisTests
     }
 
     /// <summary>
-    /// Issue #307: across the whole positive run, both ends' configured fragment size is unchanged by the
+    /// Across the whole positive run, both ends' configured fragment size is unchanged by the
     /// diagnosis — the observable form of "we diagnose, we do not recover" (see
     /// <see cref="FragmentSizeDiagnosisFixture.AssertConfiguredFragmentSizeUnchanged"/>'s own remarks for
     /// exactly what this reads and its limits). This is

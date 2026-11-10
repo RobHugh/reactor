@@ -137,10 +137,10 @@ public enum DiagnosticId
 
     /// <summary>
     /// This Peer's <see cref="RetransmissionTimer"/> backed off: a Pump's expiry sweep
-    /// (<see cref="Session.OutstandingReliableSequences.CollectExpired"/>, subtask 6.4.8, issue #198)
-    /// found at least one overdue sequence on either reliable Space, so <see cref="RetransmissionTimer.BackOff"/>
-    /// was called once for the Peer and every sequence the sweep reported re-armed at the single
-    /// resulting RTO. Subject is the Peer. <c>Value0</c> is the new RTO in milliseconds —
+    /// (<see cref="Session.OutstandingReliableSequences.CollectExpired"/>) found at least one overdue
+    /// sequence on either reliable Space, so <see cref="RetransmissionTimer.BackOff"/> was called once
+    /// for the Peer and every sequence the sweep reported re-armed at the single resulting RTO. Subject
+    /// is the Peer. <c>Value0</c> is the new RTO in milliseconds —
     /// <see cref="RetransmissionTimer.EffectiveTimeout"/> at the moment of the backoff; <c>Value1</c> is
     /// <see cref="RetransmissionTimer.ConsecutiveBackoffs"/> after this backoff.
     /// </summary>
@@ -148,7 +148,7 @@ public enum DiagnosticId
     /// <see cref="DiagnosticLevel.Trace"/>, not <see cref="DiagnosticLevel.Warn"/>: this is protocol
     /// machinery working correctly, not a fault. A lossy path emits it continuously — every Pump that
     /// finds an overdue sequence backs off again — and raising it above <c>Trace</c> would train a
-    /// consumer to ignore the level it sits at (subtask 6.4.9, issue #199).
+    /// consumer to ignore the level it sits at.
     /// </remarks>
     RetransmissionTimerBackedOff = 204,
 
@@ -156,10 +156,9 @@ public enum DiagnosticId
     /// An established Peer's Fragment declared a <c>fragmentCount</c> larger than this Reactor's own
     /// receive window could ever hold, and the Session was closed with
     /// <see cref="DisconnectReason.ProtocolViolation"/> on that Fragment's first appearance, before any
-    /// receive-window slot or Fragment-group bookkeeping was created for its set (issue #282, reworked
-    /// under #264). Subject is the Peer. <c>Value0</c> is the declared <c>fragmentCount</c>; <c>Value1</c>
-    /// is the largest legal count this Reactor's <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>
-    /// allows.
+    /// receive-window slot or Fragment-group bookkeeping was created for its set. Subject is the Peer.
+    /// <c>Value0</c> is the declared <c>fragmentCount</c>; <c>Value1</c> is the largest legal count
+    /// this Reactor's <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/> allows.
     /// </summary>
     /// <remarks>
     /// <see cref="DiagnosticLevel.Warn"/>, for the same reason as <see cref="DatagramMalformed"/>: a
@@ -170,8 +169,8 @@ public enum DiagnosticId
     /// <summary>
     /// A packet record carried the fragment shape in one of the two unreliable modes, which ADR 0004
     /// forbids — you may only fragment what you can retransmit — and the read failed outright, taking
-    /// the whole Datagram with it (issue #273). Subject is the claimed Source, not the Peer, matching
-    /// the <see cref="DatagramMalformed"/> that is raised alongside it: a discarded Datagram is never
+    /// the whole Datagram with it. Subject is the claimed Source, not the Peer, matching the
+    /// <see cref="DatagramMalformed"/> that is raised alongside it: a discarded Datagram is never
     /// attributed to the Session it named, and no byte of it is counted against that Peer.
     /// <c>Value0</c> is the mode the record claimed, as the two mode bits' wire value — 0 for
     /// <c>Unreliable</c>, 1 for <c>UnreliableSequenced</c>; <c>Value1</c> is unused.
@@ -190,6 +189,53 @@ public enum DiagnosticId
     /// </para>
     /// </remarks>
     UnreliableFragment = 206,
+
+    /// <summary>
+    /// A completed Message, whole or reassembled from its Fragments, was larger than this Reactor's own
+    /// <see cref="DatagramSessionOptions.MaxMessageSize"/> and was discarded instead of delivered.
+    /// Subject is the Peer. <c>Value0</c> is the Message's length in bytes; <c>Value1</c> is this
+    /// Reactor's <c>MaxMessageSize</c>. The Session stays open, and a discarded reliable Message stays
+    /// acknowledged, so the far end does not resend it and later Messages are unaffected.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>, for the same reason as <see cref="DatagramMalformed"/>: a
+    /// remote can produce this at will, and nothing is wrong with this Reactor.
+    /// </remarks>
+    OversizedMessage = 207,
+
+    /// <summary>
+    /// A verified handshake, or on the stream profile an accepted connection, was refused because its
+    /// address already holds <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> or
+    /// <see cref="StreamSessionOptions.MaxPeersPerAddress"/> accepted Peers while other capacity Slots
+    /// were free. Subject is the claimed Source. <c>Value0</c> is the limit; <c>Value1</c> is the prefix
+    /// length the address was counted by: 32 for IPv4, and
+    /// <see cref="DatagramSessionOptions.PeerLimitIPv6PrefixLength"/> or
+    /// <see cref="StreamSessionOptions.PeerLimitIPv6PrefixLength"/> for IPv6, so every address in that
+    /// prefix shares the limit.
+    /// One record per refusal, because it names the address and the admission cap already bounds how
+    /// many refusals a Pump can make. A full Reactor reports <see cref="CapacityExhausted"/> on the
+    /// datagram profile and <see cref="PeerRefused"/> on the stream profile instead.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>: a remote can produce this at will, and a consumer can act on it
+    /// by raising the limit if the address is a NAT or proxy, or by blocking it if it is not. Defined by
+    /// the datagram profile and shared by the stream profile, because it is one condition (ADR 0020).
+    /// </remarks>
+    AddressPeerLimitReached = 208,
+
+    /// <summary>
+    /// A Pump made <see cref="DatagramSessionOptions.MaxDatagramsPerPump"/> reads on one bound socket and
+    /// stopped. What was left, if anything, waits for a later Pump. No subject. <c>Value0</c> is the
+    /// limit; <c>Value1</c> is the socket's index in
+    /// <see cref="DatagramSessionReactor.BoundEndpoints"/>. At most one record per bound socket per Pump.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>: a remote can produce this at will, and it names a configured
+    /// bound a consumer can act on. A queued socket error spends a read, so not every read was a datagram.
+    /// The socket's queue depth cannot be read past queued errors, so a Pump that read exactly the last
+    /// queued datagram also reports this.
+    /// </remarks>
+    DatagramReadLimitReached = 209,
 
     /// <summary>
     /// A dialler was refused in-protocol during the stream handshake, either because it announced a
@@ -229,9 +275,9 @@ public enum DiagnosticId
 
     /// <summary>
     /// An established Peer sent Message bytes after its own Goodbye had already been received, and
-    /// the Session was closed with <see cref="DisconnectReason.ProtocolViolation"/> (issue #93).
-    /// Subject is the Peer. Carries no claimed length — <see cref="Session.MessageFramingLegality"/> reaches
-    /// this outcome before ever reading a prefix, so there is nothing to report but the contradiction
+    /// the Session was closed with <see cref="DisconnectReason.ProtocolViolation"/>. Subject is the
+    /// Peer. Carries no claimed length — <see cref="Session.MessageFramingLegality"/> reaches this
+    /// outcome before ever reading a prefix, so there is nothing to report but the contradiction
     /// itself. <c>Value0</c> and <c>Value1</c> are unused.
     /// </summary>
     /// <remarks>
@@ -243,12 +289,12 @@ public enum DiagnosticId
     /// <summary>
     /// A connection presenting a valid resume secret was matched onto the Interrupted Peer whose Slot
     /// was reserving the Session it named, and that Session continued over the replacement transport
-    /// rather than a new one being established (issue #123, ADR 0011). Subject is the resumed Peer —
-    /// the same <see cref="PeerId"/>, generation included, the Session had before the interruption,
-    /// since nothing about a Peer's identity is renewed by a Resume. <c>Value0</c> is the number of
-    /// retained outbound bytes the match rewound to the counter the Resume reported; <c>Value1</c> is
-    /// unused. On the datagram profile it is logged when a Resume control datagram matches the Peer on
-    /// the accepting end (session id and secret), and when an Interrupted dialling end that has sent a
+    /// rather than a new one being established (ADR 0011). Subject is the resumed Peer — the same
+    /// <see cref="PeerId"/>, generation included, the Session had before the interruption, since
+    /// nothing about a Peer's identity is renewed by a Resume. <c>Value0</c> is the number of retained
+    /// outbound bytes the match rewound to the counter the Resume reported; <c>Value1</c> is unused. On
+    /// the datagram profile it is logged when a Resume control datagram matches the Peer on the
+    /// accepting end (session id and secret), and when an Interrupted dialling end that has sent a
     /// Resume hears its session again. Nothing is rewound, because retransmission already re-sends
     /// anything unacknowledged, so <c>Value0</c> is 0 and <c>Value1</c> is unused.
     /// </summary>
@@ -262,9 +308,9 @@ public enum DiagnosticId
     /// <see cref="LingerNegotiated"/> and <see cref="ResumeUnmatched"/> (ADR 0020).
     /// </para>
     /// <para>
-    /// Numbered 304 rather than the 302 the slice-4 spec named: 302 and 303 were taken by
-    /// <see cref="MalformedFraming"/> and <see cref="DataAfterGoodbye"/> (issues #92 and #106) after
-    /// that spec was written, and a value published in a closed permanent enum is never renumbered.
+    /// Numbered 304 because 302 and 303 belong to <see cref="MalformedFraming"/> and
+    /// <see cref="DataAfterGoodbye"/>, and a value published in a closed permanent enum is never
+    /// renumbered.
     /// </para>
     /// </remarks>
     ResumeMatched = 304,
@@ -306,11 +352,11 @@ public enum DiagnosticId
     ResumeUnmatched = 305,
 
     /// <summary>
-    /// A dialling-side Peer began a fresh re-dial attempt after its transport was lost (issue #125,
-    /// ADR 0011). Subject is the Peer. <c>Value0</c> is the attempt number, starting at 1 and rising by
-    /// one per attempt; <c>Value1</c> is the delay in milliseconds this attempt actually waited before
-    /// dialling — the jittered figure <see cref="Session.RedialSchedule.NextDelay"/> drew, so
-    /// what actually elapsed is observable rather than only the computed figure before jitter.
+    /// A dialling-side Peer began a fresh re-dial attempt after its transport was lost (ADR 0011).
+    /// Subject is the Peer. <c>Value0</c> is the attempt number, starting at 1 and rising by one per
+    /// attempt; <c>Value1</c> is the delay in milliseconds this attempt actually waited before dialling
+    /// — the jittered figure <see cref="Session.RedialSchedule.NextDelay"/> drew, so what actually
+    /// elapsed is observable rather than only the computed figure before jitter.
     /// </summary>
     /// <remarks>
     /// <see cref="DiagnosticLevel.Info"/>: a re-dial is the ordinary behaviour of a dialling Peer that
@@ -319,9 +365,9 @@ public enum DiagnosticId
     RedialAttempted = 306,
 
     /// <summary>
-    /// A re-dial attempt could not connect (issue #125, ADR 0011). Subject is the Peer, which this
-    /// never closes — it stays Interrupted and waits out the schedule's next delay, leaving Linger,
-    /// not an attempt count, the only thing that ever closes it. <c>Value0</c> carries the platform
+    /// A re-dial attempt could not connect (ADR 0011). Subject is the Peer, which this never closes —
+    /// it stays Interrupted and waits out the schedule's next delay, leaving Linger, not an attempt
+    /// count, the only thing that ever closes it. <c>Value0</c> carries the platform
     /// <see cref="System.Net.Sockets.SocketError"/> as its underlying integer value; <c>Value1</c> is
     /// the attempt number that failed.
     /// </summary>
@@ -333,12 +379,12 @@ public enum DiagnosticId
     RedialFailed = 307,
 
     /// <summary>
-    /// An established Peer's delivery-counter record (issue #109) claimed to have received more
-    /// Messages than this end has ever sent it, and the Session was closed with
-    /// <see cref="DisconnectReason.ProtocolViolation"/> (issue #113) — the peer is confirming Messages
-    /// this end never queued, rather than merely repeating a count it already reported. Subject is the
-    /// Peer. <c>Value0</c> is the claimed cumulative count; <c>Value1</c> is the count of Messages (and,
-    /// if this end's own Goodbye has already been queued for this Peer, that too) this end has actually
+    /// An established Peer's delivery-counter record claimed to have received more Messages than this
+    /// end has ever sent it, and the Session was closed with
+    /// <see cref="DisconnectReason.ProtocolViolation"/> — the peer is confirming Messages this end
+    /// never queued, rather than merely repeating a count it already reported. Subject is the Peer.
+    /// <c>Value0</c> is the claimed cumulative count; <c>Value1</c> is the count of Messages (and, if
+    /// this end's own Goodbye has already been queued for this Peer, that too) this end has actually
     /// appended to this Peer's retention — the largest count a legitimate confirmation could ever sit
     /// at or below.
     /// </summary>
@@ -348,10 +394,10 @@ public enum DiagnosticId
     /// remote can produce this at will by inflating its own counter.
     /// </para>
     /// <para>
-    /// Numbered 308 rather than the next free 304: ADR 0013's roster, as amended for this slice, reserves
-    /// 304-307 for the rest of slice 4 (<see cref="ResumeMatched"/> and <see cref="ResumeUnmatched"/>,
-    /// which issue #124 has since taken, then RedialAttempted and RedialFailed), and a value published
-    /// in a closed permanent enum cannot be moved later to make room.
+    /// Numbered 308 rather than the next free 304: ADR 0013's roster reserves 304-307 for the Resume
+    /// and redial Diagnostics (<see cref="ResumeMatched"/> and <see cref="ResumeUnmatched"/>, then
+    /// RedialAttempted and RedialFailed), and a value published in a closed permanent enum cannot be
+    /// moved later to make room.
     /// </para>
     /// </remarks>
     DeliveryCounterRefused = 308,

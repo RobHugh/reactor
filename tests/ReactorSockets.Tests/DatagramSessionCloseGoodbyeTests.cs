@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #397 (parent #57): <see cref="DatagramSessionReactor.Close"/> on an Established Peer queues a
+/// <see cref="DatagramSessionReactor.Close"/> on an Established Peer queues a
 /// Goodbye, a zero-length control record in the Peer's <c>ReliableOrdered</c> Space, and puts the Peer in
 /// Closing. The tests decode the bytes a <see cref="WireTap"/> captured off the dialler, so they read the
 /// wire itself and not the far end's behaviour. They also cover the wire shape of the Goodbye record

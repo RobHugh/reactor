@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.3.3 (issue #121): Linger, not the loss of the transport, is what closes an
+/// Linger, not the loss of the transport, is what closes an
 /// <see cref="SessionEventKind.PeerInterrupted"/> Peer (issue #119). Every test here drives a real
 /// <see cref="StreamSessionReactor"/> against a hand-built raw counterparty
 /// (<see cref="LingerPeer"/>, mirroring <see cref="StreamSessionInterruptedTests"/>'s

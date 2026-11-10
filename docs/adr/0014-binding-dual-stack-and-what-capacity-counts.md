@@ -166,6 +166,108 @@ preallocation multiplier — the two things ADR 0011 separated when it made capa
 make the memory bill depend on how many addresses you listen on. A second knob for a Handle budget was
 rejected because its value is arrived at by counting binds the constructor can already see.
 
+**Amended (issue #427): one address may not hold every Slot.** Capacity and the admission cap bound
+the total, but each fresh nonce from one address could still take a Slot. The datagram profile gains a
+required `MaxPeersPerAddress`, on its own options because ADR 0012 keeps protocol knobs out of the shared
+value. It is required under ADR 0011's rule: how many Peers legitimately share an address depends on the
+NATs and proxies in front of the Reactor, and defaulting it to `Capacity` would leave the limit off for
+anyone who never read about it. `Capacity` or above is the explicit way to set no limit.
+
+- **The key is the address, not the `Source`.** `Source` equality includes the port, and a host can
+  answer a Cookie from as many ports as it can bind. Family and scope stay in the key, for the
+  reasons under *A Source carries its scope*. A host that can bind a whole IPv6 prefix still gets the
+  limit once per address, and grouping by prefix is left open. The #453 amendment below settles it.
+- **A Peer is charged to the address of its handshake until its Slot is released.** It does not move on
+  a Resume, or one address could fill its limit, move those Peers to a second address and fill it again.
+  The cost falls on other hosts behind the old address, such as a NAT, which have that much less room
+  for as long as the moved Session lasts.
+- **The refusal on the wire is ADR 0007's capacity refusal, unchanged.** The remote's next step is the
+  same, no wire format changes, and it cannot use the reason to learn whether Slots are free.
+- **A full Reactor is not a per-address refusal.** It reports `CapacityExhausted` as before, so a limit
+  of `Capacity` never fires.
+
+The stream profile has no such limit: this amendment covers the datagram profile only.
+
+**Amended (issue #452): the stream profile takes the same limit.** One address could open connections
+and complete the Hello exchange until it held every Slot. `StreamSessionOptions` gains
+`MaxPeersPerAddress`, and the key, the charge and the wire refusal follow the datagram rules above. A Peer is charged to the address its connection was accepted
+from, and a Resume on a new connection does not move it. Two points are specific to the stream profile:
+
+- **A Resume never meets the limit.** The resume match runs before the capacity check (ADR 0011), and the
+  limit runs after it, so a reconnecting Peer whose address is at the limit still resumes.
+- **The refusal reuses `AddressPeerLimitReached` (208).** It is one condition on both profiles, so under
+  ADR 0020 the stream profile shares the datagram member. A full Reactor still reports `PeerRefused`
+  (300), so a limit of `Capacity` never fires. Neither admission counter moves, as for every stream
+  refusal.
+
+**Both profiles default the limit to `Capacity - 1`, at least 1.** This supersedes the #427 amendment's
+decision to make the datagram knob required. ADR 0011 allows a default derived from another knob, and
+`Capacity - 1` is derived from the failure itself: it is the largest limit under which one address can
+never hold every Slot. Any lower default would be a guess about how many Peers share a NAT, which is the
+guess ADR 0011 forbids. The #427 objection was to a default of `Capacity`, which leaves the limit off.
+This one is on, but weak: it stops one address taking the last Slot, not one address taking all but one.
+
+- **Existing code keeps compiling.** An options value that never sets the knob gets the default.
+- **A Reactor whose Peers all share one address loses one Slot** until it sets the limit to `Capacity`.
+  Nothing reports this except `AddressPeerLimitReached` when that last Slot is refused.
+- **At a capacity of 1 the default is 1, which is no limit.** One Slot cannot be split between addresses.
+
+**Amended (issue #453): IPv6 addresses are grouped by prefix, and IPv4 addresses are not.** Both
+profiles gain `PeerLimitIPv6PrefixLength`, which sets how many leading bits of an IPv6 address form the
+key for `MaxPeersPerAddress`. A host that can bind a whole prefix no longer gets the limit once per
+address.
+
+- **It is a knob, not a constant.** ADR 0012 makes a value a constant when the consumer has no
+  information to choose it with, as for the cookie epoch. Here the consumer knows what the Reactor cannot
+  see: whether its Peers share one LAN, or arrive from ISPs that delegate a /56 to each customer. The
+  right length describes the consumer's network, so it is theirs to set.
+- **It defaults to 64, from a citable standard.** RFC 4291 §2.5.1 fixes the interface identifier of
+  unicast addresses at 64 bits, so a /64 is one link. With no NAT in IPv6, the devices behind one router
+  share one /64, which is how they share one address behind an IPv4 NAT. The default therefore gives an
+  IPv6 deployment the limit an IPv4 one already has.
+- **It accepts 1 to 128, and 128 is per address.** 128 restores the counting this ADR had before #453.
+  Construction rejects any other value, naming the knob.
+- **Family and scope stay in the key.** A link-local Peer is grouped with others on the same interface
+  only, for the reasons under *A Source carries its scope*. IPv4 addresses are never grouped, for the
+  reasons below.
+- **Only the limit groups.** The charge, the wire refusal and the rule that a Resume does not move a
+  Peer apply to the prefix as they did to the address. A Resume still compares the full address to decide
+  whether a path challenge is needed (ADR 0021).
+- **`AddressPeerLimitReached` keeps its subject.** The record names the refused `Source` and its limit
+  as before, and carries the prefix length its address was counted by in its second value, which was
+  unused: 32 for IPv4, and the configured length for IPv6. A reader can then tell a refusal of one
+  address from a refusal of its prefix. No `DiagnosticId` member is added.
+
+The cost falls on IPv6 Peers that legitimately share a /64. Every on-link host on an IPv6 LAN is in one
+/64, so at the default those Peers share one limit. A consumer whose Peers are on-link sets the length
+to 128. The default also narrows the bypass without closing it. RFC 6177 recommends a /48 to /56 for each
+end site, so one customer can hold 256 to 65 536 /64s. A shorter length closes more of that, at the cost
+of grouping unrelated customers. IPv6 is grouped and IPv4 is not because a /64 comes free with one host,
+while each IPv4 address costs its holder address space.
+
+The limit keys on the full IPv4 address. Grouping was considered for a host that holds several addresses
+in one subnet, and declined for four reasons:
+
+- **The cheap bypass cannot be told apart from honest Peers.** Holding many public IPv4 addresses costs
+  the holder address space, so the per-address limit already makes that bypass expensive. The cheap case
+  is a host on the Reactor's own subnet that claims unused addresses through ARP replies or extra DHCP
+  leases. Those addresses share a subnet with every honest on-link Peer, so a subnet limit would refuse
+  the honest Peers with the attacker.
+- **A group would merge unrelated hosts.** Carrier-grade and cloud NAT pools send many users from
+  addresses in one block, and one user can appear from several of them. Containers and virtual machines
+  on one host each take an address on a shared bridge subnet. One limit across the block puts all of
+  them behind it.
+- **The prefix length would be a guess.** The Reactor cannot see a remote network's mask. A fixed length
+  is the guess ADR 0011 forbids, and a knob owes a derived default that does not exist. A local
+  interface's mask is known only for on-link Peers, and those are the Peers the first point says must not
+  be grouped.
+- **Broadcast and multicast do not change the answer.** They are destinations, and the limit counts the
+  sources of completed handshakes, which are unicast. A broadcast or multicast send reaches Peers on the
+  local subnet, so subnet grouping would cap the audience that kind of send exists to reach.
+
+The cost is that a host on the Reactor's subnet that can claim N unused addresses can hold
+N × `MaxPeersPerAddress` Slots, bounded by `Capacity`.
+
 ## Reading back what was bound
 
 Exclusive binding makes port zero the normal way to bind in a test, so the assigned address must be

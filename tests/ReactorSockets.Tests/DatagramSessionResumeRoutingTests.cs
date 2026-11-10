@@ -7,10 +7,9 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issues #375, #376 and #377 (parent #56): the accepting end routes an arriving Resume control
-/// datagram by its target session id and authorises it by its secret (ADR 0009). Also the read-side
-/// cases #373 could not write, because the codec is internal (ADR 0015): a malformed Resume is
-/// dropped like any other malformed control datagram.
+/// The accepting end routes an arriving Resume control
+/// datagram by its target session id and authorises it by its secret (ADR 0009). A malformed Resume
+/// is dropped like any other malformed control datagram.
 /// </summary>
 /// <remarks>
 /// The resuming party is a <see cref="HostilePeer"/> on its own UDP port, so a Resume's source differs

@@ -38,8 +38,8 @@ public class RawReactorFrameTests
         // consumer actually observes at the defaults. Note what does *not* enforce it: the read share
         // is never reached, because a ready Link is read exactly once per Pump. One datagram per Link
         // per Pump is a property of the single read, not of the share cap — so this test would keep
-        // passing if the cap were removed, and a later slice that reads a Link more than once per Pump
-        // is what would first make the cap observable.
+        // passing if the cap were removed. The cap is observable only where a Link is read more than
+        // once per Pump.
         using RawReactorHarness harness = new(capacity: 4);
         (LinkId firstLink, IPEndPoint firstEndPoint) = harness.BindLoopbackLink();
         (LinkId secondLink, IPEndPoint secondEndPoint) = harness.BindLoopbackLink();

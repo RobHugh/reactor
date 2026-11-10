@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtasks 6.6.13 and 6.6.14 (issues #223 and #224): the two reliable promises, each phrased as the
+/// The two reliable promises, each phrased as the
 /// promise <c>docs/delivery-modes.md</c> makes and driven by <see cref="LossyProxy"/> under a scripted
 /// plan of drops, duplicates and reorders. <c>ReliableUnordered</c> promises every Message arrives
 /// exactly once and nothing about order; <c>ReliableOrdered</c> promises exactly once <em>and</em> in

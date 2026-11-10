@@ -4,13 +4,13 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #370 (parent #55): per-Peer counters keep running across an Interruption — a counter's
+/// Per-Peer counters keep running across an Interruption — a counter's
 /// lifetime is the Peer's, not the transport's (ADR 0013), so <see cref="PeerCounters"/> read through
 /// <see cref="DatagramSessionReactor.CountersOf"/> must neither reset at
 /// <see cref="SessionEventKind.PeerInterrupted"/> nor stop moving afterwards. Drives a real
 /// <see cref="DatagramSessionReactor"/> pair through a <see cref="LossyProxy"/> on a shared
 /// <see cref="Microsoft.Extensions.Time.Testing.FakeTimeProvider"/>, seeds the Peer's shared
-/// <see cref="RetransmissionTimer"/> with one clean round trip (mirrors
+/// <c>RetransmissionTimer</c> with one clean round trip (mirrors
 /// <see cref="DatagramSessionPingRetransmissionTests.SeedEstimator"/>), then cuts the path so a
 /// retained <c>ReliableOrdered</c> record keeps expiring into a proxy that drops every relay, both
 /// before and after the receive-idle deadline moves the Peer to Interrupted.
@@ -30,7 +30,7 @@ public class DatagramSessionInterruptedCountersTests
 
     /// <summary>
     /// The seeding round trip (the same 20ms case <see cref="DatagramSessionPingRetransmissionTests"/>
-    /// uses): seeds the shared <see cref="RetransmissionTimer"/> at a 60ms timeout, so this file's
+    /// uses): seeds the shared <c>RetransmissionTimer</c> at a 60ms timeout, so this file's
     /// retransmissions stay dense relative to the 10-minute Linger rather than waiting out an unseeded
     /// estimator's Linger-ceilinged RTO.
     /// </summary>
@@ -51,7 +51,7 @@ public class DatagramSessionInterruptedCountersTests
 
         SeedEstimator(dialler, proxy, accepter, peer, accepterPeer);
 
-        // Act — produce a genuine retransmission while the path is still relaying, so AC1's
+        // Act — produce a genuine retransmission while the path is still relaying, so the
         // PacketsRetransmitted check below is meaningful rather than an unmoved zero: drop one
         // ReliableOrdered record with the proxy's one-shot loss rule, then let its retransmit timer
         // (seeded at 60ms by SeedEstimator's round trip) expire with a comfortable margin.
@@ -125,7 +125,7 @@ public class DatagramSessionInterruptedCountersTests
 
         PeerCounters afterInterruption = dialler.Reactor.CountersOf(peer);
 
-        // Assert — AC1: every counter read through CountersOf before the transition is at least what it
+        // Assert — every counter read through CountersOf before the transition is at least what it
         // was; PeerInterrupted resets none of them. Resumes stays at zero because no Resume happens
         // in this scenario (see the comment above) — read here too so a reset of it would still be caught.
         afterInterruption.MessagesReceived.Should().BeGreaterThanOrEqualTo(beforeInterruption.MessagesReceived);
@@ -153,7 +153,7 @@ public class DatagramSessionInterruptedCountersTests
 
         PeerCounters afterRetransmissionWindow = dialler.Reactor.CountersOf(peer);
 
-        // Assert — AC2: a strict rise, measured over a window entirely after PeerInterrupted, proves the
+        // Assert — a strict rise, measured over a window entirely after PeerInterrupted, proves the
         // retained record keeps being resent while Interrupted rather than only up to the transition.
         afterRetransmissionWindow.PacketsRetransmitted.Should().BeGreaterThan(
             afterInterruption.PacketsRetransmitted,
@@ -166,7 +166,7 @@ public class DatagramSessionInterruptedCountersTests
     /// <summary>
     /// Sends one ReliableOrdered Message, flushes it, and acknowledges it exactly
     /// <see cref="_seedRoundTrip"/> later through the accepter's own reply — the only way an ack block
-    /// reaches the wire — so the Peer's shared <see cref="RetransmissionTimer"/> takes its one clean
+    /// reaches the wire — so the Peer's shared <c>RetransmissionTimer</c> takes its one clean
     /// first sample. Matches <see cref="DatagramSessionPingRetransmissionTests.SeedEstimator"/>'s shape:
     /// a short, known timeout keeps this file's clock advances small relative to the ten-minute Linger
     /// it must stay far under.

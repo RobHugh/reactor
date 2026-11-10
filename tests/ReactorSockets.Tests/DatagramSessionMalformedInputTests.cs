@@ -6,12 +6,12 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 5.2 (issue #33): the control-datagram branch and the malformed-input surface. Every test
+/// The control-datagram branch and the malformed-input surface. Every test
 /// here sends bytes a remote can produce at will — never a well-formed protocol exchange — from a
 /// <see cref="HostilePeer"/> to a bound <see cref="DatagramSessionReactor"/>, and asserts the bytes
 /// land on the Diagnostic Sink as <see cref="DiagnosticId.DatagramMalformed"/> and never on the event
-/// stream. See the wire format fixed in the parent slice spec: a 256-byte, big-endian, zero-padded
-/// control datagram — session id, control type, body, padding.
+/// stream. The wire format is a 256-byte, big-endian, zero-padded control datagram — session id,
+/// control type, body, padding.
 /// </summary>
 public class DatagramSessionMalformedInputTests
 {

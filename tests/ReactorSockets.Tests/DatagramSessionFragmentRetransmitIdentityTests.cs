@@ -5,8 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #250, the fragment-shaped sibling of <see cref="DatagramSessionRetransmitIdentityTests"/>
-/// (issue #238): a Fragment is cut and framed once, at <c>Send</c>, and lives in retention as finished
+/// The fragment-shaped sibling of <see cref="DatagramSessionRetransmitIdentityTests"/>: a Fragment is cut and framed once, at <c>Send</c>, and lives in retention as finished
 /// bytes (ADR 0004), so a retransmit copies those bytes out rather than rebuilding them. This is proved
 /// on the wire — a <see cref="WireTap"/> captures a Fragment record's original transmission and its
 /// later retransmission, and every field of the two captures is asserted equal, both individually and as
@@ -63,8 +62,8 @@ public class DatagramSessionFragmentRetransmitIdentityTests
 
     /// <summary>
     /// What the last Fragment carries: far short of <see cref="FragmentSize"/>, so the last Fragment is
-    /// a genuine partial remainder rather than a coincidental full one — the acceptance criterion the
-    /// last-Fragment case exists to prove.
+    /// a genuine partial remainder rather than a coincidental full one, which is what the last-Fragment
+    /// case exists to prove.
     /// </summary>
     private const int LastFragmentRemainder = 1_000;
 
@@ -89,7 +88,7 @@ public class DatagramSessionFragmentRetransmitIdentityTests
     /// </summary>
     private static readonly TimeSpan _pastTheRetransmitDeadline = TimeSpan.FromSeconds(3);
 
-    /// <summary>The two positions the acceptance criteria name explicitly: a middle Fragment, and the last, whose payload is short.</summary>
+    /// <summary>The two positions tested: a middle Fragment, and the last, whose payload is short.</summary>
     public static TheoryData<int, string> FragmentDropPositions => new()
     {
         { MiddleFragmentIndex, "middle" },

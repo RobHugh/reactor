@@ -65,13 +65,13 @@ and raises neither `PeerClosing` nor `PeerGoodbye`.
 | `LocalClose` | You called `Close`. |
 | `PeerGoodbye` | The peer closed on purpose. A clean ending on both sides. |
 | `VersionMismatch` | The two ends do not speak the same protocol version. The match is exact — no negotiation, no compatibility range. |
-| `RemoteAtCapacity` | The far end had no Slot free and said so. Distinct from silence: retry later. |
+| `RemoteAtCapacity` | The far end had no Slot free for you and said so, because it is full or your address is at its `MaxPeersPerAddress`. Distinct from silence: retry later. |
 | `ProtocolViolation` | The peer declared a Fragment set larger than your receive window could ever hold. |
 | `LingerExpired` | An interrupted Peer's Linger ran out before it was heard from, or a Closing Peer's Goodbye went unacknowledged for a whole Linger. |
 | `FragmentSizeUnviable` | Your `FragmentSize` is larger than the path will carry. |
+| `TransportFailed` | Your dial got no answer within your `Linger` of `Connect`, despite resending its handshake. |
 
-`TransportFailed` and `RetentionGap` never occur on this profile. There is no connection to fail and
-nothing to rewind on Resume.
+`RetentionGap` never occurs on this profile. There is nothing to rewind on Resume.
 
 `PeerClosed` is final. The `PeerId` is dead from that event onwards, and a Slot reused later carries
 a new generation, so a stale id can never alias a new Peer.
@@ -85,8 +85,9 @@ A refusal only comes after the cookie round trip. A bare Hello is always answere
 nothing else, so nothing about a Reactor's version or occupancy is learnable without proving you
 can receive at the address you claim.
 
-The refusing end logs `VersionRefused` (202) or `CapacityExhausted` (3) and counts a capacity
-refusal in `AdmissionDiscards`.
+The refusing end logs `VersionRefused` (202), `CapacityExhausted` (3) or `AddressPeerLimitReached`
+(208), and counts the last two in `AdmissionDiscards`. A dialler cannot tell a full Reactor from a
+per-address refusal, so a refusal does not say whether Slots are free.
 
 ## FragmentSizeUnviable
 

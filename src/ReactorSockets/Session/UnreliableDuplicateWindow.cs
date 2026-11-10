@@ -3,9 +3,9 @@ namespace ReactorSockets.Session;
 /// <summary>
 /// Plain <see cref="DeliveryMode.Unreliable"/>'s duplicate suppression: a bounded sliding window of
 /// the 64 most recent sequences, which admits a sequence it has not seen and suppresses one it has
-/// (subtask 6.6.12, issue #222; ADR 0017). Suppression is bounded rather than absolute — a duplicate
-/// delayed by more than 64 sequences falls out of the window and is delivered, which is the honest
-/// promise the mode makes rather than a claim it cannot keep.
+/// (ADR 0017). Suppression is bounded rather than absolute — a duplicate delayed by more than 64
+/// sequences falls out of the window and is delivered, which is the honest promise the mode makes
+/// rather than a claim it cannot keep.
 /// </summary>
 /// <remarks>
 /// <para>

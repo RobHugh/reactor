@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #368 (parent #55): under the negotiated-minimum rule (#363), two Reactors whose own configured
+/// Under the negotiated-minimum rule (#363), two Reactors whose own configured
 /// Lingers disagree do not merely each individually close on their own effective value — they abandon the
 /// Session at the <em>same instant</em>, so a Resume can no longer fail because the peer had a different
 /// idea of how long the Session existed. Both harnesses here and the <see cref="LossyProxy"/> between them
@@ -114,13 +114,12 @@ public class DatagramSessionLingerAbandonTogetherTests
     }
 
     /// <summary>
-    /// Issue #55 follow-up (PR #372): the dialler's own configured Linger is 5000.4 ms — not a whole
+    /// The dialler's own configured Linger is 5000.4 ms — not a whole
     /// millisecond — and the accepter's is 8 s. Both ends must round their own Linger up to whole
     /// milliseconds once, <em>before</em> negotiating, so both land on the same 5001 ms effective value
-    /// (issue #363 rounds the wire announcement, but before this fix the negotiation itself still read
-    /// the unrounded <c>_options.Linger</c>, so the dialler abandoned around 5000.4 ms while the accepter
-    /// negotiated 5001 ms — proving both ends must round the same way, not merely that each announces a
-    /// rounded value on the wire).
+    /// (a negotiation that read the unrounded <c>_options.Linger</c> would have the dialler abandon
+    /// around 5000.4 ms while the accepter negotiated 5001 ms, so this proves both ends round the same
+    /// way, not merely that each announces a rounded value on the wire).
     /// </summary>
     [Fact]
     public void Pump_BothEndsInterrupted_WithFractionalMillisecondLinger_RoundBothEndsToTheSameEffectiveLingerAndCloseTogether()

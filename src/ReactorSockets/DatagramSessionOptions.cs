@@ -51,10 +51,17 @@ namespace ReactorSockets;
 /// shared across the whole Reactor rather than multiplied by capacity.
 /// </para>
 /// <para>
+/// One further cost is allocated only under traffic: ordinary <c>ReliableOrdered</c> records waiting
+/// behind a gap. It has a ceiling of its own, <see cref="HeldRecordBudgetBytes"/>, and reaching it refuses
+/// further records rather than growing.
+/// </para>
+/// <para>
 /// <see cref="MaxMessageSize"/> reaches three places at once: it is announced to the remote as a
 /// receive limit, it floors the receive window at the fragments one maximum Message occupies
 /// (<see cref="ReceiveWindowFloor"/>), and it floors the frame arena, because an arena that cannot
-/// hold one maximum Message could never deliver one. Careless enlargement therefore grows memory in
+/// hold one maximum Message could never deliver one. The limit is enforced as well as announced: a
+/// completed Message above it is discarded rather than delivered, with
+/// <see cref="DiagnosticId.OversizedMessage"/>. Careless enlargement grows memory in
 /// two directions rather than one: the window floor is per Peer, so the receive line above rises
 /// with it multiplied by capacity and by the Spaces, and the shared arena is pushed up alongside.
 /// Retention is the exception this profile makes. <see cref="RetentionBytes"/> is floored by
@@ -111,8 +118,8 @@ public sealed class DatagramSessionOptions
     /// <summary>
     /// The number of Spaces that reassemble on receive and retain on send — the reliable pair of the
     /// four. Internal rather than private so <see cref="DatagramSessionReactor"/> can size its receive
-    /// arena (issue #171) against the same constant this budget is computed from, rather than a second
-    /// literal 2 that could drift from it.
+    /// arena against the same constant this budget is computed from, rather than a second literal 2
+    /// that could drift from it.
     /// </summary>
     internal const int ReliableSpaceCount = 2;
 
@@ -120,22 +127,22 @@ public sealed class DatagramSessionOptions
     /// The number of Spaces a Peer classifies arrivals against — all four of ADR 0009's delivery
     /// modes, reliable and unreliable alike. Every one of them owns a receive window and so a run of
     /// admission bytes in the receive arena, which is why the receive budget multiplies by this as
-    /// well as by <see cref="ReliableSpaceCount"/> (issue #174).
+    /// well as by <see cref="ReliableSpaceCount"/>.
     /// </summary>
     internal const int SpaceCount = 4;
 
     /// <summary>
-    /// The bytes one receive-arena length slot occupies for a retaining Space (issue #257): a
-    /// <c>u16</c> recording how many payload bytes the Fragment held in a slot actually occupies, wide
-    /// enough for any <see cref="ResolvedFragmentSize"/> up to the largest a UDP payload can carry.
-    /// Internal so <see cref="Core.ReceiveArena"/> sizes its length region against the same constant
-    /// this budget is computed from, rather than a second literal 2 that could drift from it.
+    /// The bytes one receive-arena length slot occupies for a retaining Space: a <c>u16</c> recording
+    /// how many payload bytes the Fragment held in a slot actually occupies, wide enough for any
+    /// <see cref="ResolvedFragmentSize"/> up to the largest a UDP payload can carry. Internal so
+    /// <see cref="Core.ReceiveArena"/> sizes its length region against the same constant this budget is
+    /// computed from, rather than a second literal 2 that could drift from it.
     /// </summary>
     internal const int FragmentLengthBytes = 2;
 
     /// <summary>
     /// Bytes one waiting-Fragment-group entry occupies in the receive arena: a <c>u32</c> first
-    /// sequence and a <c>u16</c> declared Fragment count, the pair that names a group (issue #259).
+    /// sequence and a <c>u16</c> declared Fragment count, the pair that names a group.
     /// </summary>
     internal const int PendingGroupEntryBytes = 6;
 
@@ -144,9 +151,16 @@ public sealed class DatagramSessionOptions
     /// first sequence and <c>u16</c> declared Fragment count as <see cref="PendingGroupEntryBytes"/>, but
     /// one entry per receive-window slot rather than per waiting group — what still names an incomplete
     /// set's held and declared counts at the moment its slot is discarded and its length residue is
-    /// cleared (issue #297).
+    /// cleared.
     /// </summary>
     internal const int FragmentGroupEntryBytes = 6;
+
+    /// <summary>
+    /// The most one held ordinary record costs beside its payload on a 64-bit runtime: an 8-byte
+    /// reference and a 4-byte length in the send-order ring, and a byte array's 24-byte object header
+    /// with up to 8 bytes of padding.
+    /// </summary>
+    internal const int HeldRecordSlotBookkeepingBytes = 8 + 4 + 24 + 8;
 
     /// <summary>
     /// The shared L0 budget: capacity, admission cap, arena size, time source and Diagnostic Sink.
@@ -165,13 +179,12 @@ public sealed class DatagramSessionOptions
     /// Announced to the peer at the handshake precisely so an oversized claim can be refused before
     /// this end holds anything for it: a declared Fragment <c>fragmentCount</c> larger than this
     /// Reactor's receive window (<see cref="ResolvedReceiveWindowFragments"/>) is closed on its first
-    /// Fragment, before any receive-window slot or Fragment-group bookkeeping exists for it (issue
-    /// #282, reworked under #264). The bound is the window rather than <see cref="ReceiveWindowFloor"/>
-    /// alone, because the floor is computed from this end's own <see cref="ResolvedFragmentSize"/> and
-    /// fragment size is unilateral and per-direction (ADR 0004): a conforming peer with a smaller
-    /// fragment size legally cuts the same, within-limit Message into more Fragments than the floor.
-    /// <see cref="Validate"/> already requires the window to be at least the floor, so a set at exactly
-    /// this value is always admitted.
+    /// Fragment, before any receive-window slot or Fragment-group bookkeeping exists for it. The bound
+    /// is the window rather than <see cref="ReceiveWindowFloor"/> alone, because the floor is computed
+    /// from this end's own <see cref="ResolvedFragmentSize"/> and fragment size is unilateral and
+    /// per-direction (ADR 0004): a conforming peer with a smaller fragment size legally cuts the same,
+    /// within-limit Message into more Fragments than the floor. <see cref="Validate"/> already requires
+    /// the window to be at least the floor, so a set at exactly this value is always admitted.
     /// </remarks>
     public required int MaxMessageSize { get; init; }
 
@@ -183,11 +196,52 @@ public sealed class DatagramSessionOptions
     public required int RetentionBytes { get; init; }
 
     /// <summary>
-    /// How long a Session may go without sending before it sends a Ping instead (issue #340). Required:
-    /// shorter costs bandwidth on an idle link, longer costs time to notice a dead Peer, and only the
-    /// consumer knows which they would rather spend. There is no option to disable this: every
-    /// Established Peer that has sent no data datagram for this long is always sent one seven-byte
-    /// control record, whatever else it did or did not receive.
+    /// The most accepted Peers one address may hold at once, so one reachable address cannot occupy
+    /// every capacity Slot. Defaults to <see cref="ResolvedMaxPeersPerAddress"/>, one fewer than
+    /// <see cref="ReactorOptions.Capacity"/>. Provenance: derived from capacity, as the largest limit that
+    /// still keeps one address from holding every Slot (ADR 0014). How many Peers legitimately share an
+    /// address depends on the NATs and proxies in front of this Reactor, so set it lower when strangers can
+    /// reach it. At least 1. A value of <see cref="ReactorOptions.Capacity"/> or above sets no limit, which
+    /// is what the default is at a capacity of 1.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The count is by address, without the port: a host can answer a Cookie from as many ports as it can
+    /// bind, so a limit that counted ports would limit nothing. The address family and IPv6 scope stay in
+    /// the key, because they distinguish hosts (ADR 0014). IPv6 addresses are counted by the prefix
+    /// <see cref="PeerLimitIPv6PrefixLength"/> sets, so a host that can bind a whole prefix gets the limit
+    /// once. IPv4 addresses are counted whole.
+    /// </para>
+    /// <para>
+    /// A Peer is charged to the address its handshake came from for as long as it holds its Slot, including
+    /// while Interrupted or Closing and after a Resume moves it to another address. A dialled Peer is not
+    /// charged: this Reactor chose to make it. A handshake over the limit is refused the same way as one at
+    /// a full Reactor, and reported with <see cref="DiagnosticId.AddressPeerLimitReached"/>.
+    /// </para>
+    /// </remarks>
+    public int? MaxPeersPerAddress { get; init; }
+
+    /// <summary>
+    /// How many leading bits of an IPv6 address form the key for <see cref="MaxPeersPerAddress"/>, so
+    /// every address in one prefix shares one limit. Defaults to <see cref="ResolvedPeerLimitIPv6PrefixLength"/>,
+    /// 64. Provenance: RFC 4291 §2.5.1 fixes the interface identifier of a unicast address at 64 bits, so a
+    /// /64 is one link (ADR 0014). From 1 to 128. A value of 128 counts each address on its own.
+    /// </summary>
+    /// <remarks>
+    /// Every on-link host on an IPv6 LAN shares one /64, so at the default those Peers share one limit.
+    /// Set 128 when Peers legitimately arrive from one link. A shorter length groups more of a customer's
+    /// delegated prefix, at the cost of grouping unrelated customers. The scope stays in the key, so
+    /// link-local addresses are grouped per interface. IPv4 addresses are never grouped.
+    /// </remarks>
+    public int? PeerLimitIPv6PrefixLength { get; init; }
+
+    /// <summary>
+    /// How long a Session may go without sending before it sends a Ping instead. Required: shorter
+    /// costs bandwidth on an idle link, longer costs time to notice a dead Peer, and only the consumer
+    /// knows which they would rather spend. There is no option to disable this: every Established Peer
+    /// that has sent no data datagram for this long is always sent one seven-byte control record,
+    /// whatever else it did or did not receive. At most 2^32 - 1 milliseconds (about 49.7 days), the
+    /// most a handshake may announce.
     /// </summary>
     /// <remarks>
     /// The Ping this produces is a Heartbeat, and a Heartbeat is not a keepalive: it proves the party
@@ -202,7 +256,8 @@ public sealed class DatagramSessionOptions
     /// <summary>
     /// How long a closing Session stays alive to retransmit its Goodbye and absorb what is still in
     /// flight. Required, for the same reason as <see cref="SendIdleInterval"/>: it trades a prompt
-    /// teardown against a clean one.
+    /// teardown against a clean one. At most 2^32 - 1 milliseconds (about 49.7 days), the most a handshake
+    /// may announce.
     /// </summary>
     public required TimeSpan Linger { get; init; }
 
@@ -238,9 +293,9 @@ public sealed class DatagramSessionOptions
     /// number a maximum Message occupies. Provenance: derived from <see cref="MaxMessageSize"/> and
     /// <see cref="FragmentSize"/> — ADR 0004's deadlock floor rather than a performance choice: a window narrower than one whole Message can never deliver one, so it can
     /// never advance, so the sender can never send the rest. This resolved value is also the inbound
-    /// bound a declared Fragment <c>fragmentCount</c> is checked against (issue #282, under #264): a set
-    /// larger than the window can never be reassembled, since there is no slot to hold every one of
-    /// its pieces at once, so <see cref="DatagramSessionReactor"/> closes it before any is held.
+    /// bound a declared Fragment <c>fragmentCount</c> is checked against: a set larger than the window
+    /// can never be reassembled, since there is no slot to hold every one of its pieces at once, so
+    /// <see cref="DatagramSessionReactor"/> closes it before any is held.
     /// </summary>
     public int? ReceiveWindowFragments { get; init; }
 
@@ -250,6 +305,22 @@ public sealed class DatagramSessionOptions
     /// least 2, because a count of 1 makes a single lost datagram fatal and no network is that reliable.
     /// </summary>
     public int? MissedHeartbeats { get; init; }
+
+    /// <summary>
+    /// The most reads one Pump makes on each bound socket, so a flood cannot keep a Pump from
+    /// returning. Defaults to <see cref="ResolvedMaxDatagramsPerPump"/>. Provenance: derived from a
+    /// full Reactor's worth of traffic, as <see cref="ReactorOptions.AdmissionCap"/> is (ADR 0012). At
+    /// least 1.
+    /// </summary>
+    /// <remarks>
+    /// What this leaves unread waits in the socket's receive buffer for a later Pump. If that buffer
+    /// fills, the operating system drops what arrives next and no counter here sees it. A queued socket
+    /// error spends a read too. Reads are first come, first served, so a live Peer's datagrams wait behind
+    /// a flood from anyone else on that socket, and a long enough wait looks to the receive-idle deadline
+    /// like silence. Lower this to bound how long one Pump can take, at the cost of a longer wait. A Pump
+    /// that reaches it reports <see cref="DiagnosticId.DatagramReadLimitReached"/>.
+    /// </remarks>
+    public int? MaxDatagramsPerPump { get; init; }
 
     /// <summary>
     /// The entropy the cookie secrets, session ids and resume secrets are drawn from. A construction
@@ -270,7 +341,7 @@ public sealed class DatagramSessionOptions
     /// The resolved fragment size: <see cref="FragmentSize"/> if set, otherwise 1200.
     /// </summary>
     /// <remarks>
-    /// A Peer captures this value once, onto its own slot, at admission (issue #248) — every
+    /// A Peer captures this value once, onto its own slot, at admission — every
     /// <see cref="DatagramSessionReactor.Send"/> call for that Peer, and every retransmit, cuts by that
     /// captured value rather than reading this property afresh, so fragment size cannot move mid-Session
     /// even if this options instance later would resolve differently (ADR 0004).
@@ -287,6 +358,26 @@ public sealed class DatagramSessionOptions
     /// <summary>The resolved receive window: <see cref="ReceiveWindowFragments"/> if set, otherwise <see cref="ReceiveWindowFloor"/>.</summary>
     public int ResolvedReceiveWindowFragments => ReceiveWindowFragments ?? ReceiveWindowFloor;
 
+    /// <summary>
+    /// The resolved per-socket read limit: <see cref="MaxDatagramsPerPump"/> if set, otherwise one receive
+    /// window for every Space of every Peer, plus every handshake the admission cap allows in one Pump.
+    /// </summary>
+    public int ResolvedMaxDatagramsPerPump =>
+        MaxDatagramsPerPump ?? (int)Math.Min(
+            ((long)Reactor.Capacity * ResolvedReceiveWindowFragments * SpaceCount) + Reactor.ResolvedAdmissionCap,
+            int.MaxValue);
+
+    /// <summary>
+    /// The resolved per-address limit: <see cref="MaxPeersPerAddress"/> if set, otherwise one fewer than
+    /// <see cref="ReactorOptions.Capacity"/>, and at least 1.
+    /// </summary>
+    public int ResolvedMaxPeersPerAddress => MaxPeersPerAddress ?? Math.Max(1, Reactor.Capacity - 1);
+
+    /// <summary>
+    /// The resolved IPv6 grouping length: <see cref="PeerLimitIPv6PrefixLength"/> if set, otherwise 64.
+    /// </summary>
+    public int ResolvedPeerLimitIPv6PrefixLength => PeerLimitIPv6PrefixLength ?? Source.DefaultPeerLimitIPv6PrefixLength;
+
     /// <summary>The resolved missed-heartbeat count: <see cref="MissedHeartbeats"/> if set, otherwise 3.</summary>
     public int ResolvedMissedHeartbeats => MissedHeartbeats ?? DefaultMissedHeartbeats;
 
@@ -296,22 +387,23 @@ public sealed class DatagramSessionOptions
     /// silently wraps through.
     /// </summary>
     /// <remarks>
-    /// Four things per Peer scale with the window, and this figure covers all four (issue #174, #257,
-    /// #259, #297). Payload slots — <see cref="ResolvedFragmentSize"/> bytes each — exist only for the
+    /// Four things per Peer scale with the window, and this figure covers all four. Payload slots —
+    /// <see cref="ResolvedFragmentSize"/> bytes each — exist only for the
     /// <see cref="ReliableSpaceCount"/> Spaces that hold fragments until a Message is whole. The
     /// one-byte-per-slot admission record a receive window classifies against exists for all
     /// <see cref="SpaceCount"/> Spaces, because all four classify whether or not they retain.
     /// <see cref="FragmentLengthBytes"/> per slot records how many bytes of a held Fragment's payload
     /// are actually occupied, and <see cref="FragmentGroupEntryBytes"/> per slot names the group that
     /// payload belongs to — both exist only for the same <see cref="ReliableSpaceCount"/> Spaces as the
-    /// payload they describe, and both are the receive window's own reassembly bookkeeping (issue #257,
-    /// #297), not a separate buffer: the length says a piece was held, the group-identity entry is what
-    /// still lets an abandoned set's held and declared counts be read once that slot is reused. The
-    /// six-byte waiting-group entry — <see cref="PendingGroupEntryBytes"/> — exists for the same two
-    /// Spaces too, but only half a window's worth each (<see cref="PendingGroupsPerSpace"/>, issue
-    /// #259), since a completed-but-undelivered group holds at least two Fragments. Nothing on the
-    /// receive side is allocated outside this figure, so it is an exact statement of what a Reactor
-    /// takes, not a floor it sits above.
+    /// payload they describe, and both are the receive window's own reassembly bookkeeping, not a
+    /// separate buffer: the length says a piece was held, the group-identity entry is what still lets
+    /// an abandoned set's held and declared counts be read once that slot is reused. The six-byte
+    /// waiting-group entry — <see cref="PendingGroupEntryBytes"/> — exists for the same two Spaces too,
+    /// but only half a window's worth each (<see cref="PendingGroupsPerSpace"/>), since a
+    /// completed-but-undelivered group holds at least two Fragments. This figure is an exact statement
+    /// of what the receive arena takes at construction. Ordinary records held behind a gap are the one
+    /// receive-side cost outside it, and they have their own ceiling,
+    /// <see cref="HeldRecordBudgetBytes"/>.
     /// </remarks>
     public long ReceiveBudgetBytes =>
         ((long)Reactor.Capacity * ResolvedReceiveWindowFragments
@@ -328,10 +420,34 @@ public sealed class DatagramSessionOptions
         ResolvedReceiveWindowFragments / 2 < 1 ? 1 : ResolvedReceiveWindowFragments / 2;
 
     /// <summary>
+    /// How many sequences from its send-order head one <c>ReliableOrdered</c> Space will hold ordinary
+    /// records for: twice <see cref="ResolvedReceiveWindowFragments"/>. Honest traffic reaches no
+    /// further while a Fragment group holds the head, because a group spans at most one window and the
+    /// receive window then spans one more from the group's last admitted piece.
+    /// </summary>
+    internal int OrderedHoldSlots => 2 * ResolvedReceiveWindowFragments;
+
+    /// <summary>
+    /// The most heap, in bytes, a Reactor's <c>ReliableOrdered</c> Spaces can hold in ordinary records
+    /// waiting behind a gap, across all its Peers: <c>Capacity × 2 × ReceiveWindowFragments ×
+    /// FragmentSize</c>, with each slot's bookkeeping.
+    /// </summary>
+    /// <remarks>
+    /// This is a ceiling reached only under traffic, not a line allocated at construction, so
+    /// <see cref="ValidateMemoryBill"/> does not count it. It is over and above
+    /// <see cref="ReceiveBudgetBytes"/> and about the same size. A record past either limit is left
+    /// unacknowledged and counted on <see cref="PeerCounters.OutOfWindowPackets"/>, so the far end's
+    /// retransmission brings it back when the Space has moved. The figure counts what stays held, not
+    /// the short-lived arrays the ring leaves behind each time it grows.
+    /// </remarks>
+    public long HeldRecordBudgetBytes =>
+        (long)Reactor.Capacity * OrderedHoldSlots * (ResolvedFragmentSize + HeldRecordSlotBookkeepingBytes);
+
+    /// <summary>
     /// The send line of the memory bill in bytes, reported the same way: <see cref="RetentionSlots"/>
     /// whole fragment slots per reliable Space per Peer, each priced at its payload plus the 15 bytes
-    /// of bookkeeping that records what it holds (issue #63). Exact, like the receive line, so it can be
-    /// below <c>Capacity × 2 × RetentionBytes</c> when retention is not a whole number of fragments.
+    /// of bookkeeping that records what it holds. Exact, like the receive line, so it can be below
+    /// <c>Capacity × 2 × RetentionBytes</c> when retention is not a whole number of fragments.
     /// </summary>
     public long SendBudgetBytes =>
         (long)Reactor.Capacity * ReliableSpaceCount * RetentionSlots
@@ -340,7 +456,7 @@ public sealed class DatagramSessionOptions
     /// <summary>
     /// The uniform retention slots one reliable Space holds per Peer: <see cref="RetentionBytes"/>
     /// divided by <see cref="ResolvedFragmentSize"/>, truncating any remainder. Stays derived from the
-    /// byte bound rather than a knob of its own (ADR 0012, issue #43) so it cannot drift from
+    /// byte bound rather than a knob of its own (ADR 0012) so it cannot drift from
     /// <see cref="RetentionBytes"/> when the fragment size changes. <see cref="Validate"/> already
     /// requires retention to hold at least one fragment, so this is always at least 1.
     /// </summary>
@@ -354,6 +470,16 @@ public sealed class DatagramSessionOptions
     internal void Validate()
     {
         Reactor.Validate();
+
+        if (MaxPeersPerAddress is int maxPeersPerAddress && maxPeersPerAddress < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxPeersPerAddress),
+                maxPeersPerAddress,
+                $"a per-address limit of {maxPeersPerAddress} refuses every handshake, so nothing could ever connect to this Reactor — it must be at least 1.");
+        }
+
+        Source.ValidatePeerLimitIPv6PrefixLength(PeerLimitIPv6PrefixLength, nameof(PeerLimitIPv6PrefixLength));
 
         if (MaxMessageSize < 1)
         {
@@ -396,6 +522,14 @@ public sealed class DatagramSessionOptions
                 nameof(ReceiveWindowFragments));
         }
 
+        if (ResolvedMaxDatagramsPerPump < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxDatagramsPerPump),
+                ResolvedMaxDatagramsPerPump,
+                $"a limit of {ResolvedMaxDatagramsPerPump} datagrams per Pump reads nothing, so nothing could ever arrive — it must be at least 1.");
+        }
+
         int missedHeartbeats = ResolvedMissedHeartbeats;
         if (missedHeartbeats < 2)
         {
@@ -419,6 +553,22 @@ public sealed class DatagramSessionOptions
                 nameof(Linger),
                 Linger,
                 $"a Linger of {Linger} closes a Session before it can retransmit its Goodbye — it must be greater than zero.");
+        }
+
+        if (SendIdleInterval > Session.HandshakeLegality.MaximumInterval)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(SendIdleInterval),
+                SendIdleInterval,
+                $"a send-idle interval of {SendIdleInterval} is above the {Session.HandshakeLegality.MaximumInterval} a handshake may announce, so every Peer would discard this end's handshake.");
+        }
+
+        if (Linger > Session.HandshakeLegality.MaximumInterval)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(Linger),
+                Linger,
+                $"a Linger of {Linger} is above the {Session.HandshakeLegality.MaximumInterval} a handshake may announce, so every Peer would discard this end's handshake.");
         }
 
         ValidateEndpoints();

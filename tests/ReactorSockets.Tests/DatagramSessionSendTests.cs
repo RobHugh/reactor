@@ -4,20 +4,15 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.5.8 (issue #207): <see cref="DatagramSessionReactor.Send"/> resolves the Peer, routes
+/// <see cref="DatagramSessionReactor.Send"/> resolves the Peer, routes
 /// the chosen <see cref="DeliveryMode"/> to its own Space, retains — or does not — and reports the
-/// outcome. Nothing here reaches the wire: packing a record, fragmenting a Message and flushing a
-/// Peer's coalesced Datagram are #44's and #45's, so every assertion below is about the outcome
+/// outcome. Every assertion below is about the outcome
 /// <see cref="DatagramSessionReactor.Send"/> reports and the retention state behind it, never about a
 /// Datagram actually observed on a socket.
 /// </summary>
 /// <remarks>
-/// An "acks release retention" recovery scenario is not asserted here: nothing on any live path calls
-/// <c>Core.RetentionPool.Release</c> yet, the same gap
-/// <see cref="DatagramSessionAckBlockTests"/> and <see cref="RetransmissionExpirySweepTests"/> already
-/// document for this profile's outbound send — an ack genuinely releasing a slot needs a record to
-/// have actually reached the wire and been acknowledged, which does not happen until #45's coalescing
-/// flush exists. What is reachable through the public seam, and asserted below, is that a full
+/// An "acks release retention" recovery scenario is not asserted here: that is
+/// <see cref="DatagramSessionAckReleasesRetentionTests"/>' subject. What this file asserts is that a full
 /// Space's outcome is <see cref="SendOutcome.RetentionExhausted"/> rather than an exception or a silent
 /// drop, and that the other reliable Space and both unreliable modes are entirely unaffected by it.
 /// </remarks>
@@ -239,9 +234,8 @@ public class DatagramSessionSendTests
     [InlineData(DeliveryMode.ReliableOrdered, SendOutcome.RemoteMessageTooLarge)]
     public void Send_AMessageWiderThanOneFragment_ReturnsTheModeAppropriateTooLargeOutcome(DeliveryMode mode, SendOutcome expected)
     {
-        // Arrange — subtask 6.6.2 (issue #215), updated for issue #284: a Message too wide for one
-        // Datagram is a checked outcome the caller can branch on, in every one of the four modes, not an
-        // exception, but the outcome now differs by mode. An unreliable mode is still capped by this
+        // Arrange — a Message too wide for one Datagram is a checked outcome the caller can branch on,
+        // in every one of the four modes, not an exception, but the outcome differs by mode. An unreliable mode is still capped by this
         // end's own Datagram size and refused as MessageTooLarge; a reliable mode is capped by the
         // remote's announced MaxMessageSize and refused as RemoteMessageTooLarge, which is only known
         // once the Peer has completed a real handshake — so both ends share the same MaxMessageSize and

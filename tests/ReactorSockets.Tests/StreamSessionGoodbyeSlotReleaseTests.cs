@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 4.4.1e (issue #142): the negative case that gives Interrupted's Slot reservation (issue #122)
+/// The negative case that gives Interrupted's Slot reservation (issue #122)
 /// its shape. Goodbye is the one thing permitted to forbid a Resume (ADR 0010), so a Peer that leaves
 /// by Goodbye holds no state and reserves nothing — its Slot is free the moment it closes, whether the
 /// Goodbye was this end's own <see cref="StreamSessionReactor.Close"/> or one that arrived from the
@@ -21,7 +21,7 @@ public class StreamSessionGoodbyeSlotReleaseTests
     private static byte[] BuildGoodbye() => StreamSessionTestRecords.BuildPrefix(GoodbyeSentinel);
 
     // =========================================================================================
-    // Slot release: a Goodbye close frees its Slot at once, with no time ever advanced (AC1, AC2)
+    // Slot release: a Goodbye close frees its Slot at once, with no time ever advanced
     // =========================================================================================
 
     [Fact]
@@ -84,7 +84,7 @@ public class StreamSessionGoodbyeSlotReleaseTests
     }
 
     // =========================================================================================
-    // No Linger deadline ever follows a Peer that left by Goodbye (AC3)
+    // No Linger deadline ever follows a Peer that left by Goodbye
     // =========================================================================================
 
     [Fact]

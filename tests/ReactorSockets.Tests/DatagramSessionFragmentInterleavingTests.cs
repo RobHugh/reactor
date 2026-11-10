@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #260: reassembly (#257, #258, #259) stays correct while other traffic moves through the same
+/// Reassembly (#257, #258, #259) stays correct while other traffic moves through the same
 /// Peer. Fragment sets can progress in both reliable Spaces at once, unfragmented Messages can arrive
 /// interleaved with — even inside the same datagram as — Fragments, a set's pieces can arrive out of
 /// order, and a set can span several datagrams with its completing piece landing anywhere within one.
@@ -344,7 +344,7 @@ public class DatagramSessionFragmentInterleavingTests
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
         offset += 8;
         // The remaining ResumeSecretLength bytes are the dialler's resume secret; an all-zero one is
-        // fine, since nothing in this ticket's path ever reads it.
+        // fine, since only a Resume reads it and these tests send none.
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 

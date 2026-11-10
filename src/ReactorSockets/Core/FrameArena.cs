@@ -98,7 +98,7 @@ internal sealed class FrameArena
     /// the bytes up front — the same outcomes, on the same rules, as
     /// <see cref="Reserve(int, ReadOnlySpan{byte})"/>, but the caller fills
     /// <see cref="ArenaReservation.Payload"/> itself once the reservation is decided rather than
-    /// handing bytes in to be copied (issue #259).
+    /// handing bytes in to be copied.
     /// </summary>
     /// <remarks>
     /// This is what lets a reassembled Message be one reservation rather than one per piece: its
@@ -106,7 +106,7 @@ internal sealed class FrameArena
     /// <see cref="ReadOnlySpan{T}"/> to hand <see cref="Reserve(int, ReadOnlySpan{byte})"/> in the
     /// first place. Reserving the whole Message's length up front and then copying each piece
     /// straight into its final position is both cheaper than staging the pieces somewhere else first
-    /// and necessary for the one-reservation-per-Message guarantee issue #259 asks for.
+    /// and necessary for the one-reservation-per-Message guarantee.
     /// </remarks>
     /// <param name="shareHolderId">A zero-based index below <see cref="Capacity"/>.</param>
     /// <param name="length">The number of bytes to reserve.</param>

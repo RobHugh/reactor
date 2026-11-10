@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.7.11 (issue #238): retransmission is byte-identical at packet granularity, never at
+/// Retransmission is byte-identical at packet granularity, never at
 /// datagram granularity. A <see cref="LossyProxy"/> drops a reliable record's only transmission so its
 /// retransmit deadline genuinely expires, while a <see cref="WireTap"/> chained ahead of the proxy — so
 /// it captures every Datagram the dialler sends before the proxy gets a chance to drop one — keeps a

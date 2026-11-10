@@ -7,10 +7,10 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 3.6.1 (issue #89): every stream Session socket — accepted and dialled alike — runs with
+/// Every stream Session socket — accepted and dialled alike — runs with
 /// Nagle off (ADR 0011). The socket option itself sits on the internal <c>TcpLink</c> and is not
-/// reachable through the public L2 surface (tests/CLAUDE.md), so this proves the property the
-/// acceptance criteria explicitly allow instead: a small Message sent while an earlier one is still
+/// reachable through the public L2 surface (tests/CLAUDE.md), so this proves the observable
+/// property instead: a small Message sent while an earlier one is still
 /// unacknowledged arrives without the Nagle-shaped stall — the classic interaction with a peer's own
 /// delayed-ACK timer, tens of milliseconds — that Nagle would otherwise impose.
 /// </summary>

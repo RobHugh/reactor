@@ -188,6 +188,9 @@ apart reads the diagnostics, which is what diagnostics are for.
 | 204 | `RetransmissionTimerBackedOff` | `Trace` | Peer | new RTO in ms / consecutive backoffs |
 | 205 | `OversizedFragmentSet` | `Warn` | Peer | declared count / largest legal count |
 | 206 | `UnreliableFragment` | `Warn` | Source | claimed mode bits / — |
+| 207 | `OversizedMessage` | `Warn` | Peer | Message length / `MaxMessageSize` |
+| 208 | `AddressPeerLimitReached` | `Warn` | Source | `MaxPeersPerAddress` / — |
+| 209 | `DatagramReadLimitReached` | `Warn` | none | `MaxDatagramsPerPump` / index in `BoundEndpoints` |
 
 ### Stream session
 
@@ -210,6 +213,29 @@ Resume and re-dial four therefore shift to **304–307**, and slice 4.1's `Deliv
 tickets that implement them. Explicit values are not optional here precisely because this happens: a
 value published in a closed permanent enum cannot be moved later, so this table follows the code once
 the code has shipped a value, never the other way round.
+
+**Amended (issue #425).** `OversizedMessage` takes 207. Unlike 205 and 302 it does not close the
+Session, so it can recur, once per over-limit Message. It still passes the admission rule: loss and
+reordering never produce it, because it fires only when a sender ignores the announced limit, and no
+counter carries the Peer or the length against the limit. It stays at `Warn` for the reason
+`UnreliableFragment` does: it names a misconfiguration a consumer can act on.
+
+**Amended (issue #427).** `AddressPeerLimitReached` takes 208. `AdmissionDiscards` already counts these
+refusals, but no counter names the address, which is what a consumer needs in order to raise the limit
+or block the address. It emits one record per refusal rather than one per Frame like
+`CapacityExhausted`, because each record has its own subject, and the admission cap bounds the volume.
+
+**Amended (issue #452).** The stream profile emits `AddressPeerLimitReached` too, under ADR 0020's rule
+that one condition is one member. No stream admission counter moves for it, so the record is the only
+place the refusal shows.
+
+**Amended (issue #428).** `DatagramReadLimitReached` takes 209, under the configured-bound class. What a
+count cannot carry is the identity of the socket that spent `MaxDatagramsPerPump`, as an index in
+`BoundEndpoints`, which tells a consumer which address is flooded. It emits at most one record per bound
+socket per Pump. It means the limit was spent, not that datagrams remain, because the socket's queue depth
+cannot be read past queued errors. The Discard rule above still holds for a Hello the Reactor has read. A
+Hello this limit leaves unread waits in the socket buffer, and no counter sees it until it is read or the
+operating system drops it.
 
 **Amended (slice 4.4.4).** `ResumeUnmatched` shipped with both value slots used, where this table had
 drafted neither. It carries the number of reserved Slots the claim was checked against and the wire

@@ -6,12 +6,12 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #166: a fuzzed hostile-input corpus for the data path — the parse loop
+/// A fuzzed hostile-input corpus for the data path — the parse loop
 /// <see cref="DatagramSessionDataDatagramParseTests"/> proves the shape of, aimed here at a live
 /// Session with random noise, boundary truncations, mutated flag bytes, overrunning lengths, and a
 /// zero-length body naming a live Session. Every one of them either parses or produces
-/// <see cref="DiagnosticId.DatagramMalformed"/> (200) and is discarded (issue #163); this ticket adds
-/// volume and randomness on top of that ticket's hand-picked shapes.
+/// <see cref="DiagnosticId.DatagramMalformed"/> (200) and is discarded. This file adds volume and
+/// randomness on top of <see cref="DatagramSessionDataDatagramParseTests"/>' hand-picked shapes.
 /// </summary>
 /// <remarks>
 /// A live Session id is not exposed by the public surface, so — exactly as
@@ -133,7 +133,7 @@ public class DatagramSessionDataFuzzTests
     /// <c>EndPoint</c> per receive regardless of datagram content (see the note in
     /// <c>RawReactorPumpTests.Pump_SteadyStateAfterWarmupWithNothingReady_AllocatesNothingOnTheManagedHeap</c>),
     /// so a corpus that drives thousands of receives cannot show literal zero bytes allocated on this
-    /// thread without also asserting something about L1's receive path, which is not this ticket's
+    /// thread without also asserting something about L1's receive path, which is not this file's
     /// parse-path claim. Instead this measures per-datagram allocation against a ceiling far below
     /// what parsing the claimed lengths or record counts would cost if the parse path allocated
     /// proportionally to attacker-controlled input — the same technique

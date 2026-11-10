@@ -17,8 +17,7 @@ namespace ReactorSockets.Session;
 /// truncated record. The caller (its own queue, its own retry policy) decides what happens to a
 /// payload that did not fit; that decision, and any coalescing across Pumps, is out of scope here.
 /// Multi-byte integers are big-endian, matching every other codec in this namespace. Only the
-/// unfragmented record shape is written — the fragment shape stays undefined on the write side until
-/// slice 7 implements it, the same boundary <see cref="PacketRecordLegality"/> draws on the read side.
+/// unfragmented record shape is written here.
 /// </remarks>
 internal static class DatagramAssembler
 {

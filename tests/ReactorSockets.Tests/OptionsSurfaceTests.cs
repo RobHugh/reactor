@@ -7,7 +7,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #63: the default-provenance audit ADR 0012 asked for at 1.0. A knob may carry a default only
+/// The default-provenance audit ADR 0012 asked for at 1.0. A knob may carry a default only
 /// when that default is derived — from machinery the library owns, from another knob, or from a
 /// citable standard — and otherwise it is required. A constant is not configurable at all. These tests
 /// walk the public surface mechanically, so the claim stays true as knobs are added rather than being
@@ -38,6 +38,9 @@ public class OptionsSurfaceTests
         "DatagramSessionOptions.Reactor",
         "DatagramSessionOptions.MaxMessageSize",
         "DatagramSessionOptions.RetentionBytes",
+        "DatagramSessionOptions.MaxPeersPerAddress",
+        "DatagramSessionOptions.PeerLimitIPv6PrefixLength",
+        "DatagramSessionOptions.MaxDatagramsPerPump",
         "DatagramSessionOptions.SendIdleInterval",
         "DatagramSessionOptions.Linger",
         "DatagramSessionOptions.Endpoints",
@@ -48,6 +51,8 @@ public class OptionsSurfaceTests
         "StreamSessionOptions.Reactor",
         "StreamSessionOptions.MaxMessageSize",
         "StreamSessionOptions.RetentionBytes",
+        "StreamSessionOptions.MaxPeersPerAddress",
+        "StreamSessionOptions.PeerLimitIPv6PrefixLength",
         "StreamSessionOptions.SendIdleInterval",
         "StreamSessionOptions.Linger",
         "StreamSessionOptions.Endpoints",

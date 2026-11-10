@@ -46,13 +46,15 @@ appears that is not in the audited list below.
 | `Reactor` | required | |
 | `MaxMessageSize` | required | A statement about your protocol. |
 | `RetentionBytes` | required | Your memory against your tolerance for stalling on loss. |
-| `SendIdleInterval` | required | Bandwidth on an idle link against time to notice a dead Peer. |
-| `Linger` | required | A prompt teardown against a clean one. |
+| `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | `Capacity`. The largest limit that still keeps one address from holding every Slot. Set it lower if strangers can reach the Reactor. `Reactor.Capacity` or above sets no limit. At least 1. |
+| `SendIdleInterval` | required | Bandwidth on an idle link against time to notice a dead Peer. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
+| `Linger` | required | A prompt teardown against a clean one. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Endpoints` | empty | No declaration. The first dial binds a wildcard, port-zero socket. |
 | `FragmentSize` | 1200 | QUIC's floor under the 1280-byte IPv6 minimum MTU. Range 576 (RFC 791) to 65 507 (UDP). |
 | `ReceiveWindowFragments` | fragments in one maximum Message | `MaxMessageSize` and `FragmentSize`. A narrower window deadlocks (ADR 0004). |
 | `MissedHeartbeats` | 3 | RFC 4271's hold time. At least 2. |
 | `Entropy` | the platform CSPRNG | The platform. |
+| `MaxDatagramsPerPump` | `Capacity × ReceiveWindowFragments × 4 + AdmissionCap` | A full Reactor's worth of reads per bound socket: one window for every Space of every Peer, plus every handshake one Pump may admit. Lower it for a shorter Pump. At least 1. |
 
 ### Stream Session (`StreamSessionOptions`)
 
@@ -61,6 +63,7 @@ appears that is not in the audited list below.
 | `Reactor` | required | |
 | `MaxMessageSize` | required | A statement about your protocol. |
 | `RetentionBytes` | required | Your memory against your tolerance for a stalled Peer. |
+| `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | As for the datagram profile. A Resume is never refused by it. |
 | `SendIdleInterval` | required | As for the datagram profile. |
 | `Linger` | required | As for the datagram profile. |
 | `Endpoints` | empty | No declaration. Dial-only. |
@@ -85,11 +88,12 @@ keep consistent with them.
 | Per-share-holder read cap | `ArenaSize ÷ Capacity` bytes per Pump, with one whole unit always allowed |
 | RTO floor and ceiling | The observed Pump interval and the effective Linger |
 | Dial-only socket's family and port | The destination's family and an OS-assigned port |
+| Ordered hold limit | 2 × `ReceiveWindowFragments` sequences, each no wider than `FragmentSize`. A Fragment group holding the head spans one window, and the receive window spans one more past it |
 
 ## Memory
 
 Every formula below has no traffic term. Each is fixed by your options before the first byte arrives,
-and `MemoryBillTests` checks each one against the bytes construction actually allocates.
+and `MemoryBillTests` checks each line construction allocates against the bytes it actually allocates.
 
 ### Stream
 
@@ -115,6 +119,18 @@ send:     Capacity × 2 × RetentionBytes
 counts bytes. The 2 is the two reliable Spaces, the only ones that reassemble and retransmit. Each line
 also carries a few bytes of bookkeeping per fragment slot, under 2% at the default fragment size.
 `ReceiveBudgetBytes` and `SendBudgetBytes` report both lines exactly, bookkeeping included.
+
+One further cost is a ceiling rather than a preallocation, so nothing allocates it at construction:
+
+```
+held:     Capacity × 2 × ReceiveWindowFragments × FragmentSize
+```
+
+These are ordinary `ReliableOrdered` records waiting behind a gap, on the heap and only under traffic.
+The 2 is two windows of sequences in the one Space, not two Spaces. A record past that reach, or wider
+than `FragmentSize`, is refused unacknowledged and counted on `OutOfWindowPackets`, and retransmission
+brings it back. `HeldRecordBudgetBytes` reports this line, bookkeeping included, and
+`DatagramSessionOrderedHoldBudgetTests` checks it against the bytes a flood allocates.
 
 ### Raw
 
@@ -177,4 +193,7 @@ measurement measures your Pump cadence, not TCP's acknowledgement clock. To batc
   it inside your Messages.
 
 Resume is authorised by a separate secret exchanged during the handshake, never by the session field
-([ADR 0009](adr/0009-the-datagram-session-wire-format.md)).
+([ADR 0009](adr/0009-the-datagram-session-wire-format.md)). The secret does not prove the Resume's
+source address receives, so a Resume from a new IP address moves sends there only after that address
+echoes a path challenge. A Resume from the same IP address on a new port moves at once
+([ADR 0021](adr/0021-a-resume-from-a-new-ip-address-is-proven-by-a-path-challenge.md)).

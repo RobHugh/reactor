@@ -4,9 +4,8 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #365 (parent #55): Linger is the RTO's ceiling (subtask 6.4), and the ceiling must read the
-/// same <em>effective</em> (negotiated, minimum-of-both-ends) Linger that Linger expiry (#367) will read
-/// — never this end's own locally configured <see cref="DatagramSessionOptions.Linger"/>. This end is
+/// Linger is the RTO's ceiling, and the ceiling must read the same <em>effective</em> (negotiated,
+/// minimum-of-both-ends) Linger that Linger expiry reads — never this end's own locally configured <see cref="DatagramSessionOptions.Linger"/>. This end is
 /// given the longer Linger of the pair (30s) and the peer the shorter one (3s, itself well above the RTO
 /// floor), so the negotiated minimum — 3s — differs from this end's own configured value. Sustained
 /// backoff, driven exactly as <see cref="DatagramSessionAdaptiveRtoTests"/> and
@@ -112,7 +111,7 @@ public class DatagramSessionRtoCeilingEffectiveLingerTests
 
     /// <summary>
     /// Sends one ReliableOrdered Message, flushes it, and acknowledges it exactly <paramref name="roundTrip"/>
-    /// later through the accepter's own reply, so the Peer's shared <see cref="RetransmissionTimer"/>
+    /// later through the accepter's own reply, so the Peer's shared <c>RetransmissionTimer</c>
     /// takes its one clean first sample. Mirrors <see cref="DatagramSessionPingRetransmissionTests.SeedEstimator"/>.
     /// </summary>
     private static void SeedEstimator(
@@ -158,8 +157,8 @@ public class DatagramSessionRtoCeilingEffectiveLingerTests
     /// <summary>
     /// Covers the flush site (<c>FlushOutboundDatagrams</c> → <c>OutstandingReliableSequences.RecordSent</c>):
     /// a first, never-yet-seeded reliable Send arms its retransmit deadline directly from
-    /// <see cref="RetransmissionTimer.EffectiveTimeout"/> at the moment it reaches the wire (issue #365,
-    /// parent #55). With no round trip ever sampled, <see cref="RetransmissionTimer.Timeout"/> is
+    /// <c>RetransmissionTimer.EffectiveTimeout</c> at the moment it reaches the wire (issue #365,
+    /// parent #55). With no round trip ever sampled, <c>RetransmissionTimer.Timeout</c> is
     /// <see cref="TimeSpan.MaxValue"/>, so the ceiling alone decides the deadline — the negotiated
     /// (effective) Linger if the flush site reads <see cref="PeerSlot.EffectiveLinger"/> as it must, or
     /// this end's own far longer configured Linger if it read <see cref="DatagramSessionOptions.Linger"/>
@@ -213,7 +212,7 @@ public class DatagramSessionRtoCeilingEffectiveLingerTests
     /// covering everything below it — slides the horizon exactly onto sequence 33 without acknowledging
     /// it: this is the one call in this whole run where <c>ApplyAck</c>'s newly-covered arm fires. Nothing
     /// has been sampled yet at that point (issue #365's own estimator is still unseeded), so
-    /// <see cref="RetransmissionTimer.Timeout"/> is still <see cref="TimeSpan.MaxValue"/> and the ceiling
+    /// <c>RetransmissionTimer.Timeout</c> is still <see cref="TimeSpan.MaxValue"/> and the ceiling
     /// alone decides the deadline this arm sets, exactly as the flush-site test above reasons.
     /// </summary>
     [Fact]

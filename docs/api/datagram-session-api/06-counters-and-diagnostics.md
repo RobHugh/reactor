@@ -22,13 +22,13 @@ Interrupted or Closing Peer, right up to the close.
 | `DatagramsSent` | Datagrams the transport accepted for sending, handshake control Datagrams included. |
 | `DatagramsReceived` | Datagrams taken from the transport. The denominator for the two discard figures below. |
 | `ArenaHighWaterBytes` | The most arena bytes any single Frame used. Approaching `ArenaSize` means Messages are being refused. |
-| `AdmissionDiscards` | Hellos turned away, by the admission cap or by a full Reactor. Exact: a discarded Hello never comes back. |
+| `AdmissionDiscards` | Hellos turned away, by the admission cap, by a full Reactor, or by `MaxPeersPerAddress`. Exact: a discarded Hello never comes back. |
 | `UnknownSourceDatagrams` | Datagrams that named no Peer: malformed control Datagrams, unknown session ids, forged cookies, stray replies, truncated Datagrams. |
 | `MalformedSessionDatagrams` | Data Datagrams that named a live Session and then failed to parse. Not charged to that Peer, because a body that did not parse proves nothing about who sent it. |
 | `SinkFaulted` | Times your Sink threw. Non-zero means diagnostics are off for the rest of this Reactor's life. |
 
-`AdmissionDeferrals` stays at zero here. UDP gives a declined Hello nowhere to wait, so this profile
-discards where the others defer.
+`AdmissionDeferrals` stays at zero here. A Hello the Reactor has read and declined has nowhere to wait,
+so this profile discards where the others defer.
 
 A rising `UnknownSourceDatagrams` on an otherwise healthy Reactor is a scan or a flood, not a fault.
 
@@ -41,7 +41,7 @@ A rising `UnknownSourceDatagrams` on an otherwise healthy Reactor is a scan or a
 | `Resumes` | Times this end raised `PeerResumed` for this Peer. Never reset, so a flapping path shows itself here. |
 | `PacketsRetransmitted` | Packet records this end resent. Records, not Datagrams and not Messages. |
 | `DuplicatePackets` | Records the receive windows refused as already seen. Usually the far end retransmitting because an ack was lost. |
-| `OutOfWindowPackets` | Records too far from a Space's window base to be tracked. Sustained reordering or loss. |
+| `OutOfWindowPackets` | Records too far from a Space's window base to be tracked, or past what `ReliableOrdered` will hold behind a gap. Sustained reordering or loss. |
 | `UnreliableLossPackets` | Sequences the two unreliable Spaces slid past without ever receiving. Your unreliable loss rate. |
 | `HorizonDeferrals` | Reliable sequences whose retransmit timer was withheld because they sat beyond the 32-sequence ack horizon. A deferral, not a loss. Zero in ordinary operation. |
 | `SocketWrites` | Datagrams written for this Peer: one per data Datagram, plus each Resume. Handshake Datagrams are not counted. |
@@ -96,10 +96,13 @@ Source or none) and two numeric slots whose meaning is documented per id.
 | `DatagramMalformed` (200) | Warn | Source | A Datagram was discarded because it did not parse or named nobody. `Value0` bytes received. |
 | `CookieRejected` (201) | Warn | Source | A Hello carried a cookie this Reactor did not mint, or minted too long ago. `Value0` the cookie's epoch, `Value1` the current one. |
 | `VersionRefused` (202) | Warn | Source | A verified Hello offered the wrong version and was refused. `Value0` offered, `Value1` required. |
-| `FragmentSetAbandoned` (203) | Warn | Peer | A Fragment set was dropped before it completed. `Value0` Fragments held, `Value1` Fragments declared. |
+| `FragmentSetAbandoned` (203) | Warn | Peer | A Fragment set the sender can never complete was dropped. `Value0` Fragments held, `Value1` Fragments declared. |
 | `RetransmissionTimerBackedOff` (204) | Trace | Peer | Records expired and were resent. `Value0` the new timeout in ms, `Value1` consecutive backoffs. |
 | `OversizedFragmentSet` (205) | Warn | Peer | A Fragment set claimed more Fragments than your window holds, closing the Session. `Value0` declared, `Value1` the largest legal count. |
 | `UnreliableFragment` (206) | Warn | Source | A Fragment arrived in an unreliable mode. `Value0` the mode (0 `Unreliable`, 1 `UnreliableSequenced`). |
+| `OversizedMessage` (207) | Warn | Peer | A completed Message was larger than your `MaxMessageSize` and was discarded. `Value0` its length, `Value1` your limit. |
+| `AddressPeerLimitReached` (208) | Warn | Source | A verified handshake was refused because its address holds `MaxPeersPerAddress` accepted Peers. `Value0` the limit, `Value1` the prefix length the address was counted by: 32 for IPv4, `PeerLimitIPv6PrefixLength` for IPv6. |
+| `DatagramReadLimitReached` (209) | Warn | — | A Pump made `MaxDatagramsPerPump` reads on one bound socket and stopped, whether or not more were queued. At most one per bound socket per Pump. `Value0` the limit, `Value1` the socket's index in `BoundEndpoints`. |
 | `LingerNegotiated` (301) | Info | Peer | A handshake completed. `Value0` your Linger in ms, `Value1` the effective one. |
 | `ResumeMatched` (304) | Info | Peer | A Resume matched, or the dialling end heard its Session again. `Value0` always 0 here. |
 | `ResumeUnmatched` (305) | Warn | Source | A Resume was refused. `Value0` 0 no such Peer, 1 wrong secret or closing. `Value1` 6, the Resume type. |
@@ -108,8 +111,11 @@ Source or none) and two numeric slots whose meaning is documented per id.
 each names one condition shared by both profiles. A Sink that range-checks 200-299 for this profile
 will miss them.
 
-`FragmentSetAbandoned` fires on ordinary loss and never closes anything. A low held count against a
-high declared count, repeated, is the early sign of a fragment size the path will not carry.
+`FragmentSetAbandoned` never closes anything, and ordinary loss never raises it. A Fragment set that
+loses a Fragment holds its receive-window slots until a retransmission completes it. Only a set the
+sender can never complete is dropped. Either it sent other records at the sequences the set's
+missing Fragments needed, or it sent a Fragment larger than your `FragmentSize`, which is admitted
+but cannot be held.
 
 ## What to watch in production
 

@@ -6,7 +6,7 @@ using Scenario = ReactorSockets.Tests.DatagramSessionResumeScenario;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #56 (PR #392 review, D2): a Resume control datagram is charged to its Peer like a data Datagram,
+/// A Resume control datagram is charged to its Peer like a data Datagram,
 /// because a Peer exists to charge (ADR 0013). The dialling end counts each Resume it sends in
 /// <see cref="PeerCounters.SocketWrites"/> and <see cref="PeerCounters.BytesSent"/>. The accepting end counts
 /// a matched Resume in <see cref="PeerCounters.BytesReceived"/>. A Resume that matches no Peer charges none.

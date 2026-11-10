@@ -5,8 +5,8 @@ namespace ReactorSockets.Session;
 /// <summary>
 /// Which of the three records a stream handshake message on the wire carries. A one-byte tag prefixing
 /// every record, so a Peer already waiting for a plain Hello can also recognise the in-protocol
-/// Refusal that takes its place when the far end declines (subtask 3.3), or the Resume a re-dialling
-/// end sends in its place to claim a Session the far end may still be holding (subtask 4.4).
+/// Refusal that takes its place when the far end declines, or the Resume a re-dialling end sends in its
+/// place to claim a Session the far end may still be holding.
 /// </summary>
 internal enum StreamHandshakeMessageType : byte
 {
@@ -49,9 +49,7 @@ internal static class StreamHandshakeCodec
 {
     private const int HelloPayloadSize =
         sizeof(uint) // version
-        + sizeof(uint) // maxMessageSize
-        + sizeof(ulong) // sendIdleIntervalMilliseconds
-        + sizeof(ulong) // lingerMilliseconds
+        + AnnouncedLimits.WireSize
         + StreamSessionProtocol.ResumeSecretLength;
 
     private const int RefusalPayloadSize =
@@ -94,6 +92,14 @@ internal static class StreamHandshakeCodec
     }
 
     /// <summary>
+    /// Whether every byte of <paramref name="record"/> past a payload of
+    /// <paramref name="payloadSize"/> bytes is zero — the padding a writer here always clears. Non-zero
+    /// padding fails the read, as it does in <see cref="ControlDatagramCodec.TryReadControlType"/>.
+    /// </summary>
+    private static bool IsPaddingZero(ReadOnlySpan<byte> record, int payloadSize) =>
+        record[(1 + payloadSize)..].IndexOfAnyExcept((byte)0) == -1;
+
+    /// <summary>
     /// Reads the one byte that tells a Hello, a Refusal and a Resume apart, without interpreting
     /// anything else. Fails
     /// when <paramref name="record"/> is not exactly <see cref="RecordSize"/> bytes or its first byte
@@ -114,16 +120,13 @@ internal static class StreamHandshakeCodec
     }
 
     /// <summary>
-    /// Writes one Hello record: this end's version, its own <c>MaxMessageSize</c> announced as a
-    /// receive limit, its send-idle interval and Linger, and the resume secret it will require before
-    /// resuming this Session.
+    /// Writes one Hello record: this end's version, its announced <paramref name="limits"/>, and the
+    /// resume secret it will require before resuming this Session.
     /// </summary>
     public static void Write(
         Span<byte> destination,
         uint version,
-        uint maxMessageSize,
-        ulong sendIdleIntervalMilliseconds,
-        ulong lingerMilliseconds,
+        AnnouncedLimits limits,
         ReadOnlySpan<byte> resumeSecret)
     {
         ValidateDestinationSize(destination);
@@ -133,12 +136,8 @@ internal static class StreamHandshakeCodec
         int offset = 1;
         BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], version);
         offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], maxMessageSize);
-        offset += sizeof(uint);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], sendIdleIntervalMilliseconds);
-        offset += sizeof(ulong);
-        BinaryPrimitives.WriteUInt64BigEndian(destination[offset..], lingerMilliseconds);
-        offset += sizeof(ulong);
+        limits.Write(destination[offset..]);
+        offset += AnnouncedLimits.WireSize;
         resumeSecret.CopyTo(destination.Slice(offset, StreamSessionProtocol.ResumeSecretLength));
     }
 
@@ -146,14 +145,14 @@ internal static class StreamHandshakeCodec
     /// Reads one Hello record's payload. Fails when <paramref name="record"/> is not exactly
     /// <see cref="RecordSize"/> bytes, its message type is not <see cref="StreamHandshakeMessageType.Hello"/>,
     /// or <paramref name="resumeSecret"/> is not exactly its wire length, since a caller that cannot
-    /// hold a full secret could not use one correctly regardless of what the record contains.
+    /// hold a full secret could not use one correctly regardless of what the record contains. Also fails
+    /// when the announced limits are not <see cref="AnnouncedLimits.IsLegal">legal</see> for the version
+    /// the record announces, the rule <see cref="ControlDatagramCodec.TryReadHelloWithCookie"/> also applies.
     /// </summary>
     public static bool TryRead(
         ReadOnlySpan<byte> record,
         out uint version,
-        out uint maxMessageSize,
-        out ulong sendIdleIntervalMilliseconds,
-        out ulong lingerMilliseconds,
+        out AnnouncedLimits limits,
         Span<byte> resumeSecret)
     {
         if (record.Length != RecordSize
@@ -161,21 +160,23 @@ internal static class StreamHandshakeCodec
             || record[0] != (byte)StreamHandshakeMessageType.Hello)
         {
             version = default;
-            maxMessageSize = default;
-            sendIdleIntervalMilliseconds = default;
-            lingerMilliseconds = default;
+            limits = default;
             return false;
         }
 
         int offset = 1;
         version = BinaryPrimitives.ReadUInt32BigEndian(record[offset..]);
         offset += sizeof(uint);
-        maxMessageSize = BinaryPrimitives.ReadUInt32BigEndian(record[offset..]);
-        offset += sizeof(uint);
-        sendIdleIntervalMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(record[offset..]);
-        offset += sizeof(ulong);
-        lingerMilliseconds = BinaryPrimitives.ReadUInt64BigEndian(record[offset..]);
-        offset += sizeof(ulong);
+        limits = AnnouncedLimits.Read(record[offset..]);
+        offset += AnnouncedLimits.WireSize;
+
+        if (!limits.IsLegal(speaksVersion: version == StreamSessionProtocol.Version))
+        {
+            version = default;
+            limits = default;
+            return false;
+        }
+
         record.Slice(offset, StreamSessionProtocol.ResumeSecretLength).CopyTo(resumeSecret);
         return true;
     }
@@ -197,12 +198,17 @@ internal static class StreamHandshakeCodec
 
     /// <summary>
     /// Reads one Refusal record's payload. Fails when <paramref name="record"/> is not exactly
-    /// <see cref="RecordSize"/> bytes or its message type is not
-    /// <see cref="StreamHandshakeMessageType.Refusal"/>.
+    /// <see cref="RecordSize"/> bytes, its message type is not
+    /// <see cref="StreamHandshakeMessageType.Refusal"/>, its reason byte is not a
+    /// <see cref="HandshakeLegality.IsLegalRefusalReason">legal reason</see>, or its padding is not
+    /// zero. Those are the rules <see cref="ControlDatagramCodec.TryReadRefusal"/> applies.
     /// </summary>
     public static bool TryReadRefusal(ReadOnlySpan<byte> record, out RefusalReason reason, out uint value0, out uint value1)
     {
-        if (record.Length != RecordSize || record[0] != (byte)StreamHandshakeMessageType.Refusal)
+        if (record.Length != RecordSize
+            || record[0] != (byte)StreamHandshakeMessageType.Refusal
+            || !HandshakeLegality.IsLegalRefusalReason((RefusalReason)record[1])
+            || !IsPaddingZero(record, RefusalPayloadSize))
         {
             reason = default;
             value0 = default;
@@ -246,15 +252,16 @@ internal static class StreamHandshakeCodec
     /// <summary>
     /// Reads one Resume record's payload. Fails when <paramref name="record"/> is not exactly
     /// <see cref="RecordSize"/> bytes, its message type is not
-    /// <see cref="StreamHandshakeMessageType.Resume"/>, or <paramref name="resumeSecret"/> is not
-    /// exactly its wire length, since a caller that cannot hold a full secret could not use one
-    /// correctly regardless of what the record contains.
+    /// <see cref="StreamHandshakeMessageType.Resume"/>, its padding is not zero, or
+    /// <paramref name="resumeSecret"/> is not exactly its wire length, since a caller that cannot hold a
+    /// full secret could not use one correctly regardless of what the record contains.
     /// </summary>
     public static bool TryReadResume(ReadOnlySpan<byte> record, Span<byte> resumeSecret, out ulong deliveryCount)
     {
         if (record.Length != RecordSize
             || resumeSecret.Length != StreamSessionProtocol.ResumeSecretLength
-            || record[0] != (byte)StreamHandshakeMessageType.Resume)
+            || record[0] != (byte)StreamHandshakeMessageType.Resume
+            || !IsPaddingZero(record, ResumePayloadSize))
         {
             deliveryCount = default;
             return false;

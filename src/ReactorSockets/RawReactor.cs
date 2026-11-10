@@ -266,11 +266,11 @@ public sealed class RawReactor : IDisposable
     /// Pump.
     /// </summary>
     /// <remarks>
-    /// There is no hostname overload and no connect-timeout knob (parent slice spec): nothing ticks
-    /// unless the consumer Pumps, and a dial going nowhere is closed by the consumer or by the OS, not
-    /// by a timer this library invented. The dialled Link consumes a capacity slot exactly like a Bind
-    /// or a Listen; <see cref="LocalOf"/> answers the address TCP bound implicitly the moment the
-    /// connect began, whether or not the handshake has finished.
+    /// There is no hostname overload and no connect-timeout knob: nothing ticks unless the consumer
+    /// Pumps, and a dial going nowhere is closed by the consumer or by the OS, not by a timer this
+    /// library invented. The dialled Link consumes a capacity slot exactly like a Bind or a Listen;
+    /// <see cref="LocalOf"/> answers the address TCP bound implicitly the moment the connect began,
+    /// whether or not the handshake has finished.
     /// </remarks>
     public LinkId Connect(IPEndPoint endpoint)
     {
@@ -611,10 +611,10 @@ public sealed class RawReactor : IDisposable
     /// <b>What the two refusals cost.</b> <see cref="ArenaReservationOutcome.ShareExhausted"/> costs
     /// nothing and is counted nowhere, because it cannot happen here: a ready Link is read once per
     /// Pump, so it never reaches a second reservation in one Frame, and <see cref="LinkCounters"/> has
-    /// no read-share figure for that reason (issue #61). <see cref="ArenaReservationOutcome.ArenaExhausted"/>
-    /// is a <c>Warn</c> Diagnostic carrying the arithmetic that explains it. Neither says anything on
-    /// the wire — the Raw profile owns no protocol, so a Payload it cannot hold is simply not delivered.
-    /// A Session profile must answer differently, which is why this policy is Raw's and not
+    /// no read-share figure for that reason. <see cref="ArenaReservationOutcome.ArenaExhausted"/> is a
+    /// <c>Warn</c> Diagnostic carrying the arithmetic that explains it. Neither says anything on the
+    /// wire — the Raw profile owns no protocol, so a Payload it cannot hold is simply not delivered. A
+    /// Session profile must answer differently, which is why this policy is Raw's and not
     /// <see cref="Core.FrameArena"/>'s (ADR 0007).
     /// </para>
     /// <para>

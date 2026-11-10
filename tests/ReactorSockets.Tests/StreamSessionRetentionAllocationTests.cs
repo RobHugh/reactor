@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 3.5.2 (issue #84): the retention arena is preallocated at <see cref="StreamSessionReactor"/>
+/// The retention arena is preallocated at <see cref="StreamSessionReactor"/>
 /// construction time, sized <c>Capacity × RetentionBytes</c>, regardless of whether any Peer has
 /// connected. Mirrors the allocation-measurement pattern in
 /// <see cref="StreamSessionMalformedFramingTests"/>.

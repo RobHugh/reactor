@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #230: a record queued past what one data Datagram can hold waits for the next Pump instead of
+/// A record queued past what one data Datagram can hold waits for the next Pump instead of
 /// being dropped, and the split preserves Send order within a Space and the one-Datagram-per-Peer-per-
 /// Pump rule. Every assertion below reads only the four things the public seam allows (tests/CLAUDE.md):
 /// the value <see cref="DatagramSessionReactor.Send"/> and <see cref="DatagramSessionReactor.Pump"/>
@@ -29,7 +29,7 @@ public class DatagramSessionFlushSplitTests
     /// <paramref name="bindLoopback"/>'s default capacity of more than one Peer, the frame arena's
     /// escape for a share-holder's very first reservation of a Frame would let only one 30 000-byte
     /// Message through per Pump even though the receive window admitted more, which is an arena-sizing
-    /// artefact this ticket is not about. <see cref="ReactorOptions.ArenaSize"/> is set to hold every
+    /// artefact these tests are not about. <see cref="ReactorOptions.ArenaSize"/> is set to hold every
     /// Message these tests deliver inside a single Frame.
     /// </summary>
     private static DatagramSessionReactorHarness NewHarness(bool bindLoopback = true) => new(

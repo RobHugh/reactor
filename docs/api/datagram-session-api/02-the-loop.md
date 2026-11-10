@@ -4,8 +4,9 @@ You own the loop. The library owns no threads, starts nothing, and waits for not
 
 ## Pump and Drain
 
-`Pump()` is one synchronous advance: read every Datagram that is ready, run the handshake, apply
-acknowledgements, deliver Messages, retransmit what is overdue, enforce timers, and write one
+`Pump()` is one synchronous advance: read the Datagrams that are ready, up to `MaxDatagramsPerPump`
+per bound socket, run the handshake, apply acknowledgements, deliver Messages, retransmit what is
+overdue, enforce timers, and write one
 Datagram per Peer with something to send. It builds the events for this Frame.
 
 `Drain()` reads those events. It never pumps.
@@ -56,6 +57,24 @@ Every member must be called from the thread that constructed the Reactor. `Pump`
 error and throws.
 
 Several independent Reactors on several threads is fine. One Reactor across threads is not.
+
+## Reading is bounded per Pump
+
+One Pump makes at most `MaxDatagramsPerPump` reads on each bound socket, so a flood cannot keep a Pump
+from returning. A queued socket error spends a read too. What is left waits in the socket's receive
+buffer for a later Pump. If that buffer fills, the operating system drops what arrives next and no
+Counter sees it. A Pump that reaches the limit logs `DatagramReadLimitReached`.
+
+Reads are first come, first served, so a live Peer's Datagrams wait behind a flood on the same socket.
+A long enough wait looks like silence to the receive-idle deadline, and the Peer is interrupted.
+
+A dial suffers most. A Hello read after `AdmissionCap` is spent is discarded. The dial resends it, so a
+dial behind a backlog of Hellos completes once the backlog has cleared. It ends with `TransportFailed` if
+that takes longer than its `Linger`.
+
+The default allows a full Reactor's worth of traffic, which grows with `Capacity` and the receive window
+and reaches hundreds of thousands of reads with a large `MaxMessageSize`. Set it lower if a Pump must
+return sooner, and accept that wait growing in exchange.
 
 ## Delivery is bounded per Frame
 

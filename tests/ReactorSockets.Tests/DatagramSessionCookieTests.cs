@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Slice 5.3 (issue #34): the stateless cookie exchange, its epoch rotation, and the amplification
+/// The stateless cookie exchange, its epoch rotation, and the amplification
 /// bound the cookie exists to hold. Every assertion here is made from outside the L2 seam (tests/CLAUDE.md):
 /// bytes this test itself puts on the wire and parses back, Events drained from a Pump, records the
 /// Sink received, and <see cref="DatagramSessionReactor.Counters"/>. The cookie machinery
@@ -127,7 +127,7 @@ public class DatagramSessionCookieTests
     /// <summary>
     /// A raw counterparty that, unlike <see cref="HostilePeer"/>, keeps its Link open across sends so
     /// replies come back to the same source address — needed to obtain a genuine Cookie and then
-    /// present it back from the same (or, for slice 5.3's replay test, a deliberately different)
+    /// present it back from the same (or, for the replay test, a deliberately different)
     /// source. Built entirely from the public Raw surface, exactly like <see cref="HostilePeer"/> and
     /// <see cref="WireObserver"/>.
     /// </summary>
@@ -236,10 +236,13 @@ public class DatagramSessionCookieTests
     public void OnHello_FloodOfBareHellosFromVariedSources_LeavesEveryCapacitySlotFree()
     {
         // Arrange
-        using DatagramSessionReactorHarness accepter = new(capacity: 4);
-        using HostilePeer flood = new();
         const int totalHellos = 3000;
         const int batchSize = 150;
+
+        // A limit below the batch size would leave Hellos queued ahead of the dial below. Its one Hello
+        // would then lose its admission to them and never be re-sent, which is not what this test is about.
+        using DatagramSessionReactorHarness accepter = new(capacity: 4, maxDatagramsPerPump: totalHellos);
+        using HostilePeer flood = new();
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> floodEvents = [];
 
         // Act — a flood of bare Hellos, each from a throwaway Link (HostilePeer binds and closes a

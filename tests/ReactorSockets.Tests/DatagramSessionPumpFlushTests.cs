@@ -4,7 +4,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.6.4 (issue #216): a <see cref="DatagramSessionReactor.Pump"/> puts everything Sent to an
+/// A <see cref="DatagramSessionReactor.Pump"/> puts everything Sent to an
 /// Established Peer since the last Pump on the wire as exactly one data Datagram, and the far end's
 /// own parse loop accepts it. Coalescing proper — splitting a Pump's queue across more than one
 /// Datagram once it stops fitting in one, the multi-Peer breadth cases, and wire-observer byte

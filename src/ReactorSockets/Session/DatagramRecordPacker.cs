@@ -3,10 +3,9 @@ namespace ReactorSockets.Session;
 /// <summary>
 /// Packs one Peer's Sent records into the bytes of one outbound data datagram (ADR 0009): the 20-byte
 /// header — session id plus both reliable spaces' ack blocks — followed by as many packet records as
-/// the caller writes and fit. This is the packing step only. Nothing sends the bytes it produces and
-/// nothing yet drives it from a Pump; deciding which of a Peer's Sent records to hand it, and starting
-/// a new datagram once records stop fitting, is #216's. Splitting a whole Pump's worth of records
-/// across multiple datagrams by capacity is #45's.
+/// the caller writes and fit. This is the packing step only. Sending the bytes, deciding which of a
+/// Peer's Sent records to hand it, and starting a new datagram once records stop fitting belong to the
+/// Reactor's flush that drives it.
 /// </summary>
 /// <remarks>
 /// A ref struct wrapping the caller's own destination buffer, so packing one datagram allocates
@@ -14,10 +13,10 @@ namespace ReactorSockets.Session;
 /// through <see cref="PacketRecordCodec.TryWrite(Span{byte}, PacketRecordMode, uint, ReadOnlySpan{byte}, out int)"/>,
 /// and <see cref="TryPackFragmentRecord"/> writes the fragment shape through
 /// <see cref="PacketRecordCodec.TryWrite(Span{byte}, PacketRecordMode, uint, ushort, ushort, ReadOnlySpan{byte}, out int)"/>
-/// (issue #245) — the caller picks whichever shape one record needs; <see cref="TryPackPingRecord"/>
-/// writes the seven-byte control shape through <see cref="PacketRecordCodec.TryWritePingRecord"/>
-/// (issue #338). <see cref="BytesWritten"/> and <see cref="RecordsPacked"/> are running counts shared
-/// by all three, rather than anything collected afterward. The header is written once, at construction, through
+/// — the caller picks whichever shape one record needs; <see cref="TryPackPingRecord"/> writes the
+/// seven-byte control shape through <see cref="PacketRecordCodec.TryWritePingRecord"/>.
+/// <see cref="BytesWritten"/> and <see cref="RecordsPacked"/> are running counts shared by all three,
+/// rather than anything collected afterward. The header is written once, at construction, through
 /// <see cref="DatagramHeaderCodec.WriteHeader"/> — both ack blocks always appear, even when the Peer
 /// has received nothing, matching that codec's own unconditional write. A record that does not fit in
 /// the remaining space is left entirely unwritten and the packing method returns
@@ -112,8 +111,8 @@ internal ref struct DatagramRecordPacker
     /// immediately after the bytes already packed, through
     /// <see cref="PacketRecordCodec.TryWrite(Span{byte}, PacketRecordMode, uint, ushort, ushort, ReadOnlySpan{byte}, out int)"/>.
     /// The counterpart to <see cref="TryPackRecord"/> for a Message <see cref="DatagramSessionReactor.Send"/>
-    /// cut into Fragments (issue #245): the fragment bit is set alongside the mode bits, and no spare
-    /// bit is ever set.
+    /// cut into Fragments: the fragment bit is set alongside the mode bits, and no spare bit is ever
+    /// set.
     /// </summary>
     /// <param name="mode">The record's delivery mode.</param>
     /// <param name="sequence">The record's <c>u32</c> sequence number.</param>
@@ -143,8 +142,8 @@ internal ref struct DatagramRecordPacker
     /// Appends one in-Session control record — seven bytes: <c>ReliableUnordered</c> mode bits plus
     /// <see cref="DatagramSessionProtocol.ControlBit"/>, a <c>u32</c> sequence, and a <c>u16</c> length
     /// of zero — immediately after the bytes already packed, through
-    /// <see cref="PacketRecordCodec.TryWritePingRecord"/>. Added by issue #338; the idle-triggered
-    /// Ping (issue #340) packs through it on both its first send and every resend.
+    /// <see cref="PacketRecordCodec.TryWritePingRecord"/>. The idle-triggered Ping packs through it on
+    /// both its first send and every resend.
     /// </summary>
     /// <param name="sequence">The record's <c>u32</c> sequence number, from the <c>ReliableUnordered</c> space.</param>
     /// <returns>
@@ -170,7 +169,7 @@ internal ref struct DatagramRecordPacker
     /// Appends one Goodbye record — seven bytes: <c>ReliableOrdered</c> mode bits plus
     /// <see cref="DatagramSessionProtocol.ControlBit"/>, a <c>u32</c> sequence, and a <c>u16</c> length
     /// of zero — immediately after the bytes already packed, through
-    /// <see cref="PacketRecordCodec.TryWriteGoodbyeRecord"/>. Added by issue #396, the same way
+    /// <see cref="PacketRecordCodec.TryWriteGoodbyeRecord"/>, the same way
     /// <see cref="TryPackPingRecord"/> packs a Ping.
     /// </summary>
     /// <param name="sequence">The record's <c>u32</c> sequence number, from the <c>ReliableOrdered</c> space.</param>

@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #63: each profile's memory bill, as <c>docs/options.md</c> and the options types' remarks
+/// Each profile's memory bill, as <c>docs/options.md</c> and the options types' remarks
 /// state it, is evaluated against what construction actually allocates. Every measurement is a pair of
 /// Reactors identical but for the knobs the formula names, each with every share-holder Slot occupied,
 /// so the difference between them is exactly the formula's own bytes with nothing else to allow for —
@@ -74,8 +74,10 @@ public class MemoryBillTests
     {
         // Arrange
         const int fragmentSize = 1200;
-        DatagramSessionOptions small = DatagramOptions(fragmentSize, windowFragments: 2, retentionBytes: fragmentSize);
-        DatagramSessionOptions large = DatagramOptions(fragmentSize, windowFragments: 8, retentionBytes: 5 * fragmentSize);
+        // Both windows reach the send-order ring's initial 16 slots, so the ring, which the bill does not
+        // count, is the same size in both and cancels out of the difference (issue #424).
+        DatagramSessionOptions small = DatagramOptions(fragmentSize, windowFragments: 8, retentionBytes: fragmentSize);
+        DatagramSessionOptions large = DatagramOptions(fragmentSize, windowFragments: 32, retentionBytes: 5 * fragmentSize);
 
         // Act
         Measure(() => SampleDatagram(small));
@@ -167,6 +169,7 @@ public class MemoryBillTests
             FragmentSize = fragmentSize,
             ReceiveWindowFragments = windowFragments,
             RetentionBytes = retentionBytes,
+            MaxPeersPerAddress = MeasurementCapacity,
             SendIdleInterval = TimeSpan.FromSeconds(1),
             Linger = TimeSpan.FromSeconds(1),
         };

@@ -114,6 +114,23 @@ cap, handshakes by the same. Three mechanisms, one reason, and a checklist for a
 because the failure they prevent is the same failure each time and it is invisible until someone points
 a load generator at it.
 
+**Amended (issue #428).** The datagram receive loop broke this rule: it read until the socket was empty,
+and the arena share does not bound that, because control traffic and refused datagrams never reach the
+arena. `DatagramSessionOptions.MaxDatagramsPerPump` is the fourth mechanism. It limits the reads one Pump
+makes on each bound socket, so a Pump's read work is at most the limit times the bound sockets. It sits on
+the datagram options because it is protocol-specific: Raw and an established stream Peer already make one
+read per Pump. The default has the same provenance as the admission cap, a full Reactor's worth: one
+receive window for every Space of every Peer, plus the admission cap. The excess waits in the socket buffer.
+That wait is the main cost, and it means an overflow no longer costs nothing. A flood can displace a Hello
+that would have been read and counted, with no Counter seeing it. A live Peer's datagrams also wait behind
+the flood, for up to the queue depth divided by the limit in Pumps, and a long enough wait looks like
+silence to the receive-idle deadline. A dial suffers most. A Hello read after the admission cap is spent is
+discarded. A pending dial resends its handshake on a jittered backoff (ADR 0009, amendment of 2026-11-10), so a
+dial behind a backlog of Hellos completes once the backlog has cleared, provided that happens within the
+dialler's Linger. The default is sized for traffic rather than latency and reaches
+hundreds of thousands of reads with a large `MaxMessageSize`, so a consumer that needs a shorter Pump sets
+it lower and accepts a longer wait.
+
 ## Datagram retention: slots, not a ring
 
 **Retention is a byte bound, per Peer, per reliable Space.**

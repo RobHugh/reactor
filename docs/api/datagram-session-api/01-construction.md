@@ -21,17 +21,20 @@ one would be guessing at your application.
 | Knob | Default | Where the default comes from |
 |---|---|---|
 | `Reactor.AdmissionCap` | `Capacity` | One Pump never does more handshake work than a full Reactor's worth. |
+| `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | The largest limit that still keeps one address from holding every Slot. |
+| `PeerLimitIPv6PrefixLength` | `64` | RFC 4291 §2.5.1: a unicast interface identifier is 64 bits, so a /64 is one link. From 1 to 128. |
 | `Reactor.ArenaSize` | `MaxMessageSize` | An arena too small for one Message could never deliver one. |
 | `Reactor.TimeProvider` | `TimeProvider.System` | Only monotonic reads are ever taken. |
 | `FragmentSize` | `1200` | QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000). |
 | `ReceiveWindowFragments` | Fragments in one maximum Message | A narrower window can never deliver one Message, so it deadlocks. |
 | `MissedHeartbeats` | `3` | RFC 4271's hold time. Minimum 2. |
+| `MaxDatagramsPerPump` | `Capacity × ReceiveWindowFragments × 4 + AdmissionCap` | A full Reactor's worth of reads per bound socket: one window for every Space of every Peer, plus every handshake one Pump may admit. Minimum 1. |
 | `Entropy` | `RandomNumberGenerator.Create()` | The platform CSPRNG. Never disposed by the Reactor. |
 | `Endpoints` | empty | An empty set is dial-only, a real configuration rather than a hole. |
 
 The resolved values are readable on the options object: `ResolvedFragmentSize`,
-`ResolvedReceiveWindowFragments`, `ReceiveWindowFloor`, `ResolvedMissedHeartbeats` and
-`RetentionSlots`.
+`ResolvedReceiveWindowFragments`, `ReceiveWindowFloor`, `ResolvedMissedHeartbeats`,
+`ResolvedMaxDatagramsPerPump` and `RetentionSlots`.
 
 Values fixed by the wire format are not options: the four sequence Spaces, the 32-bit ack width, the
 64-entry duplicate window, the 20-byte data header and the thirty-second cookie epoch. Changing one
@@ -76,6 +79,28 @@ Capacity is the number of Peers, but dialling, interrupted and closing Peers all
 Size capacity for the peak Peer count *plus* the Peers you expect to be interrupted or closing at
 once, or fresh handshakes are refused while those Slots are still held.
 
+## Choosing the per-address limit
+
+`MaxPeersPerAddress` stops one reachable address holding every Slot. The default, one fewer than
+`Capacity`, guarantees only that one Slot stays free for other addresses. Set it above the number of
+Peers you expect behind one NAT or proxy, and well below `Capacity` if strangers can reach this Reactor.
+If every Peer shares one address, for example behind one proxy, set it to `Capacity`, or the default
+leaves one Slot unused.
+
+The limit counts addresses, not ports, because one host can use many ports. Peers this Reactor
+dialled do not count.
+
+IPv6 addresses are counted by prefix. `PeerLimitIPv6PrefixLength`, 64 by default, sets how many leading
+bits form the key, so every address in one /64 shares one limit. Every on-link host on an IPv6 LAN is
+in one /64, so set it to 128 when Peers legitimately arrive from one link. A shorter length groups more
+of a customer's delegated prefix, at the cost of grouping unrelated customers. IPv4 addresses are
+always counted whole.
+
+A Peer counts against the address of its handshake until its Slot is released, so leave room for two
+cases. Interrupted and Closing Peers still count, so a client that restarts with a fresh handshake can
+be refused for up to Linger. A Peer that a Resume moved to another address also still counts, so other
+hosts behind its old address have that much less room for as long as the Session lasts.
+
 ## Choosing retention
 
 Retention is per reliable Space, per Peer: one budget for `ReliableOrdered` and another for
@@ -112,6 +137,10 @@ long total = options.ReceiveBudgetBytes + options.SendBudgetBytes;
 
 The frame arena (`Reactor.ArenaSize`) is extra, and is shared across the whole Reactor rather than
 multiplied by capacity.
+
+Ordinary `ReliableOrdered` records waiting behind a gap are also extra. They are not preallocated, but
+`options.HeldRecordBudgetBytes` is their ceiling, about the size of the receive line. Records past it
+are refused and retransmitted rather than held.
 
 `MaxMessageSize` raises memory in two directions at once. It floors the receive window, which is per
 Peer and per Space, and it floors the arena. Raise it with care.

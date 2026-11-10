@@ -6,7 +6,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.7.12 (issue #239): one scripted exchange in which every counter slice 6.7 completes moves
+/// One scripted exchange in which each datagram counter listed here moves
 /// by an amount this test states in advance — the seven per-Peer figures (<see cref="PeerCounters.BytesSent"/>,
 /// <see cref="PeerCounters.BytesReceived"/>, <see cref="PeerCounters.PacketsRetransmitted"/>,
 /// <see cref="PeerCounters.DuplicatePackets"/>, <see cref="PeerCounters.OutOfWindowPackets"/>,

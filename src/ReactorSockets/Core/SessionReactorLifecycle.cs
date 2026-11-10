@@ -5,8 +5,8 @@ namespace ReactorSockets.Core;
 /// constructed the owning Reactor, whether a Pump is currently running, and whether it has been
 /// disposed. A composed field rather than a shared base type: both Reactors are public sealed types,
 /// and a base type here would have to be at least as accessible as they are, which would leak this
-/// internal L0 concept onto their public surface for nothing (issue #103). Each Reactor keeps its own
-/// thin, differently-worded forwarding members — the checks and their messages live here once.
+/// internal L0 concept onto their public surface for nothing. Each Reactor keeps its own thin,
+/// differently-worded forwarding members — the checks and their messages live here once.
 /// </summary>
 internal sealed class SessionReactorLifecycle
 {

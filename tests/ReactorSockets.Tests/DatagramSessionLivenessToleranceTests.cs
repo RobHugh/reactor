@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Issue #358 (parent #54): the datagram profile's receive-idle deadline is
+/// The datagram profile's receive-idle deadline is
 /// <c>RemoteSendIdleInterval × ResolvedMissedHeartbeats</c> (issue #352), not anything derived from the
 /// adaptive RTO. This file proves the two stay independent under exactly the condition that would expose
 /// a deadline wired to the RTO instead: a path degraded so the Reactor under test's own reliable sends
@@ -73,7 +73,7 @@ public class DatagramSessionLivenessToleranceTests
     private const int AccepterRetentionBytes = 1200 * 40;
 
     // =========================================================================================
-    // AC1/AC2 (issue #358) — the RTO backs off far past the liveness deadline while the peer's own
+    // The RTO backs off far past the liveness deadline while the peer's own
     // traffic keeps the Session alive, and PeerInterrupted arrives at peerSendIdle × count, not later,
     // only once that traffic stops too.
     // =========================================================================================
@@ -171,7 +171,7 @@ public class DatagramSessionLivenessToleranceTests
     /// <summary>
     /// Sends one ReliableOrdered Message from the dialler, flushes it, and acknowledges it exactly
     /// <see cref="_seedRoundTrip"/> later through the accepter's own reply — the only way an ack block
-    /// reaches the wire — so the Peer's shared <see cref="RetransmissionTimer"/> takes its one clean first
+    /// reaches the wire — so the Peer's shared <c>RetransmissionTimer</c> takes its one clean first
     /// sample and the probe armed after this method returns inherits that estimate. Matches
     /// <see cref="DatagramSessionPingRetransmissionTests.SeedEstimator"/>'s shape.
     /// </summary>

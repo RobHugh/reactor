@@ -155,8 +155,8 @@ exact.
 _Avoid_: Reject, drop, throttle, backoff
 
 **Discard**:
-Letting go of work the Reactor was holding, because a cap or capacity was spent and the transport
-gives it nowhere to wait. Unrecoverable in a way a Deferral is not: no later Pump can take it,
+Letting go of work the Reactor was holding, because a cap, capacity or a per-address limit was spent
+and the transport gives it nowhere to wait. Unrecoverable in a way a Deferral is not: no later Pump can take it,
 because it is gone. Always counted exactly — a Reactor can only Discard what it had in hand, so
 there is no unknowable depth behind the number. A `DatagramSessionReactor` over its cap Discards the
 Hellos it cannot admit, which is ordinary for UDP and costs the transport nothing; the stream

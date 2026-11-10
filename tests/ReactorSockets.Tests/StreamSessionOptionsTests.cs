@@ -19,6 +19,8 @@ public class StreamSessionOptionsTests
         int? admissionCap = null,
         int maxMessageSize = 4096,
         int retentionBytes = 4100,
+        int? maxPeersPerAddress = null,
+        int? peerLimitIPv6PrefixLength = null,
         int? receiveBufferSize = null,
         int? sendBufferSize = null,
         int? missedHeartbeats = null,
@@ -38,6 +40,8 @@ public class StreamSessionOptionsTests
             },
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
+            MaxPeersPerAddress = maxPeersPerAddress,
+            PeerLimitIPv6PrefixLength = peerLimitIPv6PrefixLength,
             ReceiveBufferSize = receiveBufferSize,
             SendBufferSize = sendBufferSize,
             MissedHeartbeats = missedHeartbeats,
@@ -88,6 +92,107 @@ public class StreamSessionOptionsTests
 
         // Assert
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.MaxMessageSize));
+    }
+
+    [Theory]
+    [InlineData(4, 3)]
+    [InlineData(2, 1)]
+    [InlineData(1, 1)]
+    public void ResolvedMaxPeersPerAddress_LeftUnset_IsOneBelowCapacityAndAtLeastOne(int capacity, int expected)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(capacity: capacity);
+
+        // Act
+        int resolved = options.ResolvedMaxPeersPerAddress;
+
+        // Assert
+        resolved.Should().Be(expected);
+    }
+
+    [Fact]
+    public void ResolvedMaxPeersPerAddress_Set_IsTheValueSet()
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(capacity: 4, maxPeersPerAddress: 4);
+
+        // Act
+        int resolved = options.ResolvedMaxPeersPerAddress;
+
+        // Assert
+        resolved.Should().Be(4);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_MaxPeersPerAddressBelowOne_ThrowsArgumentOutOfRangeException(int maxPeersPerAddress)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(maxPeersPerAddress: maxPeersPerAddress);
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.MaxPeersPerAddress));
+    }
+
+    [Fact]
+    public void ResolvedPeerLimitIPv6PrefixLength_LeftUnset_IsSixtyFour()
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions();
+
+        // Act
+        int resolved = options.ResolvedPeerLimitIPv6PrefixLength;
+
+        // Assert
+        resolved.Should().Be(64);
+    }
+
+    [Fact]
+    public void ResolvedPeerLimitIPv6PrefixLength_Set_IsTheValueSet()
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(peerLimitIPv6PrefixLength: 128);
+
+        // Act
+        int resolved = options.ResolvedPeerLimitIPv6PrefixLength;
+
+        // Assert
+        resolved.Should().Be(128);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(129)]
+    public void Constructor_PeerLimitIPv6PrefixLengthOutsideOneTo128_ThrowsArgumentOutOfRangeException(int prefixLength)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(peerLimitIPv6PrefixLength: prefixLength);
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.PeerLimitIPv6PrefixLength));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(128)]
+    public void Constructor_PeerLimitIPv6PrefixLengthAtEitherBound_Succeeds(int prefixLength)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(peerLimitIPv6PrefixLength: prefixLength);
+
+        // Act
+        Action act = () => new StreamSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().NotThrow();
     }
 
     [Fact]
@@ -286,6 +391,50 @@ public class StreamSessionOptionsTests
 
         // Assert
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.Linger));
+    }
+
+    [Theory]
+    [InlineData(42_949_672_950_001L)] // one tick above uint.MaxValue milliseconds
+    [InlineData(long.MaxValue)]
+    public void Constructor_SendIdleIntervalAboveTheAnnounceableMaximum_ThrowsArgumentOutOfRangeException(long ticks)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(sendIdleInterval: TimeSpan.FromTicks(ticks));
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.SendIdleInterval));
+    }
+
+    [Theory]
+    [InlineData(42_949_672_950_001L)] // one tick above uint.MaxValue milliseconds
+    [InlineData(long.MaxValue)]
+    public void Constructor_LingerAboveTheAnnounceableMaximum_ThrowsArgumentOutOfRangeException(long ticks)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(linger: TimeSpan.FromTicks(ticks));
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.Linger));
+    }
+
+    [Fact]
+    public void Constructor_IntervalsAtTheAnnounceableMaximum_Constructs()
+    {
+        // Arrange
+        TimeSpan maximum = TimeSpan.FromTicks(42_949_672_950_000L); // exactly uint.MaxValue milliseconds
+        StreamSessionOptions options = CreateOptions(sendIdleInterval: maximum, linger: maximum);
+
+        // Act
+        Action act = () => new StreamSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().NotThrow();
     }
 
     [Fact]

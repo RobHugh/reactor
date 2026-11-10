@@ -5,7 +5,7 @@ using Xunit;
 namespace ReactorSockets.Tests;
 
 /// <summary>
-/// Subtask 6.7.6 (issue #233): coalescing is per Peer, not per Pump. Three established Peers, Sends
+/// Coalescing is per Peer, not per Pump. Three established Peers, Sends
 /// queued against each between two Pumps, leave exactly three data datagrams on the wire — one per
 /// Peer, each carrying only the records Sent to that Peer.
 /// </summary>
@@ -17,8 +17,7 @@ namespace ReactorSockets.Tests;
 /// three <see cref="WireTap"/> instances, each a private point-to-point relay for one dialler, all
 /// aimed at the same accepter endpoint — the accepter Reactor still sees three distinct source
 /// addresses (one per tap's accepter-facing link) and so admits three distinct Peers on the one
-/// Reactor under test, exactly as the ticket asks. No change to <see cref="WireTap"/> itself was
-/// needed.
+/// Reactor under test.
 /// </remarks>
 public class DatagramSessionPerPeerDatagramTests
 {

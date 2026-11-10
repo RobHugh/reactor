@@ -66,8 +66,8 @@ internal enum RawOperation
 /// — an enum can hold values no member names — so a discard is mandatory whatever we do. Making it
 /// refuse means a kind whose row is missing fails closed: it is rejected everywhere until someone
 /// writes its row, which the first test to touch it will say loudly. Permitting by default would have
-/// relocated the original defect rather than fixed it. The arm is unreachable today; it is a net, not
-/// a branch.
+/// relocated the original defect rather than fixed it. While every named pair has a row the arm is
+/// unreachable. It is a net, not a branch.
 /// </para>
 /// <para>
 /// The other half of that safety is <c>LinkSlot.Kind</c> being abstract: a new kind of Link cannot

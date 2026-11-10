@@ -58,6 +58,12 @@ internal static class DatagramSessionProtocol
     /// <summary>The length in bytes of the secret established for a later Resume, exchanged during the handshake.</summary>
     public const int ResumeSecretLength = 16;
 
+    /// <summary>
+    /// The length in bytes of the random nonce a <see cref="DatagramControlType.PathChallenge"/> carries
+    /// and a <see cref="DatagramControlType.PathResponse"/> echoes (ADR 0021).
+    /// </summary>
+    public const int PathNonceLength = 16;
+
     /// <summary>The length in bytes of the per-Reactor secret the cookie HMAC is keyed with.</summary>
     public const int EpochSecretLength = 32;
 
@@ -141,8 +147,8 @@ internal static class DatagramSessionProtocol
 
     /// <summary>
     /// The wire value of the <c>Unreliable</c> mode's two mode bits (ADR 0009). Not the public
-    /// <see cref="ReactorSockets.DeliveryMode"/> enum (issue #207) — this is what the wire carries for
-    /// that mode, named here so the eight tickets after this one never restate the number.
+    /// <see cref="ReactorSockets.DeliveryMode"/> enum — this is what the wire carries for that mode,
+    /// named here so no caller restates the number.
     /// </summary>
     public const byte ModeUnreliable = 0b0000_0000;
 
@@ -159,27 +165,26 @@ internal static class DatagramSessionProtocol
     /// The bit marking a packet record as a fragment of a larger Message rather than a complete one
     /// (ADR 0004, ADR 0009). Only the two reliable modes ever set it, and both ends now enforce that
     /// rather than merely observe it: <see cref="DatagramSessionReactor.Send"/> answers
-    /// <see cref="SendOutcome.MessageTooLarge"/> rather than fragment an unreliable Message (issue
-    /// #246), and <see cref="PacketRecordLegality.ShapeOf"/> refuses the shape on the way in, failing
-    /// the read and discarding the whole Datagram (issue #273). Setting it grows the record by
-    /// the fragment index and fragment count that follow the length field — an unfragmented Message
-    /// pays one bit rather than the four bytes those fields would cost every record if they were
-    /// always present.
+    /// <see cref="SendOutcome.MessageTooLarge"/> rather than fragment an unreliable Message, and
+    /// <see cref="PacketRecordLegality.ShapeOf"/> refuses the shape on the way in, failing the read and
+    /// discarding the whole Datagram. Setting it grows the record by the fragment index and fragment
+    /// count that follow the length field — an unfragmented Message pays one bit rather than the four
+    /// bytes those fields would cost every record if they were always present.
     /// </summary>
     public const byte FragmentBit = 0b0000_0100;
 
     /// <summary>
     /// The bit marking a packet record as in-Session control rather than a Message (ADR 0009):
     /// "in-Session control is an ordinary record with a control bit". Its first consumer is the
-    /// idle-triggered reliable Ping (#53), a seven-byte <c>ReliableUnordered</c> record with this bit
-    /// set and zero payload, and the Goodbye, the same shape in <c>ReliableOrdered</c>. The lowest of
-    /// the five spare bits, chosen only because the other four remain free for whatever comes after. The packer writes it (issue #338), and
-    /// <see cref="PacketRecordCodec.TryRead"/> accepts it on read (issues #339, #394) for exactly two
+    /// idle-triggered reliable Ping, a seven-byte <c>ReliableUnordered</c> record with this bit set and
+    /// zero payload, and the Goodbye, the same shape in <c>ReliableOrdered</c>. The lowest of the five
+    /// spare bits, chosen only because the other four remain free for whatever comes after. The packer
+    /// writes it, and <see cref="PacketRecordCodec.TryRead"/> accepts it on read for exactly two
     /// combinations, both unfragmented and zero length: <c>ReliableUnordered</c> (a Ping) and
     /// <c>ReliableOrdered</c> (a Goodbye). It refuses every other
     /// combination (another mode, the fragment bit, or a nonzero length) as malformed, the same as any
-    /// other protocol violation (issue #341). No longer part of <see cref="SpareBitsMask"/>, since it
-    /// is no longer merely spare.
+    /// other protocol violation. No longer part of <see cref="SpareBitsMask"/>, since it is no longer
+    /// merely spare.
     /// </summary>
     public const byte ControlBit = 0b0000_1000;
 
@@ -187,9 +192,9 @@ internal static class DatagramSessionProtocol
     /// The mask isolating the four spare bits in a packet record's flags byte. These are genuinely
     /// spare, not reserved-and-ignored: with the protocol version matched exactly (ADR 0009), a record
     /// with any spare bit set is a protocol violation and is rejected, not tolerated. Only a version
-    /// bump unlocks them. No longer includes <see cref="ControlBit"/> (issue #339): that bit now has a
-    /// meaning of its own, checked by <see cref="PacketRecordCodec.TryRead"/> on its own terms rather
-    /// than folded into "any bit here is unknown".
+    /// bump unlocks them. No longer includes <see cref="ControlBit"/>: that bit now has a meaning of
+    /// its own, checked by <see cref="PacketRecordCodec.TryRead"/> on its own terms rather than folded
+    /// into "any bit here is unknown".
     /// </summary>
     public const byte SpareBitsMask = 0b1111_0000;
 }

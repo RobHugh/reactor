@@ -18,9 +18,10 @@ sends anything.
 **Why that leg.** Hello to Cookie is answered without per-sender state, so it does not exercise the
 accepter's admission path. Hello-with-cookie to Accept covers the accepter's full handshake processing.
 
-**Karn's rule does not apply.** The handshake never resends (see `Connect`), so the request is sent once
-and the Accept cannot answer an earlier transmission. A dial whose datagram is lost stays pending and
-produces no sample.
+**Karn's rule applies.** A pending dial resends its Hello-with-cookie (ADR 0009, amendment of 2026-11-10),
+and an Accept may answer any copy. A dial that sent its Hello-with-cookie more than once is not seeded, and
+its first timeout is the Linger, as before this ADR. A dial whose Hello alone was resent is still seeded,
+because the leg starts at the Hello-with-cookie.
 
 **A zero measurement is not sampled.** A leg that spans zero clock ticks is below the clock's resolution.
 It only happens on a frozen `FakeTimeProvider`. Sampling it would seed a zero timeout, which the Pump

@@ -5,8 +5,7 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// The stream Session profile's wire-record builders and handshake-pumping loop, shared by every test
 /// file that hand-builds a Hello/Refusal record or frames a Message over a raw counterparty socket
-/// (issue #102). Copy-pasted near-verbatim across 11 files before this existed — this is the one place
-/// that shape is stated, mirroring how <see cref="MessageFramingLegality"/> states the framing table
+/// This is the one place that shape is stated, mirroring how <see cref="MessageFramingLegality"/> states the framing table
 /// once in production code rather than a branch at a time. Deliberately not shared with the datagram
 /// profile's own <c>BuildHello</c>-shaped helpers: the two profiles' Hello records are a different wire
 /// format entirely (ADR 0008), so a file testing the datagram profile keeps its own.
@@ -18,6 +17,9 @@ internal static class StreamSessionTestRecords
 
     /// <summary>The wire type byte a Hello record's first byte carries.</summary>
     public const byte HelloRecordType = 1;
+
+    /// <summary>The wire type byte a Refusal record's first byte carries.</summary>
+    public const byte RefusalRecordType = 2;
 
     /// <summary>The wire type byte a Resume record's first byte carries (issue #115).</summary>
     public const byte ResumeRecordType = 3;
@@ -100,6 +102,21 @@ internal static class StreamSessionTestRecords
         record[0] = ResumeRecordType;
         secret.CopyTo(record.AsSpan(1, ResumeSecretLength));
         BinaryPrimitives.WriteUInt64BigEndian(record.AsSpan(1 + ResumeSecretLength, 8), deliveryCount);
+        return record;
+    }
+
+    /// <summary>
+    /// Builds a <see cref="HandshakeRecordSize"/>-byte Refusal record: the type byte, the reason byte,
+    /// two 4-byte big-endian values, and zero padding out to the size a Hello occupies. The reason is a
+    /// raw byte so a test can name one no member of the wire roster names (issue #429).
+    /// </summary>
+    public static byte[] BuildRefusal(byte reason, uint value0 = 0, uint value1 = 0)
+    {
+        byte[] record = new byte[HandshakeRecordSize];
+        record[0] = RefusalRecordType;
+        record[1] = reason;
+        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(2, 4), value0);
+        BinaryPrimitives.WriteUInt32BigEndian(record.AsSpan(6, 4), value1);
         return record;
     }
 
