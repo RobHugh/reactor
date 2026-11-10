@@ -84,7 +84,7 @@
   <rect class="strip" x="82" y="456" width="956" height="80" rx="6"/>
   <text class="t body" x="98" y="478" font-weight="700">Shared by all three</text>
   <text class="m body" x="98" y="498">Events are drained · Diagnostics are pushed to a Sink inside the Pump · Counters are pulled and only ever rise</text>
-  <text class="m body" x="98" y="516">One arena, capacity ≤ 64 share-holders, each capped at arena ÷ capacity per Pump · TimeProvider, read monotonically</text>
+  <text class="m body" x="98" y="516">One arena, Capacity share-holders, each capped at arena ÷ Capacity per Pump · TimeProvider, read monotonically</text>
 
   <!-- L2 <-> L1 -->
   <line class="e" x1="180" y1="554" x2="180" y2="588"/>
