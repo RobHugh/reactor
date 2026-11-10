@@ -39,6 +39,202 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
       "output": {
         ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.SendIdleInterval.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions.SendIdleInterval",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.PeerLimitIPv6PrefixLength.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions.PeerLimitIPv6PrefixLength",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.RetentionBytes.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions.RetentionBytes",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.MaxMessageSize.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions.MaxMessageSize",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.Reactor.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions.Reactor",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.ResolvedMaxPeersPerAddress.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions.ResolvedMaxPeersPerAddress",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions",
+      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.DatagramSessionOptions.yml\" sourcestartlinenumber=\"1\">The construction surface of a <xref href=\"ReactorSockets.DatagramSessionReactor\" data-throw-if-not-resolved=\"false\"></xref> (ADR 0012): the shared L0\nbudget composed in as <xref href=\"ReactorSockets.DatagramSessionOptions.Reactor\" data-throw-if-not-resolved=\"false\"></xref>, plus the knobs this profile alone has. Composed\nrather than inherited, so that nothing protocol-specific here can ever leak into\n<xref href=\"ReactorSockets.ReactorOptions\" data-throw-if-not-resolved=\"false\"></xref> and turn it into the base class ADR 0011 refused.</p>\n"
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.RetentionSlots.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions.RetentionSlots",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.SendBudgetBytes.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions.SendBudgetBytes",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.HeldRecordBudgetBytes.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions.HeldRecordBudgetBytes",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.ReceiveBudgetBytes.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions.ReceiveBudgetBytes",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.ResolvedMissedHeartbeats.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions.ResolvedMissedHeartbeats",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionOptions.Linger.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionOptions.Linger",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
+      "output": {
+        ".html": {
           "relative_path": "ReactorSockets.DatagramSessionOptions.Endpoints.html"
         }
       },
@@ -53,13 +249,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.FragmentSize.html"
+          "relative_path": "ReactorSockets.DatagramSessionOptions.ResolvedPeerLimitIPv6PrefixLength.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.FragmentSize",
+      "Title": "ReactorSockets.DatagramSessionOptions.ResolvedPeerLimitIPv6PrefixLength",
       "Summary": null
     },
     {
@@ -179,209 +375,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.ResolvedMaxPeersPerAddress.html"
+          "relative_path": "ReactorSockets.DatagramSessionOptions.FragmentSize.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.ResolvedMaxPeersPerAddress",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.ResolvedPeerLimitIPv6PrefixLength.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.ResolvedPeerLimitIPv6PrefixLength",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.Reactor.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.Reactor",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.ReceiveBudgetBytes.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.ReceiveBudgetBytes",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.MaxMessageSize.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.MaxMessageSize",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.RetentionBytes.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.RetentionBytes",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.PeerLimitIPv6PrefixLength.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.PeerLimitIPv6PrefixLength",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.ResolvedMissedHeartbeats.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.ResolvedMissedHeartbeats",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.Linger.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.Linger",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions",
-      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.DatagramSessionOptions.yml\" sourcestartlinenumber=\"1\">The construction surface of a <xref href=\"ReactorSockets.DatagramSessionReactor\" data-throw-if-not-resolved=\"false\"></xref> (ADR 0012): the shared L0\nbudget composed in as <xref href=\"ReactorSockets.DatagramSessionOptions.Reactor\" data-throw-if-not-resolved=\"false\"></xref>, plus the knobs this profile alone has. Composed\nrather than inherited, so that nothing protocol-specific here can ever leak into\n<xref href=\"ReactorSockets.ReactorOptions\" data-throw-if-not-resolved=\"false\"></xref> and turn it into the base class ADR 0011 refused.</p>\n"
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.SendIdleInterval.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.SendIdleInterval",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.SendBudgetBytes.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.SendBudgetBytes",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.HeldRecordBudgetBytes.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.HeldRecordBudgetBytes",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionOptions.RetentionSlots.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionOptions.RetentionSlots",
+      "Title": "ReactorSockets.DatagramSessionOptions.FragmentSize",
       "Summary": null
     },
     {
@@ -389,13 +389,41 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionReactor.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionReactor.Pump.html"
+          "relative_path": "ReactorSockets.DatagramSessionReactor.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionReactor.Pump",
+      "Title": "ReactorSockets.DatagramSessionReactor",
+      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.DatagramSessionReactor.yml\" sourcestartlinenumber=\"1\">The datagram Session profile (ADR 0009): Sessions established over UDP, addressed as Peers, driven\nby a single synchronous <xref href=\"ReactorSockets.DatagramSessionReactor.Pump\" data-throw-if-not-resolved=\"false\"></xref> from the consumer's own loop. It carries the handshake\nand everything that guards it — the stateless cookie, the amplification bound, version and\ncapacity refusals, session identity and demultiplexing — and the data plane behind it: packet\nrecords in four sequence Spaces, one per <xref href=\"ReactorSockets.DeliveryMode\" data-throw-if-not-resolved=\"false\"></xref>, fragmentation of reliable\nMessages, acknowledgement and retransmission, heartbeats, Goodbye, interruption and Resume.</p>\n"
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionReactor.-ctor.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionReactor.DatagramSessionReactor",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DatagramSessionReactor.BoundEndpoints.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DatagramSessionReactor.BoundEndpoints",
       "Summary": null
     },
     {
@@ -417,27 +445,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionReactor.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionReactor.Send.html"
+          "relative_path": "ReactorSockets.DatagramSessionReactor.Pump.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionReactor.Send",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionReactor.-ctor.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionReactor.DatagramSessionReactor",
+      "Title": "ReactorSockets.DatagramSessionReactor.Pump",
       "Summary": null
     },
     {
@@ -501,13 +515,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionReactor.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionReactor.BoundEndpoints.html"
+          "relative_path": "ReactorSockets.DatagramSessionReactor.Send.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionReactor.BoundEndpoints",
+      "Title": "ReactorSockets.DatagramSessionReactor.Send",
       "Summary": null
     },
     {
@@ -523,20 +537,6 @@
       "IsMRef": true,
       "Title": "ReactorSockets.DatagramSessionReactor.Dispose",
       "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DatagramSessionReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DatagramSessionReactor.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DatagramSessionReactor",
-      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.DatagramSessionReactor.yml\" sourcestartlinenumber=\"1\">The datagram Session profile (ADR 0009): Sessions established over UDP, addressed as Peers, driven\nby a single synchronous <xref href=\"ReactorSockets.DatagramSessionReactor.Pump\" data-throw-if-not-resolved=\"false\"></xref> from the consumer's own loop. It carries the handshake\nand everything that guards it — the stateless cookie, the amplification bound, version and\ncapacity refusals, session identity and demultiplexing — and the data plane behind it: packet\nrecords in four sequence Spaces, one per <xref href=\"ReactorSockets.DeliveryMode\" data-throw-if-not-resolved=\"false\"></xref>, fragmentation of reliable\nMessages, acknowledgement and retransmission, heartbeats, Goodbye, interruption and Resume.</p>\n"
     },
     {
       "type": "ManagedReference",
@@ -557,20 +557,6 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticFormatter.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.DiagnosticFormatter.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticFormatter",
-      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.DiagnosticFormatter.yml\" sourcestartlinenumber=\"1\">The one authoritative rendering of a <xref href=\"ReactorSockets.DiagnosticRecord\" data-throw-if-not-resolved=\"false\"></xref> to text (ADR 0005, ADR 0013),\nso a structured Sink consumes the typed fields and never formats, and a text Sink gets this\nlibrary's wording rather than inventing its own. Holds no state: nothing is allocated until\n<xref href=\"ReactorSockets.DiagnosticFormatter.Format(ReactorSockets.DiagnosticRecord%40)\" data-throw-if-not-resolved=\"false\"></xref> is called, and a consumer who never formats pays nothing.</p>\n"
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticFormatter.yml",
-      "output": {
-        ".html": {
           "relative_path": "ReactorSockets.DiagnosticFormatter.Format.html"
         }
       },
@@ -579,6 +565,20 @@
       "IsMRef": true,
       "Title": "ReactorSockets.DiagnosticFormatter.Format",
       "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticFormatter.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticFormatter.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticFormatter",
+      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.DiagnosticFormatter.yml\" sourcestartlinenumber=\"1\">The one authoritative rendering of a <xref href=\"ReactorSockets.DiagnosticRecord\" data-throw-if-not-resolved=\"false\"></xref> to text (ADR 0005, ADR 0013),\nso a structured Sink consumes the typed fields and never formats, and a text Sink gets this\nlibrary's wording rather than inventing its own. Holds no state: nothing is allocated until\n<xref href=\"ReactorSockets.DiagnosticFormatter.Format(ReactorSockets.DiagnosticRecord%40)\" data-throw-if-not-resolved=\"false\"></xref> is called, and a consumer who never formats pays nothing.</p>\n"
     },
     {
       "type": "ManagedReference",
@@ -627,62 +627,6 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForFragmentSetAbandoned.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForFragmentSetAbandoned",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForVersionRefused.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForVersionRefused",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForDeliveryCounterRefused.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForDeliveryCounterRefused",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord",
-      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.DiagnosticRecord.yml\" sourcestartlinenumber=\"1\">A single diagnostic emitted to an <xref href=\"ReactorSockets.IReactorDiagnostics\" data-throw-if-not-resolved=\"false\"></xref> Sink: a closed\n<xref href=\"ReactorSockets.DiagnosticId\" data-throw-if-not-resolved=\"false\"></xref>, its fixed <xref href=\"ReactorSockets.DiagnosticLevel\" data-throw-if-not-resolved=\"false\"></xref>, a tagged subject — none,\nLink, Source or Peer (ADR 0013) — and two numeric slots whose meaning is documented per\n<xref href=\"ReactorSockets.DiagnosticId\" data-throw-if-not-resolved=\"false\"></xref> member. No strings, no <code>object[]</code>, no closures — everything here\nlives on the stack and is built only after <xref href=\"ReactorSockets.IReactorDiagnostics.IsEnabled(ReactorSockets.DiagnosticLevel)\" data-throw-if-not-resolved=\"false\"></xref> passes.</p>\n"
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
           "relative_path": "ReactorSockets.DiagnosticRecord.SubjectKind.html"
         }
       },
@@ -697,195 +641,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.Link.html"
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForDataAfterGoodbye.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.Link",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.Source.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.Source",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.Peer.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.Peer",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.Value0.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.Value0",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.Value1.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.Value1",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForAdmissionCapReached.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForAdmissionCapReached",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForUnreliableFragment.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForUnreliableFragment",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForResumeUnmatched.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForResumeUnmatched",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForRedialAttempted.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForRedialAttempted",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForCookieRejected.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForCookieRejected",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForResumeMatched.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForResumeMatched",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForOversizedMessage.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForOversizedMessage",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForAddressPeerLimitReached.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForAddressPeerLimitReached",
+      "Title": "ReactorSockets.DiagnosticRecord.ForDataAfterGoodbye",
       "Summary": null
     },
     {
@@ -977,13 +739,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForCapacityExhausted.html"
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForLinkFailed.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForCapacityExhausted",
+      "Title": "ReactorSockets.DiagnosticRecord.ForLinkFailed",
       "Summary": null
     },
     {
@@ -991,13 +753,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForRedialFailed.html"
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForResumeMatched.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForRedialFailed",
+      "Title": "ReactorSockets.DiagnosticRecord.ForResumeMatched",
       "Summary": null
     },
     {
@@ -1005,27 +767,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForDatagramMalformed.html"
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForAddressPeerLimitReached.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForDatagramMalformed",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForDataAfterGoodbye.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForDataAfterGoodbye",
+      "Title": "ReactorSockets.DiagnosticRecord.ForAddressPeerLimitReached",
       "Summary": null
     },
     {
@@ -1047,6 +795,34 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
       "output": {
         ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.Link.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.Link",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForDatagramMalformed.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.ForDatagramMalformed",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
           "relative_path": "ReactorSockets.DiagnosticRecord.Id.html"
         }
       },
@@ -1061,13 +837,27 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForDatagramTruncated.html"
+          "relative_path": "ReactorSockets.DiagnosticRecord.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForDatagramTruncated",
+      "Title": "ReactorSockets.DiagnosticRecord",
+      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.DiagnosticRecord.yml\" sourcestartlinenumber=\"1\">A single diagnostic emitted to an <xref href=\"ReactorSockets.IReactorDiagnostics\" data-throw-if-not-resolved=\"false\"></xref> Sink: a closed\n<xref href=\"ReactorSockets.DiagnosticId\" data-throw-if-not-resolved=\"false\"></xref>, its fixed <xref href=\"ReactorSockets.DiagnosticLevel\" data-throw-if-not-resolved=\"false\"></xref>, a tagged subject — none,\nLink, Source or Peer (ADR 0013) — and two numeric slots whose meaning is documented per\n<xref href=\"ReactorSockets.DiagnosticId\" data-throw-if-not-resolved=\"false\"></xref> member. No strings, no <code>object[]</code>, no closures — everything here\nlives on the stack and is built only after <xref href=\"ReactorSockets.IReactorDiagnostics.IsEnabled(ReactorSockets.DiagnosticLevel)\" data-throw-if-not-resolved=\"false\"></xref> passes.</p>\n"
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForDeliveryCounterRefused.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.ForDeliveryCounterRefused",
       "Summary": null
     },
     {
@@ -1089,13 +879,223 @@
       "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.DiagnosticRecord.ForLinkFailed.html"
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForRedialAttempted.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.DiagnosticRecord.ForLinkFailed",
+      "Title": "ReactorSockets.DiagnosticRecord.ForRedialAttempted",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForResumeUnmatched.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.ForResumeUnmatched",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForCapacityExhausted.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.ForCapacityExhausted",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForAdmissionCapReached.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.ForAdmissionCapReached",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForDatagramTruncated.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.ForDatagramTruncated",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.Value1.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.Value1",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.Peer.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.Peer",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.Source.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.Source",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForOversizedMessage.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.ForOversizedMessage",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForUnreliableFragment.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.ForUnreliableFragment",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForFragmentSetAbandoned.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.ForFragmentSetAbandoned",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForVersionRefused.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.ForVersionRefused",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForCookieRejected.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.ForCookieRejected",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.Value0.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.Value0",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.DiagnosticRecord.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.DiagnosticRecord.ForRedialFailed.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.DiagnosticRecord.ForRedialFailed",
       "Summary": null
     },
     {
@@ -1131,20 +1131,6 @@
       "source_relative_path": "docs/.reference/ReactorSockets.IReactorDiagnostics.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.IReactorDiagnostics.Log.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.IReactorDiagnostics.Log",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.IReactorDiagnostics.yml",
-      "output": {
-        ".html": {
           "relative_path": "ReactorSockets.IReactorDiagnostics.html"
         }
       },
@@ -1166,6 +1152,34 @@
       "Uid": null,
       "IsMRef": true,
       "Title": "ReactorSockets.IReactorDiagnostics.IsEnabled",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.IReactorDiagnostics.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.IReactorDiagnostics.Log.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.IReactorDiagnostics.Log",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.LinkCounters.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.LinkCounters.-ctor.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.LinkCounters.LinkCounters",
       "Summary": null
     },
     {
@@ -1212,16 +1226,16 @@
     },
     {
       "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.LinkCounters.yml",
+      "source_relative_path": "docs/.reference/ReactorSockets.LinkId.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.LinkCounters.-ctor.html"
+          "relative_path": "ReactorSockets.LinkId.Generation.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.LinkCounters.LinkCounters",
+      "Title": "ReactorSockets.LinkId.Generation",
       "Summary": null
     },
     {
@@ -1243,27 +1257,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.LinkId.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.LinkId.Index.html"
+          "relative_path": "ReactorSockets.LinkId.-ctor.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.LinkId.Index",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.LinkId.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.LinkId.Generation.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.LinkId.Generation",
+      "Title": "ReactorSockets.LinkId.LinkId",
       "Summary": null
     },
     {
@@ -1285,13 +1285,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.LinkId.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.LinkId.-ctor.html"
+          "relative_path": "ReactorSockets.LinkId.Index.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.LinkId.LinkId",
+      "Title": "ReactorSockets.LinkId.Index",
       "Summary": null
     },
     {
@@ -1299,13 +1299,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.PeerCounters.UnreliableLossPackets.html"
+          "relative_path": "ReactorSockets.PeerCounters.PacketsRetransmitted.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.PeerCounters.UnreliableLossPackets",
+      "Title": "ReactorSockets.PeerCounters.PacketsRetransmitted",
       "Summary": null
     },
     {
@@ -1313,13 +1313,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.PeerCounters.-ctor.html"
+          "relative_path": "ReactorSockets.PeerCounters.SocketWrites.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.PeerCounters.PeerCounters",
+      "Title": "ReactorSockets.PeerCounters.SocketWrites",
       "Summary": null
     },
     {
@@ -1327,13 +1327,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.PeerCounters.MessagesReceived.html"
+          "relative_path": "ReactorSockets.PeerCounters.HorizonDeferrals.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.PeerCounters.MessagesReceived",
+      "Title": "ReactorSockets.PeerCounters.HorizonDeferrals",
       "Summary": null
     },
     {
@@ -1341,41 +1341,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.PeerCounters.RetentionHighWaterBytes.html"
+          "relative_path": "ReactorSockets.PeerCounters.BytesSent.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.PeerCounters.RetentionHighWaterBytes",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.PeerCounters.Resumes.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.PeerCounters.Resumes",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.PeerCounters.OutOfWindowPackets.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.PeerCounters.OutOfWindowPackets",
+      "Title": "ReactorSockets.PeerCounters.BytesSent",
       "Summary": null
     },
     {
@@ -1397,13 +1369,55 @@
       "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.PeerCounters.HorizonDeferrals.html"
+          "relative_path": "ReactorSockets.PeerCounters.OutOfWindowPackets.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.PeerCounters.HorizonDeferrals",
+      "Title": "ReactorSockets.PeerCounters.OutOfWindowPackets",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.PeerCounters.Resumes.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.PeerCounters.Resumes",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.PeerCounters.RetentionHighWaterBytes.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.PeerCounters.RetentionHighWaterBytes",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.PeerCounters.MessagesReceived.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.PeerCounters.MessagesReceived",
       "Summary": null
     },
     {
@@ -1439,20 +1453,6 @@
       "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.PeerCounters.SocketWrites.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.PeerCounters.SocketWrites",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
-      "output": {
-        ".html": {
           "relative_path": "ReactorSockets.PeerCounters.BytesReceived.html"
         }
       },
@@ -1467,13 +1467,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.PeerCounters.BytesSent.html"
+          "relative_path": "ReactorSockets.PeerCounters.UnreliableLossPackets.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.PeerCounters.BytesSent",
+      "Title": "ReactorSockets.PeerCounters.UnreliableLossPackets",
       "Summary": null
     },
     {
@@ -1481,13 +1481,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.PeerCounters.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.PeerCounters.PacketsRetransmitted.html"
+          "relative_path": "ReactorSockets.PeerCounters.-ctor.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.PeerCounters.PacketsRetransmitted",
+      "Title": "ReactorSockets.PeerCounters.PeerCounters",
       "Summary": null
     },
     {
@@ -1495,13 +1495,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.PeerId.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.PeerId.Origin.html"
+          "relative_path": "ReactorSockets.PeerId.-ctor.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.PeerId.Origin",
+      "Title": "ReactorSockets.PeerId.PeerId",
       "Summary": null
     },
     {
@@ -1516,6 +1516,20 @@
       "Uid": null,
       "IsMRef": true,
       "Title": "ReactorSockets.PeerId.Index",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.PeerId.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.PeerId.Origin.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.PeerId.Origin",
       "Summary": null
     },
     {
@@ -1548,16 +1562,44 @@
     },
     {
       "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.PeerId.yml",
+      "source_relative_path": "docs/.reference/ReactorSockets.RawEvent.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.PeerId.-ctor.html"
+          "relative_path": "ReactorSockets.RawEvent.Payload.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.PeerId.PeerId",
+      "Title": "ReactorSockets.RawEvent.Payload",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.RawEvent.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.RawEvent.Kind.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.RawEvent.Kind",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.RawEvent.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.RawEvent.Link.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.RawEvent.Link",
       "Summary": null
     },
     {
@@ -1593,34 +1635,6 @@
       "source_relative_path": "docs/.reference/ReactorSockets.RawEvent.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.RawEvent.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.RawEvent",
-      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.RawEvent.yml\" sourcestartlinenumber=\"1\">One event drained from a <xref href=\"ReactorSockets.RawReactor\" data-throw-if-not-resolved=\"false\"></xref>. A <code>ref struct</code> because\n<xref href=\"ReactorSockets.RawEvent.Payload\" data-throw-if-not-resolved=\"false\"></xref> aliases the frame arena directly and must never outlive the Frame it was\ndrained in (ADR 0008). <xref href=\"ReactorSockets.RawEvent.Kind\" data-throw-if-not-resolved=\"false\"></xref> determines exactly which other fields are populated —\nthe kinds are <xref href=\"ReactorSockets.RawEventKind.DatagramReceived\" data-throw-if-not-resolved=\"false\"></xref>, <xref href=\"ReactorSockets.RawEventKind.Closed\" data-throw-if-not-resolved=\"false\"></xref>,\n<xref href=\"ReactorSockets.RawEventKind.Accepted\" data-throw-if-not-resolved=\"false\"></xref>, <xref href=\"ReactorSockets.RawEventKind.Connected\" data-throw-if-not-resolved=\"false\"></xref>,\n<xref href=\"ReactorSockets.RawEventKind.SegmentReceived\" data-throw-if-not-resolved=\"false\"></xref>, <xref href=\"ReactorSockets.RawEventKind.EndOfStream\" data-throw-if-not-resolved=\"false\"></xref> and\n<xref href=\"ReactorSockets.RawEventKind.Writable\" data-throw-if-not-resolved=\"false\"></xref> — the complete Raw profile roster.</p>\n"
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.RawEvent.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.RawEvent.Payload.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.RawEvent.Payload",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.RawEvent.yml",
-      "output": {
-        ".html": {
           "relative_path": "ReactorSockets.RawEvent.Reason.html"
         }
       },
@@ -1635,42 +1649,28 @@
       "source_relative_path": "docs/.reference/ReactorSockets.RawEvent.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.RawEvent.Kind.html"
+          "relative_path": "ReactorSockets.RawEvent.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.RawEvent.Kind",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.RawEvent.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.RawEvent.Link.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.RawEvent.Link",
-      "Summary": null
+      "Title": "ReactorSockets.RawEvent",
+      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.RawEvent.yml\" sourcestartlinenumber=\"1\">One event drained from a <xref href=\"ReactorSockets.RawReactor\" data-throw-if-not-resolved=\"false\"></xref>. A <code>ref struct</code> because\n<xref href=\"ReactorSockets.RawEvent.Payload\" data-throw-if-not-resolved=\"false\"></xref> aliases the frame arena directly and must never outlive the Frame it was\ndrained in (ADR 0008). <xref href=\"ReactorSockets.RawEvent.Kind\" data-throw-if-not-resolved=\"false\"></xref> determines exactly which other fields are populated —\nthe kinds are <xref href=\"ReactorSockets.RawEventKind.DatagramReceived\" data-throw-if-not-resolved=\"false\"></xref>, <xref href=\"ReactorSockets.RawEventKind.Closed\" data-throw-if-not-resolved=\"false\"></xref>,\n<xref href=\"ReactorSockets.RawEventKind.Accepted\" data-throw-if-not-resolved=\"false\"></xref>, <xref href=\"ReactorSockets.RawEventKind.Connected\" data-throw-if-not-resolved=\"false\"></xref>,\n<xref href=\"ReactorSockets.RawEventKind.SegmentReceived\" data-throw-if-not-resolved=\"false\"></xref>, <xref href=\"ReactorSockets.RawEventKind.EndOfStream\" data-throw-if-not-resolved=\"false\"></xref> and\n<xref href=\"ReactorSockets.RawEventKind.Writable\" data-throw-if-not-resolved=\"false\"></xref> — the complete Raw profile roster.</p>\n"
     },
     {
       "type": "ManagedReference",
       "source_relative_path": "docs/.reference/ReactorSockets.RawEventEnumerator.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.RawEventEnumerator.MoveNext.html"
+          "relative_path": "ReactorSockets.RawEventEnumerator.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.RawEventEnumerator.MoveNext",
-      "Summary": null
+      "Title": "ReactorSockets.RawEventEnumerator",
+      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.RawEventEnumerator.yml\" sourcestartlinenumber=\"1\">The zero-allocation enumerator <xref href=\"ReactorSockets.RawReactor.Drain\" data-throw-if-not-resolved=\"false\"></xref> returns. A <code>ref struct</code>\nso that a <code>foreach</code> over it can yield <xref href=\"ReactorSockets.RawEvent\" data-throw-if-not-resolved=\"false\"></xref> — itself a <code>ref struct</code>\n— without a heap-allocated <code>IEnumerator&lt;T&gt;</code>, following the same pattern as\n<xref href=\"System.Span%601\" data-throw-if-not-resolved=\"false\"></xref>'s own enumerator.</p>\n"
     },
     {
       "type": "ManagedReference",
@@ -1705,14 +1705,14 @@
       "source_relative_path": "docs/.reference/ReactorSockets.RawEventEnumerator.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.RawEventEnumerator.html"
+          "relative_path": "ReactorSockets.RawEventEnumerator.MoveNext.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.RawEventEnumerator",
-      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.RawEventEnumerator.yml\" sourcestartlinenumber=\"1\">The zero-allocation enumerator <xref href=\"ReactorSockets.RawReactor.Drain\" data-throw-if-not-resolved=\"false\"></xref> returns. A <code>ref struct</code>\nso that a <code>foreach</code> over it can yield <xref href=\"ReactorSockets.RawEvent\" data-throw-if-not-resolved=\"false\"></xref> — itself a <code>ref struct</code>\n— without a heap-allocated <code>IEnumerator&lt;T&gt;</code>, following the same pattern as\n<xref href=\"System.Span%601\" data-throw-if-not-resolved=\"false\"></xref>'s own enumerator.</p>\n"
+      "Title": "ReactorSockets.RawEventEnumerator.MoveNext",
+      "Summary": null
     },
     {
       "type": "ManagedReference",
@@ -1727,118 +1727,6 @@
       "IsMRef": true,
       "Title": "ReactorSockets.RawEventKind",
       "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.RawEventKind.yml\" sourcestartlinenumber=\"1\">Which kind of <xref href=\"ReactorSockets.RawEvent\" data-throw-if-not-resolved=\"false\"></xref> a drained event is (ADR 0008). <xref href=\"ReactorSockets.RawEventKind.Accepted\" data-throw-if-not-resolved=\"false\"></xref> comes\nfrom a listening Link, <xref href=\"ReactorSockets.RawEventKind.Connected\" data-throw-if-not-resolved=\"false\"></xref> from dialling, <xref href=\"ReactorSockets.RawEventKind.SegmentReceived\" data-throw-if-not-resolved=\"false\"></xref> and\n<xref href=\"ReactorSockets.RawEventKind.EndOfStream\" data-throw-if-not-resolved=\"false\"></xref> from stream reads, and <xref href=\"ReactorSockets.RawEventKind.Writable\" data-throw-if-not-resolved=\"false\"></xref> from partial sends.</p>\n"
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.RawReactor.Close.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.RawReactor.Close",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.RawReactor.RemoteOf.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.RawReactor.RemoteOf",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.RawReactor.Listen.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.RawReactor.Listen",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.RawReactor.CountersOf.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.RawReactor.CountersOf",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.RawReactor.MaxUdpDatagramSize.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.RawReactor.MaxUdpDatagramSize",
-      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.RawReactor.yml\" sourcestartlinenumber=\"1\">The largest a UDP datagram can be, and this Reactor's default scratch buffer size and arena\nfloor: a Segment is as large as one read, so the arena must hold at least one (ADR 0012).</p>\n"
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.RawReactor.LocalOf.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.RawReactor.LocalOf",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.RawReactor.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.RawReactor",
-      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.RawReactor.yml\" sourcestartlinenumber=\"1\">The escape hatch (ADR 0007): a consumer registers UDP sockets at runtime, gets a <xref href=\"ReactorSockets.LinkId\" data-throw-if-not-resolved=\"false\"></xref>\nback for each, and advances everything with a single synchronous <xref href=\"ReactorSockets.RawReactor.Pump\" data-throw-if-not-resolved=\"false\"></xref> call from their\nown loop. Nothing is delivered except in response to a call the consumer made, on the thread that\nconstructed this Reactor. TCP joins the datagram surface here: a listening Link and the connections\nit accepts are registered and admitted the same way, and a stream Link's reads drain as\n<xref href=\"ReactorSockets.RawEventKind.SegmentReceived\" data-throw-if-not-resolved=\"false\"></xref> and <xref href=\"ReactorSockets.RawEventKind.EndOfStream\" data-throw-if-not-resolved=\"false\"></xref> exactly like a\ndatagram Link's. A stream Link's <xref href=\"ReactorSockets.RawReactor.Send(ReactorSockets.LinkId%2cSystem.ReadOnlySpan%7bSystem.Byte%7d)\" data-throw-if-not-resolved=\"false\"></xref> takes what the socket will take and reports the\ncount, arming exactly one <xref href=\"ReactorSockets.RawEventKind.Writable\" data-throw-if-not-resolved=\"false\"></xref> when it took fewer bytes than\noffered; <xref href=\"ReactorSockets.RawReactor.Shutdown(ReactorSockets.LinkId)\" data-throw-if-not-resolved=\"false\"></xref> sends this Link's own FIN while it stays open for reading.</p>\n"
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.RawReactor.Counters.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.RawReactor.Counters",
-      "Summary": null
     },
     {
       "type": "ManagedReference",
@@ -1873,6 +1761,62 @@
       "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
       "output": {
         ".html": {
+          "relative_path": "ReactorSockets.RawReactor.Bind.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.RawReactor.Bind",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.RawReactor.CountersOf.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.RawReactor.CountersOf",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.RawReactor.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.RawReactor",
+      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.RawReactor.yml\" sourcestartlinenumber=\"1\">The escape hatch (ADR 0007): a consumer registers UDP sockets at runtime, gets a <xref href=\"ReactorSockets.LinkId\" data-throw-if-not-resolved=\"false\"></xref>\nback for each, and advances everything with a single synchronous <xref href=\"ReactorSockets.RawReactor.Pump\" data-throw-if-not-resolved=\"false\"></xref> call from their\nown loop. Nothing is delivered except in response to a call the consumer made, on the thread that\nconstructed this Reactor. TCP joins the datagram surface here: a listening Link and the connections\nit accepts are registered and admitted the same way, and a stream Link's reads drain as\n<xref href=\"ReactorSockets.RawEventKind.SegmentReceived\" data-throw-if-not-resolved=\"false\"></xref> and <xref href=\"ReactorSockets.RawEventKind.EndOfStream\" data-throw-if-not-resolved=\"false\"></xref> exactly like a\ndatagram Link's. A stream Link's <xref href=\"ReactorSockets.RawReactor.Send(ReactorSockets.LinkId%2cSystem.ReadOnlySpan%7bSystem.Byte%7d)\" data-throw-if-not-resolved=\"false\"></xref> takes what the socket will take and reports the\ncount, arming exactly one <xref href=\"ReactorSockets.RawEventKind.Writable\" data-throw-if-not-resolved=\"false\"></xref> when it took fewer bytes than\noffered; <xref href=\"ReactorSockets.RawReactor.Shutdown(ReactorSockets.LinkId)\" data-throw-if-not-resolved=\"false\"></xref> sends this Link's own FIN while it stays open for reading.</p>\n"
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.RawReactor.Listen.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.RawReactor.Listen",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
+      "output": {
+        ".html": {
           "relative_path": "ReactorSockets.RawReactor.Connect.html"
         }
       },
@@ -1880,6 +1824,62 @@
       "Uid": null,
       "IsMRef": true,
       "Title": "ReactorSockets.RawReactor.Connect",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.RawReactor.Close.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.RawReactor.Close",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.RawReactor.Send.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.RawReactor.Send",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.RawReactor.RemoteOf.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.RawReactor.RemoteOf",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.RawReactor.Counters.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.RawReactor.Counters",
       "Summary": null
     },
     {
@@ -1901,14 +1901,14 @@
       "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.RawReactor.Bind.html"
+          "relative_path": "ReactorSockets.RawReactor.MaxUdpDatagramSize.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.RawReactor.Bind",
-      "Summary": null
+      "Title": "ReactorSockets.RawReactor.MaxUdpDatagramSize",
+      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.RawReactor.yml\" sourcestartlinenumber=\"1\">The largest a UDP datagram can be, and this Reactor's default scratch buffer size and arena\nfloor: a Segment is as large as one read, so the arena must hold at least one (ADR 0012).</p>\n"
     },
     {
       "type": "ManagedReference",
@@ -1943,13 +1943,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.RawReactor.Pump.html"
+          "relative_path": "ReactorSockets.RawReactor.LocalOf.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.RawReactor.Pump",
+      "Title": "ReactorSockets.RawReactor.LocalOf",
       "Summary": null
     },
     {
@@ -1957,125 +1957,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.RawReactor.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.RawReactor.Send.html"
+          "relative_path": "ReactorSockets.RawReactor.Pump.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.RawReactor.Send",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.ReactorCounters.ArenaHighWaterBytes.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.ReactorCounters.ArenaHighWaterBytes",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.ReactorCounters.SinkFaulted.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.ReactorCounters.SinkFaulted",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.ReactorCounters.AdmissionDiscards.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.ReactorCounters.AdmissionDiscards",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.ReactorCounters.UnknownSourceDatagrams.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.ReactorCounters.UnknownSourceDatagrams",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.ReactorCounters.-ctor.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.ReactorCounters.ReactorCounters",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.ReactorCounters.MalformedSessionDatagrams.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.ReactorCounters.MalformedSessionDatagrams",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.ReactorCounters.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.ReactorCounters",
-      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.ReactorCounters.yml\" sourcestartlinenumber=\"1\">A point-in-time snapshot of the Reactor-scope counters (ADR 0013): monotonic figures running\nfrom construction, with no reset. Fetched by value so nothing lets a consumer hold a pointer\ninto live state across a Pump; diffing two snapshots gives everything a reset would, from state\nthe consumer already owns.</p>\n"
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.ReactorCounters.DatagramsSent.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.ReactorCounters.DatagramsSent",
+      "Title": "ReactorSockets.RawReactor.Pump",
       "Summary": null
     },
     {
@@ -2097,6 +1985,90 @@
       "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
       "output": {
         ".html": {
+          "relative_path": "ReactorSockets.ReactorCounters.ArenaHighWaterBytes.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.ReactorCounters.ArenaHighWaterBytes",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.ReactorCounters.DatagramsSent.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.ReactorCounters.DatagramsSent",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.ReactorCounters.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.ReactorCounters",
+      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.ReactorCounters.yml\" sourcestartlinenumber=\"1\">A point-in-time snapshot of the Reactor-scope counters (ADR 0013): monotonic figures running\nfrom construction, with no reset. Fetched by value so nothing lets a consumer hold a pointer\ninto live state across a Pump; diffing two snapshots gives everything a reset would, from state\nthe consumer already owns.</p>\n"
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.ReactorCounters.AdmissionDiscards.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.ReactorCounters.AdmissionDiscards",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.ReactorCounters.MalformedSessionDatagrams.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.ReactorCounters.MalformedSessionDatagrams",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.ReactorCounters.UnknownSourceDatagrams.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.ReactorCounters.UnknownSourceDatagrams",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
+      "output": {
+        ".html": {
           "relative_path": "ReactorSockets.ReactorCounters.AdmissionDeferrals.html"
         }
       },
@@ -2108,16 +2080,30 @@
     },
     {
       "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.ReactorOptions.yml",
+      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.ReactorOptions.MinimumLevel.html"
+          "relative_path": "ReactorSockets.ReactorCounters.SinkFaulted.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.ReactorOptions.MinimumLevel",
+      "Title": "ReactorSockets.ReactorCounters.SinkFaulted",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.ReactorCounters.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.ReactorCounters.-ctor.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.ReactorCounters.ReactorCounters",
       "Summary": null
     },
     {
@@ -2125,13 +2111,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.ReactorOptions.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.ReactorOptions.ResolvedAdmissionCap.html"
+          "relative_path": "ReactorSockets.ReactorOptions.Sink.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.ReactorOptions.ResolvedAdmissionCap",
+      "Title": "ReactorSockets.ReactorOptions.Sink",
       "Summary": null
     },
     {
@@ -2139,14 +2125,14 @@
       "source_relative_path": "docs/.reference/ReactorSockets.ReactorOptions.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.ReactorOptions.html"
+          "relative_path": "ReactorSockets.ReactorOptions.AdmissionCap.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.ReactorOptions",
-      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.ReactorOptions.yml\" sourcestartlinenumber=\"1\">The budget L0 spends inside a Pump, shared by every profile. Composed as a member into each\nprofile's options type rather than inherited from a base (ADR 0012) — nothing protocol-specific\nmay ever enter this type, since a knob two of three profiles need is exactly what would turn it\ninto the base class ADR 0011 refused.</p>\n"
+      "Title": "ReactorSockets.ReactorOptions.AdmissionCap",
+      "Summary": null
     },
     {
       "type": "ManagedReference",
@@ -2181,6 +2167,48 @@
       "source_relative_path": "docs/.reference/ReactorSockets.ReactorOptions.yml",
       "output": {
         ".html": {
+          "relative_path": "ReactorSockets.ReactorOptions.MinimumLevel.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.ReactorOptions.MinimumLevel",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.ReactorOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.ReactorOptions.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.ReactorOptions",
+      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.ReactorOptions.yml\" sourcestartlinenumber=\"1\">The budget L0 spends inside a Pump, shared by every profile. Composed as a member into each\nprofile's options type rather than inherited from a base (ADR 0012) — nothing protocol-specific\nmay ever enter this type, since a knob two of three profiles need is exactly what would turn it\ninto the base class ADR 0011 refused.</p>\n"
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.ReactorOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.ReactorOptions.ResolvedAdmissionCap.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.ReactorOptions.ResolvedAdmissionCap",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.ReactorOptions.yml",
+      "output": {
+        ".html": {
           "relative_path": "ReactorSockets.ReactorOptions.Capacity.html"
         }
       },
@@ -2188,48 +2216,6 @@
       "Uid": null,
       "IsMRef": true,
       "Title": "ReactorSockets.ReactorOptions.Capacity",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.ReactorOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.ReactorOptions.AdmissionCap.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.ReactorOptions.AdmissionCap",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.ReactorOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.ReactorOptions.Sink.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.ReactorOptions.Sink",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.Result.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.Result.IsSuccess.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.Result.IsSuccess",
       "Summary": null
     },
     {
@@ -2251,13 +2237,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.Result.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.Result.Error.html"
+          "relative_path": "ReactorSockets.Result.Failure.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.Result.Error",
+      "Title": "ReactorSockets.Result.Failure",
       "Summary": null
     },
     {
@@ -2279,13 +2265,27 @@
       "source_relative_path": "docs/.reference/ReactorSockets.Result.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.Result.Failure.html"
+          "relative_path": "ReactorSockets.Result.Error.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.Result.Failure",
+      "Title": "ReactorSockets.Result.Error",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.Result.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.Result.IsSuccess.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.Result.IsSuccess",
       "Summary": null
     },
     {
@@ -2307,20 +2307,6 @@
       "source_relative_path": "docs/.reference/ReactorSockets.SendResult.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.SendResult.IsSuccess.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.SendResult.IsSuccess",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.SendResult.yml",
-      "output": {
-        ".html": {
           "relative_path": "ReactorSockets.SendResult.html"
         }
       },
@@ -2329,20 +2315,6 @@
       "IsMRef": true,
       "Title": "ReactorSockets.SendResult",
       "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.SendResult.yml\" sourcestartlinenumber=\"1\">The outcome of one <xref href=\"ReactorSockets.RawReactor.Send(ReactorSockets.LinkId%2cSystem.ReadOnlySpan%7bSystem.Byte%7d)\" data-throw-if-not-resolved=\"false\"></xref> call. Unlike <xref href=\"ReactorSockets.Result\" data-throw-if-not-resolved=\"false\"></xref>, a stream send\nhas a quantity worth reporting even on success: the Reactor holds no outbound bytes (ADR 0008), so\n<code>Send</code> takes what the socket will take right now and hands back the count — the caller keeps\nwhatever was not taken, and <xref href=\"ReactorSockets.SendResult.BytesSent\" data-throw-if-not-resolved=\"false\"></xref> is how it learns how much that is.</p>\n"
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.SendResult.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.SendResult.Error.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.SendResult.Error",
-      "Summary": null
     },
     {
       "type": "ManagedReference",
@@ -2377,6 +2349,20 @@
       "source_relative_path": "docs/.reference/ReactorSockets.SendResult.yml",
       "output": {
         ".html": {
+          "relative_path": "ReactorSockets.SendResult.Error.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.SendResult.Error",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.SendResult.yml",
+      "output": {
+        ".html": {
           "relative_path": "ReactorSockets.SendResult.BytesSent.html"
         }
       },
@@ -2388,16 +2374,16 @@
     },
     {
       "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.SessionEvent.yml",
+      "source_relative_path": "docs/.reference/ReactorSockets.SendResult.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.SessionEvent.Kind.html"
+          "relative_path": "ReactorSockets.SendResult.IsSuccess.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.SessionEvent.Kind",
+      "Title": "ReactorSockets.SendResult.IsSuccess",
       "Summary": null
     },
     {
@@ -2447,6 +2433,20 @@
       "source_relative_path": "docs/.reference/ReactorSockets.SessionEvent.yml",
       "output": {
         ".html": {
+          "relative_path": "ReactorSockets.SessionEvent.Kind.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.SessionEvent.Kind",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.SessionEvent.yml",
+      "output": {
+        ".html": {
           "relative_path": "ReactorSockets.SessionEvent.html"
         }
       },
@@ -2455,20 +2455,6 @@
       "IsMRef": true,
       "Title": "ReactorSockets.SessionEvent",
       "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.SessionEvent.yml\" sourcestartlinenumber=\"1\">One event drained from a Session Reactor. A <code>ref struct</code> because\n<xref href=\"ReactorSockets.SessionEvent.Payload\" data-throw-if-not-resolved=\"false\"></xref> aliases the frame arena directly, and must never outlive the Frame it was\ndrained in (ADR 0008). <xref href=\"ReactorSockets.SessionEvent.Kind\" data-throw-if-not-resolved=\"false\"></xref> determines exactly which other fields are populated.</p>\n"
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.SessionEventEnumerator.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.SessionEventEnumerator.Current.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.SessionEventEnumerator.Current",
-      "Summary": null
     },
     {
       "type": "ManagedReference",
@@ -2496,6 +2482,20 @@
       "Uid": null,
       "IsMRef": true,
       "Title": "ReactorSockets.SessionEventEnumerator.MoveNext",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.SessionEventEnumerator.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.SessionEventEnumerator.Current.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.SessionEventEnumerator.Current",
       "Summary": null
     },
     {
@@ -2531,6 +2531,20 @@
       "source_relative_path": "docs/.reference/ReactorSockets.Source.yml",
       "output": {
         ".html": {
+          "relative_path": "ReactorSockets.Source.FromIPEndPoint.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.Source.FromIPEndPoint",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.Source.yml",
+      "output": {
+        ".html": {
           "relative_path": "ReactorSockets.Source.-ctor.html"
         }
       },
@@ -2538,6 +2552,20 @@
       "Uid": null,
       "IsMRef": true,
       "Title": "ReactorSockets.Source.Source",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.Source.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.Source.ScopeId.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.Source.ScopeId",
       "Summary": null
     },
     {
@@ -2573,42 +2601,14 @@
       "source_relative_path": "docs/.reference/ReactorSockets.Source.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.Source.ScopeId.html"
+          "relative_path": "ReactorSockets.Source.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.Source.ScopeId",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.Source.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.Source.Port.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.Source.Port",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.Source.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.Source.FromIPEndPoint.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.Source.FromIPEndPoint",
-      "Summary": null
+      "Title": "ReactorSockets.Source",
+      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.Source.yml\" sourcestartlinenumber=\"1\">Who a datagram claims to be from — an unauthenticated hint about origin, never an identity\n(ADR 0014). Carried on the record path as a value type: <code>{ family, 16 address bytes, scope id,\nport }</code>, roughly 56 bytes, so a Diagnostic or an Event never allocates to name a Source.</p>\n"
     },
     {
       "type": "ManagedReference",
@@ -2629,14 +2629,14 @@
       "source_relative_path": "docs/.reference/ReactorSockets.Source.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.Source.html"
+          "relative_path": "ReactorSockets.Source.Port.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.Source",
-      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.Source.yml\" sourcestartlinenumber=\"1\">Who a datagram claims to be from — an unauthenticated hint about origin, never an identity\n(ADR 0014). Carried on the record path as a value type: <code>{ family, 16 address bytes, scope id,\nport }</code>, roughly 56 bytes, so a Diagnostic or an Event never allocates to name a Source.</p>\n"
+      "Title": "ReactorSockets.Source.Port",
+      "Summary": null
     },
     {
       "type": "ManagedReference",
@@ -2657,55 +2657,13 @@
       "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.Reactor.html"
+          "relative_path": "ReactorSockets.StreamSessionOptions.MaxPeersPerAddress.html"
         }
       },
       "version": "",
       "Uid": null,
       "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.Reactor",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.ResolvedMissedHeartbeats.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.ResolvedMissedHeartbeats",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.ReceiveBudgetBytes.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.ReceiveBudgetBytes",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.MaxMessageSize.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.MaxMessageSize",
+      "Title": "ReactorSockets.StreamSessionOptions.MaxPeersPerAddress",
       "Summary": null
     },
     {
@@ -2727,34 +2685,6 @@
       "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
       "output": {
         ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.MaxPeersPerAddress.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.MaxPeersPerAddress",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.Entropy.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.Entropy",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
           "relative_path": "ReactorSockets.StreamSessionOptions.SendIdleInterval.html"
         }
       },
@@ -2762,160 +2692,6 @@
       "Uid": null,
       "IsMRef": true,
       "Title": "ReactorSockets.StreamSessionOptions.SendIdleInterval",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions",
-      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.StreamSessionOptions.yml\" sourcestartlinenumber=\"1\">The construction surface of a <xref href=\"ReactorSockets.StreamSessionReactor\" data-throw-if-not-resolved=\"false\"></xref> (ADR 0011): the shared L0 budget\ncomposed in as <xref href=\"ReactorSockets.StreamSessionOptions.Reactor\" data-throw-if-not-resolved=\"false\"></xref>, plus the knobs this profile alone has. Composed rather than\ninherited, so that nothing protocol-specific here can ever leak into <xref href=\"ReactorSockets.ReactorOptions\" data-throw-if-not-resolved=\"false\"></xref>\nand turn it into the base class ADR 0011 refused.</p>\n"
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.BoundaryRingBudgetBytes.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.BoundaryRingBudgetBytes",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.SendBudgetBytes.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.SendBudgetBytes",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.ReceiveBufferSize.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.ReceiveBufferSize",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.SendBufferSize.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.SendBufferSize",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.MissedHeartbeats.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.MissedHeartbeats",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.ReceiveBufferFloor.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.ReceiveBufferFloor",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.ResolvedReceiveBufferSize.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.ResolvedReceiveBufferSize",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.ResolvedMaxPeersPerAddress.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.ResolvedMaxPeersPerAddress",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.PeerLimitIPv6PrefixLength.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.PeerLimitIPv6PrefixLength",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionOptions.ResolvedPeerLimitIPv6PrefixLength.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionOptions.ResolvedPeerLimitIPv6PrefixLength",
       "Summary": null
     },
     {
@@ -2937,6 +2713,34 @@
       "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
       "output": {
         ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.Entropy.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.Entropy",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.ReceiveBufferSize.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.ReceiveBufferSize",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
           "relative_path": "ReactorSockets.StreamSessionOptions.Linger.html"
         }
       },
@@ -2944,6 +2748,272 @@
       "Uid": null,
       "IsMRef": true,
       "Title": "ReactorSockets.StreamSessionOptions.Linger",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.PeerLimitIPv6PrefixLength.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.PeerLimitIPv6PrefixLength",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.MaxMessageSize.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.MaxMessageSize",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.MissedHeartbeats.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.MissedHeartbeats",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.Reactor.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.Reactor",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.SendBudgetBytes.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.SendBudgetBytes",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.ReceiveBudgetBytes.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.ReceiveBudgetBytes",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.ResolvedMissedHeartbeats.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.ResolvedMissedHeartbeats",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.SendBufferSize.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.SendBufferSize",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.ResolvedMaxPeersPerAddress.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.ResolvedMaxPeersPerAddress",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.ResolvedReceiveBufferSize.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.ResolvedReceiveBufferSize",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.ReceiveBufferFloor.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.ReceiveBufferFloor",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.ResolvedPeerLimitIPv6PrefixLength.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.ResolvedPeerLimitIPv6PrefixLength",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.BoundaryRingBudgetBytes.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions.BoundaryRingBudgetBytes",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionOptions.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionOptions.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionOptions",
+      "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.StreamSessionOptions.yml\" sourcestartlinenumber=\"1\">The construction surface of a <xref href=\"ReactorSockets.StreamSessionReactor\" data-throw-if-not-resolved=\"false\"></xref> (ADR 0011): the shared L0 budget\ncomposed in as <xref href=\"ReactorSockets.StreamSessionOptions.Reactor\" data-throw-if-not-resolved=\"false\"></xref>, plus the knobs this profile alone has. Composed rather than\ninherited, so that nothing protocol-specific here can ever leak into <xref href=\"ReactorSockets.ReactorOptions\" data-throw-if-not-resolved=\"false\"></xref>\nand turn it into the base class ADR 0011 refused.</p>\n"
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionReactor.-ctor.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionReactor.StreamSessionReactor",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionReactor.BoundEndpoints.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionReactor.BoundEndpoints",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionReactor.Counters.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionReactor.Counters",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionReactor.Pump.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionReactor.Pump",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionReactor.Connect.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionReactor.Connect",
       "Summary": null
     },
     {
@@ -2958,6 +3028,34 @@
       "Uid": null,
       "IsMRef": true,
       "Title": "ReactorSockets.StreamSessionReactor.Close",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionReactor.Drain.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionReactor.Drain",
+      "Summary": null
+    },
+    {
+      "type": "ManagedReference",
+      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
+      "output": {
+        ".html": {
+          "relative_path": "ReactorSockets.StreamSessionReactor.CountersOf.html"
+        }
+      },
+      "version": "",
+      "Uid": null,
+      "IsMRef": true,
+      "Title": "ReactorSockets.StreamSessionReactor.CountersOf",
       "Summary": null
     },
     {
@@ -3001,104 +3099,6 @@
       "IsMRef": true,
       "Title": "ReactorSockets.StreamSessionReactor",
       "Summary": "<p sourcefile=\"docs/.reference/ReactorSockets.StreamSessionReactor.yml\" sourcestartlinenumber=\"1\">The stream Session profile (ADR 0010): Sessions established over TCP, addressed as Peers,\ndelivering <code>u32</code> length-prefixed Messages rather than the byte runs the transport gives.\nConstruction validates <xref href=\"ReactorSockets.StreamSessionOptions\" data-throw-if-not-resolved=\"false\"></xref> and its allocation bill and binds the\ndeclared endpoint set; each Peer is carried through the handshake to an established Session. Each\nestablished Peer reassembles Messages in its own persistent receive buffer and delivers each whole\none as a <xref href=\"ReactorSockets.SessionEventKind.MessageReceived\" data-throw-if-not-resolved=\"false\"></xref> event copied into the shared frame arena.</p>\n"
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionReactor.Pump.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionReactor.Pump",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionReactor.Drain.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionReactor.Drain",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionReactor.Connect.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionReactor.Connect",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionReactor.-ctor.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionReactor.StreamSessionReactor",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionReactor.BoundEndpoints.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionReactor.BoundEndpoints",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionReactor.CountersOf.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionReactor.CountersOf",
-      "Summary": null
-    },
-    {
-      "type": "ManagedReference",
-      "source_relative_path": "docs/.reference/ReactorSockets.StreamSessionReactor.yml",
-      "output": {
-        ".html": {
-          "relative_path": "ReactorSockets.StreamSessionReactor.Counters.html"
-        }
-      },
-      "version": "",
-      "Uid": null,
-      "IsMRef": true,
-      "Title": "ReactorSockets.StreamSessionReactor.Counters",
-      "Summary": null
     },
     {
       "type": "ManagedReference",
