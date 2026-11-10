@@ -767,7 +767,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// How many accepted Peers hold a Slot on a connection accepted from <paramref name="remote"/>'s
-    /// address, or for IPv6 from its prefix (issues #452 and #453). Counted from the Slots rather than kept as a separate tally, so it cannot
+    /// address, or for IPv6 from its prefix (ADR 0014). Counted from the Slots rather than kept as a separate tally, so it cannot
     /// drift from the Peers it describes. It costs one walk of capacity entries, on a path the admission
     /// cap already bounds per Pump.
     /// </summary>

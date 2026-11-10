@@ -73,7 +73,9 @@ public readonly record struct Source(SourceFamily Family, UInt128 AddressBytes, 
 
     /// <summary>
     /// Whether <paramref name="other"/> names the same host address, whatever its port. Family and scope
-    /// count, for the reasons on this type's remarks.
+    /// count, for the reasons on this type's remarks. This is the exact-address check, used where an
+    /// IPv6 prefix must not apply, such as deciding whether a Resume needs a path challenge. The
+    /// per-address Peer limit uses <see cref="SharesPeerLimitWith"/> instead.
     /// </summary>
     internal bool HasSameAddressAs(Source other) =>
         Family == other.Family && AddressBytes == other.AddressBytes && ScopeId == other.ScopeId;

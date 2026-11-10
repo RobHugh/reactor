@@ -176,7 +176,7 @@ anyone who never read about it. `Capacity` or above is the explicit way to set n
 - **The key is the address, not the `Source`.** `Source` equality includes the port, and a host can
   answer a Cookie from as many ports as it can bind. Family and scope stay in the key, for the
   reasons under *A Source carries its scope*. A host that can bind a whole IPv6 prefix still gets the
-  limit once per address, and grouping by prefix is left open.
+  limit once per address, and grouping by prefix is left open. The #453 amendment below settles it.
 - **A Peer is charged to the address of its handshake until its Slot is released.** It does not move on
   a Resume, or one address could fill its limit, move those Peers to a second address and fill it again.
   The cost falls on other hosts behind the old address, such as a NAT, which have that much less room

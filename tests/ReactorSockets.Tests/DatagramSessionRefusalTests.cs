@@ -960,6 +960,22 @@ public class DatagramSessionRefusalTests
     }
 
     [IPv6PrefixFact]
+    public void OnHelloWithCookie_PrefixLengthOf63_GroupsAddressesThatDifferOnlyInTheSixtyFourthBit()
+    {
+        // Arrange — fd00:453::1 and fd00:453:0:1::1 differ first in bit 64, so a /63 holds both.
+        using DatagramSessionReactorHarness accepter = IPv6Accepter(peerLimitIPv6PrefixLength: 63);
+        using RawPeer first = new(IPv6PrefixFactAttribute.InPrefixFirst);
+        using RawPeer outside = new(IPv6PrefixFactAttribute.OutsidePrefix);
+        CompleteHandshake(accepter, first, 0x0000_0000_0000_045BUL);
+
+        // Act
+        byte[] reply = ReplyToHandshake(accepter, outside, 0x0000_0000_0000_045CUL);
+
+        // Assert
+        reply[4].Should().Be(RefusalType);
+    }
+
+    [IPv6PrefixFact]
     public void OnHelloWithCookie_PrefixLengthOf128_CountsEachAddressInAPrefixOnItsOwn()
     {
         // Arrange
