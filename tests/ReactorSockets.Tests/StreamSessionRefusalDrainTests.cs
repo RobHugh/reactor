@@ -24,7 +24,7 @@ public class StreamSessionRefusalDrainTests
     /// How long the flooding sender keeps writing at most. A Pump with no read limit lasts this long,
     /// so the assertion below takes half of it as the line between bounded and not.
     /// </summary>
-    private static readonly TimeSpan FloodDuration = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan _floodDuration = TimeSpan.FromSeconds(10);
 
     [Fact]
     public void Pump_ARefusedSenderStillWritingDuringThePump_ReturnsBeforeTheSenderStops()
@@ -41,7 +41,7 @@ public class StreamSessionRefusalDrainTests
 
         // Act — time every Pump until the refusal has happened.
         TimeSpan longestPump = TimeSpan.Zero;
-        PumpDeadline deadline = PumpDeadline.Start(FloodDuration * 2);
+        PumpDeadline deadline = PumpDeadline.Start(_floodDuration * 2);
         while (!accepter.Sink.Received.Any(r => r.Id == DiagnosticId.PeerRefused) && !deadline.Expired)
         {
             Stopwatch pump = Stopwatch.StartNew();
@@ -50,11 +50,11 @@ public class StreamSessionRefusalDrainTests
         }
 
         flooder.Dispose();
-        writer.Join(FloodDuration * 2);
+        writer.Join(_floodDuration * 2);
 
         // Assert
         accepter.Sink.Received.Should().Contain(r => r.Id == DiagnosticId.PeerRefused);
-        longestPump.Should().BeLessThan(FloodDuration / 2);
+        longestPump.Should().BeLessThan(_floodDuration / 2);
 
         held.ForEach(peer => peer.Counterparty.Dispose());
     }
@@ -121,7 +121,7 @@ public class StreamSessionRefusalDrainTests
     }
 
     /// <summary>
-    /// Writes as fast as the socket accepts until <see cref="FloodDuration"/> passes or the
+    /// Writes as fast as the socket accepts until <see cref="_floodDuration"/> passes or the
     /// connection fails, which is how it ends once the Reactor closes it.
     /// </summary>
     private static void Flood(Socket socket)
@@ -130,7 +130,7 @@ public class StreamSessionRefusalDrainTests
         Stopwatch elapsed = Stopwatch.StartNew();
         try
         {
-            while (elapsed.Elapsed < FloodDuration)
+            while (elapsed.Elapsed < _floodDuration)
             {
                 socket.Send(chunk);
             }
