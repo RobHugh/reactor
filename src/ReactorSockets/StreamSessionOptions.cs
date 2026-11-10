@@ -109,7 +109,7 @@ public sealed class StreamSessionOptions
     /// A Peer is charged to the address its connection was accepted from for as long as it holds its Slot,
     /// including while Interrupted or Closing and after a Resume moves it to another address. A Resume is
     /// never refused by this limit, because the Peer it names already owns its Slot (ADR 0011). A dialled
-    /// Peer is not charged: this Reactor chose to make it. A Hello over the limit is refused the same way as
+    /// Peer is not charged: this Reactor chose to make it. A connection over the limit is refused the same way as
     /// one at a full Reactor, and reported with <see cref="DiagnosticId.AddressPeerLimitReached"/>.
     /// </para>
     /// </remarks>

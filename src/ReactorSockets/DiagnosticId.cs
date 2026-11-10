@@ -204,8 +204,8 @@ public enum DiagnosticId
     OversizedMessage = 207,
 
     /// <summary>
-    /// A verified handshake was refused because its address already holds
-    /// <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> or
+    /// A verified handshake, or on the stream profile an accepted connection, was refused because its
+    /// address already holds <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> or
     /// <see cref="StreamSessionOptions.MaxPeersPerAddress"/> accepted Peers while other capacity Slots
     /// were free. Subject is the claimed Source. <c>Value0</c> is the limit; <c>Value1</c> is unused.
     /// One record per refusal, because it names the address and the admission cap already bounds how

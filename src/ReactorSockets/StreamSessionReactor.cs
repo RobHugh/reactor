@@ -703,11 +703,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Hello announcing an illegal interval is dropped there for the same reason, before it can take a
     /// Slot. The per-address limit runs after the capacity check, so a Resume never meets it and a full
     /// Reactor reports <see cref="DiagnosticId.PeerRefused"/> rather than
-    /// <see cref="DiagnosticId.AddressPeerLimitReached"/>. A Hello announcing a secret a reservation is holding is refused ahead of the capacity
-    /// check as well, since it is a claim on that reserved Session and not a request for a Slot
-    /// (<see cref="IsHelloClaimingAReservedSession"/>). Everything else — an ordinary Hello, a Refusal,
-    /// and how each is answered — reaches <see cref="OnHandshakeRecordFilled"/> through
-    /// <see cref="AdmitPendingAdmission"/> unchanged.
+    /// <see cref="DiagnosticId.AddressPeerLimitReached"/>. A Hello announcing a secret a reservation is
+    /// holding is refused ahead of the capacity check as well, since it is a claim on that reserved
+    /// Session and not a request for a Slot (<see cref="IsHelloClaimingAReservedSession"/>). Everything
+    /// else — an ordinary Hello, a Refusal, and how each is answered — reaches
+    /// <see cref="OnHandshakeRecordFilled"/> through <see cref="AdmitPendingAdmission"/> unchanged.
     /// </remarks>
     private void OnPendingAdmissionRecordFilled(PendingAdmission pending)
     {

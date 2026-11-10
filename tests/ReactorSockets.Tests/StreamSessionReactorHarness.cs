@@ -350,10 +350,9 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// refusal cannot be mistaken for a capacity refusal (issue #124). The caller owns disposing the
     /// counterparty, exactly as with <see cref="FillToCapacity"/>.
     /// </summary>
-    /// <param name="localAddress">The address the counterparty connects from, loopback when null.</param>
-    public HeldPeer EstablishOnePeer(IPAddress? localAddress = null)
+    public HeldPeer EstablishOnePeer()
     {
-        RawStreamPeer counterparty = new(Endpoint, localAddress);
+        RawStreamPeer counterparty = new(Endpoint);
         PeerId id = StreamSessionTestRecords.EstablishSession(this, counterparty.Send);
         byte[] hello = counterparty.Receive(StreamSessionTestRecords.HandshakeRecordSize);
         return new HeldPeer(id, counterparty, StreamSessionTestRecords.ReadResumeSecretFromHello(hello));
