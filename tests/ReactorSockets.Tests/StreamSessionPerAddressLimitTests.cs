@@ -227,6 +227,101 @@ public class StreamSessionPerAddressLimitTests
         inbound.Admitted.Should().BeTrue();
     }
 
+    // =========================================================================================
+    // IPv6 prefix grouping (issue #453)
+    // =========================================================================================
+
+    [IPv6PrefixFact]
+    public void AttemptFreshConnection_SecondAddressInAPrefixAtItsPeerLimit_IsRefusedForCapacity()
+    {
+        // Arrange — the default groups by /64, and both addresses are in fd00:453::/64.
+        using StreamSessionReactorHarness accepter = IPv6Accepter(peerLimitIPv6PrefixLength: null);
+        using StreamSessionReactorHarness.InboundAttemptResult first =
+            accepter.AttemptFreshConnection(localAddress: IPv6PrefixFactAttribute.InPrefixFirst);
+
+        // Act
+        using StreamSessionReactorHarness.InboundAttemptResult second =
+            accepter.AttemptFreshConnection(localAddress: IPv6PrefixFactAttribute.InPrefixSecond);
+
+        // Assert
+        first.Admitted.Should().BeTrue();
+        second.Admitted.Should().BeFalse();
+        second.RefusalReason.Should().Be(RefusalReasonCapacity);
+    }
+
+    [IPv6PrefixFact]
+    public void AttemptFreshConnection_AddressOutsideAPrefixAtItsPeerLimit_KeepsItsOwnLimit()
+    {
+        // Arrange — fd00:453:0:1::1 shares a /48 with fd00:453::1, but not a /64.
+        using StreamSessionReactorHarness accepter = IPv6Accepter(peerLimitIPv6PrefixLength: null);
+        using StreamSessionReactorHarness.InboundAttemptResult first =
+            accepter.AttemptFreshConnection(localAddress: IPv6PrefixFactAttribute.InPrefixFirst);
+
+        // Act
+        using StreamSessionReactorHarness.InboundAttemptResult outside =
+            accepter.AttemptFreshConnection(localAddress: IPv6PrefixFactAttribute.OutsidePrefix);
+
+        // Assert
+        first.Admitted.Should().BeTrue();
+        outside.Admitted.Should().BeTrue();
+    }
+
+    [IPv6PrefixFact]
+    public void AttemptFreshConnection_PrefixLengthOf128_CountsEachAddressInAPrefixOnItsOwn()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = IPv6Accepter(peerLimitIPv6PrefixLength: 128);
+        using StreamSessionReactorHarness.InboundAttemptResult first =
+            accepter.AttemptFreshConnection(localAddress: IPv6PrefixFactAttribute.InPrefixFirst);
+
+        // Act
+        using StreamSessionReactorHarness.InboundAttemptResult second =
+            accepter.AttemptFreshConnection(localAddress: IPv6PrefixFactAttribute.InPrefixSecond);
+
+        // Assert
+        first.Admitted.Should().BeTrue();
+        second.Admitted.Should().BeTrue();
+    }
+
+    [IPv6PrefixFact]
+    public void AttemptFreshConnection_SecondAddressInAPrefixAtItsPeerLimit_LogsThePrefixLengthItWasCountedBy()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = IPv6Accepter(peerLimitIPv6PrefixLength: 56);
+        using StreamSessionReactorHarness.InboundAttemptResult first =
+            accepter.AttemptFreshConnection(localAddress: IPv6PrefixFactAttribute.InPrefixFirst);
+
+        // Act
+        using StreamSessionReactorHarness.InboundAttemptResult second =
+            accepter.AttemptFreshConnection(localAddress: IPv6PrefixFactAttribute.InPrefixSecond);
+
+        // Assert
+        accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.AddressPeerLimitReached)
+            .Which.Value1.Should().Be(56);
+    }
+
+    [Fact]
+    public void AttemptFreshConnection_IPv4AddressAtItsPeerLimit_LogsThirtyTwoAsThePrefixLength()
+    {
+        // Arrange — IPv4 addresses are counted whole, whatever the IPv6 setting.
+        using StreamSessionReactorHarness accepter = new(capacity: 3, maxPeersPerAddress: 1, peerLimitIPv6PrefixLength: 56);
+        using StreamSessionReactorHarness.InboundAttemptResult first = accepter.AttemptFreshConnection();
+
+        // Act
+        using StreamSessionReactorHarness.InboundAttemptResult second = accepter.AttemptFreshConnection();
+
+        // Assert
+        accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.AddressPeerLimitReached)
+            .Which.Value1.Should().Be(32);
+    }
+
+    /// <summary>An accepter on <c>[::1]</c> whose per-address limit is 1, grouped by the given length.</summary>
+    private static StreamSessionReactorHarness IPv6Accepter(int? peerLimitIPv6PrefixLength) =>
+        new(capacity: 3,
+            maxPeersPerAddress: 1,
+            peerLimitIPv6PrefixLength: peerLimitIPv6PrefixLength,
+            endpoints: [new IPEndPoint(IPAddress.IPv6Loopback, 0)]);
+
     private static void DisposeAll(List<StreamSessionReactorHarness.HeldPeer> held)
     {
         foreach (StreamSessionReactorHarness.HeldPeer peer in held)

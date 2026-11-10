@@ -922,6 +922,116 @@ public class DatagramSessionRefusalTests
         scenario.Accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.AddressPeerLimitReached);
     }
 
+    // =========================================================================================
+    // IPv6 prefix grouping (issue #453)
+    // =========================================================================================
+
+    [IPv6PrefixFact]
+    public void OnHelloWithCookie_SecondAddressInAPrefixAtItsPeerLimit_IsRefused()
+    {
+        // Arrange — the default groups by /64, and both addresses are in fd00:453::/64.
+        using DatagramSessionReactorHarness accepter = IPv6Accepter(peerLimitIPv6PrefixLength: null);
+        using RawPeer first = new(IPv6PrefixFactAttribute.InPrefixFirst);
+        using RawPeer second = new(IPv6PrefixFactAttribute.InPrefixSecond);
+        CompleteHandshake(accepter, first, 0x0000_0000_0000_0451UL);
+
+        // Act
+        byte[] reply = ReplyToHandshake(accepter, second, 0x0000_0000_0000_0452UL);
+
+        // Assert
+        reply[4].Should().Be(RefusalType);
+        ParseRefusal(reply).Reason.Should().Be(RefusalReasonCapacity);
+    }
+
+    [IPv6PrefixFact]
+    public void OnHelloWithCookie_AddressOutsideAPrefixAtItsPeerLimit_KeepsItsOwnLimit()
+    {
+        // Arrange — fd00:453:0:1::1 shares a /48 with fd00:453::1, but not a /64.
+        using DatagramSessionReactorHarness accepter = IPv6Accepter(peerLimitIPv6PrefixLength: null);
+        using RawPeer first = new(IPv6PrefixFactAttribute.InPrefixFirst);
+        using RawPeer outside = new(IPv6PrefixFactAttribute.OutsidePrefix);
+        CompleteHandshake(accepter, first, 0x0000_0000_0000_0453UL);
+
+        // Act
+        byte[] reply = ReplyToHandshake(accepter, outside, 0x0000_0000_0000_0454UL);
+
+        // Assert
+        reply[4].Should().Be(AcceptType);
+    }
+
+    [IPv6PrefixFact]
+    public void OnHelloWithCookie_PrefixLengthOf63_GroupsAddressesThatDifferOnlyInTheSixtyFourthBit()
+    {
+        // Arrange — fd00:453::1 and fd00:453:0:1::1 differ first in bit 64, so a /63 holds both.
+        using DatagramSessionReactorHarness accepter = IPv6Accepter(peerLimitIPv6PrefixLength: 63);
+        using RawPeer first = new(IPv6PrefixFactAttribute.InPrefixFirst);
+        using RawPeer outside = new(IPv6PrefixFactAttribute.OutsidePrefix);
+        CompleteHandshake(accepter, first, 0x0000_0000_0000_045BUL);
+
+        // Act
+        byte[] reply = ReplyToHandshake(accepter, outside, 0x0000_0000_0000_045CUL);
+
+        // Assert
+        reply[4].Should().Be(RefusalType);
+    }
+
+    [IPv6PrefixFact]
+    public void OnHelloWithCookie_PrefixLengthOf128_CountsEachAddressInAPrefixOnItsOwn()
+    {
+        // Arrange
+        using DatagramSessionReactorHarness accepter = IPv6Accepter(peerLimitIPv6PrefixLength: 128);
+        using RawPeer first = new(IPv6PrefixFactAttribute.InPrefixFirst);
+        using RawPeer second = new(IPv6PrefixFactAttribute.InPrefixSecond);
+        CompleteHandshake(accepter, first, 0x0000_0000_0000_0455UL);
+
+        // Act
+        byte[] reply = ReplyToHandshake(accepter, second, 0x0000_0000_0000_0456UL);
+
+        // Assert
+        reply[4].Should().Be(AcceptType);
+    }
+
+    [IPv6PrefixFact]
+    public void OnHelloWithCookie_SecondAddressInAPrefixAtItsPeerLimit_LogsThePrefixLengthItWasCountedBy()
+    {
+        // Arrange
+        using DatagramSessionReactorHarness accepter = IPv6Accepter(peerLimitIPv6PrefixLength: 56);
+        using RawPeer first = new(IPv6PrefixFactAttribute.InPrefixFirst);
+        using RawPeer second = new(IPv6PrefixFactAttribute.InPrefixSecond);
+        CompleteHandshake(accepter, first, 0x0000_0000_0000_0457UL);
+
+        // Act
+        ReplyToHandshake(accepter, second, 0x0000_0000_0000_0458UL);
+
+        // Assert
+        DiagnosticRecord record = accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.AddressPeerLimitReached).Which;
+        record.Source.Should().Be(Source.FromIPEndPoint(second.LocalEndPoint));
+        record.Value1.Should().Be(56);
+    }
+
+    [Fact]
+    public void OnHelloWithCookie_IPv4AddressAtItsPeerLimit_LogsThirtyTwoAsThePrefixLength()
+    {
+        // Arrange — IPv4 addresses are counted whole, whatever the IPv6 setting.
+        using DatagramSessionReactorHarness accepter = new(capacity: 4, maxPeersPerAddress: 1, peerLimitIPv6PrefixLength: 56);
+        using RawPeer peer = new();
+        CompleteHandshake(accepter, peer, 0x0000_0000_0000_0459UL);
+
+        // Act
+        ReplyToHandshake(accepter, peer, 0x0000_0000_0000_045AUL);
+
+        // Assert
+        accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.AddressPeerLimitReached)
+            .Which.Value1.Should().Be(32);
+    }
+
+    /// <summary>An accepter on <c>[::1]</c> whose per-address limit is 1, grouped by the given length.</summary>
+    private static DatagramSessionReactorHarness IPv6Accepter(int? peerLimitIPv6PrefixLength) =>
+        new(capacity: 4,
+            maxPeersPerAddress: 1,
+            peerLimitIPv6PrefixLength: peerLimitIPv6PrefixLength,
+            endpoints: [new IPEndPoint(IPAddress.IPv6Loopback, 0)]);
+
     /// <summary>
     /// A plain BCL UDP socket bound to loopback, standing in for a counterparty this Reactor has never
     /// seen. It is bidirectional:
@@ -934,8 +1044,9 @@ public class DatagramSessionRefusalTests
 
         public RawPeer(IPAddress? address = null)
         {
-            _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            _socket.Bind(new IPEndPoint(address ?? IPAddress.Loopback, 0));
+            IPAddress bound = address ?? IPAddress.Loopback;
+            _socket = new Socket(bound.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
+            _socket.Bind(new IPEndPoint(bound, 0));
             _socket.ReceiveTimeout = 5000;
         }
 
@@ -946,7 +1057,8 @@ public class DatagramSessionRefusalTests
         public byte[] Receive(out IPEndPoint from)
         {
             byte[] buffer = new byte[512];
-            EndPoint remote = new IPEndPoint(IPAddress.Any, 0);
+            EndPoint remote = new IPEndPoint(
+                _socket.AddressFamily == AddressFamily.InterNetworkV6 ? IPAddress.IPv6Any : IPAddress.Any, 0);
             int read = _socket.ReceiveFrom(buffer, ref remote);
             from = (IPEndPoint)remote;
             return buffer[..read];

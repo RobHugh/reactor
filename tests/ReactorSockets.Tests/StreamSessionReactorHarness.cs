@@ -19,6 +19,7 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         int capacity = 4,
         int? maxPeersPerAddress = null,
         bool defaultMaxPeersPerAddress = false,
+        int? peerLimitIPv6PrefixLength = null,
         int? admissionCap = null,
         int maxMessageSize = 4096,
         int retentionBytes = 4100,
@@ -57,6 +58,7 @@ internal sealed class StreamSessionReactorHarness : IDisposable
             RetentionBytes = retentionBytes,
             // No limit unless asked: every counterparty in a test shares the loopback address.
             MaxPeersPerAddress = defaultMaxPeersPerAddress ? null : maxPeersPerAddress ?? capacity,
+            PeerLimitIPv6PrefixLength = peerLimitIPv6PrefixLength,
             ReceiveBufferSize = receiveBufferSize,
             SendBufferSize = sendBufferSize,
             MissedHeartbeats = missedHeartbeats,

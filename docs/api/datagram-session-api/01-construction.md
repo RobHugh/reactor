@@ -22,6 +22,7 @@ one would be guessing at your application.
 |---|---|---|
 | `Reactor.AdmissionCap` | `Capacity` | One Pump never does more handshake work than a full Reactor's worth. |
 | `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | The largest limit that still keeps one address from holding every Slot. |
+| `PeerLimitIPv6PrefixLength` | `64` | RFC 4291 §2.5.1: a unicast interface identifier is 64 bits, so a /64 is one link. From 1 to 128. |
 | `Reactor.ArenaSize` | `MaxMessageSize` | An arena too small for one Message could never deliver one. |
 | `Reactor.TimeProvider` | `TimeProvider.System` | Only monotonic reads are ever taken. |
 | `FragmentSize` | `1200` | QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000). |
@@ -86,9 +87,14 @@ Peers you expect behind one NAT or proxy, and well below `Capacity` if strangers
 If every Peer shares one address, for example behind one proxy, set it to `Capacity`, or the default
 leaves one Slot unused.
 
-The limit counts addresses, not ports, because one host can use many ports. It does not group IPv6
-addresses by prefix, so a host that can bind a whole prefix gets the limit once per address. Peers
-this Reactor dialled do not count.
+The limit counts addresses, not ports, because one host can use many ports. Peers this Reactor
+dialled do not count.
+
+IPv6 addresses are counted by prefix. `PeerLimitIPv6PrefixLength`, 64 by default, sets how many leading
+bits form the key, so every address in one /64 shares one limit. Every on-link host on an IPv6 LAN is
+in one /64, so set it to 128 when Peers legitimately arrive from one link. A shorter length groups more
+of a customer's delegated prefix, at the cost of grouping unrelated customers. IPv4 addresses are
+always counted whole.
 
 A Peer counts against the address of its handshake until its Slot is released, so leave room for two
 cases. Interrupted and Closing Peers still count, so a client that restarts with a fresh handshake can

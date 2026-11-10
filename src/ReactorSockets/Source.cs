@@ -73,8 +73,54 @@ public readonly record struct Source(SourceFamily Family, UInt128 AddressBytes, 
 
     /// <summary>
     /// Whether <paramref name="other"/> names the same host address, whatever its port. Family and scope
-    /// count, for the reasons on this type's remarks.
+    /// count, for the reasons on this type's remarks. This is the exact-address check, used where an
+    /// IPv6 prefix must not apply, such as deciding whether a Resume needs a path challenge. The
+    /// per-address Peer limit uses <see cref="SharesPeerLimitWith"/> instead.
     /// </summary>
     internal bool HasSameAddressAs(Source other) =>
         Family == other.Family && AddressBytes == other.AddressBytes && ScopeId == other.ScopeId;
+
+    /// <summary>
+    /// Whether <paramref name="other"/> falls under the same per-address Peer limit as this Source
+    /// (ADR 0014). An IPv4 address is compared whole. An IPv6 address is compared on its leading
+    /// <paramref name="ipv6PrefixLength"/> bits. Family and scope always count, and the port never does.
+    /// </summary>
+    internal bool SharesPeerLimitWith(Source other, int ipv6PrefixLength)
+    {
+        if (Family != other.Family || ScopeId != other.ScopeId)
+        {
+            return false;
+        }
+
+        UInt128 mask = UInt128.MaxValue << (128 - PeerLimitPrefixLength(ipv6PrefixLength));
+        return (AddressBytes & mask) == (other.AddressBytes & mask);
+    }
+
+    /// <summary>
+    /// How many leading bits of this Source's address form its per-address Peer limit key: 32 for IPv4,
+    /// which is never grouped, and <paramref name="ipv6PrefixLength"/> for IPv6.
+    /// </summary>
+    internal int PeerLimitPrefixLength(int ipv6PrefixLength) =>
+        Family == SourceFamily.IPv4 ? 32 : ipv6PrefixLength;
+
+    /// <summary>
+    /// The default IPv6 grouping length for the per-address Peer limit. RFC 4291 §2.5.1 fixes the
+    /// interface identifier of a unicast address at 64 bits, so a /64 is one link (ADR 0014).
+    /// </summary>
+    internal const int DefaultPeerLimitIPv6PrefixLength = 64;
+
+    /// <summary>
+    /// Throws when <paramref name="prefixLength"/> is set and outside 1 to 128, naming the knob that
+    /// carried it. Shared by both Session profiles' options, which take the same knob.
+    /// </summary>
+    internal static void ValidatePeerLimitIPv6PrefixLength(int? prefixLength, string paramName)
+    {
+        if (prefixLength is int length && length is < 1 or > 128)
+        {
+            throw new ArgumentOutOfRangeException(
+                paramName,
+                length,
+                $"an IPv6 prefix length of {length} names no prefix of a 128-bit address — it must be from 1 to 128, and 128 counts each address on its own.");
+        }
+    }
 }

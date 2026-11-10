@@ -20,6 +20,7 @@ public class StreamSessionOptionsTests
         int maxMessageSize = 4096,
         int retentionBytes = 4100,
         int? maxPeersPerAddress = null,
+        int? peerLimitIPv6PrefixLength = null,
         int? receiveBufferSize = null,
         int? sendBufferSize = null,
         int? missedHeartbeats = null,
@@ -40,6 +41,7 @@ public class StreamSessionOptionsTests
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
             MaxPeersPerAddress = maxPeersPerAddress,
+            PeerLimitIPv6PrefixLength = peerLimitIPv6PrefixLength,
             ReceiveBufferSize = receiveBufferSize,
             SendBufferSize = sendBufferSize,
             MissedHeartbeats = missedHeartbeats,
@@ -134,6 +136,63 @@ public class StreamSessionOptionsTests
 
         // Assert
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.MaxPeersPerAddress));
+    }
+
+    [Fact]
+    public void ResolvedPeerLimitIPv6PrefixLength_LeftUnset_IsSixtyFour()
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions();
+
+        // Act
+        int resolved = options.ResolvedPeerLimitIPv6PrefixLength;
+
+        // Assert
+        resolved.Should().Be(64);
+    }
+
+    [Fact]
+    public void ResolvedPeerLimitIPv6PrefixLength_Set_IsTheValueSet()
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(peerLimitIPv6PrefixLength: 128);
+
+        // Act
+        int resolved = options.ResolvedPeerLimitIPv6PrefixLength;
+
+        // Assert
+        resolved.Should().Be(128);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(129)]
+    public void Constructor_PeerLimitIPv6PrefixLengthOutsideOneTo128_ThrowsArgumentOutOfRangeException(int prefixLength)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(peerLimitIPv6PrefixLength: prefixLength);
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(StreamSessionOptions.PeerLimitIPv6PrefixLength));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(128)]
+    public void Constructor_PeerLimitIPv6PrefixLengthAtEitherBound_Succeeds(int prefixLength)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(peerLimitIPv6PrefixLength: prefixLength);
+
+        // Act
+        Action act = () => new StreamSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().NotThrow();
     }
 
     [Fact]

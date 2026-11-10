@@ -24,6 +24,7 @@ public class DatagramSessionOptionsTests
         int maxMessageSize = 4096,
         int retentionBytes = 4096,
         int? maxPeersPerAddress = null,
+        int? peerLimitIPv6PrefixLength = null,
         int? maxDatagramsPerPump = null,
         int? fragmentSize = null,
         int? receiveWindowFragments = null,
@@ -46,6 +47,7 @@ public class DatagramSessionOptionsTests
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
             MaxPeersPerAddress = maxPeersPerAddress,
+            PeerLimitIPv6PrefixLength = peerLimitIPv6PrefixLength,
             MaxDatagramsPerPump = maxDatagramsPerPump,
             FragmentSize = fragmentSize,
             ReceiveWindowFragments = receiveWindowFragments,
@@ -153,6 +155,63 @@ public class DatagramSessionOptionsTests
 
         // Assert
         act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(DatagramSessionOptions.MaxPeersPerAddress));
+    }
+
+    [Fact]
+    public void ResolvedPeerLimitIPv6PrefixLength_LeftUnset_IsSixtyFour()
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions();
+
+        // Act
+        int resolved = options.ResolvedPeerLimitIPv6PrefixLength;
+
+        // Assert
+        resolved.Should().Be(64);
+    }
+
+    [Fact]
+    public void ResolvedPeerLimitIPv6PrefixLength_Set_IsTheValueSet()
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(peerLimitIPv6PrefixLength: 128);
+
+        // Act
+        int resolved = options.ResolvedPeerLimitIPv6PrefixLength;
+
+        // Assert
+        resolved.Should().Be(128);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(129)]
+    public void Constructor_PeerLimitIPv6PrefixLengthOutsideOneTo128_ThrowsArgumentOutOfRangeException(int prefixLength)
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(peerLimitIPv6PrefixLength: prefixLength);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>().WithParameterName(nameof(DatagramSessionOptions.PeerLimitIPv6PrefixLength));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(128)]
+    public void Constructor_PeerLimitIPv6PrefixLengthAtEitherBound_Succeeds(int prefixLength)
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(peerLimitIPv6PrefixLength: prefixLength);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().NotThrow();
     }
 
     [Theory]

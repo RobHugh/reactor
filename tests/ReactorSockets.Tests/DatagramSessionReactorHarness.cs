@@ -32,6 +32,7 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
         int? admissionCap = null,
         int? maxPeersPerAddress = null,
         bool defaultMaxPeersPerAddress = false,
+        int? peerLimitIPv6PrefixLength = null,
         int? maxDatagramsPerPump = null,
         int maxMessageSize = 4096,
         int retentionBytes = 4096,
@@ -67,6 +68,7 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
             RetentionBytes = retentionBytes,
             // No limit unless asked: every party in a test shares the loopback address.
             MaxPeersPerAddress = defaultMaxPeersPerAddress ? null : maxPeersPerAddress ?? capacity,
+            PeerLimitIPv6PrefixLength = peerLimitIPv6PrefixLength,
             FragmentSize = fragmentSize,
             ReceiveWindowFragments = receiveWindowFragments,
             MissedHeartbeats = missedHeartbeats,
