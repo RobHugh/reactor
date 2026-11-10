@@ -1,0 +1,56 @@
+# <a id="ReactorSockets_DeliveryMode"></a> Enum DeliveryMode
+
+Namespace: [ReactorSockets](ReactorSockets.md)  
+Assembly: ReactorSockets.dll  
+
+Which of a datagram Session's four delivery modes carries a Message sent through
+[`DatagramSessionReactor.Send(PeerId, DeliveryMode, ReadOnlySpan<byte>)`](ReactorSockets.DatagramSessionReactor.Send.md#ReactorSockets_DatagramSessionReactor_Send_ReactorSockets_PeerId_ReactorSockets_DeliveryMode_System_ReadOnlySpan_System_Byte__) (ADR 0009). See
+<code>docs/delivery-modes.md</code> for the consumer-facing guide to choosing one and the full guarantees
+each mode makes: ordering, duplicate suppression, and what a late arrival does. Each mode is carried
+in its own Space.
+
+```csharp
+public enum DeliveryMode
+```
+
+## Fields
+
+`Unreliable = 0` 
+
+Delivered at most once per send, in whatever order it arrives, deduplicated within a bounded
+sliding window. Nothing under this mode is ever retransmitted.
+
+
+
+`UnreliableSequenced = 1` 
+
+Delivered only if it is strictly newer than the last Message this mode delivered; a Message
+superseded before it arrives is discarded rather than delivered late. Nothing under this mode
+is ever retransmitted.
+
+
+
+`ReliableUnordered = 2` 
+
+Always delivered, in whatever order it arrives. Retransmitted until acknowledged, retaining
+what was sent in this mode's own reliable Space.
+
+
+
+`ReliableOrdered = 3` 
+
+Always delivered, in the order it was sent — a Message held up in transit blocks every later
+Message in this mode's Space until it arrives. Retransmitted until acknowledged, retaining what
+was sent in this mode's own reliable Space.
+
+
+
+## Remarks
+
+Explicit values throughout, the same house style as [`DisconnectReason`](ReactorSockets.DisconnectReason.md) and
+[`SendOutcome`](ReactorSockets.SendOutcome.md): a member is added at the end with the next free number, never inserted,
+so a value a consumer has already persisted keeps its meaning across a library upgrade. The values
+match the wire's own mode bits (ADR 0009) so the two never need a lookup table to agree, though
+this type is deliberately not the wire encoding itself — that is
+<code>Session.PacketRecordMode</code>, internal to this library.
+

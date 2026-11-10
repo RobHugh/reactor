@@ -16,6 +16,23 @@
       "namespaceLayout": "nested",
       "memberLayout": "separatePages",
       "enumSortOrder": "declaringOrder"
+    },
+    {
+      "src": [
+        {
+          "src": "src/ReactorSockets",
+          "files": [ "ReactorSockets.csproj" ]
+        },
+        {
+          "src": "src/ReactorSockets.Logging",
+          "files": [ "ReactorSockets.Logging.csproj" ]
+        }
+      ],
+      "dest": "docs/api/markdown",
+      "outputFormat": "markdown",
+      "namespaceLayout": "nested",
+      "memberLayout": "separatePages",
+      "enumSortOrder": "declaringOrder"
     }
   ],
   "build": {

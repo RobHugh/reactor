@@ -1,0 +1,524 @@
+### YamlMime:TableOfContent
+- name: ReactorSockets
+  href: ReactorSockets.md
+  items:
+  - name: Logging
+    href: ReactorSockets.Logging.md
+    items:
+    - name: Classes
+    - name: LoggerSink
+      href: ReactorSockets.Logging.LoggerSink.md
+      items:
+      - name: Constructors
+      - name: LoggerSink
+        href: ReactorSockets.Logging.LoggerSink.-ctor.md
+      - name: Methods
+      - name: IsEnabled
+        href: ReactorSockets.Logging.LoggerSink.IsEnabled.md
+      - name: Log
+        href: ReactorSockets.Logging.LoggerSink.Log.md
+  - name: Classes
+  - name: DatagramSessionOptions
+    href: ReactorSockets.DatagramSessionOptions.md
+    items:
+    - name: Properties
+    - name: Endpoints
+      href: ReactorSockets.DatagramSessionOptions.Endpoints.md
+    - name: Entropy
+      href: ReactorSockets.DatagramSessionOptions.Entropy.md
+    - name: FragmentSize
+      href: ReactorSockets.DatagramSessionOptions.FragmentSize.md
+    - name: HeldRecordBudgetBytes
+      href: ReactorSockets.DatagramSessionOptions.HeldRecordBudgetBytes.md
+    - name: Linger
+      href: ReactorSockets.DatagramSessionOptions.Linger.md
+    - name: MaxDatagramsPerPump
+      href: ReactorSockets.DatagramSessionOptions.MaxDatagramsPerPump.md
+    - name: MaxMessageSize
+      href: ReactorSockets.DatagramSessionOptions.MaxMessageSize.md
+    - name: MaxPeersPerAddress
+      href: ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress.md
+    - name: MissedHeartbeats
+      href: ReactorSockets.DatagramSessionOptions.MissedHeartbeats.md
+    - name: PeerLimitIPv6PrefixLength
+      href: ReactorSockets.DatagramSessionOptions.PeerLimitIPv6PrefixLength.md
+    - name: Reactor
+      href: ReactorSockets.DatagramSessionOptions.Reactor.md
+    - name: ReceiveBudgetBytes
+      href: ReactorSockets.DatagramSessionOptions.ReceiveBudgetBytes.md
+    - name: ReceiveWindowFloor
+      href: ReactorSockets.DatagramSessionOptions.ReceiveWindowFloor.md
+    - name: ReceiveWindowFragments
+      href: ReactorSockets.DatagramSessionOptions.ReceiveWindowFragments.md
+    - name: ResolvedFragmentSize
+      href: ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md
+    - name: ResolvedMaxDatagramsPerPump
+      href: ReactorSockets.DatagramSessionOptions.ResolvedMaxDatagramsPerPump.md
+    - name: ResolvedMaxPeersPerAddress
+      href: ReactorSockets.DatagramSessionOptions.ResolvedMaxPeersPerAddress.md
+    - name: ResolvedMissedHeartbeats
+      href: ReactorSockets.DatagramSessionOptions.ResolvedMissedHeartbeats.md
+    - name: ResolvedPeerLimitIPv6PrefixLength
+      href: ReactorSockets.DatagramSessionOptions.ResolvedPeerLimitIPv6PrefixLength.md
+    - name: ResolvedReceiveWindowFragments
+      href: ReactorSockets.DatagramSessionOptions.ResolvedReceiveWindowFragments.md
+    - name: RetentionBytes
+      href: ReactorSockets.DatagramSessionOptions.RetentionBytes.md
+    - name: RetentionSlots
+      href: ReactorSockets.DatagramSessionOptions.RetentionSlots.md
+    - name: SendBudgetBytes
+      href: ReactorSockets.DatagramSessionOptions.SendBudgetBytes.md
+    - name: SendIdleInterval
+      href: ReactorSockets.DatagramSessionOptions.SendIdleInterval.md
+  - name: DatagramSessionReactor
+    href: ReactorSockets.DatagramSessionReactor.md
+    items:
+    - name: Constructors
+    - name: DatagramSessionReactor
+      href: ReactorSockets.DatagramSessionReactor.-ctor.md
+    - name: Properties
+    - name: BoundEndpoints
+      href: ReactorSockets.DatagramSessionReactor.BoundEndpoints.md
+    - name: Counters
+      href: ReactorSockets.DatagramSessionReactor.Counters.md
+    - name: Methods
+    - name: Close
+      href: ReactorSockets.DatagramSessionReactor.Close.md
+    - name: Connect
+      href: ReactorSockets.DatagramSessionReactor.Connect.md
+    - name: CountersOf
+      href: ReactorSockets.DatagramSessionReactor.CountersOf.md
+    - name: Dispose
+      href: ReactorSockets.DatagramSessionReactor.Dispose.md
+    - name: Drain
+      href: ReactorSockets.DatagramSessionReactor.Drain.md
+    - name: Pump
+      href: ReactorSockets.DatagramSessionReactor.Pump.md
+    - name: Send
+      href: ReactorSockets.DatagramSessionReactor.Send.md
+  - name: DiagnosticFormatter
+    href: ReactorSockets.DiagnosticFormatter.md
+    items:
+    - name: Methods
+    - name: Format
+      href: ReactorSockets.DiagnosticFormatter.Format.md
+  - name: RawReactor
+    href: ReactorSockets.RawReactor.md
+    items:
+    - name: Constructors
+    - name: RawReactor
+      href: ReactorSockets.RawReactor.-ctor.md
+    - name: Fields
+    - name: MaxUdpDatagramSize
+      href: ReactorSockets.RawReactor.MaxUdpDatagramSize.md
+    - name: Properties
+    - name: Counters
+      href: ReactorSockets.RawReactor.Counters.md
+    - name: Methods
+    - name: Bind
+      href: ReactorSockets.RawReactor.Bind.md
+    - name: Close
+      href: ReactorSockets.RawReactor.Close.md
+    - name: Connect
+      href: ReactorSockets.RawReactor.Connect.md
+    - name: CountersOf
+      href: ReactorSockets.RawReactor.CountersOf.md
+    - name: Dispose
+      href: ReactorSockets.RawReactor.Dispose.md
+    - name: Drain
+      href: ReactorSockets.RawReactor.Drain.md
+    - name: Listen
+      href: ReactorSockets.RawReactor.Listen.md
+    - name: LocalOf
+      href: ReactorSockets.RawReactor.LocalOf.md
+    - name: Pump
+      href: ReactorSockets.RawReactor.Pump.md
+    - name: RemoteOf
+      href: ReactorSockets.RawReactor.RemoteOf.md
+    - name: Send
+      href: ReactorSockets.RawReactor.Send.md
+    - name: SendTo
+      href: ReactorSockets.RawReactor.SendTo.md
+    - name: Shutdown
+      href: ReactorSockets.RawReactor.Shutdown.md
+  - name: ReactorOptions
+    href: ReactorSockets.ReactorOptions.md
+    items:
+    - name: Properties
+    - name: AdmissionCap
+      href: ReactorSockets.ReactorOptions.AdmissionCap.md
+    - name: ArenaSize
+      href: ReactorSockets.ReactorOptions.ArenaSize.md
+    - name: Capacity
+      href: ReactorSockets.ReactorOptions.Capacity.md
+    - name: MinimumLevel
+      href: ReactorSockets.ReactorOptions.MinimumLevel.md
+    - name: ResolvedAdmissionCap
+      href: ReactorSockets.ReactorOptions.ResolvedAdmissionCap.md
+    - name: Sink
+      href: ReactorSockets.ReactorOptions.Sink.md
+    - name: TimeProvider
+      href: ReactorSockets.ReactorOptions.TimeProvider.md
+  - name: StreamSessionOptions
+    href: ReactorSockets.StreamSessionOptions.md
+    items:
+    - name: Properties
+    - name: BoundaryRingBudgetBytes
+      href: ReactorSockets.StreamSessionOptions.BoundaryRingBudgetBytes.md
+    - name: Endpoints
+      href: ReactorSockets.StreamSessionOptions.Endpoints.md
+    - name: Entropy
+      href: ReactorSockets.StreamSessionOptions.Entropy.md
+    - name: Linger
+      href: ReactorSockets.StreamSessionOptions.Linger.md
+    - name: MaxMessageSize
+      href: ReactorSockets.StreamSessionOptions.MaxMessageSize.md
+    - name: MaxPeersPerAddress
+      href: ReactorSockets.StreamSessionOptions.MaxPeersPerAddress.md
+    - name: MissedHeartbeats
+      href: ReactorSockets.StreamSessionOptions.MissedHeartbeats.md
+    - name: PeerLimitIPv6PrefixLength
+      href: ReactorSockets.StreamSessionOptions.PeerLimitIPv6PrefixLength.md
+    - name: Reactor
+      href: ReactorSockets.StreamSessionOptions.Reactor.md
+    - name: ReceiveBudgetBytes
+      href: ReactorSockets.StreamSessionOptions.ReceiveBudgetBytes.md
+    - name: ReceiveBufferFloor
+      href: ReactorSockets.StreamSessionOptions.ReceiveBufferFloor.md
+    - name: ReceiveBufferSize
+      href: ReactorSockets.StreamSessionOptions.ReceiveBufferSize.md
+    - name: ResolvedMaxPeersPerAddress
+      href: ReactorSockets.StreamSessionOptions.ResolvedMaxPeersPerAddress.md
+    - name: ResolvedMissedHeartbeats
+      href: ReactorSockets.StreamSessionOptions.ResolvedMissedHeartbeats.md
+    - name: ResolvedPeerLimitIPv6PrefixLength
+      href: ReactorSockets.StreamSessionOptions.ResolvedPeerLimitIPv6PrefixLength.md
+    - name: ResolvedReceiveBufferSize
+      href: ReactorSockets.StreamSessionOptions.ResolvedReceiveBufferSize.md
+    - name: RetentionBytes
+      href: ReactorSockets.StreamSessionOptions.RetentionBytes.md
+    - name: SendBudgetBytes
+      href: ReactorSockets.StreamSessionOptions.SendBudgetBytes.md
+    - name: SendBufferSize
+      href: ReactorSockets.StreamSessionOptions.SendBufferSize.md
+    - name: SendIdleInterval
+      href: ReactorSockets.StreamSessionOptions.SendIdleInterval.md
+  - name: StreamSessionReactor
+    href: ReactorSockets.StreamSessionReactor.md
+    items:
+    - name: Constructors
+    - name: StreamSessionReactor
+      href: ReactorSockets.StreamSessionReactor.-ctor.md
+    - name: Properties
+    - name: BoundEndpoints
+      href: ReactorSockets.StreamSessionReactor.BoundEndpoints.md
+    - name: Counters
+      href: ReactorSockets.StreamSessionReactor.Counters.md
+    - name: Methods
+    - name: Close
+      href: ReactorSockets.StreamSessionReactor.Close.md
+    - name: Connect
+      href: ReactorSockets.StreamSessionReactor.Connect.md
+    - name: CountersOf
+      href: ReactorSockets.StreamSessionReactor.CountersOf.md
+    - name: Dispose
+      href: ReactorSockets.StreamSessionReactor.Dispose.md
+    - name: Drain
+      href: ReactorSockets.StreamSessionReactor.Drain.md
+    - name: Pump
+      href: ReactorSockets.StreamSessionReactor.Pump.md
+    - name: Send
+      href: ReactorSockets.StreamSessionReactor.Send.md
+  - name: Structs
+  - name: DiagnosticRecord
+    href: ReactorSockets.DiagnosticRecord.md
+    items:
+    - name: Properties
+    - name: Id
+      href: ReactorSockets.DiagnosticRecord.Id.md
+    - name: Level
+      href: ReactorSockets.DiagnosticRecord.Level.md
+    - name: Link
+      href: ReactorSockets.DiagnosticRecord.Link.md
+    - name: Peer
+      href: ReactorSockets.DiagnosticRecord.Peer.md
+    - name: Source
+      href: ReactorSockets.DiagnosticRecord.Source.md
+    - name: SubjectKind
+      href: ReactorSockets.DiagnosticRecord.SubjectKind.md
+    - name: Value0
+      href: ReactorSockets.DiagnosticRecord.Value0.md
+    - name: Value1
+      href: ReactorSockets.DiagnosticRecord.Value1.md
+    - name: Methods
+    - name: ForAddressPeerLimitReached
+      href: ReactorSockets.DiagnosticRecord.ForAddressPeerLimitReached.md
+    - name: ForAdmissionCapReached
+      href: ReactorSockets.DiagnosticRecord.ForAdmissionCapReached.md
+    - name: ForArenaExhausted
+      href: ReactorSockets.DiagnosticRecord.ForArenaExhausted.md
+    - name: ForCapacityExhausted
+      href: ReactorSockets.DiagnosticRecord.ForCapacityExhausted.md
+    - name: ForCookieRejected
+      href: ReactorSockets.DiagnosticRecord.ForCookieRejected.md
+    - name: ForDataAfterGoodbye
+      href: ReactorSockets.DiagnosticRecord.ForDataAfterGoodbye.md
+    - name: ForDatagramMalformed
+      href: ReactorSockets.DiagnosticRecord.ForDatagramMalformed.md
+    - name: ForDatagramReadLimitReached
+      href: ReactorSockets.DiagnosticRecord.ForDatagramReadLimitReached.md
+    - name: ForDatagramTruncated
+      href: ReactorSockets.DiagnosticRecord.ForDatagramTruncated.md
+    - name: ForDeliveryCounterRefused
+      href: ReactorSockets.DiagnosticRecord.ForDeliveryCounterRefused.md
+    - name: ForDestinationUnreachable
+      href: ReactorSockets.DiagnosticRecord.ForDestinationUnreachable.md
+    - name: ForFragmentSetAbandoned
+      href: ReactorSockets.DiagnosticRecord.ForFragmentSetAbandoned.md
+    - name: ForLingerNegotiated
+      href: ReactorSockets.DiagnosticRecord.ForLingerNegotiated.md
+    - name: ForLinkFailed
+      href: ReactorSockets.DiagnosticRecord.ForLinkFailed.md
+    - name: ForMalformedFraming
+      href: ReactorSockets.DiagnosticRecord.ForMalformedFraming.md
+    - name: ForOversizedFragmentSet
+      href: ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet.md
+    - name: ForOversizedMessage
+      href: ReactorSockets.DiagnosticRecord.ForOversizedMessage.md
+    - name: ForPeerRefusedCapacity
+      href: ReactorSockets.DiagnosticRecord.ForPeerRefusedCapacity.md
+    - name: ForPeerRefusedVersion
+      href: ReactorSockets.DiagnosticRecord.ForPeerRefusedVersion.md
+    - name: ForRedialAttempted
+      href: ReactorSockets.DiagnosticRecord.ForRedialAttempted.md
+    - name: ForRedialFailed
+      href: ReactorSockets.DiagnosticRecord.ForRedialFailed.md
+    - name: ForResumeMatched
+      href: ReactorSockets.DiagnosticRecord.ForResumeMatched.md
+    - name: ForResumeUnmatched
+      href: ReactorSockets.DiagnosticRecord.ForResumeUnmatched.md
+    - name: ForRetransmissionTimerBackedOff
+      href: ReactorSockets.DiagnosticRecord.ForRetransmissionTimerBackedOff.md
+    - name: ForUnreliableFragment
+      href: ReactorSockets.DiagnosticRecord.ForUnreliableFragment.md
+    - name: ForVersionRefused
+      href: ReactorSockets.DiagnosticRecord.ForVersionRefused.md
+  - name: LinkCounters
+    href: ReactorSockets.LinkCounters.md
+    items:
+    - name: Constructors
+    - name: LinkCounters
+      href: ReactorSockets.LinkCounters.-ctor.md
+    - name: Properties
+    - name: BytesReceived
+      href: ReactorSockets.LinkCounters.BytesReceived.md
+    - name: BytesSent
+      href: ReactorSockets.LinkCounters.BytesSent.md
+  - name: LinkId
+    href: ReactorSockets.LinkId.md
+    items:
+    - name: Constructors
+    - name: LinkId
+      href: ReactorSockets.LinkId.-ctor.md
+    - name: Properties
+    - name: Generation
+      href: ReactorSockets.LinkId.Generation.md
+    - name: Index
+      href: ReactorSockets.LinkId.Index.md
+    - name: Origin
+      href: ReactorSockets.LinkId.Origin.md
+  - name: PeerCounters
+    href: ReactorSockets.PeerCounters.md
+    items:
+    - name: Constructors
+    - name: PeerCounters
+      href: ReactorSockets.PeerCounters.-ctor.md
+    - name: Properties
+    - name: BytesReceived
+      href: ReactorSockets.PeerCounters.BytesReceived.md
+    - name: BytesSent
+      href: ReactorSockets.PeerCounters.BytesSent.md
+    - name: DuplicatePackets
+      href: ReactorSockets.PeerCounters.DuplicatePackets.md
+    - name: HorizonDeferrals
+      href: ReactorSockets.PeerCounters.HorizonDeferrals.md
+    - name: MessagesReceived
+      href: ReactorSockets.PeerCounters.MessagesReceived.md
+    - name: OutOfWindowPackets
+      href: ReactorSockets.PeerCounters.OutOfWindowPackets.md
+    - name: PacketsRetransmitted
+      href: ReactorSockets.PeerCounters.PacketsRetransmitted.md
+    - name: ReadShareExhaustions
+      href: ReactorSockets.PeerCounters.ReadShareExhaustions.md
+    - name: Resumes
+      href: ReactorSockets.PeerCounters.Resumes.md
+    - name: RetentionHighWaterBytes
+      href: ReactorSockets.PeerCounters.RetentionHighWaterBytes.md
+    - name: SocketWrites
+      href: ReactorSockets.PeerCounters.SocketWrites.md
+    - name: UnreliableLossPackets
+      href: ReactorSockets.PeerCounters.UnreliableLossPackets.md
+  - name: PeerId
+    href: ReactorSockets.PeerId.md
+    items:
+    - name: Constructors
+    - name: PeerId
+      href: ReactorSockets.PeerId.-ctor.md
+    - name: Properties
+    - name: Generation
+      href: ReactorSockets.PeerId.Generation.md
+    - name: Index
+      href: ReactorSockets.PeerId.Index.md
+    - name: Origin
+      href: ReactorSockets.PeerId.Origin.md
+  - name: RawEvent
+    href: ReactorSockets.RawEvent.md
+    items:
+    - name: Properties
+    - name: Kind
+      href: ReactorSockets.RawEvent.Kind.md
+    - name: Link
+      href: ReactorSockets.RawEvent.Link.md
+    - name: ListeningLink
+      href: ReactorSockets.RawEvent.ListeningLink.md
+    - name: Payload
+      href: ReactorSockets.RawEvent.Payload.md
+    - name: Reason
+      href: ReactorSockets.RawEvent.Reason.md
+    - name: Source
+      href: ReactorSockets.RawEvent.Source.md
+  - name: RawEventEnumerator
+    href: ReactorSockets.RawEventEnumerator.md
+    items:
+    - name: Properties
+    - name: Current
+      href: ReactorSockets.RawEventEnumerator.Current.md
+    - name: Methods
+    - name: GetEnumerator
+      href: ReactorSockets.RawEventEnumerator.GetEnumerator.md
+    - name: MoveNext
+      href: ReactorSockets.RawEventEnumerator.MoveNext.md
+  - name: ReactorCounters
+    href: ReactorSockets.ReactorCounters.md
+    items:
+    - name: Constructors
+    - name: ReactorCounters
+      href: ReactorSockets.ReactorCounters.-ctor.md
+    - name: Properties
+    - name: AdmissionDeferrals
+      href: ReactorSockets.ReactorCounters.AdmissionDeferrals.md
+    - name: AdmissionDiscards
+      href: ReactorSockets.ReactorCounters.AdmissionDiscards.md
+    - name: ArenaHighWaterBytes
+      href: ReactorSockets.ReactorCounters.ArenaHighWaterBytes.md
+    - name: DatagramsReceived
+      href: ReactorSockets.ReactorCounters.DatagramsReceived.md
+    - name: DatagramsSent
+      href: ReactorSockets.ReactorCounters.DatagramsSent.md
+    - name: MalformedSessionDatagrams
+      href: ReactorSockets.ReactorCounters.MalformedSessionDatagrams.md
+    - name: SinkFaulted
+      href: ReactorSockets.ReactorCounters.SinkFaulted.md
+    - name: UnknownSourceDatagrams
+      href: ReactorSockets.ReactorCounters.UnknownSourceDatagrams.md
+  - name: Result
+    href: ReactorSockets.Result.md
+    items:
+    - name: Properties
+    - name: Error
+      href: ReactorSockets.Result.Error.md
+    - name: IsSuccess
+      href: ReactorSockets.Result.IsSuccess.md
+    - name: Methods
+    - name: Failure
+      href: ReactorSockets.Result.Failure.md
+    - name: Success
+      href: ReactorSockets.Result.Success.md
+  - name: SendResult
+    href: ReactorSockets.SendResult.md
+    items:
+    - name: Properties
+    - name: BytesSent
+      href: ReactorSockets.SendResult.BytesSent.md
+    - name: Error
+      href: ReactorSockets.SendResult.Error.md
+    - name: IsSuccess
+      href: ReactorSockets.SendResult.IsSuccess.md
+    - name: Methods
+    - name: Failure
+      href: ReactorSockets.SendResult.Failure.md
+    - name: Success
+      href: ReactorSockets.SendResult.Success.md
+  - name: SessionEvent
+    href: ReactorSockets.SessionEvent.md
+    items:
+    - name: Properties
+    - name: Kind
+      href: ReactorSockets.SessionEvent.Kind.md
+    - name: Payload
+      href: ReactorSockets.SessionEvent.Payload.md
+    - name: Peer
+      href: ReactorSockets.SessionEvent.Peer.md
+    - name: Reason
+      href: ReactorSockets.SessionEvent.Reason.md
+  - name: SessionEventEnumerator
+    href: ReactorSockets.SessionEventEnumerator.md
+    items:
+    - name: Properties
+    - name: Current
+      href: ReactorSockets.SessionEventEnumerator.Current.md
+    - name: Methods
+    - name: GetEnumerator
+      href: ReactorSockets.SessionEventEnumerator.GetEnumerator.md
+    - name: MoveNext
+      href: ReactorSockets.SessionEventEnumerator.MoveNext.md
+  - name: Source
+    href: ReactorSockets.Source.md
+    items:
+    - name: Constructors
+    - name: Source
+      href: ReactorSockets.Source.-ctor.md
+    - name: Properties
+    - name: AddressBytes
+      href: ReactorSockets.Source.AddressBytes.md
+    - name: Family
+      href: ReactorSockets.Source.Family.md
+    - name: Port
+      href: ReactorSockets.Source.Port.md
+    - name: ScopeId
+      href: ReactorSockets.Source.ScopeId.md
+    - name: Methods
+    - name: FromIPEndPoint
+      href: ReactorSockets.Source.FromIPEndPoint.md
+    - name: ToIPEndPoint
+      href: ReactorSockets.Source.ToIPEndPoint.md
+  - name: Interfaces
+  - name: IReactorDiagnostics
+    href: ReactorSockets.IReactorDiagnostics.md
+    items:
+    - name: Methods
+    - name: IsEnabled
+      href: ReactorSockets.IReactorDiagnostics.IsEnabled.md
+    - name: Log
+      href: ReactorSockets.IReactorDiagnostics.Log.md
+  - name: Enums
+  - name: CloseReason
+    href: ReactorSockets.CloseReason.md
+  - name: DeliveryMode
+    href: ReactorSockets.DeliveryMode.md
+  - name: DiagnosticId
+    href: ReactorSockets.DiagnosticId.md
+  - name: DiagnosticLevel
+    href: ReactorSockets.DiagnosticLevel.md
+  - name: DiagnosticSubjectKind
+    href: ReactorSockets.DiagnosticSubjectKind.md
+  - name: DisconnectReason
+    href: ReactorSockets.DisconnectReason.md
+  - name: RawEventKind
+    href: ReactorSockets.RawEventKind.md
+  - name: SendOutcome
+    href: ReactorSockets.SendOutcome.md
+  - name: SessionEventKind
+    href: ReactorSockets.SessionEventKind.md
+  - name: SourceFamily
+    href: ReactorSockets.SourceFamily.md
