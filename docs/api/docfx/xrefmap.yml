@@ -1432,6 +1432,63 @@ references:
   commentId: Overload:ReactorSockets.LinkId.Origin
   fullName: ReactorSockets.LinkId.Origin
   nameWithType: LinkId.Origin
+- uid: ReactorSockets.Logging
+  name: ReactorSockets.Logging
+  href: ReactorSockets.Logging.html
+  commentId: N:ReactorSockets.Logging
+  fullName: ReactorSockets.Logging
+  nameWithType: ReactorSockets.Logging
+- uid: ReactorSockets.Logging.LoggerSink
+  name: LoggerSink
+  href: ReactorSockets.Logging.LoggerSink.html
+  commentId: T:ReactorSockets.Logging.LoggerSink
+  fullName: ReactorSockets.Logging.LoggerSink
+  nameWithType: LoggerSink
+- uid: ReactorSockets.Logging.LoggerSink.#ctor(Microsoft.Extensions.Logging.ILogger)
+  name: LoggerSink(ILogger)
+  href: ReactorSockets.Logging.LoggerSink.-ctor.html#ReactorSockets_Logging_LoggerSink__ctor_Microsoft_Extensions_Logging_ILogger_
+  commentId: M:ReactorSockets.Logging.LoggerSink.#ctor(Microsoft.Extensions.Logging.ILogger)
+  name.vb: New(ILogger)
+  fullName: ReactorSockets.Logging.LoggerSink.LoggerSink(Microsoft.Extensions.Logging.ILogger)
+  fullName.vb: ReactorSockets.Logging.LoggerSink.New(Microsoft.Extensions.Logging.ILogger)
+  nameWithType: LoggerSink.LoggerSink(ILogger)
+  nameWithType.vb: LoggerSink.New(ILogger)
+- uid: ReactorSockets.Logging.LoggerSink.#ctor*
+  name: LoggerSink
+  href: ReactorSockets.Logging.LoggerSink.-ctor.html
+  commentId: Overload:ReactorSockets.Logging.LoggerSink.#ctor
+  name.vb: New
+  fullName: ReactorSockets.Logging.LoggerSink.LoggerSink
+  fullName.vb: ReactorSockets.Logging.LoggerSink.New
+  nameWithType: LoggerSink.LoggerSink
+  nameWithType.vb: LoggerSink.New
+- uid: ReactorSockets.Logging.LoggerSink.IsEnabled(ReactorSockets.DiagnosticLevel)
+  name: IsEnabled(DiagnosticLevel)
+  href: ReactorSockets.Logging.LoggerSink.IsEnabled.html#ReactorSockets_Logging_LoggerSink_IsEnabled_ReactorSockets_DiagnosticLevel_
+  commentId: M:ReactorSockets.Logging.LoggerSink.IsEnabled(ReactorSockets.DiagnosticLevel)
+  fullName: ReactorSockets.Logging.LoggerSink.IsEnabled(ReactorSockets.DiagnosticLevel)
+  nameWithType: LoggerSink.IsEnabled(DiagnosticLevel)
+- uid: ReactorSockets.Logging.LoggerSink.IsEnabled*
+  name: IsEnabled
+  href: ReactorSockets.Logging.LoggerSink.IsEnabled.html
+  commentId: Overload:ReactorSockets.Logging.LoggerSink.IsEnabled
+  fullName: ReactorSockets.Logging.LoggerSink.IsEnabled
+  nameWithType: LoggerSink.IsEnabled
+- uid: ReactorSockets.Logging.LoggerSink.Log(ReactorSockets.DiagnosticRecord@)
+  name: Log(in DiagnosticRecord)
+  href: ReactorSockets.Logging.LoggerSink.Log.html#ReactorSockets_Logging_LoggerSink_Log_ReactorSockets_DiagnosticRecord__
+  commentId: M:ReactorSockets.Logging.LoggerSink.Log(ReactorSockets.DiagnosticRecord@)
+  name.vb: Log(DiagnosticRecord)
+  fullName: ReactorSockets.Logging.LoggerSink.Log(in ReactorSockets.DiagnosticRecord)
+  fullName.vb: ReactorSockets.Logging.LoggerSink.Log(ReactorSockets.DiagnosticRecord)
+  nameWithType: LoggerSink.Log(in DiagnosticRecord)
+  nameWithType.vb: LoggerSink.Log(DiagnosticRecord)
+- uid: ReactorSockets.Logging.LoggerSink.Log*
+  name: Log
+  href: ReactorSockets.Logging.LoggerSink.Log.html
+  commentId: Overload:ReactorSockets.Logging.LoggerSink.Log
+  fullName: ReactorSockets.Logging.LoggerSink.Log
+  nameWithType: LoggerSink.Log
 - uid: ReactorSockets.PeerCounters
   name: PeerCounters
   href: ReactorSockets.PeerCounters.html

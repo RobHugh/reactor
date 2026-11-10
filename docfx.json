@@ -6,6 +6,10 @@
         {
           "src": "src/ReactorSockets",
           "files": [ "ReactorSockets.csproj" ]
+        },
+        {
+          "src": "src/ReactorSockets.Logging",
+          "files": [ "ReactorSockets.Logging.csproj" ]
         }
       ],
       "dest": "docs/.reference",

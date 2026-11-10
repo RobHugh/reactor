@@ -16,6 +16,9 @@ one would be guessing at your application.
 | `SendIdleInterval` | How long a Session may stay silent before it heartbeats. |
 | `Linger` | How long a closing or interrupted Session stays alive. |
 
+`SendIdleInterval` and `Linger` must be above zero and at most 2^32 − 1 milliseconds, about 49.7
+days. That is the most a handshake can announce, so a longer value could never complete one.
+
 ## Defaulted knobs
 
 | Knob | Default | Where the default comes from |
@@ -30,6 +33,9 @@ one would be guessing at your application.
 | `Entropy` | `RandomNumberGenerator.Create()` | The platform CSPRNG. Never disposed by the Reactor. |
 | `SendBufferSize` | `null` | The OS default and its own autotuning. |
 | `Endpoints` | empty | An empty set is dial-only, a real configuration rather than a hole. |
+
+The resolved values are readable on the options object: `ResolvedReceiveBufferSize`,
+`ReceiveBufferFloor`, `ResolvedMissedHeartbeats` and `ResolvedMaxPeersPerAddress`.
 
 ## Binding
 

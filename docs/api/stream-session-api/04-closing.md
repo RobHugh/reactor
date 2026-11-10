@@ -42,7 +42,7 @@ making. You need not act on it.
 | `LocalClose` | You called `Close`. |
 | `PeerGoodbye` | The peer closed on purpose. A clean ending on both sides. |
 | `VersionMismatch` | The two ends do not speak the same protocol version. The match is exact — no negotiation, no compatibility range. |
-| `RemoteAtCapacity` | The far end had no Slot free and said so. Distinct from silence: retry later. |
+| `RemoteAtCapacity` | The far end had no Slot free for you and said so, because it is full or your address is at its `MaxPeersPerAddress`. Distinct from silence: retry later. |
 | `TransportFailed` | The transport died before the Session ever existed. Only ever a dial or a handshake, never an established Peer. |
 | `ProtocolViolation` | The peer broke framing rules, sent data after its own Goodbye, or claimed to have received Messages you never sent. |
 | `LingerExpired` | An interrupted Peer's Linger ran out before the transport came back. |
