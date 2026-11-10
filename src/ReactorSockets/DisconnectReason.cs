@@ -55,6 +55,12 @@ public enum DisconnectReason
     /// Messages are still worth holding for a Resume. This member now fires only for a Peer that never
     /// finished becoming one.
     /// </summary>
+    /// <remarks>
+    /// The datagram profile has no transport to fail, and produces this member for a dial that got no
+    /// answer: one still pending its own <see cref="DatagramSessionOptions.Linger"/> after
+    /// <see cref="DatagramSessionReactor.Connect"/>, its handshake resent throughout (ADR 0009, amendment
+    /// of 2026-11-10).
+    /// </remarks>
     TransportFailed = 3,
 
     /// <summary>

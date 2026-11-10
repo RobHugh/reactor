@@ -205,3 +205,52 @@ ADR 0021 adds `PathChallenge` (7) and `PathResponse` (8) to the pre-Session rost
 the IP address the Peer is already sent to still moves the send address at once. One from any other IP
 address moves it only after that address echoes a random nonce, because the secret proves who sent the
 Resume but not that its source receives.
+
+## Amendment 2026-11-10: a pending dial resends its handshake and times out
+
+Issue #456. A dial sent its Hello once and resent nothing, so a lost Hello, Cookie or Accept left the dial
+pending, holding its Slot, until the consumer closed it. A Hello discarded behind a flood of Hellos (ADR
+0012, amendment for issue #428) had the same result after the flood stopped.
+
+**What is resent.** A dial awaiting a Cookie resends its Hello. A dial awaiting an Accept resends its
+Hello-with-cookie, echoing the stored cookie. Every copy keeps the dial's client nonce. A cookie is valid for
+at least one epoch after it is minted, so a resend made one epoch or more after the Cookie arrived goes back
+to a fresh Hello instead. A cookie resent near the end of that epoch can still arrive expired. The accepter
+then answers with silence, and the next resend starts from a fresh Hello.
+
+**Schedule.** The stream profile's re-dial schedule (`RedialSchedule`): the first delay is the observed Pump
+interval, each later one doubles, the ceiling is this end's `Linger`, and each delay is drawn with full
+jitter so diallers do not retry in step against a flooded accepter. The schedule is built on the first Pump
+of a flight that has observed a positive Pump interval. Before a second Pump the interval reads `MaxValue`,
+which would make the first delay the whole `Linger`. A flight that is answered moves on, and the next flight
+starts its own schedule. A restart from a fresh Hello after an old cookie is a resend, not an answer, so it
+keeps the current schedule. A flight is resent only when strictly more than its delay has passed, so a frozen
+clock never resends and the tests that count exact datagrams on a frozen clock are unchanged.
+
+**Timeout.** A dial still pending one `Linger` after `Connect` closes. No knob is added: the `Linger` is
+already this end's declared bound on how long it waits for a silent remote, and it is the only `Linger` a dial
+knows before the Accept announces the remote's.
+
+**Close reason.** `TransportFailed`, not a new member. That member already covers a dial that could not
+connect, which is what a stream dial reports when the operating system's own connect retries time out. A new
+public member would be permanent for a condition an existing one already names.
+
+**Accepting end.** No change. A repeated Hello-with-cookie whose (source, nonce) names an admitted Peer is
+answered with that Peer's Accept, whether the Peer is Open, Interrupted or Closing, and a fresh Hello with the
+same nonce yields a cookie that reaches the same entry. Once the accepted Peer has closed, its entry is gone,
+and a later copy carrying a valid cookie is admitted as a new Peer. The dialler never reached the first Peer,
+so it establishes against the new one. If the Accepts are lost for longer than the accepter's receive-idle
+deadline, the accepted Peer goes Interrupted. It still answers, and the dialler's ordinary Resume brings it
+back.
+
+**Traffic.** The accepter's amplification bound holds per datagram: each Hello still gets one Cookie of the
+same size, and a resent Hello-with-cookie gets at most one Accept or Refusal. Each resend spends the
+accepter's admission cap like any other Hello. The computed delay doubles on every resend, so a flight makes about
+log2(`Linger` / Pump interval) resends before the delay reaches `Linger`, and an expected two per `Linger`
+after that.
+
+**Round-trip seed.** Karn's rule now applies to ADR 0018's seed. A dial that sent its Hello-with-cookie more
+than once is not seeded, because the Accept may answer any copy.
+
+**Wire compatibility.** No datagram changes shape. An accepter on the current version already answers
+repeated Hellos and repeated Hellos-with-cookie, so a resending dialler needs nothing new from it.

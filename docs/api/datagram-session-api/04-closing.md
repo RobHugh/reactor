@@ -69,9 +69,9 @@ and raises neither `PeerClosing` nor `PeerGoodbye`.
 | `ProtocolViolation` | The peer declared a Fragment set larger than your receive window could ever hold. |
 | `LingerExpired` | An interrupted Peer's Linger ran out before it was heard from, or a Closing Peer's Goodbye went unacknowledged for a whole Linger. |
 | `FragmentSizeUnviable` | Your `FragmentSize` is larger than the path will carry. |
+| `TransportFailed` | Your dial got no answer within your `Linger` of `Connect`, despite resending its handshake. |
 
-`TransportFailed` and `RetentionGap` never occur on this profile. There is no connection to fail and
-nothing to rewind on Resume.
+`RetentionGap` never occurs on this profile. There is nothing to rewind on Resume.
 
 `PeerClosed` is final. The `PeerId` is dead from that event onwards, and a Slot reused later carries
 a new generation, so a stale id can never alias a new Peer.
