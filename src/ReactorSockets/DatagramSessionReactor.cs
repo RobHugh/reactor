@@ -316,6 +316,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             _capacityDiscardsThisFrame = 0;
             MarkDrainedClosingPeersCloseDue();
             _dispatcher.Pump();
+            RetransmitPendingDials();
             CloseAckedGoodbyePeers();
             RetryPendingFragmentDeliveries();
             ReportExpiredRetransmissions();
@@ -352,10 +353,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="SessionEventKind.PeerClosed"/> resolves it on a later Pump.
     /// </summary>
     /// <remarks>
-    /// The Hello is sent once, and no handshake control datagram is ever retransmitted. The heartbeat
-    /// and the missed-heartbeat deadline apply only to an Established Peer, so a dial whose Hello,
-    /// Cookie or Accept is lost has no timeout: it stays pending, holding its capacity Slot, until the
-    /// consumer closes it.
+    /// While the dial is pending, a Pump resends its current flight: the Hello while it awaits a Cookie,
+    /// and the Hello-with-cookie while it awaits an Accept. The delay starts at the observed Pump
+    /// interval, doubles, stops at this Reactor's <see cref="DatagramSessionOptions.Linger"/> and is
+    /// drawn with full jitter, the same schedule the stream profile re-dials on. A dial whose cookie is
+    /// one epoch old restarts from a fresh Hello. A dial still pending one
+    /// <see cref="DatagramSessionOptions.Linger"/> after this call ends with
+    /// <see cref="DisconnectReason.TransportFailed"/> and frees its Slot. <see cref="Close"/> ends it
+    /// sooner and stops the resends. Nothing is resent while the clock has not moved since the last send.
     /// </remarks>
     public PeerId Connect(IPEndPoint destination)
     {
@@ -366,10 +371,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         UdpLink link = LinkForFamily(destination.AddressFamily);
         Source remote = Source.FromIPEndPoint(destination);
         RetransmissionTimer retransmitTimer = new();
+        long now = _options.Reactor.TimeProvider.GetTimestamp();
 
         PeerSlot slot = new()
         {
             Remote = remote,
+            DialStartTimestamp = now,
+            HandshakeSentTimestamp = now,
             Link = link,
             ClientNonce = NextNonce(),
             LocalSessionId = NextSessionId(),
@@ -2949,17 +2957,117 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return;
         }
 
+        long now = _options.Reactor.TimeProvider.GetTimestamp();
         slot.Lifecycle.CookieAnswered();
-        slot.HelloWithCookieSentTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+        slot.Cookie = cookie.ToArray();
+        slot.CookieEpoch = epoch;
+        slot.CookieReceivedTimestamp = now;
+        slot.HelloWithCookieSentTimestamp = now;
+        slot.HandshakeSentTimestamp = now;
+        slot.HandshakeSchedule = null;
+        SendHelloWithCookie(link, source, slot);
+    }
+
+    /// <summary>Writes and sends <paramref name="slot"/>'s Hello-with-cookie, echoing its stored cookie.</summary>
+    private void SendHelloWithCookie(UdpLink link, Source destination, PeerSlot slot)
+    {
+        // Only called once OnCookie has stored the cookie, which nothing clears while the dial awaits an Accept.
+        byte[] cookie = slot.Cookie ?? throw new InvalidOperationException(
+            "A Hello-with-cookie was sent for a dial that holds no cookie.");
         ControlDatagramCodec.WriteHelloWithCookie(
             _sendBuffer,
             DatagramSessionProtocol.Version,
-            clientNonce,
-            epoch,
+            slot.ClientNonce,
+            slot.CookieEpoch,
             cookie,
             AnnouncedTermsFor(slot),
             slot.LocalResumeSecret);
-        SendControl(link, source);
+        SendControl(link, destination);
+    }
+
+    /// <summary>
+    /// Resends the current flight of every pending dial whose delay has passed, and ends with
+    /// <see cref="DisconnectReason.TransportFailed"/> every dial still pending one
+    /// <see cref="DatagramSessionOptions.Linger"/> after <see cref="Connect"/>. Runs after the
+    /// datagrams are read, so a dial answered this Pump has already moved to its next flight.
+    /// </summary>
+    /// <remarks>
+    /// The delay is a <see cref="RedialSchedule"/> built from the observed Pump interval and this
+    /// Reactor's own Linger, the only Linger a dial knows before the Accept announces the remote's. It is
+    /// built on the first Pump of a flight with a positive, observed interval: before a second Pump the
+    /// interval reads <see cref="TimeSpan.MaxValue"/>, which would make the first delay the whole Linger.
+    /// A flight is resent only once strictly more than its delay has passed, so a clock that has not
+    /// moved since the last send never resends.
+    /// </remarks>
+    private void RetransmitPendingDials()
+    {
+        if (_dialsByNonce.Count == 0)
+        {
+            return;
+        }
+
+        TimeProvider clock = _options.Reactor.TimeProvider;
+        long now = clock.GetTimestamp();
+        for (int index = 0; index < _peers.Capacity; index++)
+        {
+            if (_peers.OccupantAt(index) is not PeerSlot { Lifecycle.IsEstablished: false } slot)
+            {
+                continue;
+            }
+
+            if (clock.GetElapsedTime(slot.DialStartTimestamp, now) >= _options.Linger)
+            {
+                ClosePeer(slot.Handle, DisconnectReason.TransportFailed);
+                continue;
+            }
+
+            if (slot.HandshakeSchedule is not RedialSchedule schedule)
+            {
+                TimeSpan interval = ObservedPumpInterval;
+                if (interval <= TimeSpan.Zero || interval == TimeSpan.MaxValue)
+                {
+                    continue;
+                }
+
+                schedule = new RedialSchedule(interval, _options.Linger, _entropy);
+                slot.HandshakeSchedule = schedule;
+                slot.HandshakeDelay = schedule.NextDelay();
+            }
+
+            if (clock.GetElapsedTime(slot.HandshakeSentTimestamp, now) <= slot.HandshakeDelay)
+            {
+                continue;
+            }
+
+            ResendHandshakeFlight(slot, now);
+            slot.HandshakeDelay = schedule.NextDelay();
+        }
+    }
+
+    /// <summary>
+    /// Resends a pending dial's current flight. A dial awaiting an Accept echoes its cookie again while
+    /// the cookie is younger than one epoch, the least validity ADR 0009 guarantees. An older cookie may
+    /// have expired, so the dial returns to <see cref="PeerPhase.AwaitingCookie"/> and sends a fresh
+    /// Hello with the same nonce, which the accepter still matches to a Peer it already admitted.
+    /// </summary>
+    private void ResendHandshakeFlight(PeerSlot slot, long now)
+    {
+        TimeSpan cookieAge = _options.Reactor.TimeProvider.GetElapsedTime(slot.CookieReceivedTimestamp, now);
+        if (slot.Lifecycle.Phase == PeerPhase.AwaitingAccept
+            && cookieAge < TimeSpan.FromSeconds(DatagramSessionProtocol.CookieEpochSeconds))
+        {
+            slot.HelloWithCookieResent = true;
+            SendHelloWithCookie(slot.Link, slot.Remote, slot);
+        }
+        else
+        {
+            slot.Lifecycle.RestartFromHello();
+            slot.Cookie = null;
+            ControlDatagramCodec.WriteHello(_sendBuffer, DatagramSessionProtocol.Version, slot.ClientNonce);
+            SendControl(slot.Link, slot.Remote);
+        }
+
+        slot.HandshakeSentTimestamp = now;
     }
 
     /// <summary>
@@ -3023,11 +3131,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         // Seed the round-trip estimate from Hello-with-cookie -> Accept. Unseeded, the RTO equals the
         // Linger, so the Peer's first reliable record (a Goodbye included) could be resent only once
-        // per Linger and never inside it. The handshake resends nothing, so this leg is never ambiguous.
-        // A leg that measures zero ticks is below the clock's resolution (a frozen clock, never a real
-        // network) and says nothing about the round trip, so it leaves the estimator unseeded.
+        // per Linger and never inside it. A resent Hello-with-cookie makes the leg ambiguous, because the
+        // Accept may answer any copy, so it is not sampled (Karn's rule). A leg that measures zero ticks
+        // is below the clock's resolution (a frozen clock, never a real network) and says nothing about
+        // the round trip, so it leaves the estimator unseeded too.
         TimeSpan handshakeRoundTrip = _options.Reactor.TimeProvider.GetElapsedTime(slot.HelloWithCookieSentTimestamp, now);
-        if (handshakeRoundTrip > TimeSpan.Zero)
+        if (handshakeRoundTrip > TimeSpan.Zero && !slot.HelloWithCookieResent)
         {
             slot.RetransmitTimer.Estimator.Sample(handshakeRoundTrip);
         }
@@ -3842,6 +3951,18 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
         }
 
+        /// <summary>
+        /// Moves a dial from <see cref="PeerPhase.AwaitingAccept"/> back to <see cref="PeerPhase.AwaitingCookie"/>,
+        /// when its cookie may have expired and the dial restarts from a fresh Hello.
+        /// </summary>
+        public void RestartFromHello()
+        {
+            if (Phase == PeerPhase.AwaitingAccept)
+            {
+                Phase = PeerPhase.AwaitingCookie;
+            }
+        }
+
         /// <summary>Moves a dial from <see cref="PeerPhase.AwaitingAccept"/> to <see cref="PeerPhase.Open"/>.</summary>
         public void Establish()
         {
@@ -4040,12 +4161,60 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         public required ulong ClientNonce { get; init; }
 
         /// <summary>
-        /// <see cref="TimeProvider.GetTimestamp"/> at the moment a dialled Peer sent its
+        /// <see cref="TimeProvider.GetTimestamp"/> at the moment a dialled Peer first sent its
         /// Hello-with-cookie. <see cref="OnAccept"/> measures the Accept's arrival against it to seed
-        /// <see cref="RetransmitTimer"/>'s estimator. The handshake never resends, so the request is
-        /// sent exactly once and the sample is never ambiguous under Karn's rule. Unused on an accepted Peer.
+        /// <see cref="RetransmitTimer"/>'s estimator, unless <see cref="HelloWithCookieResent"/> is set.
+        /// Unused on an accepted Peer.
         /// </summary>
         public long HelloWithCookieSentTimestamp { get; set; }
+
+        /// <summary>
+        /// Whether this dial has sent its Hello-with-cookie more than once. An Accept may then answer any
+        /// of the copies, so <see cref="OnAccept"/> does not seed the round-trip estimate (Karn's rule).
+        /// Never cleared, because a restart from a fresh Hello keeps the same nonce and the accepter
+        /// answers every copy with the same Accept.
+        /// </summary>
+        public bool HelloWithCookieResent { get; set; }
+
+        /// <summary>
+        /// <see cref="TimeProvider.GetTimestamp"/> at <see cref="Connect"/>. A dial still pending this
+        /// Reactor's <see cref="DatagramSessionOptions.Linger"/> later ends with
+        /// <see cref="DisconnectReason.TransportFailed"/> (<see cref="RetransmitPendingDials"/>). Unused on
+        /// an accepted Peer.
+        /// </summary>
+        public long DialStartTimestamp { get; init; }
+
+        /// <summary>
+        /// <see cref="TimeProvider.GetTimestamp"/> at the last send of this dial's current handshake flight,
+        /// the Hello or the Hello-with-cookie. <see cref="HandshakeDelay"/> is measured from it.
+        /// </summary>
+        public long HandshakeSentTimestamp { get; set; }
+
+        /// <summary>
+        /// The backoff this dial's handshake flight is resent on, built on the first Pump of the flight
+        /// that has a usable observed Pump interval. <see langword="null"/> until then, and reset when
+        /// the dial moves to a new flight.
+        /// </summary>
+        public RedialSchedule? HandshakeSchedule { get; set; }
+
+        /// <summary>How long after <see cref="HandshakeSentTimestamp"/> the current flight is resent.</summary>
+        public TimeSpan HandshakeDelay { get; set; }
+
+        /// <summary>
+        /// The cookie a dial in <see cref="PeerPhase.AwaitingAccept"/> echoes in every Hello-with-cookie it
+        /// sends. <see langword="null"/> before a Cookie arrives and after a restart from a fresh Hello.
+        /// </summary>
+        public byte[]? Cookie { get; set; }
+
+        /// <summary>The accepter's epoch that <see cref="Cookie"/> was minted in, echoed back with it.</summary>
+        public long CookieEpoch { get; set; }
+
+        /// <summary>
+        /// <see cref="TimeProvider.GetTimestamp"/> when <see cref="Cookie"/> arrived. A cookie stays valid
+        /// for at least one epoch after it is minted (ADR 0009), so a resend later than that restarts
+        /// from a fresh Hello instead of echoing it.
+        /// </summary>
+        public long CookieReceivedTimestamp { get; set; }
 
         /// <summary>The id this Reactor assigned, which the remote stamps on datagrams sent here.</summary>
         public required uint LocalSessionId { get; init; }

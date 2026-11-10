@@ -125,9 +125,9 @@ That wait is the main cost, and it means an overflow no longer costs nothing. A 
 that would have been read and counted, with no Counter seeing it. A live Peer's datagrams also wait behind
 the flood, for up to the queue depth divided by the limit in Pumps, and a long enough wait looks like
 silence to the receive-idle deadline. A dial suffers most. A Hello read after the admission cap is spent is
-discarded, and a dial sends its Hello once, so it stays pending until the consumer closes it. That was
-already true of Hellos arriving in one Pump, but a backlog of Hellos now extends it to a dial made after the
-flood has stopped. The default is sized for traffic rather than latency and reaches
+discarded. A pending dial resends its handshake on a jittered backoff (ADR 0009, amendment of 2026-11-10), so a
+dial behind a backlog of Hellos completes once the backlog has cleared, provided that happens within the
+dialler's Linger. The default is sized for traffic rather than latency and reaches
 hundreds of thousands of reads with a large `MaxMessageSize`, so a consumer that needs a shorter Pump sets
 it lower and accepts a longer wait.
 

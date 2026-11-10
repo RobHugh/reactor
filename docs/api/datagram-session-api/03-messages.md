@@ -14,10 +14,13 @@ resolves on a later Pump, as one of:
 
 - `PeerConnected` — the Session is established.
 - `PeerClosed` with `VersionMismatch` or `RemoteAtCapacity` — the far end refused in protocol.
+- `PeerClosed` with `TransportFailed` — nothing answered within this Reactor's `Linger` of `Connect`.
 
-**A dial has no timeout and its handshake Datagrams are not retransmitted.** If the Hello, Cookie or
-Accept is lost, or nothing is listening, the Peer stays pending and holds its Slot. Put your own
-deadline on dials and `Close` a Peer that has not connected in time.
+A pending dial resends its handshake: the Hello until a Cookie arrives, then the Hello-with-cookie until an
+Accept or Refusal arrives. The first resend waits about one Pump interval, each later wait doubles up to
+`Linger`, and every wait is drawn at random below that, so many dials do not retry in step. A lost Hello,
+Cookie or Accept therefore costs a delay, not the dial. `Close` ends a pending dial at once and stops the
+resends. Nothing is resent while your clock has not moved.
 
 `Connect` throws `InvalidOperationException` if the Reactor is already at capacity. Check your own
 Peer count before dialling if that is reachable in your application.
