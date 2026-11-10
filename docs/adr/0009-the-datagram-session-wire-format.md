@@ -222,8 +222,9 @@ then answers with silence, and the next resend starts from a fresh Hello.
 interval, each later one doubles, the ceiling is this end's `Linger`, and each delay is drawn with full
 jitter so diallers do not retry in step against a flooded accepter. The schedule is built on the first Pump
 of a flight that has observed a positive Pump interval. Before a second Pump the interval reads `MaxValue`,
-which would make the first delay the whole `Linger`. A flight moves on when it is answered, and the next one
-starts its own schedule. A flight is resent only when strictly more than its delay has passed, so a frozen
+which would make the first delay the whole `Linger`. A flight that is answered moves on, and the next flight
+starts its own schedule. A restart from a fresh Hello after an old cookie is a resend, not an answer, so it
+keeps the current schedule. A flight is resent only when strictly more than its delay has passed, so a frozen
 clock never resends and the tests that count exact datagrams on a frozen clock are unchanged.
 
 **Timeout.** A dial still pending one `Linger` after `Connect` closes. No knob is added: the `Linger` is

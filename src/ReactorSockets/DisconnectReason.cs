@@ -59,7 +59,7 @@ public enum DisconnectReason
     /// The datagram profile has no transport to fail, and produces this member for a dial that got no
     /// answer: one still pending its own <see cref="DatagramSessionOptions.Linger"/> after
     /// <see cref="DatagramSessionReactor.Connect"/>, its handshake resent throughout (ADR 0009, amendment
-    /// of 2026-11-10). That is the datagram counterpart of a stream dial whose connect timed out.
+    /// of 2026-11-10).
     /// </remarks>
     TransportFailed = 3,
 

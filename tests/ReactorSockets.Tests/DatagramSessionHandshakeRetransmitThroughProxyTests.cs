@@ -115,6 +115,8 @@ public class DatagramSessionHandshakeRetransmitThroughProxyTests
         // Assert
         diallerEvents.Should().ContainSingle(k => k == SessionEventKind.PeerConnected);
         accepterEvents.Should().ContainSingle(k => k == SessionEventKind.PeerConnected);
+        proxy.Captures.Count(c => c.Direction == RelayDirection.ClientToUpstream && IsControl(c.Payload, HelloType))
+            .Should().BeGreaterThan(1, "the dialler resent its Hello");
     }
 
     [Fact]
@@ -140,11 +142,13 @@ public class DatagramSessionHandshakeRetransmitThroughProxyTests
     [Fact]
     public void Connect_HelloQueuedBehindAFloodOfHellos_DialCompletesOnceTheFloodHasCleared()
     {
-        // Arrange — an admission cap of one, so the first flooded Hello spends the whole Pump's cap.
+        // Arrange — four reads and one admission per Pump, so the flood drains over six Pumps. The
+        // dialler's Hello is the 22nd datagram, read in the same Pump as the 21st, after the cap is spent.
         using DatagramSessionReactorHarness dialler = new(bindLoopback: false, linger: _linger);
-        using DatagramSessionReactorHarness accepter = new(admissionCap: 1, linger: _linger, timeProvider: dialler.TimeProvider);
+        using DatagramSessionReactorHarness accepter = new(
+            admissionCap: 1, maxDatagramsPerPump: 4, linger: _linger, timeProvider: dialler.TimeProvider);
         using HostilePeer flooder = new();
-        for (ulong nonce = 1; nonce <= 20; nonce++)
+        for (ulong nonce = 1; nonce <= 21; nonce++)
         {
             flooder.SendDatagram(accepter.Endpoint, BuildHello(nonce));
         }
@@ -166,7 +170,7 @@ public class DatagramSessionHandshakeRetransmitThroughProxyTests
         }
 
         // Assert
-        discardsAfterFlood.Should().BeGreaterThan(0UL, "the dialler's first Hello was read after the cap was spent");
+        discardsAfterFlood.Should().BeGreaterThan(0UL, "the cap discards the flooded Hellos it cannot admit");
         diallerEvents.Should().ContainSingle(k => k == SessionEventKind.PeerConnected);
         accepterEvents.Should().ContainSingle(k => k == SessionEventKind.PeerConnected);
     }
