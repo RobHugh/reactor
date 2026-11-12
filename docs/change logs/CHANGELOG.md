@@ -14,7 +14,7 @@
   `RemoteMessageTooLarge` when the Message needs more Fragments at that size than the peer's
   `ReceiveWindowFragments`. A reliable Fragment wider than the receiver's own `FragmentSize`, which
   only a non-conforming peer sends, closes the Peer with `ProtocolViolation` before its datagram is
-  acknowledged. An announced `FragmentSize` outside 576 to 65 507 or a `ReceiveWindowFragments` of 0
+  acknowledged, and logs the new `OversizedFragment` (210) Diagnostic. An announced `FragmentSize` outside 576 to 65 507 or a `ReceiveWindowFragments` of 0
   is refused like an illegal announced interval. The smaller `FragmentSize` is also the
   single-Datagram cap of the unreliable modes, so an unreliable `Send` to a peer with a smaller
   `FragmentSize` returns `MessageTooLarge` sooner.
@@ -144,7 +144,7 @@ still shows.
 - A Fragment-size stall (unfragmented records acked, no Fragment acked over four rounds) closes the
   Peer with `FragmentSizeUnviable`. Nothing is probed or resized.
 - Diagnostics: `FragmentSetAbandoned` for a set that can never complete, `OversizedFragmentSet`,
-  `UnreliableFragment`, `OversizedMessage`, `RetransmissionTimerBackedOff`.
+  `OversizedFragment`, `UnreliableFragment`, `OversizedMessage`, `RetransmissionTimerBackedOff`.
 - Memory is preallocated at construction and states its bill exactly (`ReceiveBudgetBytes`,
   `SendBudgetBytes`). `HeldRecordBudgetBytes` states the ceiling for records held behind an ordered
   gap.

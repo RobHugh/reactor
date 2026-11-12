@@ -1083,6 +1083,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
                 if (record.Payload.Length > _maxLegalFragmentWidth)
                 {
+                    if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                    {
+                        _diagnostics.Log(DiagnosticRecord.ForOversizedFragment(
+                            ToPeerId(slot.Handle), record.Payload.Length, _maxLegalFragmentWidth));
+                    }
+
                     ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
                     return;
                 }

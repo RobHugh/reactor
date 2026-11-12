@@ -39,7 +39,8 @@ produce more Fragments per Message than the receiver's window floor allows.
 6. **A Fragment wider than the receiver's own `FragmentSize` is a protocol violation.** The
    receiver closes the Peer with `ProtocolViolation`. The check runs in the same pre-classification
    pass as the `fragmentCount` check, so nothing in that datagram is acknowledged. After point 4
-   only a non-conforming peer can trigger it.
+   only a non-conforming peer can trigger it. The close logs `OversizedFragment` (210), carrying the
+   Fragment's width and the receiver's `FragmentSize` (ADR 0013).
 7. **Receive memory does not change.** Retention slots stay the sender's own `FragmentSize` wide.
 
 ## Alternative rejected

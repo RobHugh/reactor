@@ -163,6 +163,7 @@ that Message and leave the Reactor untouched.
 | A Datagram that does not parse, or names no Session | Discarded. `DatagramMalformed` (200). |
 | A Fragment in an unreliable mode | Datagram discarded. `UnreliableFragment` (206) and `DatagramMalformed` (200). |
 | A Fragment set claiming more Fragments than your receive window holds | `PeerClosed` with `ProtocolViolation`. `OversizedFragmentSet` (205). |
+| A reliable Fragment wider than your `FragmentSize` | `PeerClosed` with `ProtocolViolation`. `OversizedFragment` (210). |
 | A Message larger than your `MaxMessageSize`, whole or assembled | Discarded and still acknowledged. The Session stays open. `OversizedMessage` (207). |
 | Messages after the peer's own Goodbye | Acknowledged, not delivered. |
 

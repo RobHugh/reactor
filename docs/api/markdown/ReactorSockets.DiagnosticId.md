@@ -209,6 +209,18 @@ bound a consumer can act on. A queued socket error spends a read, so not every r
 The socket's queue depth cannot be read past queued errors, so a Pump that read exactly the last
 queued datagram also reports this.
 
+`OversizedFragment = 210` 
+
+An established Peer's reliable Fragment carried more payload bytes than this Reactor's own
+[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize), and the Session was closed with
+[`DisconnectReason.ProtocolViolation`](ReactorSockets.DisconnectReason.md) before anything in that Datagram was
+acknowledged (ADR 0024). Subject is the Peer. <code>Value0</code> is the Fragment's payload length in
+bytes; <code>Value1</code> is this Reactor's <code>ResolvedFragmentSize</code>.
+
+[`DiagnosticLevel.Warn`](ReactorSockets.DiagnosticLevel.md), for the same reason as [`DiagnosticId.DatagramMalformed`](ReactorSockets.DiagnosticId.md): a
+remote can produce this at will. The handshake announces the size, so a conforming peer never
+sends a wider Fragment, and the width and the size say which end is misbuilt.
+
 `PeerRefused = 300` 
 
 A dialler was refused in-protocol during the stream handshake, either because it announced a

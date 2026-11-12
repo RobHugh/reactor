@@ -279,6 +279,17 @@ The socket's queue depth cannot be read past queued errors, so a Pump that read 
 queued datagram also reports this.</p>
 </dd>
   
+    <dt id="ReactorSockets_DiagnosticId_OversizedFragment"><code>OversizedFragment = 210</code></dt>
+  <dd><p>An established Peer's reliable Fragment carried more payload bytes than this Reactor's own
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a>, and the Session was closed with
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_ProtocolViolation">ProtocolViolation</a> before anything in that Datagram was
+acknowledged (ADR 0024). Subject is the Peer. <code>Value0</code> is the Fragment's payload length in
+bytes; <code>Value1</code> is this Reactor's <code>ResolvedFragmentSize</code>.</p>
+<p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>, for the same reason as <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_DatagramMalformed">DatagramMalformed</a>: a
+remote can produce this at will. The handshake announces the size, so a conforming peer never
+sends a wider Fragment, and the width and the size say which end is misbuilt.</p>
+</dd>
+  
     <dt id="ReactorSockets_DiagnosticId_PeerRefused"><code>PeerRefused = 300</code></dt>
   <dd><p>A dialler was refused in-protocol during the stream handshake, either because it announced a
 different protocol version or because every capacity Slot was occupied. Subject is the claimed

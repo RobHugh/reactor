@@ -291,6 +291,13 @@ no full prefix was ever read; <code>Value1</code> is this Reactor's own <code>Ma
 </dd>
   </dl>
   <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForOversizedFragment.html#ReactorSockets_DiagnosticRecord_ForOversizedFragment_ReactorSockets_PeerId_System_Int64_System_Int64_">ForOversizedFragment(PeerId, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_OversizedFragment">OversizedFragment</a> record for the Peer whose reliable Fragment
+was wider than this Reactor's own Fragment size, carrying the Fragment's payload length and that
+size.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet.html#ReactorSockets_DiagnosticRecord_ForOversizedFragmentSet_ReactorSockets_PeerId_System_Int64_System_Int64_">ForOversizedFragmentSet(PeerId, long, long)</a></dt>
     <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_OversizedFragmentSet">OversizedFragmentSet</a> record for the Peer whose Fragment
 declared a <code>fragmentCount</code> larger than this Reactor's own receive window could ever hold,

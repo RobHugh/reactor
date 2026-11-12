@@ -355,6 +355,37 @@ public class DatagramSessionOversizedFragmentSetTests
     }
 
     [Fact]
+    public void Pump_FragmentOneByteWiderThanTheAccepterFragmentSize_LogsOversizedFragmentCarryingTheWidthAndTheFragmentSize()
+    {
+        // Arrange
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x6000_0000_0000_0005UL);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: new byte[DefaultFragmentSize + 1]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            accepter.PumpUntilDrained(all => all.Any(e => e.Kind == SessionEventKind.PeerClosed));
+
+        // Assert
+        drained.Should().Contain(e => e.Kind == SessionEventKind.PeerClosed);
+        DiagnosticRecord record = accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.OversizedFragment).Subject;
+        record.Level.Should().Be(DiagnosticLevel.Warn);
+        record.Peer.Should().Be(accepterPeer);
+        record.Value0.Should().Be(DefaultFragmentSize + 1);
+        record.Value1.Should().Be(DefaultFragmentSize);
+        accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.OversizedFragmentSet);
+    }
+
+    [Fact]
     public void Pump_FragmentExactlyTheAccepterFragmentSize_IsHeldAndTheSetDeliveredIntact()
     {
         // Arrange

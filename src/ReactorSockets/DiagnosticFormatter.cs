@@ -87,6 +87,8 @@ public static class DiagnosticFormatter
                 $"the retransmission timer backed off (RTO {v0} ms, consecutive backoffs {v1})"),
             DiagnosticId.OversizedFragmentSet => Invariant(
                 $"a fragment set declared more fragments than the receive window can hold and the Session was closed (fragments declared {v0}, largest legal {v1})"),
+            DiagnosticId.OversizedFragment => Invariant(
+                $"a fragment wider than FragmentSize arrived and the Session was closed (fragment bytes {v0}, FragmentSize {v1})"),
             DiagnosticId.UnreliableFragment => Invariant(
                 $"a datagram fragmenting in an unreliable mode was discarded (mode {ModeName(v0)}, mode bits {v0})"),
             DiagnosticId.OversizedMessage => Invariant(
