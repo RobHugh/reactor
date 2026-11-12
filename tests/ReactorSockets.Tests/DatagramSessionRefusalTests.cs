@@ -21,13 +21,11 @@ public class DatagramSessionRefusalTests
 
     private const byte HelloType = 1;
     private const byte CookieType = 2;
-    private const byte HelloWithCookieType = 3;
     private const byte AcceptType = 4;
     private const byte RefusalType = 5;
 
     private const int HelloBodyLength = 12;
     private const int CookieBodyLength = 48;
-    private const int HelloWithCookieBodyLength = 92;
     private const int RefusalBodyLength = 17;
 
     private const int CookieLength = 32;
@@ -64,39 +62,6 @@ public class DatagramSessionRefusalTests
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(8, 8), unchecked((ulong)epoch));
         cookie.CopyTo(body.AsSpan(16, CookieLength));
         return BuildControlDatagram(CookieType, body);
-    }
-
-    private static byte[] BuildHelloWithCookie(
-        uint version,
-        ulong clientNonce,
-        long epoch,
-        ReadOnlySpan<byte> cookie,
-        uint sessionIdForMe,
-        uint maxMessageSize,
-        ReadOnlySpan<byte> resumeSecret,
-        ulong sendIdleIntervalMilliseconds = 60_000,
-        ulong lingerMilliseconds = 30_000)
-    {
-        byte[] body = new byte[HelloWithCookieBodyLength];
-        int offset = 0;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), version);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), clientNonce);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), unchecked((ulong)epoch));
-        offset += 8;
-        cookie.CopyTo(body.AsSpan(offset, CookieLength));
-        offset += CookieLength;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), sessionIdForMe);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), maxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), sendIdleIntervalMilliseconds);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), lingerMilliseconds);
-        offset += 8;
-        resumeSecret.CopyTo(body.AsSpan(offset, ResumeSecretLength));
-        return BuildControlDatagram(HelloWithCookieType, body);
     }
 
     private static byte[] BuildRefusal(ulong clientNonce, byte reason, uint versionOffered, uint versionRequired)
@@ -173,8 +138,8 @@ public class DatagramSessionRefusalTests
     {
         (long epoch, byte[] cookie) = ObtainCookie(accepter, peer, clientNonce);
         ulong sentBefore = accepter.Reactor.Counters.DatagramsSent;
-        peer.Send(accepter.Endpoint, BuildHelloWithCookie(
-            ProtocolVersion, clientNonce, epoch, cookie, sessionIdForMe: 1, maxMessageSize: 4096, resumeSecret: new byte[ResumeSecretLength]));
+        peer.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
+            clientNonce, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength]));
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsSent > sentBefore);
         return peer.Receive(out _);
     }
@@ -194,8 +159,8 @@ public class DatagramSessionRefusalTests
         ulong sentBefore = accepter.Reactor.Counters.DatagramsSent;
 
         // Act
-        peer.Send(accepter.Endpoint, BuildHelloWithCookie(
-            version: 2, clientNonce, epoch, cookie, sessionIdForMe: 1, maxMessageSize: 4096, resumeSecret: new byte[ResumeSecretLength]));
+        peer.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
+            clientNonce, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength], version: 2));
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsSent > sentBefore);
         byte[] reply = peer.Receive(out _);
 
@@ -218,8 +183,8 @@ public class DatagramSessionRefusalTests
         (long epoch, byte[] cookie) = ObtainCookie(accepter, peer, clientNonce);
 
         // Act
-        peer.Send(accepter.Endpoint, BuildHelloWithCookie(
-            version: 2, clientNonce, epoch, cookie, sessionIdForMe: 1, maxMessageSize: 4096, resumeSecret: new byte[ResumeSecretLength]));
+        peer.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
+            clientNonce, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength], version: 2));
         accepter.PumpUntil(() => accepter.Sink.Received.Any(record => record.Id == DiagnosticId.VersionRefused));
 
         // Assert — a remote can produce this at will, so it is a Sink record at Warn, never an Error.
@@ -237,8 +202,8 @@ public class DatagramSessionRefusalTests
         (long epoch, byte[] cookie) = ObtainCookie(accepter, peer, clientNonce);
 
         // Act
-        peer.Send(accepter.Endpoint, BuildHelloWithCookie(
-            version: 2, clientNonce, epoch, cookie, sessionIdForMe: 1, maxMessageSize: 4096, resumeSecret: new byte[ResumeSecretLength]));
+        peer.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
+            clientNonce, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength], version: 2));
         accepter.PumpUntil(() => accepter.Sink.Received.Any(record => record.Id == DiagnosticId.VersionRefused));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
 
@@ -267,8 +232,8 @@ public class DatagramSessionRefusalTests
         ulong sentBefore = accepter.Reactor.Counters.DatagramsSent;
 
         // Act
-        peer.Send(accepter.Endpoint, BuildHelloWithCookie(
-            version: 0, clientNonce, epoch, cookie, sessionIdForMe: 1, maxMessageSize: 4096, resumeSecret: new byte[ResumeSecretLength]));
+        peer.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
+            clientNonce, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength], version: 0));
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsSent > sentBefore);
         byte[] reply = peer.Receive(out _);
 
@@ -389,8 +354,8 @@ public class DatagramSessionRefusalTests
         ulong sentBefore = accepter.Reactor.Counters.DatagramsSent;
 
         // Act
-        peerC.Send(accepter.Endpoint, BuildHelloWithCookie(
-            ProtocolVersion, clientNonceC, epoch, cookie, sessionIdForMe: 1, maxMessageSize: 4096, resumeSecret: new byte[ResumeSecretLength]));
+        peerC.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
+            clientNonceC, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength]));
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsSent > sentBefore);
         byte[] reply = peerC.Receive(out _);
 
@@ -417,8 +382,8 @@ public class DatagramSessionRefusalTests
         ulong discardsBefore = accepter.Reactor.Counters.AdmissionDiscards;
 
         // Act
-        peerC.Send(accepter.Endpoint, BuildHelloWithCookie(
-            ProtocolVersion, clientNonceC, epoch, cookie, sessionIdForMe: 1, maxMessageSize: 4096, resumeSecret: new byte[ResumeSecretLength]));
+        peerC.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
+            clientNonceC, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength]));
         accepter.PumpUntil(() => accepter.Reactor.Counters.AdmissionDiscards > discardsBefore);
 
         // Assert
@@ -444,8 +409,8 @@ public class DatagramSessionRefusalTests
         ulong sentBefore = accepter.Reactor.Counters.DatagramsSent;
 
         // Act
-        peerC.Send(accepter.Endpoint, BuildHelloWithCookie(
-            ProtocolVersion, clientNonceC, epoch, cookie, sessionIdForMe: 1, maxMessageSize: 4096, resumeSecret: new byte[ResumeSecretLength]));
+        peerC.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
+            clientNonceC, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength]));
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsSent > sentBefore);
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
 
@@ -491,8 +456,8 @@ public class DatagramSessionRefusalTests
         const ulong clientNonceB = 0x0000_0000_0000_0032UL;
         (long firstEpoch, byte[] firstCookie) = ObtainCookie(accepter, peerB, clientNonceB);
         ulong sentBefore = accepter.Reactor.Counters.DatagramsSent;
-        peerB.Send(accepter.Endpoint, BuildHelloWithCookie(
-            ProtocolVersion, clientNonceB, firstEpoch, firstCookie, sessionIdForMe: 1, maxMessageSize: 4096, resumeSecret: new byte[ResumeSecretLength]));
+        peerB.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
+            clientNonceB, firstEpoch, firstCookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength]));
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsSent > sentBefore);
         byte[] refusalReply = peerB.Receive(out _);
         ParseRefusal(refusalReply).Reason.Should().Be(RefusalReasonCapacity);
@@ -504,8 +469,8 @@ public class DatagramSessionRefusalTests
 
         (long secondEpoch, byte[] secondCookie) = ObtainCookie(accepter, peerB, clientNonceB);
         ulong sentBefore2 = accepter.Reactor.Counters.DatagramsSent;
-        peerB.Send(accepter.Endpoint, BuildHelloWithCookie(
-            ProtocolVersion, clientNonceB, secondEpoch, secondCookie, sessionIdForMe: 1, maxMessageSize: 4096, resumeSecret: new byte[ResumeSecretLength]));
+        peerB.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
+            clientNonceB, secondEpoch, secondCookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength]));
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsSent > sentBefore2);
         byte[] acceptReply = peerB.Receive(out _);
 
@@ -849,8 +814,8 @@ public class DatagramSessionRefusalTests
         using RawPeer peer = new();
         const ulong clientNonce = 0x0000_0000_0000_0061UL;
         (long epoch, byte[] cookie) = ObtainCookie(accepter, peer, clientNonce);
-        byte[] helloWithCookie = BuildHelloWithCookie(
-            ProtocolVersion, clientNonce, epoch, cookie, sessionIdForMe: 1, maxMessageSize: 4096, resumeSecret: new byte[ResumeSecretLength]);
+        byte[] helloWithCookie = DatagramSessionWire.BuildHelloWithCookie(
+            clientNonce, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength]);
         ulong sentBefore = accepter.Reactor.Counters.DatagramsSent;
         peer.Send(accepter.Endpoint, helloWithCookie);
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsSent > sentBefore);

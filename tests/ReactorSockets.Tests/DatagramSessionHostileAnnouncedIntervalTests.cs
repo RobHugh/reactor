@@ -65,7 +65,7 @@ public class DatagramSessionHostileAnnouncedIntervalTests
         // Act
         hostile.SendTo(
             Source.FromIPEndPoint(accepter.Endpoint),
-            BuildHelloWithCookie(clientNonce, epoch, cookie, sendIdleIntervalMilliseconds, lingerMilliseconds));
+            DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: CounterpartySessionId, sendIdleIntervalMilliseconds: sendIdleIntervalMilliseconds, lingerMilliseconds: lingerMilliseconds));
         Action pump = () =>
         {
             accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
@@ -115,7 +115,7 @@ public class DatagramSessionHostileAnnouncedIntervalTests
         // Act
         counterparty.SendTo(
             Source.FromIPEndPoint(accepter.Endpoint),
-            BuildHelloWithCookie(clientNonce, epoch, cookie, ulong.MaxValue, ulong.MaxValue, version: ProtocolVersion + 1));
+            DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: CounterpartySessionId, sendIdleIntervalMilliseconds: ulong.MaxValue, lingerMilliseconds: ulong.MaxValue, version: ProtocolVersion + 1));
         (_, byte[] refusal) = counterparty.PumpUntilReceived(accepter.Reactor.Pump, RefusalType);
 
         // Assert — clientNonce(8) comes first in a Refusal's body, then the reason.
@@ -132,7 +132,7 @@ public class DatagramSessionHostileAnnouncedIntervalTests
         (long epoch, byte[] cookie) = ObtainCookie(accepter, hostile, clientNonce);
         hostile.SendTo(
             Source.FromIPEndPoint(accepter.Endpoint),
-            BuildHelloWithCookie(clientNonce, epoch, cookie, SurvivesConversionOverflowsDeadline, LegalInterval));
+            DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: CounterpartySessionId, sendIdleIntervalMilliseconds: SurvivesConversionOverflowsDeadline, lingerMilliseconds: LegalInterval));
         accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
         using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
 
@@ -159,7 +159,7 @@ public class DatagramSessionHostileAnnouncedIntervalTests
         // Act
         counterparty.SendTo(
             Source.FromIPEndPoint(accepter.Endpoint),
-            BuildHelloWithCookie(clientNonce, epoch, cookie, MaximumLegalInterval, MaximumLegalInterval));
+            DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: CounterpartySessionId, sendIdleIntervalMilliseconds: MaximumLegalInterval, lingerMilliseconds: MaximumLegalInterval));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = [];
         Action pump = () =>
         {
@@ -209,7 +209,7 @@ public class DatagramSessionHostileAnnouncedIntervalTests
         (long epoch, byte[] cookie) = ObtainCookie(accepter, counterparty, clientNonce);
         counterparty.SendTo(
             Source.FromIPEndPoint(accepter.Endpoint),
-            BuildHelloWithCookie(clientNonce, epoch, cookie, sendIdleIntervalMilliseconds: 1000, LegalInterval));
+            DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: CounterpartySessionId, sendIdleIntervalMilliseconds: 1000, lingerMilliseconds: LegalInterval));
         accepter.PumpUntilDrained(drained => drained.Any(evt => evt.Kind == SessionEventKind.PeerConnected));
 
         // Act
@@ -268,34 +268,6 @@ public class DatagramSessionHostileAnnouncedIntervalTests
         datagram[4] = controlType;
         body.CopyTo(datagram.AsSpan(ControlBodyOffset));
         return datagram;
-    }
-
-    private static byte[] BuildHelloWithCookie(
-        ulong clientNonce,
-        long epoch,
-        ReadOnlySpan<byte> cookie,
-        ulong sendIdleIntervalMilliseconds,
-        ulong lingerMilliseconds,
-        uint version = ProtocolVersion)
-    {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + 8 + ResumeSecretLength];
-        int offset = 0;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), version);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), clientNonce);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), unchecked((ulong)epoch));
-        offset += 8;
-        cookie.CopyTo(body.AsSpan(offset, CookieLength));
-        offset += CookieLength;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), CounterpartySessionId);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), CounterpartyMaxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), sendIdleIntervalMilliseconds);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), lingerMilliseconds);
-        return BuildControlDatagram(HelloWithCookieType, body);
     }
 
     private static byte[] BuildAccept(ulong clientNonce, ulong sendIdleIntervalMilliseconds, ulong lingerMilliseconds)
