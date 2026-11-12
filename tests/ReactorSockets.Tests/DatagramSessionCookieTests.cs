@@ -22,7 +22,6 @@ public class DatagramSessionCookieTests
     private const int BodyOffset = 5;
     private const byte HelloType = 1;
     private const byte CookieType = 2;
-    private const byte HelloWithCookieType = 3;
     private const int CookieLength = 32;
     private const int ResumeSecretLength = 16;
     private const uint ProtocolVersion = 1;
@@ -38,46 +37,6 @@ public class DatagramSessionCookieTests
         BinaryPrimitives.WriteUInt32BigEndian(datagram.AsSpan(offset, 4), version);
         offset += 4;
         BinaryPrimitives.WriteUInt64BigEndian(datagram.AsSpan(offset, 8), clientNonce);
-        return datagram;
-    }
-
-    private static byte[] BuildHelloWithCookie(
-        ulong clientNonce,
-        long epoch,
-        ReadOnlySpan<byte> cookie,
-        uint sessionIdForMe = 0,
-        uint maxMessageSize = 4096,
-        ReadOnlySpan<byte> resumeSecret = default,
-        uint version = ProtocolVersion,
-        ulong sendIdleIntervalMilliseconds = 60_000,
-        ulong lingerMilliseconds = 30_000)
-    {
-        byte[] datagram = new byte[ControlSize];
-        BinaryPrimitives.WriteUInt32BigEndian(datagram.AsSpan(0, 4), 0);
-        datagram[4] = HelloWithCookieType;
-
-        int offset = BodyOffset;
-        BinaryPrimitives.WriteUInt32BigEndian(datagram.AsSpan(offset, 4), version);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(datagram.AsSpan(offset, 8), clientNonce);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(datagram.AsSpan(offset, 8), unchecked((ulong)epoch));
-        offset += 8;
-        cookie.CopyTo(datagram.AsSpan(offset, CookieLength));
-        offset += CookieLength;
-        BinaryPrimitives.WriteUInt32BigEndian(datagram.AsSpan(offset, 4), sessionIdForMe);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(datagram.AsSpan(offset, 4), maxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(datagram.AsSpan(offset, 8), sendIdleIntervalMilliseconds);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(datagram.AsSpan(offset, 8), lingerMilliseconds);
-        offset += 8;
-        if (!resumeSecret.IsEmpty)
-        {
-            resumeSecret.CopyTo(datagram.AsSpan(offset, ResumeSecretLength));
-        }
-
         return datagram;
     }
 
@@ -311,7 +270,7 @@ public class DatagramSessionCookieTests
             byte[] forgedCookie = new byte[CookieLength];
             Random.Shared.NextBytes(forgedCookie);
             byte[] resumeSecret = new byte[ResumeSecretLength];
-            SendAndCount(BuildHelloWithCookie((ulong)(1000 + i), 0, forgedCookie, resumeSecret: resumeSecret));
+            SendAndCount(DatagramSessionWire.BuildHelloWithCookie((ulong)(1000 + i), 0, forgedCookie, sessionIdForMe: 0, resumeSecret: resumeSecret));
         }
 
         harness.Reactor.Pump();
@@ -356,7 +315,7 @@ public class DatagramSessionCookieTests
         // Act
         client.SendTo(
             harness.Endpoint,
-            BuildHelloWithCookie(clientNonce, epoch, cookie, resumeSecret: resumeSecret, sendIdleIntervalMilliseconds: 0));
+            DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: 0, resumeSecret: resumeSecret, sendIdleIntervalMilliseconds: 0));
         harness.Reactor.Pump();
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = harness.DrainToList();
 
@@ -385,7 +344,7 @@ public class DatagramSessionCookieTests
         // Act
         client.SendTo(
             harness.Endpoint,
-            BuildHelloWithCookie(clientNonce, epoch, cookie, resumeSecret: resumeSecret, lingerMilliseconds: 0));
+            DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: 0, resumeSecret: resumeSecret, lingerMilliseconds: 0));
         harness.Reactor.Pump();
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = harness.DrainToList();
 
@@ -411,7 +370,7 @@ public class DatagramSessionCookieTests
         byte[] resumeSecret = new byte[ResumeSecretLength];
 
         // Act
-        client.SendTo(harness.Endpoint, BuildHelloWithCookie(clientNonce, epoch, forgedCookie, resumeSecret: resumeSecret));
+        client.SendTo(harness.Endpoint, DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, forgedCookie, sessionIdForMe: 0, resumeSecret: resumeSecret));
         harness.Reactor.Pump();
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = harness.DrainToList();
 
@@ -437,7 +396,7 @@ public class DatagramSessionCookieTests
         byte[] resumeSecret = new byte[ResumeSecretLength];
 
         // Act
-        client.SendTo(harness.Endpoint, BuildHelloWithCookie(clientNonce, epoch, corruptedCookie, resumeSecret: resumeSecret));
+        client.SendTo(harness.Endpoint, DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, corruptedCookie, sessionIdForMe: 0, resumeSecret: resumeSecret));
         harness.Reactor.Pump();
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = harness.DrainToList();
 
@@ -463,7 +422,7 @@ public class DatagramSessionCookieTests
 
         // Act — the same genuine cookie, presented from a different source port than the one that
         // requested it (two independently bound loopback Links never share a port).
-        impersonator.SendTo(harness.Endpoint, BuildHelloWithCookie(clientNonce, epoch, cookie, resumeSecret: resumeSecret));
+        impersonator.SendTo(harness.Endpoint, DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: 0, resumeSecret: resumeSecret));
         harness.Reactor.Pump();
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = harness.DrainToList();
 
@@ -489,7 +448,7 @@ public class DatagramSessionCookieTests
         // Act — one full epoch (30s, DatagramSessionProtocol.CookieEpochSeconds) passes, purely on the
         // FakeTimeProvider; no wall-clock wait anywhere in this file.
         harness.TimeProvider.Advance(TimeSpan.FromSeconds(30));
-        client.SendTo(harness.Endpoint, BuildHelloWithCookie(clientNonce, epoch, cookie, resumeSecret: resumeSecret));
+        client.SendTo(harness.Endpoint, DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: 0, resumeSecret: resumeSecret));
         harness.Reactor.Pump();
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = harness.DrainToList();
 
@@ -509,7 +468,7 @@ public class DatagramSessionCookieTests
 
         // Act — 61 seconds: two full epochs and change, still driven purely by the FakeTimeProvider.
         harness.TimeProvider.Advance(TimeSpan.FromSeconds(61));
-        client.SendTo(harness.Endpoint, BuildHelloWithCookie(clientNonce, epoch, cookie, resumeSecret: resumeSecret));
+        client.SendTo(harness.Endpoint, DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: 0, resumeSecret: resumeSecret));
         harness.Reactor.Pump();
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = harness.DrainToList();
 
@@ -539,7 +498,7 @@ public class DatagramSessionCookieTests
         // Act — exactly 30 seconds from the mint of both cookies.
         harness.TimeProvider.Advance(TimeSpan.FromSeconds(30));
         acceptedClient.SendTo(
-            harness.Endpoint, BuildHelloWithCookie(acceptedNonce, acceptedEpoch, acceptedCookie, resumeSecret: resumeSecret));
+            harness.Endpoint, DatagramSessionWire.BuildHelloWithCookie(acceptedNonce, acceptedEpoch, acceptedCookie, sessionIdForMe: 0, resumeSecret: resumeSecret));
         harness.Reactor.Pump();
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> atThirtySeconds = harness.DrainToList();
 
@@ -549,7 +508,7 @@ public class DatagramSessionCookieTests
         // Act — exactly 60 seconds from the same mint (30 more, on top of the 30 already advanced).
         harness.TimeProvider.Advance(TimeSpan.FromSeconds(30));
         rejectedClient.SendTo(
-            harness.Endpoint, BuildHelloWithCookie(rejectedNonce, rejectedEpoch, rejectedCookie, resumeSecret: resumeSecret));
+            harness.Endpoint, DatagramSessionWire.BuildHelloWithCookie(rejectedNonce, rejectedEpoch, rejectedCookie, sessionIdForMe: 0, resumeSecret: resumeSecret));
         harness.Reactor.Pump();
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> atSixtySeconds = harness.DrainToList();
 

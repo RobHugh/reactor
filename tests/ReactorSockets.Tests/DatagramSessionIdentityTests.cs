@@ -19,17 +19,13 @@ public class DatagramSessionIdentityTests
     private const uint ControlSession = 0;
 
     private const byte HelloType = 1;
-    private const byte HelloWithCookieType = 3;
     private const byte AcceptType = 4;
 
     private const int HelloBodyLength = 12;
-    private const int HelloWithCookieBodyLength = 92;
 
     private const int CookieLength = 32;
 
     private const uint ProtocolVersion = 1;
-    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
-    private const ulong DialerLingerMilliseconds = 30_000;
 
     // ---- wire helpers ----
 
@@ -48,28 +44,6 @@ public class DatagramSessionIdentityTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(0, 4), ProtocolVersion);
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(4, 8), clientNonce);
         return BuildControlDatagram(HelloType, body);
-    }
-
-    private static byte[] BuildHelloWithCookie(ulong clientNonce, long epoch, ReadOnlySpan<byte> cookie, uint sessionIdForMe)
-    {
-        byte[] body = new byte[HelloWithCookieBodyLength];
-        int offset = 0;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), clientNonce);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), unchecked((ulong)epoch));
-        offset += 8;
-        cookie.CopyTo(body.AsSpan(offset, CookieLength));
-        offset += CookieLength;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), sessionIdForMe);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), 4096);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
-        return BuildControlDatagram(HelloWithCookieType, body);
     }
 
     /// <summary>
@@ -116,7 +90,7 @@ public class DatagramSessionIdentityTests
         (long epoch, byte[] cookie) = ParseCookie(cookieReply);
 
         sentBefore = accepter.Reactor.Counters.DatagramsSent;
-        peer.Send(accepter.Endpoint, BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: 0xABCD_1234));
+        peer.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: 0xABCD_1234));
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsSent > sentBefore);
         byte[] acceptReply = peer.Receive();
         replies.Add(acceptReply);
