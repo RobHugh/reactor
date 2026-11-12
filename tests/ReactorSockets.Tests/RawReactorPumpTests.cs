@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using FluentAssertions;
 using Xunit;
 
@@ -198,5 +199,68 @@ public class RawReactorPumpTests
 
         // Assert
         (allocatedAfter - allocatedBefore).Should().Be(0);
+    }
+
+    [Fact]
+    public void Pump_SteadyStateStreamReceive_AllocatesNothingOnTheManagedHeap()
+    {
+        // Arrange — three Links read into an arena that is not a multiple of one read: in each Pump the
+        // first Link read gets 3000 bytes, the second is capped at the 1096 bytes left, and the third
+        // finds the arena full and is not read. The measured window therefore covers the capped read
+        // and the skipped read, not only full-size ones.
+        const int linkCount = 3;
+        const int perLink = 40_000;
+        const int runLength = linkCount * perLink;
+        using RawReactorHarness harness = new(capacity: 8, scratchBufferSize: 3000, arenaSize: 4096);
+        (_, IPEndPoint endPoint) = harness.ListenOnLoopback();
+        using Socket counterpartyA = harness.ConnectCounterpartyTo(endPoint);
+        using Socket counterpartyB = harness.ConnectCounterpartyTo(endPoint);
+        using Socket counterpartyC = harness.ConnectCounterpartyTo(endPoint);
+        harness.PumpUntilDrained(e => e.Count(x => x.Kind == RawEventKind.Accepted) == linkCount)
+            .Count(x => x.Kind == RawEventKind.Accepted).Should().Be(linkCount);
+
+        byte[] payload = new byte[perLink];
+        Random.Shared.NextBytes(payload);
+
+        // Warm-up — the same multi-Pump receive the window measures, repeated so tiered JIT and
+        // first-use allocations happen outside it.
+        for (int round = 0; round < 5; round++)
+        {
+            SendToEach(payload, counterpartyA, counterpartyB, counterpartyC);
+            PumpUntilReceived(harness.Reactor, runLength).Should().Be(runLength);
+        }
+
+        SendToEach(payload, counterpartyA, counterpartyB, counterpartyC);
+
+        // Act
+        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        int received = PumpUntilReceived(harness.Reactor, runLength);
+        long allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
+
+        // Assert
+        received.Should().Be(runLength, "a window that did not receive every byte measured nothing useful");
+        (allocatedAfter - allocatedBefore).Should().Be(0);
+
+        static void SendToEach(byte[] payload, Socket a, Socket b, Socket c)
+        {
+            a.Send(payload);
+            b.Send(payload);
+            c.Send(payload);
+        }
+
+        static int PumpUntilReceived(RawReactor reactor, int target)
+        {
+            int total = 0;
+            for (int pump = 0; pump < 2000 && total < target; pump++)
+            {
+                reactor.Pump();
+                foreach (RawEvent evt in reactor.Drain())
+                {
+                    total += evt.Payload.Length;
+                }
+            }
+
+            return total;
+        }
     }
 }
