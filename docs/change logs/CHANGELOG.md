@@ -126,7 +126,8 @@ still shows.
   Retransmission is per record.
 - Fragmentation for the reliable modes. A wide Message is cut into Fragments on contiguous
   sequences, with no message ID on the wire, and reassembled inside the receive window with no
-  separate buffer. Fragment size is per direction and never announced.
+  separate buffer. Each end announces its Fragment size, and a reliable Message is cut at the
+  smaller of the two (see Unreleased).
 - `Send` returns `MessageTooLarge` above one datagram in an unreliable mode, and
   `RemoteMessageTooLarge` above the peer's announced limit in any mode. A refused Send burns no
   sequence and takes no retention.
@@ -288,8 +289,8 @@ Each risk was stated in a closed pull request and is still present in the code.
 - **R8 Fragment delivery retries can lose the arena race repeatedly.** The delay is unbounded but
   not permanent. A record refused because it would overwrite a held Fragment raises no counter or
   Diagnostic.
-- **R9 Side effects of the ordered hold limit.** A Goodbye past the limit behind a stalled head goes unacked, so the sender waits out its Linger.
-  `OutOfWindowPackets` also counts in-window records the Space will not hold.
+- **R9 Side effects of the ordered hold limit.** A Goodbye past the limit behind a stalled head
+  goes unacked, so the sender waits out its Linger. `OutOfWindowPackets` also counts in-window records the Space will not hold.
   `HeldRecordBudgetBytes` excludes the short-lived arrays left when the ring grows.
 - **R10 A discarded oversized `UnreliableSequenced` record still advances the high-water mark**, so
   an older record arriving after it is dropped.
