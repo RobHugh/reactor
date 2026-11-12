@@ -411,6 +411,31 @@ public class RawReactorStreamReadTests
         drained.Count(x => x.Kind == RawEventKind.EndOfStream && x.Link == linkB).Should().Be(1);
     }
 
+    [Fact]
+    public void Drain_SingleLinkWhoseShareIsSmallerThanOneRead_ReceivesFullSizeReadsAndEveryByte()
+    {
+        // Proves: a lone Link whose ReadShare (4096 / 8 = 512) is below one read still gets full-size
+        // reads, so the read is capped by the arena's free space and never by the share.
+        using RawReactorHarness harness = new(capacity: 8, scratchBufferSize: 4096, arenaSize: 4096);
+        (_, IPEndPoint endPoint) = harness.ListenOnLoopback();
+        (Socket counterparty, LinkId link) = AcceptCounterparty(harness, endPoint);
+        using Socket disposeCounterparty = counterparty;
+
+        byte[] payload = new byte[40_000];
+        Random.Shared.NextBytes(payload);
+        counterparty.Send(payload);
+
+        // Act
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained =
+            harness.PumpUntilDrained(e => SegmentBytes(e, link).Length >= payload.Length);
+
+        // Assert
+        SegmentBytes(drained, link).Should().Equal(payload);
+        drained.Where(x => x.Kind == RawEventKind.SegmentReceived && x.Link == link)
+            .Should().Contain(x => x.Payload.Length > 512, "the read must not be capped at the 512-byte share");
+        harness.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ArenaExhausted);
+    }
+
     private static (Socket Counterparty, LinkId Link) AcceptCounterparty(RawReactorHarness harness, IPEndPoint endPoint)
     {
         Socket counterparty = harness.ConnectCounterpartyTo(endPoint);

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using FluentAssertions;
 using Xunit;
 
@@ -197,6 +198,60 @@ public class RawReactorPumpTests
         long allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
 
         // Assert
+        (allocatedAfter - allocatedBefore).Should().Be(0);
+    }
+
+    [Fact]
+    public void Pump_SteadyStateStreamReceive_AllocatesNothingOnTheManagedHeap()
+    {
+        // Proves: once warmed up, receiving a multi-Pump stream run that reaches the arena cap
+        // (Pump plus a foreach over Drain) allocates nothing on the managed heap.
+        const int runLength = 40_000;
+        using RawReactorHarness harness = new(capacity: 8, scratchBufferSize: 4096, arenaSize: 4096);
+        (_, IPEndPoint endPoint) = harness.ListenOnLoopback();
+        using Socket counterparty = harness.ConnectCounterpartyTo(endPoint);
+        harness.Reactor.Pump();
+        harness.FirstAcceptedLink();
+
+        byte[] payload = new byte[runLength];
+        Random.Shared.NextBytes(payload);
+
+        // Warm-up — the same multi-Pump receive the window measures, repeated so tiered JIT and
+        // first-use allocations happen outside it.
+        for (int round = 0; round < 5; round++)
+        {
+            counterparty.Send(payload);
+            int warmupTotal = 0;
+            for (int pump = 0; pump < 2000 && warmupTotal < runLength; pump++)
+            {
+                harness.Reactor.Pump();
+                foreach (RawEvent evt in harness.Reactor.Drain())
+                {
+                    warmupTotal += evt.Payload.Length;
+                }
+            }
+
+            warmupTotal.Should().Be(runLength);
+        }
+
+        counterparty.Send(payload);
+
+        // Act
+        int received = 0;
+        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        for (int pump = 0; pump < 2000 && received < runLength; pump++)
+        {
+            harness.Reactor.Pump();
+            foreach (RawEvent evt in harness.Reactor.Drain())
+            {
+                received += evt.Payload.Length;
+            }
+        }
+
+        long allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
+
+        // Assert
+        received.Should().Be(runLength, "a window that received nothing measured nothing");
         (allocatedAfter - allocatedBefore).Should().Be(0);
     }
 }
