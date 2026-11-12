@@ -126,7 +126,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="_scratchBuffer"/> — which is read-side and reused within one
     /// <see cref="OnLinkReadable"/> call — and from <see cref="_sendBuffer"/>, which is sized for a
     /// control datagram only and far too small for a coalesced data one. Sized at
-    /// <see cref="MaxUdpDatagramSize"/> like <see cref="_scratchBuffer"/> so it can hold whatever a
+    /// <see cref="MaxUdpDatagramSize"/>, the largest datagram one send can carry, so it can hold whatever a
     /// Pump packs into it; reused across every Peer flushed by one Pump rather than allocated per Peer.
     /// </summary>
     private readonly byte[] _outboundDatagramBuffer = new byte[MaxUdpDatagramSize];
