@@ -17,15 +17,13 @@ public class DatagramSessionHostileAnnouncedIntervalTests
     private const int ControlDatagramSize = 256;
     private const int ControlBodyOffset = 5;
     private const int CookieLength = 32;
-    private const int ResumeSecretLength = 16;
-    private const uint ProtocolVersion = 1;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
     private const uint CounterpartyMaxMessageSize = 4096;
     private const uint CounterpartySessionId = 0xBEEF_0003;
 
     private const byte HelloType = 1;
     private const byte CookieType = 2;
     private const byte HelloWithCookieType = 3;
-    private const byte AcceptType = 4;
     private const byte RefusalType = 5;
     private const byte RefusalReasonVersion = 1;
 
@@ -89,7 +87,7 @@ public class DatagramSessionHostileAnnouncedIntervalTests
         (Source dialSource, ulong clientNonce) = DialUpToAccept(dialler, hostile);
 
         // Act
-        hostile.SendTo(dialSource, BuildAccept(clientNonce, sendIdleIntervalMilliseconds, lingerMilliseconds));
+        hostile.SendTo(dialSource, DatagramSessionWire.BuildAccept(clientNonce, CounterpartySessionId, CounterpartyMaxMessageSize, sendIdleIntervalMilliseconds, lingerMilliseconds));
         Action pump = () =>
         {
             dialler.PumpUntil(() => dialler.Reactor.Counters.UnknownSourceDatagrams > 0);
@@ -100,6 +98,107 @@ public class DatagramSessionHostileAnnouncedIntervalTests
         pump.Should().NotThrow();
         dialler.DrainToList().Should().NotContain(evt => evt.Kind == SessionEventKind.PeerConnected);
         dialler.Sink.Received.Should().Contain(record => record.Id == DiagnosticId.DatagramMalformed);
+    }
+
+    /// <summary>Each illegal Fragment size or receive window (ADR 0024), with the other field legal.</summary>
+    public static TheoryData<ushort, uint> IllegalFragmentTerms => new()
+    {
+        { 575, DatagramSessionWire.DefaultReceiveWindowFragments },
+        { 65_508, DatagramSessionWire.DefaultReceiveWindowFragments },
+        { DatagramSessionWire.DefaultFragmentSize, 0 },
+    };
+
+    /// <summary>The edges of the legal Fragment size range, which are accepted.</summary>
+    public static TheoryData<ushort> LegalFragmentSizeBoundaries => new() { 576, 65_507 };
+
+    [Theory]
+    [MemberData(nameof(IllegalFragmentTerms))]
+    public void Pump_HelloWithCookieAnnouncingAnIllegalFragmentTerm_DiscardsItAsMalformedAndKeepsPumping(
+        ushort fragmentSize, uint receiveWindowFragments)
+    {
+        // Arrange
+        using DatagramSessionReactorHarness accepter = new();
+        using RawCounterparty hostile = new();
+        const ulong clientNonce = 47;
+        (long epoch, byte[] cookie) = ObtainCookie(accepter, hostile, clientNonce);
+
+        // Act
+        hostile.SendTo(
+            Source.FromIPEndPoint(accepter.Endpoint),
+            DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: CounterpartySessionId, fragmentSize: fragmentSize, receiveWindowFragments: receiveWindowFragments));
+        Action pump = () =>
+        {
+            accepter.PumpUntil(() => accepter.Reactor.Counters.UnknownSourceDatagrams > 0);
+            accepter.Reactor.Pump();
+        };
+
+        // Assert
+        pump.Should().NotThrow();
+        accepter.DrainToList().Should().NotContain(evt => evt.Kind == SessionEventKind.PeerConnected);
+        accepter.Sink.Received.Should().Contain(record => record.Id == DiagnosticId.DatagramMalformed);
+    }
+
+    [Theory]
+    [MemberData(nameof(IllegalFragmentTerms))]
+    public void Pump_AcceptAnnouncingAnIllegalFragmentTerm_DiscardsItAsMalformedAndKeepsPumping(
+        ushort fragmentSize, uint receiveWindowFragments)
+    {
+        // Arrange
+        using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
+        using RawCounterparty hostile = new();
+        (Source dialSource, ulong clientNonce) = DialUpToAccept(dialler, hostile);
+
+        // Act
+        hostile.SendTo(dialSource, DatagramSessionWire.BuildAccept(clientNonce, CounterpartySessionId, CounterpartyMaxMessageSize, fragmentSize: fragmentSize, receiveWindowFragments: receiveWindowFragments));
+        Action pump = () =>
+        {
+            dialler.PumpUntil(() => dialler.Reactor.Counters.UnknownSourceDatagrams > 0);
+            dialler.Reactor.Pump();
+        };
+
+        // Assert
+        pump.Should().NotThrow();
+        dialler.DrainToList().Should().NotContain(evt => evt.Kind == SessionEventKind.PeerConnected);
+        dialler.Sink.Received.Should().Contain(record => record.Id == DiagnosticId.DatagramMalformed);
+    }
+
+    [Theory]
+    [MemberData(nameof(LegalFragmentSizeBoundaries))]
+    public void Pump_HelloWithCookieAnnouncingALegalFragmentSizeBoundary_Establishes(ushort fragmentSize)
+    {
+        // Arrange
+        using DatagramSessionReactorHarness accepter = new();
+        using RawCounterparty counterparty = new();
+        const ulong clientNonce = 48;
+        (long epoch, byte[] cookie) = ObtainCookie(accepter, counterparty, clientNonce);
+
+        // Act
+        counterparty.SendTo(
+            Source.FromIPEndPoint(accepter.Endpoint),
+            DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie, sessionIdForMe: CounterpartySessionId, fragmentSize: fragmentSize));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events =
+            accepter.PumpUntilDrained(drained => drained.Any(evt => evt.Kind == SessionEventKind.PeerConnected));
+
+        // Assert
+        events.Should().Contain(evt => evt.Kind == SessionEventKind.PeerConnected);
+    }
+
+    [Theory]
+    [MemberData(nameof(LegalFragmentSizeBoundaries))]
+    public void Pump_AcceptAnnouncingALegalFragmentSizeBoundary_Establishes(ushort fragmentSize)
+    {
+        // Arrange
+        using DatagramSessionReactorHarness dialler = new(bindLoopback: false);
+        using RawCounterparty counterparty = new();
+        (Source dialSource, ulong clientNonce) = DialUpToAccept(dialler, counterparty);
+
+        // Act
+        counterparty.SendTo(dialSource, DatagramSessionWire.BuildAccept(clientNonce, CounterpartySessionId, CounterpartyMaxMessageSize, fragmentSize: fragmentSize));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events =
+            dialler.PumpUntilDrained(drained => drained.Any(evt => evt.Kind == SessionEventKind.PeerConnected));
+
+        // Assert
+        events.Should().Contain(evt => evt.Kind == SessionEventKind.PeerConnected);
     }
 
     [Fact]
@@ -183,7 +282,7 @@ public class DatagramSessionHostileAnnouncedIntervalTests
         (Source dialSource, ulong clientNonce) = DialUpToAccept(dialler, counterparty);
 
         // Act
-        counterparty.SendTo(dialSource, BuildAccept(clientNonce, MaximumLegalInterval, MaximumLegalInterval));
+        counterparty.SendTo(dialSource, DatagramSessionWire.BuildAccept(clientNonce, CounterpartySessionId, CounterpartyMaxMessageSize, MaximumLegalInterval, MaximumLegalInterval));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = [];
         Action pump = () =>
         {
@@ -268,22 +367,6 @@ public class DatagramSessionHostileAnnouncedIntervalTests
         datagram[4] = controlType;
         body.CopyTo(datagram.AsSpan(ControlBodyOffset));
         return datagram;
-    }
-
-    private static byte[] BuildAccept(ulong clientNonce, ulong sendIdleIntervalMilliseconds, ulong lingerMilliseconds)
-    {
-        byte[] body = new byte[8 + 4 + 4 + 8 + 8 + ResumeSecretLength];
-        int offset = 0;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), clientNonce);
-        offset += 8;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), CounterpartySessionId);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), CounterpartyMaxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), sendIdleIntervalMilliseconds);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), lingerMilliseconds);
-        return BuildControlDatagram(AcceptType, body);
     }
 
     /// <summary>

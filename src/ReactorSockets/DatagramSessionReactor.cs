@@ -3126,7 +3126,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // already trusted by the time this Peer reaches Established — an internal invariant to assert rather than input to re-validate,
         // mirroring NewAcceptedPeer's assert on the accepting path.
         Debug.Assert(
-            remoteTerms.Limits.IsLegal(speaksVersion: true),
+            remoteTerms.IsLegal(speaksVersion: true),
             "ControlDatagramCodec.TryReadAccept rejects illegal announced limits before this is called.");
 
         AnnouncedLimits remoteLimits = remoteTerms.Limits;
@@ -3137,6 +3137,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         slot.RemoteMaxMessageSize = remoteLimits.MaxMessageSize;
         slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteLimits.SendIdleIntervalMilliseconds);
         slot.RemoteLinger = remoteLinger;
+        slot.RemoteFragmentSize = remoteTerms.FragmentSize;
+        slot.RemoteReceiveWindowFragments = remoteTerms.ReceiveWindowFragments;
         slot.EffectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
         slot.Lifecycle.Establish();
@@ -3468,7 +3470,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // Established, the limits are already trusted — an internal invariant to assert rather than
         // input to re-validate.
         Debug.Assert(
-            remoteTerms.Limits.IsLegal(speaksVersion: true),
+            remoteTerms.IsLegal(speaksVersion: true),
             "ControlDatagramCodec.TryReadHelloWithCookie rejects illegal announced limits before this is called.");
 
         AnnouncedLimits remoteLimits = remoteTerms.Limits;
@@ -3489,6 +3491,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RemoteMaxMessageSize = remoteLimits.MaxMessageSize,
             RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteLimits.SendIdleIntervalMilliseconds),
             RemoteLinger = remoteLinger,
+            RemoteFragmentSize = remoteTerms.FragmentSize,
+            RemoteReceiveWindowFragments = remoteTerms.ReceiveWindowFragments,
             EffectiveLinger = effectiveLinger,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
             Lifecycle = PeerLifecycle.Accepted(),
@@ -3529,11 +3533,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// The terms this end announces for <paramref name="slot"/> in its Hello-with-cookie or Accept:
-    /// the slot's own local session id and this Reactor's announced limits and intervals.
+    /// the slot's own local session id, this Reactor's announced limits and intervals, and its own
+    /// Fragment size and receive window.
     /// </summary>
     private AnnouncedSessionTerms AnnouncedTermsFor(PeerSlot slot) => new(
         slot.LocalSessionId,
-        new AnnouncedLimits((uint)_options.MaxMessageSize, AnnouncedSendIdleIntervalMilliseconds, AnnouncedLingerMilliseconds));
+        new AnnouncedLimits((uint)_options.MaxMessageSize, AnnouncedSendIdleIntervalMilliseconds, AnnouncedLingerMilliseconds),
+        (ushort)_options.ResolvedFragmentSize,
+        (uint)_options.ResolvedReceiveWindowFragments);
 
     /// <summary>
     /// Spends one unit of the per-Pump admission budget, or Discards. The cap bounds work rather than
@@ -4263,6 +4270,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// send address.
         /// </summary>
         public uint RemoteMaxMessageSize { get; set; }
+
+        /// <summary>
+        /// The Fragment size in bytes the peer announced during the handshake, never this end's own
+        /// <see cref="FragmentSize"/>. Set on both Established paths and always within the legal
+        /// announced range, because <see cref="ControlDatagramCodec"/> rejects any other value at parse.
+        /// </summary>
+        public ushort RemoteFragmentSize { get; set; }
+
+        /// <summary>
+        /// The receive window in Fragments the peer announced during the handshake, never this end's own.
+        /// Set on both Established paths and never zero, because <see cref="ControlDatagramCodec"/>
+        /// rejects zero at parse.
+        /// </summary>
+        public uint RemoteReceiveWindowFragments { get; set; }
 
         /// <summary>
         /// The send-idle interval the peer itself announced during the handshake — never this end's own

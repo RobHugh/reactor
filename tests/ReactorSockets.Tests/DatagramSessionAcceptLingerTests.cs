@@ -20,7 +20,6 @@ public class DatagramSessionAcceptLingerTests
     private const byte HelloType = 1;
     private const byte CookieType = 2;
     private const byte HelloWithCookieType = 3;
-    private const byte AcceptType = 4;
 
     private const int ControlBodyOffset = 5;
     private const int CookieLength = 32;
@@ -54,7 +53,7 @@ public class DatagramSessionAcceptLingerTests
 
         PumpBothUntilReceived(dialler, fakeAccepter, HelloWithCookieType, out _);
 
-        byte[] zeroLingerAccept = BuildAccept(
+        byte[] zeroLingerAccept = DatagramSessionWire.BuildAccept(
             clientNonce,
             AccepterSessionId,
             AccepterMaxMessageSize,
@@ -124,29 +123,5 @@ public class DatagramSessionAcceptLingerTests
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(8, 8), unchecked((ulong)epoch));
         cookie.CopyTo(body.AsSpan(16, CookieLength));
         return BuildControlDatagram(CookieType, body);
-    }
-
-    private static byte[] BuildAccept(
-        ulong clientNonce,
-        uint sessionIdForMe,
-        uint maxMessageSize,
-        ulong sendIdleIntervalMilliseconds,
-        ulong lingerMilliseconds,
-        ReadOnlySpan<byte> resumeSecret)
-    {
-        byte[] body = new byte[8 + 4 + 4 + 8 + 8 + ResumeSecretLength];
-        int offset = 0;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), clientNonce);
-        offset += 8;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), sessionIdForMe);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), maxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), sendIdleIntervalMilliseconds);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), lingerMilliseconds);
-        offset += 8;
-        resumeSecret.CopyTo(body.AsSpan(offset, ResumeSecretLength));
-        return BuildControlDatagram(AcceptType, body);
     }
 }

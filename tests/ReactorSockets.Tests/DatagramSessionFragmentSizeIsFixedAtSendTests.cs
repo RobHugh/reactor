@@ -7,9 +7,7 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// Fragment size is decided once, at <see cref="DatagramSessionReactor.Send"/>, captured
 /// per-Peer at admission rather than read afresh from <see cref="DatagramSessionOptions"/> on every
-/// call. It is unilateral and per-direction (ADR 0004) and is never announced in the handshake, because
-/// a receiver reassembles a Fragment set from <c>fragmentIndex</c> and <c>fragmentCount</c> alone and
-/// never needs to know the sender's choice. Every test here drives a live Session through
+/// call. It is announced in the handshake (ADR 0024). Every test here drives a live Session through
 /// <see cref="WireTap"/> and decodes the captured bytes by hand, the same proof style
 /// <see cref="DatagramSessionSendFragmentationTests"/> uses.
 /// </summary>
@@ -87,41 +85,46 @@ public class DatagramSessionFragmentSizeIsFixedAtSendTests
     }
 
     [Fact]
-    public void Connect_HandshakeDatagrams_NeverContainTheConfiguredFragmentSizesBytes()
+    public void Connect_HandshakeDatagrams_EachCarryTheirOwnFragmentSizeAndReceiveWindowAtTheDocumentedOffsets()
     {
-        // Arrange — a fragment size distinctive enough that finding its 4-byte big-endian encoding
-        // anywhere in a handshake datagram could not be an innocent coincidence: not a small round
-        // number, and not a value any other handshake field would plausibly carry (issue #248, ADR
-        // 0004 — fragment size is unilateral, per-direction and never announced).
-        const int diallerFragmentSize = 23_456;
-        const int accepterFragmentSize = 61_234;
+        // Arrange — each end gets a distinct pair, so a value read from the wrong datagram, or the two
+        // fields written in the wrong order, reads back as a different number (ADR 0024).
+        const int diallerFragmentSize = 733;
+        const int diallerReceiveWindow = 17;
+        const int accepterFragmentSize = 911;
+        const int accepterReceiveWindow = 23;
         using DatagramSessionReactorHarness dialler = new(
-            bindLoopback: false, retentionBytes: diallerFragmentSize * 2, fragmentSize: diallerFragmentSize);
+            bindLoopback: false, fragmentSize: diallerFragmentSize, receiveWindowFragments: diallerReceiveWindow);
         using DatagramSessionReactorHarness accepter = new(
-            retentionBytes: accepterFragmentSize * 2, fragmentSize: accepterFragmentSize);
+            fragmentSize: accepterFragmentSize, receiveWindowFragments: accepterReceiveWindow);
         using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
 
-        byte[] diallerNeedle = new byte[sizeof(uint)];
-        BinaryPrimitives.WriteUInt32BigEndian(diallerNeedle, (uint)diallerFragmentSize);
-        byte[] accepterNeedle = new byte[sizeof(uint)];
-        BinaryPrimitives.WriteUInt32BigEndian(accepterNeedle, (uint)accepterFragmentSize);
-
-        // Act — connect only. No Send is ever called, so every datagram the tap relays is part of the
-        // handshake (ADR 0009's control profile), not a data datagram that could carry a Fragment
-        // header of its own.
+        // Act — connect only, so the only datagrams the tap relays are the handshake's.
         dialler.Reactor.Connect(tap.PublicEndPoint);
         DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
 
-        // Assert
-        tap.Captures.Should().NotBeEmpty();
-        foreach (TapCapture capture in tap.Captures)
-        {
-            capture.Payload.AsSpan().IndexOf(diallerNeedle).Should().Be(
-                -1, $"the dialler's configured fragment size ({diallerFragmentSize}) must never be announced on the wire (ADR 0004)");
-            capture.Payload.AsSpan().IndexOf(accepterNeedle).Should().Be(
-                -1, $"the accepter's configured fragment size ({accepterFragmentSize}) must never be announced on the wire (ADR 0004)");
-        }
+        // Assert — the terms start at a fixed offset in each datagram, with FragmentSize (u16) at 24 and
+        // ReceiveWindowFragments (u32) at 26 inside them, big-endian.
+        byte[] helloWithCookie = tap.Captures
+            .Single(capture => capture.Direction == TapDirection.DiallerToAccepter && capture.Payload[4] == DatagramSessionWire.HelloWithCookieType)
+            .Payload;
+        byte[] accept = tap.Captures
+            .Single(capture => capture.Direction == TapDirection.AccepterToDialler && capture.Payload[4] == DatagramSessionWire.AcceptType)
+            .Payload;
+
+        ReadAnnouncedFragmentSize(helloWithCookie, DatagramSessionWire.HelloWithCookieTermsOffset).Should().Be(diallerFragmentSize);
+        ReadAnnouncedReceiveWindow(helloWithCookie, DatagramSessionWire.HelloWithCookieTermsOffset).Should().Be(diallerReceiveWindow);
+        ReadAnnouncedFragmentSize(accept, DatagramSessionWire.AcceptTermsOffset).Should().Be(accepterFragmentSize);
+        ReadAnnouncedReceiveWindow(accept, DatagramSessionWire.AcceptTermsOffset).Should().Be(accepterReceiveWindow);
     }
+
+    /// <summary>The Fragment size a handshake datagram announces, read at `termsOffset` plus the documented offset inside the terms.</summary>
+    private static ushort ReadAnnouncedFragmentSize(byte[] datagram, int termsOffset) =>
+        BinaryPrimitives.ReadUInt16BigEndian(datagram.AsSpan(termsOffset + DatagramSessionWire.TermsFragmentSizeOffset, sizeof(ushort)));
+
+    /// <summary>The receive window a handshake datagram announces, read at `termsOffset` plus the documented offset inside the terms.</summary>
+    private static uint ReadAnnouncedReceiveWindow(byte[] datagram, int termsOffset) =>
+        BinaryPrimitives.ReadUInt32BigEndian(datagram.AsSpan(termsOffset + DatagramSessionWire.TermsReceiveWindowOffset, sizeof(uint)));
 
     [Fact]
     public void Send_TwoSessionsWithDifferentFragmentSizes_InteroperateEachCuttingByItsOwnValue()

@@ -31,7 +31,7 @@ public class DatagramSessionRefusalTests
     private const int CookieLength = 32;
     private const int ResumeSecretLength = 16;
 
-    private const uint ProtocolVersion = 1;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
 
     private const byte RefusalReasonVersion = 1;
     private const byte RefusalReasonCapacity = 2;
@@ -160,7 +160,7 @@ public class DatagramSessionRefusalTests
 
         // Act
         peer.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
-            clientNonce, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength], version: 2));
+            clientNonce, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength], version: 1));
         accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsSent > sentBefore);
         byte[] reply = peer.Receive(out _);
 
@@ -169,7 +169,7 @@ public class DatagramSessionRefusalTests
         (ulong nonce, byte reason, uint versionOffered, uint versionRequired) = ParseRefusal(reply);
         nonce.Should().Be(clientNonce);
         reason.Should().Be(RefusalReasonVersion);
-        versionOffered.Should().Be(2);
+        versionOffered.Should().Be(1);
         versionRequired.Should().Be(ProtocolVersion);
     }
 
@@ -184,7 +184,7 @@ public class DatagramSessionRefusalTests
 
         // Act
         peer.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
-            clientNonce, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength], version: 2));
+            clientNonce, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength], version: 1));
         accepter.PumpUntil(() => accepter.Sink.Received.Any(record => record.Id == DiagnosticId.VersionRefused));
 
         // Assert — a remote can produce this at will, so it is a Sink record at Warn, never an Error.
@@ -203,7 +203,7 @@ public class DatagramSessionRefusalTests
 
         // Act
         peer.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
-            clientNonce, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength], version: 2));
+            clientNonce, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength], version: 1));
         accepter.PumpUntil(() => accepter.Sink.Received.Any(record => record.Id == DiagnosticId.VersionRefused));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = accepter.DrainToList();
 
@@ -263,7 +263,7 @@ public class DatagramSessionRefusalTests
         dialler.Reactor.Pump();
         accepter.Receive(out _); // The dialler's HelloWithCookie — its content does not matter here.
 
-        accepter.Send(diallerEndpoint, BuildRefusal(clientNonce, RefusalReasonVersion, versionOffered: 2, versionRequired: ProtocolVersion));
+        accepter.Send(diallerEndpoint, BuildRefusal(clientNonce, RefusalReasonVersion, versionOffered: 1, versionRequired: ProtocolVersion));
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
             dialler.PumpUntilDrained(e => e.Any(x => x.Kind == SessionEventKind.PeerClosed));
 
