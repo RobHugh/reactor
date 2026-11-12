@@ -475,8 +475,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// frame arena for delivery, and not a Message the arena refused.
     /// <see cref="PeerCounters.Resumes"/> counts the Peer's resumes: once per
     /// <see cref="SessionEventKind.PeerResumed"/> raised for it, on the accepting end when a matching
-    /// Resume moves it out of Interrupted and on the dialling end when it hears its session again after
-    /// sending a Resume, and never reset by one (ADR 0013).
+    /// Resume, or a well-formed data Datagram from the address it sends to, moves it out of Interrupted and
+    /// on the dialling end when it hears its session again after sending a Resume, and never reset by one
+    /// (ADR 0013).
     /// <see cref="PeerCounters.RetentionHighWaterBytes"/> reads the true per-Peer figure — summed
     /// across both reliable Spaces — from <see cref="_retention"/>.
     /// </summary>
@@ -940,7 +941,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// established from: a Peer behind a NAT that rebinds, or a device that changes network, keeps its
     /// Session, which is the whole reason the identity is a token rather than an address. A session id
     /// naming a recently closed Session goes to <see cref="TryReAckClosedSession"/> first (ADR 0017,
-    /// second amendment) and is discarded only if that declines.
+    /// second amendment) and is discarded only if that declines. A data Datagram from another address is
+    /// delivered but neither moves the Peer's send address nor resumes an Interrupted accepted Peer.
     /// </summary>
     private void ProcessDataDatagram(UdpLink link, Source source, uint session, ReadOnlySpan<byte> datagram)
     {
@@ -1098,7 +1100,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // Fully parsed and not refused above: this is what "well-formed" means for leaving Interrupted
         // (issue #383). It sits after the oversized-set close so a datagram that closes the Peer never
         // resumes it first.
-        ResumeInterruptedDialledPeerOnData(slot);
+        ResumeInterruptedPeerOnData(source, slot);
 
         // The proof above is what attributes this Datagram to slot's Peer: it names an established
         // session id (ProcessDataDatagram's own lookup) and every record in it parses. Only from this
@@ -1609,11 +1611,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Takes an Interrupted dialled Peer back to <see cref="PeerPhase.Open"/> on hearing its
-    /// session again: queues <see cref="SessionEventKind.PeerResumed"/> with the same
-    /// <see cref="PeerId"/> (generation included), calls <see cref="Core.PeerCounterSet.RecordResume"/>
-    /// once and logs <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c> 0 (a datagram Session
-    /// rewinds nothing). Does nothing for an accepting-end Peer or a Peer that is not Interrupted.
+    /// Takes an Interrupted Peer back to <see cref="PeerPhase.Open"/> on hearing its session again:
+    /// queues <see cref="SessionEventKind.PeerResumed"/> with the same <see cref="PeerId"/> (generation
+    /// included), calls <see cref="Core.PeerCounterSet.RecordResume"/> once and logs
+    /// <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c> 0 (a datagram Session rewinds nothing).
+    /// An Interrupted dialled Peer resumes on any well-formed data Datagram for its Session, an
+    /// Interrupted accepted Peer only on one from exactly its current <see cref="PeerSlot.Remote"/>
+    /// (address and port). Does nothing for a Peer that is not Interrupted.
     /// </summary>
     /// <remarks>
     /// Called once <see cref="ParseDataDatagram"/> has fully parsed a data datagram, the same well-formedness
@@ -1622,15 +1626,24 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// grants no takeover (the accepting end still demands the resume secret, ADR 0009) and on-path
     /// attackers are out of scope. Counters are never reset by a Resume (ADR 0013).
     /// <para>
-    /// No "has sent a Resume yet" check is needed (ADR 0015): the Pump that marks a dialled Peer
-    /// Interrupted also sends its first Resume (<c>SendResumeIfDue</c> runs after the receive-idle
+    /// On the accepting end the datagram is not authenticated either, because the session id is only a
+    /// demultiplexing token (ADR 0009). A party able to forge a data Datagram from the held address with the
+    /// right session id can already keep <see cref="PeerSlot.LastReceiveTimestamp"/> fresh and stop the Peer
+    /// being interrupted at all, so resuming on the same evidence grants it nothing new. This path never moves
+    /// the send address, so the comparison is on the whole <see cref="Source"/>: a datagram from the same IP
+    /// on another port would otherwise report a resume while sends still go to the old port. A new port or IP
+    /// needs a matched Resume (and a path challenge for a new IP, ADR 0021).
+    /// </para>
+    /// <para>
+    /// No "has sent a Resume yet" check is needed on the dialled end (ADR 0015): the Pump that marks a dialled
+    /// Peer Interrupted also sends its first Resume (<c>SendResumeIfDue</c> runs after the receive-idle
     /// check), and datagrams are read before either, so every datagram that reaches an Interrupted
     /// dialled Peer arrives after at least one Resume went out.
     /// </para>
     /// </remarks>
-    private void ResumeInterruptedDialledPeerOnData(PeerSlot slot)
+    private void ResumeInterruptedPeerOnData(Source source, PeerSlot slot)
     {
-        if (!slot.IsDialled || !slot.Lifecycle.TryLeaveInterrupted())
+        if (!(slot.IsDialled || source == slot.Remote) || !slot.Lifecycle.TryLeaveInterrupted())
         {
             return;
         }
@@ -3867,9 +3880,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <see cref="PeerSlot.EffectiveLinger"/>, elapsed since <see cref="PeerLifecycle.LingerStartTimestamp"/>,
         /// ends it with <see cref="DisconnectReason.LingerExpired"/>, mirroring
         /// <see cref="StreamSessionReactor.HasExceededLinger"/>. A Resume is the other way out: on the
-        /// accepting end one matched by session id and secret (<see cref="ResumeInterruptedPeer"/>), on the
-        /// dialling end hearing its session again after it has sent a Resume
-        /// (<see cref="ResumeInterruptedDialledPeerOnData"/>). Either raises
+        /// accepting end one matched by session id and secret (<see cref="ResumeInterruptedPeer"/>) or a
+        /// well-formed data Datagram from the address it sends to, on the dialling end hearing its session
+        /// again after it has sent a Resume (<see cref="ResumeInterruptedPeerOnData"/>). Either raises
         /// <see cref="SessionEventKind.PeerResumed"/>.
         /// </remarks>
         Interrupted,
