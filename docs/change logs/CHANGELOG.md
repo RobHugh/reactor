@@ -15,8 +15,9 @@
   `ReceiveWindowFragments`. A reliable Fragment wider than the receiver's own `FragmentSize`, which
   only a non-conforming peer sends, closes the Peer with `ProtocolViolation` before its datagram is
   acknowledged. An announced `FragmentSize` outside 576 to 65 507 or a `ReceiveWindowFragments` of 0
-  is refused like an illegal announced interval. Unreliable modes keep the local `FragmentSize` as
-  their single-Datagram cap.
+  is refused like an illegal announced interval. The smaller `FragmentSize` is also the
+  single-Datagram cap of the unreliable modes, so an unreliable `Send` to a peer with a smaller
+  `FragmentSize` returns `MessageTooLarge` sooner.
 
 ### Breaking changes
 

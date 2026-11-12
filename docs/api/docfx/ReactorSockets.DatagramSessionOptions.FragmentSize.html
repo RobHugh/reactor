@@ -140,8 +140,8 @@ this value and the peer's announced value, fixed once when the Peer reaches Esta
 unchanged across a Resume, so two Reactors configured with different values interoperate. A
 reliable Fragment wider than this value closes the Peer with
 <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_ProtocolViolation">ProtocolViolation</a>, which only a non-conforming peer causes. The
-single-Datagram cap of an unreliable Message is this value alone, whatever the peer announced.
-A later change to this options instance never reaches a Peer already open. See
+same smaller value is the single-Datagram cap of an unreliable Message, refused above it with
+<a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_MessageTooLarge">MessageTooLarge</a>. A later change to this options instance never reaches a Peer already open. See
 <a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a>.</p>
 </div>
 

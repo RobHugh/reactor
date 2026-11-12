@@ -30,7 +30,8 @@ produce more Fragments per Message than the receiver's window floor allows.
    version, and the dial ends as any unanswered dial does.
 4. **A Peer sends at the smaller of the two sizes.** Each Peer's send Fragment size is
    `min(local FragmentSize, remote FragmentSize)`. It is fixed once, when the Peer reaches
-   Established, and does not change across a Resume.
+   Established, and does not change across a Resume. It is also the single-Datagram cap of the
+   unreliable modes, so an unreliable Message wider than it returns `MessageTooLarge`.
 5. **`Send` refuses a Message the remote window cannot hold.** `Send` on a reliable mode returns
    `RemoteMessageTooLarge` when the Message's Fragment count at the send size exceeds the remote
    `ReceiveWindowFragments`. This covers a sender whose own `FragmentSize` is smaller than the

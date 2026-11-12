@@ -73,7 +73,7 @@ receiver closes the Peer with `ProtocolViolation`.
 | Outcome | Modes | Meaning |
 |---|---|---|
 | `NotEstablished` | all | The Peer's handshake has not finished. |
-| `MessageTooLarge` | `Unreliable`, `UnreliableSequenced` | Wider than one Datagram at this Reactor's own `FragmentSize`. The peer's `FragmentSize` does not bound it. Split it or use a reliable mode. |
+| `MessageTooLarge` | `Unreliable`, `UnreliableSequenced` | Wider than one Datagram at the smaller of the two ends' `FragmentSize` values. Split it or use a reliable mode. |
 | `RemoteMessageTooLarge` | all | Wider than the `MaxMessageSize` this Peer announced at handshake. In a reliable mode it also covers a Message that needs more Fragments, at the size this Peer is sent at, than the `ReceiveWindowFragments` this Peer announced. Another Peer may accept it. |
 | `RetentionExhausted` | `ReliableOrdered`, `ReliableUnordered` | The mode's Space has no `RetentionBytes` left. This is backpressure: retry after the Peer acknowledges. |
 | `Closed` | all | The Session is ending: a Goodbye has passed in either direction, or the Reactor no longer holds the Peer. |

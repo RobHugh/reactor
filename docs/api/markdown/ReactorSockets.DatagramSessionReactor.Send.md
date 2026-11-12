@@ -56,8 +56,10 @@ Which of the four delivery modes carries this Message; see <code>docs/delivery-m
 The Message payload, unframed. The bytes are copied before this call returns — into
 `_retention` for a reliable mode, into the queued record for an unreliable one — so
 the caller owns its buffer again the instant <code>Send</code> returns and may overwrite or reuse it
-without changing what is eventually put on the wire. A Message wider than
-[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) cannot fit in one Datagram, and for
+without changing what is eventually put on the wire. A Message wider than this Peer's send
+Fragment size (<code>fragmentSize</code> below: the smaller of this Reactor's
+[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) and the peer's announced Fragment size)
+cannot fit in one Datagram, and for
 [`DeliveryMode.Unreliable`](ReactorSockets.DeliveryMode.md) and [`DeliveryMode.UnreliableSequenced`](ReactorSockets.DeliveryMode.md) that cap
 is reported back as [`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md) rather than thrown, and it is
 permanent — no option lifts it: you may only fragment what you can retransmit (ADR 0004), because

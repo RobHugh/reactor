@@ -126,7 +126,9 @@ receiving.</p>
     <dt id="ReactorSockets_SendOutcome_MessageTooLarge"><code>MessageTooLarge = 3</code></dt>
   
   <dd><p>The Message is wider than one Datagram can carry, and the Space it was sent on cannot
-fragment it. Nothing was copied. Deliberately its own value rather than folded into
+fragment it. On the datagram profile that cap is the Peer's send Fragment size: the smaller of
+this end's <a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a> and the Fragment size the
+peer announced (ADR 0024). Nothing was copied. Deliberately its own value rather than folded into
 <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RetentionExhausted">RetentionExhausted</a>: retention exhaustion is backpressure the caller can retry
 once bytes are released, while an oversized Message will never fit however long the caller
 waits — a consumer that cannot tell the two apart cannot tell &quot;retry later&quot; from &quot;split it or
@@ -138,10 +140,10 @@ use a reliable mode&quot;.</p>
 the handshake, or a reliable Message needs more Fragments than the receive window the remote end
 announced (ADR 0024). Nothing was copied, and the caller may retry immediately with a smaller payload.
 An unreliable Message over both limits reports <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_MessageTooLarge">MessageTooLarge</a> instead. Distinct
-from <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_MessageTooLarge">MessageTooLarge</a> purely by whose limit was exceeded: that value means a local
-configuration fact the caller's own settings could have predicted (the single-Datagram cap an
-unreliable mode cannot exceed); this one means the far end's announced receive limit, which the
-caller has no way to know in advance.</p>
+from <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_MessageTooLarge">MessageTooLarge</a> by which limit was exceeded: that value means the
+single-Datagram cap an unreliable mode cannot exceed, which a smaller peer Fragment size lowers;
+this one means the far end's announced receive limit, its <code>MaxMessageSize</code> or its receive
+window.</p>
 </dd>
     <dt id="ReactorSockets_SendOutcome_NotEstablished"><code>NotEstablished = 5</code></dt>
   

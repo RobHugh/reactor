@@ -25,7 +25,7 @@ this value and the peer's announced value, fixed once when the Peer reaches Esta
 unchanged across a Resume, so two Reactors configured with different values interoperate. A
 reliable Fragment wider than this value closes the Peer with
 [`DisconnectReason.ProtocolViolation`](ReactorSockets.DisconnectReason.md), which only a non-conforming peer causes. The
-single-Datagram cap of an unreliable Message is this value alone, whatever the peer announced.
-A later change to this options instance never reaches a Peer already open. See
+same smaller value is the single-Datagram cap of an unreliable Message, refused above it with
+[`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md). A later change to this options instance never reaches a Peer already open. See
 [`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize).
 
