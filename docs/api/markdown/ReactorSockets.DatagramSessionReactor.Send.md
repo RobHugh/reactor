@@ -70,16 +70,16 @@ on arrival; a Message over both caps reports [`SendOutcome.MessageTooLarge`](Rea
 [`DeliveryMode.ReliableOrdered`](ReactorSockets.DeliveryMode.md) and [`DeliveryMode.ReliableUnordered`](ReactorSockets.DeliveryMode.md) the
 single-Datagram cap does not apply: a Message up to <code class="paramref">peer</code>'s own announced
 <code>MaxMessageSize</code> (see the summary above) is cut into <code>ceil(length / fragmentSize)</code>
-Fragments, each retained and sequenced as its own ordinary reliable packet, and only a Message
+Fragments, each retained and sequenced as its own ordinary reliable packet, and a Message
 wider than that remote limit is refused with [`SendOutcome.RemoteMessageTooLarge`](ReactorSockets.SendOutcome.md).
-That <code>fragmentSize</code> is this Peer's own `FragmentSize`, captured from
-[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) once when the Peer was admitted — not
-re-read from options on this or any later call. Fragment size is unilateral, per-direction, and
-decided once, at <code>Send</code> (ADR 0004): a retransmit re-sends bytes already cut rather than
-re-deciding anything, so two Messages sent to the same Peer at different times, and every
-retransmit of either, are always cut with the same size. It is never announced in the handshake,
-because a receiver reassembles a Fragment set by <code>fragmentIndex</code> and <code>fragmentCount</code>
-alone and never needs to know the sender's choice.
+That <code>fragmentSize</code> is this Peer's `FragmentSize`: the smaller of this
+Reactor's [`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) and the Fragment size the
+peer announced, fixed once when the Peer reached Established (ADR 0024) — not re-read on this or
+any later call, and unchanged by a Resume. A retransmit re-sends bytes already cut, so two
+Messages sent to the same Peer at different times, and every retransmit of either, are cut with
+the same size. A reliable Message that needs more Fragments at that size than the peer's announced
+receive window holds is refused with [`SendOutcome.RemoteMessageTooLarge`](ReactorSockets.SendOutcome.md), with
+nothing retained or sequenced.
 
 ### Returns
 

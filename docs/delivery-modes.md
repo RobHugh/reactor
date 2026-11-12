@@ -60,9 +60,11 @@ longer: the wait is now the time to deliver the whole Message, not one Datagram.
 practical argument for `ReliableUnordered`, which is the answer for bulk transfer.
 
 While a `ReliableOrdered` Space waits on a gap, the receiver holds at most two receive windows of later
-records. A record past that, or wider than `FragmentSize`, is refused unacknowledged and counted on
-`OutOfWindowPackets`, and the sender retransmits it. A long stall therefore costs retransmissions, not
-unbounded memory.
+records. A record past that is refused unacknowledged and counted on `OutOfWindowPackets`, and the
+sender retransmits it. A long stall therefore costs retransmissions, not unbounded memory. A reliable
+Fragment wider than the receiver's own `FragmentSize` is not held. Only a non-conforming peer sends
+one, because a conforming sender cuts at the smaller of the two announced `FragmentSize` values. The
+receiver closes the Peer with `ProtocolViolation`.
 
 ## What `Send` refuses
 
@@ -71,8 +73,8 @@ unbounded memory.
 | Outcome | Modes | Meaning |
 |---|---|---|
 | `NotEstablished` | all | The Peer's handshake has not finished. |
-| `MessageTooLarge` | `Unreliable`, `UnreliableSequenced` | Wider than one Datagram. Split it or use a reliable mode. |
-| `RemoteMessageTooLarge` | all | Wider than the `MaxMessageSize` this Peer announced at handshake. Another Peer may accept it. |
+| `MessageTooLarge` | `Unreliable`, `UnreliableSequenced` | Wider than one Datagram at this Reactor's own `FragmentSize`. The peer's `FragmentSize` does not bound it. Split it or use a reliable mode. |
+| `RemoteMessageTooLarge` | all | Wider than the `MaxMessageSize` this Peer announced at handshake. In a reliable mode it also covers a Message that needs more Fragments, at the size this Peer is sent at, than the `ReceiveWindowFragments` this Peer announced. Another Peer may accept it. |
 | `RetentionExhausted` | `ReliableOrdered`, `ReliableUnordered` | The mode's Space has no `RetentionBytes` left. This is backpressure: retry after the Peer acknowledges. |
 | `Closed` | all | The Session is ending: a Goodbye has passed in either direction, or the Reactor no longer holds the Peer. |
 

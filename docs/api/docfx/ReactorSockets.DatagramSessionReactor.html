@@ -281,7 +281,7 @@ progress.</p>
 0009). A Message too wide for its mode to carry is refused before any work is done on it: no
 sequence is allocated and no retention is taken, so a rejected Send leaves no trace on the
 Session. How wide is too wide depends on the mode and is decided by
-<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32">Resolve(int, int, DeliveryMode, int)</a>, the one place the rule is stated: an unreliable mode is capped
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32">Resolve(int, int, DeliveryMode, uint, int)</a>, the one place the rule is stated: an unreliable mode is capped
 at a single Datagram and refused above it as <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_MessageTooLarge">MessageTooLarge</a>, a reliable
 mode fragments, and every mode is refused above a second cap as
 <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RemoteMessageTooLarge">RemoteMessageTooLarge</a> (ADR 0004). That second cap is

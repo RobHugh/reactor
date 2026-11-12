@@ -113,9 +113,10 @@ will miss them.
 
 `FragmentSetAbandoned` never closes anything, and ordinary loss never raises it. A Fragment set that
 loses a Fragment holds its receive-window slots until a retransmission completes it. Only a set the
-sender can never complete is dropped. Either it sent other records at the sequences the set's
-missing Fragments needed, or it sent a Fragment larger than your `FragmentSize`, which is admitted
-but cannot be held.
+sender can never complete is dropped. That is a set whose sender sent other records at the sequences
+the set's missing Fragments needed. A reliable Fragment wider than your `FragmentSize` is not a set
+that is abandoned. Only a non-conforming peer sends one, and it closes the Peer with
+`ProtocolViolation` before anything in its datagram is acknowledged.
 
 ## What to watch in production
 

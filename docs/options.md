@@ -51,7 +51,7 @@ appears that is not in the audited list below.
 | `SendIdleInterval` | required | Bandwidth on an idle link against time to notice a dead Peer. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Linger` | required | A prompt teardown against a clean one. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Endpoints` | empty | No declaration. The first dial binds a wildcard, port-zero socket. |
-| `FragmentSize` | 1200 | QUIC's floor under the 1280-byte IPv6 minimum MTU. Range 576 (RFC 791) to 65 507 (UDP). |
+| `FragmentSize` | 1200 | QUIC's floor under the 1280-byte IPv6 minimum MTU. Range 576 (RFC 791) to 65 507 (UDP). Announced at handshake. A reliable Message to a Peer is cut at the smaller of the two ends' sizes, fixed when the Peer reaches Established. |
 | `ReceiveWindowFragments` | fragments in one maximum Message | `MaxMessageSize` and `FragmentSize`. A narrower window deadlocks (ADR 0004). |
 | `MissedHeartbeats` | 3 | RFC 4271's hold time. At least 2. |
 | `Entropy` | the platform CSPRNG | The platform. |
@@ -131,9 +131,11 @@ held:     Capacity × 2 × ReceiveWindowFragments × FragmentSize
 ```
 
 These are ordinary `ReliableOrdered` records waiting behind a gap, on the heap and only under traffic.
-The 2 is two windows of sequences in the one Space, not two Spaces. A record past that reach, or wider
-than `FragmentSize`, is refused unacknowledged and counted on `OutOfWindowPackets`, and retransmission
-brings it back. `HeldRecordBudgetBytes` reports this line, bookkeeping included, and
+The 2 is two windows of sequences in the one Space, not two Spaces. A record past that reach is
+refused unacknowledged and counted on `OutOfWindowPackets`, and retransmission brings it back. A
+reliable Fragment wider than `FragmentSize` never reaches this line. Only a non-conforming peer sends
+one, because every conforming peer cuts at the smaller of the two sizes, and it closes the Peer with
+`ProtocolViolation` before anything in its datagram is acknowledged. `HeldRecordBudgetBytes` reports this line, bookkeeping included, and
 `DatagramSessionOrderedHoldBudgetTests` checks it against the bytes a flood allocates.
 
 ### Raw

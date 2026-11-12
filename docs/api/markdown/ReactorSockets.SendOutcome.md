@@ -51,7 +51,8 @@ use a reliable mode".
 `RemoteMessageTooLarge = 4` 
 
 A Message, in any delivery mode, exceeds the <code>MaxMessageSize</code> the remote end announced during
-the handshake. Nothing was copied, and the caller may retry immediately with a smaller payload.
+the handshake, or a reliable Message needs more Fragments than the receive window the remote end
+announced (ADR 0024). Nothing was copied, and the caller may retry immediately with a smaller payload.
 An unreliable Message over both limits reports [`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md) instead. Distinct
 from [`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md) purely by whose limit was exceeded: that value means a local
 configuration fact the caller's own settings could have predicted (the single-Datagram cap an

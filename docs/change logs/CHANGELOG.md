@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Two Datagram Session Reactors with different `FragmentSize` values could not exchange large
+  reliable Messages (#479, ADR 0024). A receiver acknowledged and then dropped a Fragment wider than
+  its own `FragmentSize`. A `ReliableOrdered` Space then stopped delivering for the rest of the
+  Session, a `ReliableUnordered` Message was lost, and the sender's `Send` returned `Sent`.
+  Hello-with-cookie and Accept now carry the announcing end's `FragmentSize` and
+  `ReceiveWindowFragments`. A reliable Message is cut at the smaller of the two `FragmentSize`
+  values, fixed when the Peer reaches Established and unchanged across a Resume. `Send` returns
+  `RemoteMessageTooLarge` when the Message needs more Fragments at that size than the peer's
+  `ReceiveWindowFragments`. A reliable Fragment wider than the receiver's own `FragmentSize`, which
+  only a non-conforming peer sends, closes the Peer with `ProtocolViolation` before its datagram is
+  acknowledged. An announced `FragmentSize` outside 576 to 65 507 or a `ReceiveWindowFragments` of 0
+  is refused like an illegal announced interval. Unreliable modes keep the local `FragmentSize` as
+  their single-Datagram cap.
+
+### Breaking changes
+
+- `DatagramSessionProtocol.Version` goes from 1 to 2. A version 1 and a version 2 Datagram Session
+  Reactor refuse each other with `VersionMismatch`.
+- A smaller peer `FragmentSize` means more retention slots per Message, so `RetentionExhausted`
+  arrives sooner. Receive memory is unchanged.
+
 This log covers the closed pull requests up to the 1.0.0 release on `main` (2026-11-10). It describes
 the code as it stands now. Where a later change replaced earlier behaviour, only the current
 behaviour is listed. The risks section lists what the pull requests left open and the current code
@@ -263,9 +288,7 @@ Each risk was stated in a closed pull request and is still present in the code.
 - **R8 Fragment delivery retries can lose the arena race repeatedly.** The delay is unbounded but
   not permanent. A record refused because it would overwrite a held Fragment raises no counter or
   Diagnostic.
-- **R9 Side effects of the ordered hold limit.** A record wider than this end's `FragmentSize`
-  behind a gap waits for its turn, which costs latency against a peer with a larger `FragmentSize`.
-  A Goodbye past the limit behind a stalled head goes unacked, so the sender waits out its Linger.
+- **R9 Side effects of the ordered hold limit.** A Goodbye past the limit behind a stalled head goes unacked, so the sender waits out its Linger.
   `OutOfWindowPackets` also counts in-window records the Space will not hold.
   `HeldRecordBudgetBytes` excludes the short-lived arrays left when the ring grows.
 - **R10 A discarded oversized `UnreliableSequenced` record still advances the high-water mark**, so

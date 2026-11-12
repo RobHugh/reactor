@@ -46,8 +46,8 @@ Message is legal and is delivered as an empty `Payload`.
 | `RetentionExhausted` | The mode's reliable Space has too few free slots. Nothing was copied. | Retry after a later Pump. |
 | `Closed` | The Peer is not open, or a Goodbye has passed in one direction or the other. | Stop sending to this Peer. |
 | `NotEstablished` | The handshake has not finished. Nothing was copied. | Wait for `PeerConnected`. |
-| `MessageTooLarge` | An unreliable Message is larger than one fragment. | Split it, or use a reliable mode. |
-| `RemoteMessageTooLarge` | A Message in any mode is larger than the `MaxMessageSize` the peer announced. | Send something smaller. |
+| `MessageTooLarge` | An unreliable Message is larger than one fragment at your own `FragmentSize`. | Split it, or use a reliable mode. |
+| `RemoteMessageTooLarge` | A Message in any mode is larger than the `MaxMessageSize` the peer announced, or a reliable Message needs more Fragments than the `ReceiveWindowFragments` the peer announced. Nothing was retained or sequenced. | Send something smaller. |
 
 The checks run in this order: Peer not open or peer's Goodbye delivered (`Closed`), handshake
 unfinished (`NotEstablished`), your own `Close` in progress (`Closed`), size, then retention. A
@@ -86,16 +86,22 @@ walks through the choice.
 ## Fragmentation
 
 Only the reliable modes fragment. A reliable Message larger than one fragment is cut into
-`ceil(length / FragmentSize)` Fragments, each sequenced, retained and retransmitted on its own, and
+`ceil(length / size)` Fragments, each sequenced, retained and retransmitted on its own, and
 delivered as one `MessageReceived` once all of them have arrived.
 
 - Every mode is limited by the **peer's** announced `MaxMessageSize`, not yours. The same payload can
   be accepted for one Peer and refused for another.
+- `size` is the smaller of your `FragmentSize` and the one the peer announced. It is fixed when the
+  Peer reaches Established and does not change across a Resume. A reliable Message that needs more
+  Fragments at that size than the peer's announced `ReceiveWindowFragments` returns
+  `RemoteMessageTooLarge`. A smaller peer `FragmentSize` also means more retention slots per Message,
+  so `RetentionExhausted` arrives sooner. Receive memory does not change.
 - A Message is committed whole or not at all. If its mode's Space has fewer free retention slots
   than it has Fragments, `Send` returns `RetentionExhausted` and nothing is retained.
 - The unreliable modes are capped at one fragment, permanently. Fragmenting what cannot be
   retransmitted multiplies the loss rate by the number of pieces. An unreliable Message above both
-  one fragment and the peer's `MaxMessageSize` returns `MessageTooLarge`.
+  one fragment and the peer's `MaxMessageSize` returns `MessageTooLarge`. The cap is your own
+  `FragmentSize`. The peer's `FragmentSize` does not bound an unreliable Message.
 
 Fragmentation lengthens `ReliableOrdered` head-of-line blocking: every later Message waits for the
 whole fragmented Message, not one Datagram. For bulk transfer, prefer `ReliableUnordered`.
