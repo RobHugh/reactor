@@ -254,3 +254,10 @@ than once is not seeded, because the Accept may answer any copy.
 
 **Wire compatibility.** No datagram changes shape. An accepter on the current version already answers
 repeated Hellos and repeated Hellos-with-cookie, so a resending dialler needs nothing new from it.
+
+**Amended (issue #479).** Fragment size is now announced, which supersedes "fragment size is not announced, because that
+ADR made it unilateral and per-direction". Hello-with-cookie and Accept each carry the announcing end's
+`FragmentSize` and `ReceiveWindowFragments` after `AnnouncedLimits`, and `DatagramSessionProtocol.Version` goes
+from 1 to 2. Exact version matching turns a version 1 and a version 2 pair into a `VersionMismatch` Refusal.
+The fields, their legal ranges and the send rule are in ADR 0024. The main cost is that a mixed-version pair
+can no longer connect.
