@@ -126,73 +126,93 @@ public class DatagramSessionFragmentSizeIsFixedAtSendTests
     private static uint ReadAnnouncedReceiveWindow(byte[] datagram, int termsOffset) =>
         BinaryPrimitives.ReadUInt32BigEndian(datagram.AsSpan(termsOffset + DatagramSessionWire.TermsReceiveWindowOffset, sizeof(uint)));
 
-    [Fact(Skip = "Replaced by #498")]
-    public void Send_TwoSessionsWithDifferentFragmentSizes_InteroperateEachCuttingByItsOwnValue()
+    /// <summary>One drain's worth of Events from one end: every Event kind, and a copy of every received payload.</summary>
+    private static void DrainInto(DatagramSessionReactorHarness harness, List<SessionEventKind> kinds, List<byte[]> payloads)
     {
-        // Arrange — the dialler and the accepter each configure their own, different fragment size.
-        // Fragment size is unilateral and per-direction (ADR 0004): the two need not, and here do not,
-        // agree.
-        const int diallerFragmentSize = 600;
-        const int accepterFragmentSize = 900;
-        const int maxMessageSize = 2400;
-        // Capacity 1: the frame arena's per-Peer share is ArenaSize / Capacity, and the default
-        // ArenaSize floor is one MaxMessageSize — with the harness's usual capacity of 4 that share
-        // would hold only a quarter of one Message, well under what either Send below needs to reach
-        // the consumer whole. One Peer is all this test ever admits.
+        foreach (SessionEvent evt in harness.Reactor.Drain())
+        {
+            kinds.Add(evt.Kind);
+            if (evt.Kind == SessionEventKind.MessageReceived)
+            {
+                payloads.Add(evt.Payload.ToArray());
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(DeliveryMode.ReliableOrdered, 900, 600, true)]
+    [InlineData(DeliveryMode.ReliableOrdered, 600, 900, true)]
+    [InlineData(DeliveryMode.ReliableOrdered, 900, 600, false)]
+    [InlineData(DeliveryMode.ReliableOrdered, 600, 900, false)]
+    [InlineData(DeliveryMode.ReliableUnordered, 900, 600, true)]
+    [InlineData(DeliveryMode.ReliableUnordered, 600, 900, true)]
+    [InlineData(DeliveryMode.ReliableUnordered, 900, 600, false)]
+    [InlineData(DeliveryMode.ReliableUnordered, 600, 900, false)]
+    public void Send_TwoSessionsWithDifferentFragmentSizes_DeliverBothMessagesIntactAndRaiseNoPeerClosed(
+        DeliveryMode mode, int senderFragmentSize, int receiverFragmentSize, bool senderIsDialler)
+    {
+        // Arrange — capacity 1 and retention for the Fragment counts (2300 at 600 is 4 Fragments, plus
+        // the 50-byte Message), so neither the frame arena share nor retention drops a Message. The
+        // sender is the dialler or the accepter, because each end fixes its effective size at a different
+        // point of the handshake.
+        const int maxMessageSize = 4000;
+        int diallerFragmentSize = senderIsDialler ? senderFragmentSize : receiverFragmentSize;
+        int accepterFragmentSize = senderIsDialler ? receiverFragmentSize : senderFragmentSize;
         using DatagramSessionReactorHarness dialler = new(
             capacity: 1, bindLoopback: false, maxMessageSize: maxMessageSize, retentionBytes: maxMessageSize * 4, fragmentSize: diallerFragmentSize);
         using DatagramSessionReactorHarness accepter = new(
             capacity: 1, maxMessageSize: maxMessageSize, retentionBytes: maxMessageSize * 4, fragmentSize: accepterFragmentSize);
         using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
-
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerEvents = [];
-        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> accepterEvents = [];
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> diallerHandshakeEvents = [];
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> accepterHandshakeEvents = [];
         PeerId diallerPeer = dialler.Reactor.Connect(tap.PublicEndPoint);
         PeerId accepterPeer = DatagramSessionReactorHarness.PumpThroughTapUntilConnected(
-            dialler, tap, accepter, diallerEvents, accepterEvents);
+            dialler, tap, accepter, diallerHandshakeEvents, accepterHandshakeEvents);
+        DatagramSessionReactorHarness sender = senderIsDialler ? dialler : accepter;
+        DatagramSessionReactorHarness receiver = senderIsDialler ? accepter : dialler;
+        PeerId senderPeer = senderIsDialler ? diallerPeer : accepterPeer;
+        byte[] large = Enumerable.Range(0, 2300).Select(i => (byte)(i % 251)).ToArray();
+        byte[] small = Enumerable.Range(0, 50).Select(i => (byte)(255 - i)).ToArray();
+        List<SessionEventKind> senderKinds = [];
+        List<SessionEventKind> receiverKinds = [];
+        List<byte[]> received = [];
+        List<byte[]> ignored = [];
 
-        // Act — the dialler Sends a Message wider than its own fragment size, cut by its own value.
-        // Payloads are drained immediately once delivered, rather than after both exchanges: a Pump's
-        // Frame does not outlive the next Pump (issue #219), so a later round would silently discard an
-        // event drained too late.
-        byte[] fromDialler = Enumerable.Range(0, 1500).Select(i => (byte)i).ToArray();
-        dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, fromDialler).Should().Be(SendOutcome.Sent);
-        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
-        byte[] diallerToAccepterDatagram = LastDataDatagram(tap, TapDirection.DiallerToAccepter);
-        List<byte[]> accepterPayloads = accepter.DrainPayloads();
+        // Act — Pump with the clock advancing so acknowledgements flow, draining both ends after every
+        // round and keeping every Event kind seen. A few rounds past the second delivery would expose a
+        // late PeerClosed.
+        sender.Reactor.Send(senderPeer, mode, large).Should().Be(SendOutcome.Sent);
+        sender.Reactor.Send(senderPeer, mode, small).Should().Be(SendOutcome.Sent);
+        int settleRounds = 0;
+        for (int round = 0; round < 400 && settleRounds < 15; round++)
+        {
+            DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
+            DrainInto(sender, senderKinds, ignored);
+            DrainInto(receiver, receiverKinds, received);
+            dialler.TimeProvider.Advance(TimeSpan.FromMilliseconds(10));
+            Thread.Sleep(1);
+            if (received.Count >= 2)
+            {
+                settleRounds++;
+            }
+        }
 
-        // Act — the accepter Sends a differently sized Message back, cut by its own, different value.
-        byte[] fromAccepter = Enumerable.Range(0, 2300).Select(i => (byte)(i % 256)).ToArray();
-        accepter.Reactor.Send(accepterPeer, DeliveryMode.ReliableOrdered, fromAccepter).Should().Be(SendOutcome.Sent);
-        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
-        byte[] accepterToDiallerDatagram = LastDataDatagram(tap, TapDirection.AccepterToDialler);
+        // Assert
+        received.Should().HaveCount(2);
+        if (mode == DeliveryMode.ReliableOrdered)
+        {
+            received[0].Should().Equal(large, "the 2300-byte Message is delivered first");
+            received[1].Should().Equal(small, "the 50-byte Message is delivered after it");
+        }
+        else
+        {
+            received.Should().ContainSingle(p => p.SequenceEqual(large));
+            received.Should().ContainSingle(p => p.SequenceEqual(small));
+        }
 
-        // The accepter's reply left within the round above, after this round's own dialler.Pump()
-        // already ran, so the dialler needs one further round to receive and parse it.
-        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
-        List<byte[]> diallerPayloads = dialler.DrainPayloads();
-
-        // Assert — each direction was cut by its own sender's fragment size, not the other's or a
-        // shared one.
-        CountRecords(diallerToAccepterDatagram).Should().Be((1500 + diallerFragmentSize - 1) / diallerFragmentSize);
-        FirstRecordLength(diallerToAccepterDatagram).Should().Be((ushort)diallerFragmentSize);
-
-        CountRecords(accepterToDiallerDatagram).Should().Be((2300 + accepterFragmentSize - 1) / accepterFragmentSize);
-        FirstRecordLength(accepterToDiallerDatagram).Should().Be((ushort)accepterFragmentSize);
-
-        // Assert — every Fragment admits on the wire despite the two Sessions never agreeing on a
-        // fragment size, whatever either side does with it once admitted. Nothing here required the
-        // receiver to learn the sender's fragment size (ADR 0004) — interoperation held on the wire even
-        // though the two values differ and neither side was ever told the other's. Since issue #259, a
-        // completed set reassembles into exactly the Message its sender sent — but a receive-side
-        // Fragment slot is sized to that receiver's own configured fragment size (#257), not the
-        // sender's, so a Fragment wider than the receiver's own slot is refused outright and its group
-        // can never complete: the dialler's fragments (600 bytes each) fit comfortably inside the
-        // accepter's 900-byte slot, but the accepter's fragments (900 bytes each) do not fit the
-        // dialler's 600-byte slot, so only the dialler-to-accepter direction ever assembles.
-        accepterPayloads.Should().BeEquivalentTo(
-            new[] { fromDialler }, "the dialler's 600-byte Fragments fit inside the accepter's 900-byte slot and reassemble whole");
-        diallerPayloads.Should().BeEmpty(
-            "the accepter's 900-byte Fragments do not fit inside the dialler's own 600-byte slot, so that group can never complete");
+        senderKinds.Should().NotContain(SessionEventKind.PeerClosed);
+        receiverKinds.Should().NotContain(SessionEventKind.PeerClosed);
+        diallerHandshakeEvents.Select(e => e.Kind).Should().NotContain(SessionEventKind.PeerClosed);
+        accepterHandshakeEvents.Select(e => e.Kind).Should().NotContain(SessionEventKind.PeerClosed);
     }
 }
