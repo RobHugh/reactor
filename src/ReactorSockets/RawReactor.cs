@@ -511,7 +511,8 @@ public sealed class RawReactor : IDisposable
     /// per Pump, which a consumer already controls by choosing how often to Pump. A stream Link
     /// delivering a run longer than one read is simply read again on a later Pump, once the dispatcher
     /// finds it ready a second time — the same bound, applied to a transport with no message
-    /// boundaries of its own.
+    /// boundaries of its own. A stream Link is read only as far as the arena has room, so a full arena
+    /// defers its read to a later Pump and loses nothing.
     /// </summary>
     /// <remarks>
     /// The consequence is that a Link cannot reach a second <c>Reserve</c> in one Frame, so
@@ -586,9 +587,22 @@ public sealed class RawReactor : IDisposable
     /// is to stop reading and never learn of a subsequent reset — but a second <c>EndOfStream</c> is
     /// never queued, since the remote already said everything it is going to say.
     /// </summary>
+    /// <remarks>
+    /// The read length is the smaller of the accepted read size and the arena's free space, so the
+    /// arena always has room for what was read and a stream read is never lost. When the arena has no
+    /// free space the Link is not read this Pump: <c>Receive</c> is not called, because an empty read
+    /// would be reported as <c>EndOfStream</c>. The bytes stay in the kernel's receive buffer, the
+    /// socket stays readable, and the next Pump dispatches the Link again.
+    /// </remarks>
     private void OnStreamLinkReadable(SlotHandle handle, StreamLinkSlot slot)
     {
-        TcpLinkReceiveResult result = slot.Link.Receive(_scratchBuffer.AsSpan(0, _acceptedSize));
+        int readLength = Math.Min(_acceptedSize, _arena.BytesFree);
+        if (readLength == 0)
+        {
+            return;
+        }
+
+        TcpLinkReceiveResult result = slot.Link.Receive(_scratchBuffer.AsSpan(0, readLength));
         switch (result.Outcome)
         {
             case TcpLinkReceiveOutcome.Delivered:
@@ -623,10 +637,11 @@ public sealed class RawReactor : IDisposable
     /// nothing and is counted nowhere, because it cannot happen here: a ready Link is read once per
     /// Pump, so it never reaches a second reservation in one Frame, and <see cref="LinkCounters"/> has
     /// no read-share figure for that reason. <see cref="ArenaReservationOutcome.ArenaExhausted"/> is a
-    /// <c>Warn</c> Diagnostic carrying the arithmetic that explains it. Neither says anything on the
-    /// wire — the Raw profile owns no protocol, so a Payload it cannot hold is simply not delivered. A
-    /// Session profile must answer differently, which is why this policy is Raw's and not
-    /// <see cref="Core.FrameArena"/>'s (ADR 0007).
+    /// <c>Warn</c> Diagnostic carrying the arithmetic that explains it, and only a Datagram can reach
+    /// it: a stream read is capped at the arena's free space, so its reservation is always committed.
+    /// Neither says anything on the wire — the Raw profile owns no protocol, so a Datagram it cannot
+    /// hold is simply not delivered. A Session profile must answer differently, which is why this
+    /// policy is Raw's and not <see cref="Core.FrameArena"/>'s (ADR 0007).
     /// </para>
     /// <para>
     /// <b>The two counters on the success path belong here</b> because they are facts about bytes
@@ -693,7 +708,10 @@ public sealed class RawReactor : IDisposable
     /// Queues the <see cref="RawEventKind.SegmentReceived"/> event for a Payload the arena accepted.
     /// No Source is claimed, because a stream Link has one remote for its whole lifetime and nothing
     /// per-Segment to claim; and no Segment counter is kept, because a Segment is an artefact of how
-    /// much happened to be readable rather than anything the remote sent as a unit.
+    /// much happened to be readable rather than anything the remote sent as a unit. The read was
+    /// capped at the arena's free space, so the reservation is committed and the Segment is always
+    /// queued. The refusal check is the fail-closed path for an outcome with no arm in
+    /// <see cref="TryReserve"/>.
     /// </summary>
     private void DeliverSegment(SlotHandle handle, LinkSlot slot, ReadOnlySpan<byte> data)
     {

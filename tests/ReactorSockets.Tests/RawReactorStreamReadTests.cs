@@ -306,28 +306,119 @@ public class RawReactorStreamReadTests
     }
 
     [Fact]
-    public void Pump_ArenaWithNoRoomForASecondStreamLinksSegment_ReportsArenaExhausted()
+    public void Drain_ArenaWithNoRoomForASecondStreamLinksSegment_DeliversBothLinksBytesOnALaterPump()
     {
-        // Arrange — the stream counterpart of RawReactorFrameTests' datagram arena-exhaustion case: two
-        // accepted Links ready in one Frame, sharing an arena that cannot hold both Segments.
+        // Proves: when two ready stream Links share an arena that cannot hold both reads, the second
+        // Link's bytes stay in the kernel and arrive on a later Pump, and nothing is logged as lost.
+        // Arrange
         using RawReactorHarness harness = new(capacity: 3, scratchBufferSize: 1200, arenaSize: 1200);
         (_, IPEndPoint endPoint) = harness.ListenOnLoopback();
-        using Socket counterpartyA = harness.ConnectCounterpartyTo(endPoint);
-        using Socket counterpartyB = harness.ConnectCounterpartyTo(endPoint);
-        harness.Reactor.Pump();
-        harness.DrainToList().Count(evt => evt.Kind == RawEventKind.Accepted).Should().Be(2);
+        (Socket counterpartyA, LinkId linkA) = AcceptCounterparty(harness, endPoint);
+        (Socket counterpartyB, LinkId linkB) = AcceptCounterparty(harness, endPoint);
+        using Socket disposeA = counterpartyA;
+        using Socket disposeB = counterpartyB;
 
-        byte[] payload = new byte[1000];
-        counterpartyA.Send(payload);
-        counterpartyB.Send(payload);
+        byte[] payloadA = new byte[1000];
+        byte[] payloadB = new byte[1000];
+        Random.Shared.NextBytes(payloadA);
+        Random.Shared.NextBytes(payloadB);
+        counterpartyA.Send(payloadA);
+        counterpartyB.Send(payloadB);
 
         // Act
-        harness.Reactor.Pump();
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpUntilDrained(
+            e => SegmentBytes(e, linkA).Length >= payloadA.Length && SegmentBytes(e, linkB).Length >= payloadB.Length);
 
         // Assert
-        DiagnosticRecord record = harness.Sink.Received.Should()
-            .ContainSingle(r => r.Id == DiagnosticId.ArenaExhausted).Subject;
-        record.Value0.Should().Be(1000, "the refused Segment's size is reported");
-        record.Value1.Should().Be(200, "so is the arena's free space at the moment it was refused");
+        SegmentBytes(drained, linkA).Should().Equal(payloadA);
+        SegmentBytes(drained, linkB).Should().Equal(payloadB);
+        harness.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ArenaExhausted);
     }
+
+    [Fact]
+    public void Drain_SeveralLinksEachSentMoreThanTheWholeArena_DeliversEveryLinksBytesInOrder()
+    {
+        // Proves: three Links each sent several times the arena all receive every byte, in order,
+        // with no ArenaExhausted logged.
+        // Arrange
+        const int perLink = 20_000;
+        using RawReactorHarness harness = new(capacity: 4, scratchBufferSize: 4096, arenaSize: 4096);
+        (_, IPEndPoint endPoint) = harness.ListenOnLoopback();
+        List<(Socket Socket, LinkId Link, byte[] Payload)> peers = [];
+        try
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                (Socket socket, LinkId link) = AcceptCounterparty(harness, endPoint);
+                byte[] payload = new byte[perLink];
+                Random.Shared.NextBytes(payload);
+                peers.Add((socket, link, payload));
+            }
+
+            foreach ((Socket socket, _, byte[] payload) in peers)
+            {
+                socket.Send(payload);
+            }
+
+            // Act
+            List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpUntilDrained(
+                e => peers.TrueForAll(p => SegmentBytes(e, p.Link).Length >= perLink));
+
+            // Assert
+            foreach ((_, LinkId link, byte[] payload) in peers)
+            {
+                SegmentBytes(drained, link).Should().Equal(payload);
+            }
+
+            harness.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ArenaExhausted);
+        }
+        finally
+        {
+            peers.ForEach(p => p.Socket.Dispose());
+        }
+    }
+
+    [Fact]
+    public void Drain_StreamLinkDeferredByAFullArena_DeliversEveryByteBeforeEndOfStream()
+    {
+        // Proves: a Link skipped for lack of arena room is not read with an empty span, which would
+        // report EndOfStream while it still has bytes queued; all its bytes precede its single EndOfStream.
+        // Arrange
+        using RawReactorHarness harness = new(capacity: 3, scratchBufferSize: 1200, arenaSize: 1200);
+        (_, IPEndPoint endPoint) = harness.ListenOnLoopback();
+        (Socket counterpartyA, LinkId linkA) = AcceptCounterparty(harness, endPoint);
+        (Socket counterpartyB, LinkId linkB) = AcceptCounterparty(harness, endPoint);
+        using Socket disposeA = counterpartyA;
+        using Socket disposeB = counterpartyB;
+
+        byte[] payloadA = new byte[5000];
+        byte[] payloadB = new byte[1000];
+        Random.Shared.NextBytes(payloadA);
+        Random.Shared.NextBytes(payloadB);
+        counterpartyA.Send(payloadA);
+        counterpartyB.Send(payloadB);
+        counterpartyB.Shutdown(SocketShutdown.Send);
+
+        // Act
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpUntilDrained(
+            e => e.Any(x => x.Kind == RawEventKind.EndOfStream && x.Link == linkB)
+                && SegmentBytes(e, linkA).Length >= payloadA.Length);
+
+        // Assert
+        int endOfStreamIndex = drained.FindIndex(x => x.Kind == RawEventKind.EndOfStream && x.Link == linkB);
+        endOfStreamIndex.Should().BeGreaterThanOrEqualTo(0);
+        SegmentBytes(drained.Take(endOfStreamIndex).ToList(), linkB).Should().Equal(payloadB);
+        drained.Count(x => x.Kind == RawEventKind.EndOfStream && x.Link == linkB).Should().Be(1);
+    }
+
+    private static (Socket Counterparty, LinkId Link) AcceptCounterparty(RawReactorHarness harness, IPEndPoint endPoint)
+    {
+        Socket counterparty = harness.ConnectCounterpartyTo(endPoint);
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained =
+            harness.PumpUntilDrained(e => e.Any(x => x.Kind == RawEventKind.Accepted));
+        return (counterparty, drained.First(x => x.Kind == RawEventKind.Accepted).Link);
+    }
+
+    private static byte[] SegmentBytes(IEnumerable<(RawEventKind Kind, LinkId Link, byte[] Payload)> events, LinkId link) =>
+        events.Where(x => x.Kind == RawEventKind.SegmentReceived && x.Link == link).SelectMany(x => x.Payload).ToArray();
 }

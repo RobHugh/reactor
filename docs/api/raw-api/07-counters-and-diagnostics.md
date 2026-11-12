@@ -78,7 +78,7 @@ Every Raw diagnostic is `Warn`.
 | Id | Subject | What it tells you |
 |---|---|---|
 | `AdmissionCapReached` (1) | — | A Pump hit `AdmissionCap` with connections still waiting. `Value0` the cap, `Value1` listening Links that deferred. |
-| `ArenaExhausted` (2) | Link | The arena had no room for a read, which was not delivered. `Value0` bytes requested, `Value1` bytes free. |
+| `ArenaExhausted` (2) | Link | The arena had no room for a datagram, which was not delivered. `Value0` bytes requested, `Value1` bytes free. |
 | `CapacityExhausted` (3) | — | Every Slot was taken with connections still waiting. `Value0` the capacity, `Value1` listening Links that deferred. |
 | `LinkFailed` (100) | Link | A dial, read or accept failed. `Value0` the `SocketError`. A failed accept leaves the listening Link open; anything else closes the Link. |
 | `DestinationUnreachable` (101) | Link | An ICMP unreachable was reported for an earlier send. The Link stays open. `Value0` the `SocketError`. |
@@ -89,8 +89,8 @@ raised. The second wants `Capacity` raised or Links closed sooner.
 
 ## What to watch in production
 
-- `ArenaExhausted`, or `ArenaHighWaterBytes` near `ArenaSize`. Reads are being lost. Raise
-  `ArenaSize`.
+- `ArenaExhausted` means datagrams are being lost. `ArenaHighWaterBytes` near `ArenaSize` means
+  stream reads are being deferred to later Pumps. Both want `ArenaSize` raised.
 - `DatagramTruncated`. Senders exceed `scratchBufferSize`.
 - `CapacityExhausted`. Connections are waiting for Slots. Look for stream Links left open after
   `EndOfStream`.
