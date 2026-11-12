@@ -139,10 +139,11 @@ brings it back. `HeldRecordBudgetBytes` reports this line, bookkeeping included,
 ### Raw
 
 ```
-scratchBufferSize + ArenaSize
+scratchBufferSize + 1 + ArenaSize
 ```
 
-One scratch buffer and one arena, neither multiplied by capacity. Raw holds nothing for a Link across a
+One scratch buffer and one arena, neither multiplied by capacity. The scratch buffer is one byte longer
+than `scratchBufferSize`, so a read that fills it is known to be a truncated datagram. Raw holds nothing for a Link across a
 Pump. That is what inventing nothing on the wire looks like from the constructor.
 
 The frame arena (`ArenaSize`) is also allocated by both Session profiles, once per Reactor, on top of

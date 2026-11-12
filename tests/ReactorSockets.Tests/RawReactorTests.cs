@@ -209,7 +209,7 @@ public class RawReactorTests
         // Arrange
         const int scratchSize = 64;
         using RawReactorHarness harness = new(scratchBufferSize: scratchSize);
-        byte[] payload = SendDatagramOfSize(harness, scratchSize);
+        (byte[] payload, _) = SendDatagramOfSize(harness, scratchSize);
 
         // Act
         List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpUntilDrained(
@@ -226,15 +226,17 @@ public class RawReactorTests
         // Arrange
         const int scratchSize = 64;
         using RawReactorHarness harness = new(scratchBufferSize: scratchSize);
-        SendDatagramOfSize(harness, scratchSize + 1);
+        (_, IPEndPoint sender) = SendDatagramOfSize(harness, scratchSize + 1);
 
         // Act
         harness.PumpUntil(() => harness.Sink.Received.Any(record => record.Id == DiagnosticId.DatagramTruncated));
 
         // Assert
-        harness.Sink.Received
+        DiagnosticRecord truncated = harness.Sink.Received
             .Where(record => record.Id == DiagnosticId.DatagramTruncated)
-            .Should().ContainSingle().Which.Value0.Should().Be(scratchSize);
+            .Should().ContainSingle().Subject;
+        truncated.Value0.Should().Be(scratchSize);
+        truncated.Source.Should().Be(Source.FromIPEndPoint(sender));
     }
 
     [Fact]
@@ -381,8 +383,11 @@ public class RawReactorTests
         harness.Reactor.Pump();
     }
 
-    /// <summary>Binds a Link on the harness's Reactor and sends it one random datagram of <paramref name="size"/> bytes.</summary>
-    private static byte[] SendDatagramOfSize(RawReactorHarness harness, int size)
+    /// <summary>
+    /// Binds a Link on the harness's Reactor and sends it one random datagram of <paramref name="size"/>
+    /// bytes. Returns the payload and the endpoint it was sent from.
+    /// </summary>
+    private static (byte[] Payload, IPEndPoint Sender) SendDatagramOfSize(RawReactorHarness harness, int size)
     {
         LinkId link = harness.Reactor.Bind(new IPEndPoint(IPAddress.Loopback, 0));
         IPEndPoint localEndPoint = harness.Reactor.LocalOf(link);
@@ -392,7 +397,7 @@ public class RawReactorTests
         byte[] payload = new byte[size];
         Random.Shared.NextBytes(payload);
         counterparty.SendTo(payload, localEndPoint);
-        return payload;
+        return (payload, (IPEndPoint)counterparty.LocalEndPoint!); // non-null: the socket was bound above
     }
 
     /// <summary>

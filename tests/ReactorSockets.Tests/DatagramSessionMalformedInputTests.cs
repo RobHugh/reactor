@@ -355,6 +355,8 @@ public class DatagramSessionMalformedInputTests
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramTruncated);
         counters.DatagramsReceived.Should().BeGreaterThanOrEqualTo(minimumReadCount);
         counters.UnknownSourceDatagrams.Should().Be(counters.DatagramsReceived);
+        accepter.Sink.Received.Count(record => record.Id == DiagnosticId.DatagramMalformed)
+            .Should().Be((int)counters.DatagramsReceived);
     }
 
     private static byte[] BuildDatagramOfRandomNoise(Random random)

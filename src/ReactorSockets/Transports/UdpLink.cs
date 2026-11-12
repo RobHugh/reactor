@@ -146,10 +146,14 @@ internal sealed class UdpLink : IDisposable
         try
         {
             int received = Socket.ReceiveFrom(scratch, SocketFlags.None, ref remoteEndPoint);
-            Source source = remoteEndPoint is IPEndPoint resolved ? Source.FromIPEndPoint(resolved) : default;
-            return received == scratch.Length
-                ? UdpLinkReceiveResult.ForTruncated(source)
-                : UdpLinkReceiveResult.ForDelivered(source, scratch[..received]);
+            if (received == scratch.Length)
+            {
+                Source truncatedSource = remoteEndPoint is IPEndPoint resolved ? Source.FromIPEndPoint(resolved) : default;
+                return UdpLinkReceiveResult.ForTruncated(truncatedSource);
+            }
+
+            Source source = Source.FromIPEndPoint((IPEndPoint)remoteEndPoint);
+            return UdpLinkReceiveResult.ForDelivered(source, scratch[..received]);
         }
         catch (SocketException exception) when (exception.SocketErrorCode == SocketError.MessageSize)
         {

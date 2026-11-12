@@ -86,7 +86,8 @@ public sealed class RawReactor : IDisposable
     /// <remarks>
     /// <b>The memory bill</b> is one scratch buffer plus one arena — <c>scratchBufferSize + 1 + ArenaSize</c>
     /// (the extra byte is how a truncated datagram is recognised) — neither multiplied by capacity,
-    /// because Raw holds nothing for a Link across a Pump. That is what "invents nothing on the wire" looks like from the constructor (ADR 0012).
+    /// because Raw holds nothing for a Link across a Pump. That is what "invents nothing on the wire"
+    /// looks like from the constructor (ADR 0012).
     /// </remarks>
     /// <param name="options">
     /// The shared options value. Every knob on it is validated here, and
