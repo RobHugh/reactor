@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_RawReactor__ctor_" data-uid="ReactorSockets.RawReactor.#ctor*" class="text-break">
-Constructor RawReactor  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/RawReactor.cs/#L97"><i class="bi bi-code-slash"></i></a>
+Constructor RawReactor  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/RawReactor.cs/#L107"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,7 +107,7 @@ Constructor RawReactor  <a class="header-action link-secondary" title="View sour
 
 <h3 id="ReactorSockets_RawReactor__ctor_ReactorSockets_ReactorOptions_System_Nullable_System_Int32__" data-uid="ReactorSockets.RawReactor.#ctor(ReactorSockets.ReactorOptions,System.Nullable{System.Int32})">
   RawReactor(ReactorOptions, int?)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/RawReactor.cs/#L97"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/RawReactor.cs/#L107"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>Constructs a Reactor bound to the calling thread (ADR 0002) — every future mutating call must
@@ -129,8 +129,9 @@ combination that cannot work throws at construction and nowhere else.</p>
   <dt><code>scratchBufferSize</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32">int</a>?</dt>
   <dd><p>The single scratch buffer every Link's receive lands in, reused across Links since only one is
 read at any instant inside a single-threaded Pump (ADR 0012). Defaults to
-<a class="xref" href="ReactorSockets.RawReactor.MaxUdpDatagramSize.html">MaxUdpDatagramSize</a>. Provenance: the largest payload a UDP datagram can carry, at
-which truncation is unreachable. This is the profile-specific
+<a class="xref" href="ReactorSockets.RawReactor.MaxUdpDatagramSize.html">MaxUdpDatagramSize</a>. Provenance: the largest payload a UDP datagram can carry over
+IPv4, at which an IPv4 datagram cannot be truncated. An IPv6 datagram of 65 508 to 65 527 bytes
+exceeds it and is reported as truncated. This is the profile-specific
 knob a consumer lowers to opt into truncation, kept off <a class="xref" href="ReactorSockets.ReactorOptions.html">ReactorOptions</a> because it
 has no meaning outside Raw's datagram surface.</p>
 </dd>
@@ -144,9 +145,10 @@ has no meaning outside Raw's datagram surface.</p>
 
 
 <h4 class="section" id="ReactorSockets_RawReactor__ctor_ReactorSockets_ReactorOptions_System_Nullable_System_Int32___remarks">Remarks</h4>
-<div class="markdown level1 remarks"><p><b>The memory bill</b> is one scratch buffer plus one arena — <code>scratchBufferSize + ArenaSize</code>
-— neither multiplied by capacity, because Raw holds nothing for a Link across a Pump. That is
-what &quot;invents nothing on the wire&quot; looks like from the constructor (ADR 0012).</p>
+<div class="markdown level1 remarks"><p><b>The memory bill</b> is one scratch buffer plus one arena — <code>scratchBufferSize + 1 + ArenaSize</code>
+(the extra byte is how a truncated datagram is recognised) — neither multiplied by capacity,
+because Raw holds nothing for a Link across a Pump. That is what &quot;invents nothing on the wire&quot;
+looks like from the constructor (ADR 0012).</p>
 </div>
 
 

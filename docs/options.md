@@ -37,7 +37,7 @@ appears that is not in the audited list below.
 
 | Knob | Default | Provenance |
 |---|---|---|
-| `scratchBufferSize` | 65 507 | The largest UDP payload, at which truncation cannot happen. |
+| `scratchBufferSize` | 65 507 | The largest UDP payload over IPv4, at which an IPv4 datagram cannot be truncated. An IPv6 datagram can carry up to 65 527 bytes, so one of 65 508 to 65 527 bytes is reported as truncated. |
 
 ### Datagram Session (`DatagramSessionOptions`)
 

@@ -213,6 +213,13 @@ about a peer it makes no claims about. Because it is one buffer and not `capacit
 rounding error against the arena and the per-Peer allocations — which is what makes a safe default
 affordable here and nowhere else.
 
+**Amended (issue #477).** 65 507 bytes is the largest UDP payload over IPv4 only: 65 535 less the 20-byte
+IPv4 header and the 8-byte UDP header. An IPv6 payload length excludes the 40-byte fixed header, so an
+IPv6 UDP datagram can carry up to 65 527 bytes. At the default, truncation is unreachable over IPv4, but
+an IPv6 datagram of 65 508 to 65 527 bytes is reported as `DatagramTruncated` and never delivered. Both
+profiles share the 65 507 bound, so the same holds for the Datagram Session's scratch buffer. The read
+buffer is one byte longer than the bound, and a read that fills it is the truncation signal.
+
 ## Diagnostics are installed at a level
 
 **The Sink and `MinimumLevel` are one argument, not two.** Both present or both absent. Absent means

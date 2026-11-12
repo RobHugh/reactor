@@ -55,8 +55,10 @@ namespace ReactorSockets;
 public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 {
     /// <summary>
-    /// The largest a UDP datagram can be, and this Reactor's scratch buffer size — at which
-    /// truncation is unreachable, so a datagram is never silently shortened into a different one.
+    /// The largest payload a UDP datagram can carry over IPv4, and the largest datagram this Reactor
+    /// reads. An IPv4 datagram is never truncated. An IPv6 datagram can carry up to 65 527 bytes, so
+    /// one of 65 508 to 65 527 bytes is reported as truncated and discarded. In both cases a datagram is
+    /// never silently shortened into a different one.
     /// </summary>
     private const int MaxUdpDatagramSize = 65_507;
 

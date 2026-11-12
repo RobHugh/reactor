@@ -51,8 +51,9 @@ namespace ReactorSockets;
 public sealed class RawReactor : IDisposable
 {
     /// <summary>
-    /// The largest a UDP datagram can be, and this Reactor's default scratch buffer size and arena
-    /// floor: a Segment is as large as one read, so the arena must hold at least one (ADR 0012).
+    /// The largest payload a UDP datagram can carry over IPv4, and this Reactor's default scratch
+    /// buffer size and arena floor: a Segment is as large as one read, so the arena must hold at least
+    /// one (ADR 0012). An IPv6 datagram can carry up to 65 527 bytes, more than this bound.
     /// </summary>
     public const int MaxUdpDatagramSize = 65_507;
 
@@ -97,8 +98,9 @@ public sealed class RawReactor : IDisposable
     /// <param name="scratchBufferSize">
     /// The single scratch buffer every Link's receive lands in, reused across Links since only one is
     /// read at any instant inside a single-threaded Pump (ADR 0012). Defaults to
-    /// <see cref="MaxUdpDatagramSize"/>. Provenance: the largest payload a UDP datagram can carry, at
-    /// which truncation is unreachable. This is the profile-specific
+    /// <see cref="MaxUdpDatagramSize"/>. Provenance: the largest payload a UDP datagram can carry over
+    /// IPv4, at which an IPv4 datagram cannot be truncated. An IPv6 datagram of 65 508 to 65 527 bytes
+    /// exceeds it and is reported as truncated. This is the profile-specific
     /// knob a consumer lowers to opt into truncation, kept off <see cref="ReactorOptions"/> because it
     /// has no meaning outside Raw's datagram surface.
     /// </param>
