@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Net;
+using System.Net.Sockets;
 using FluentAssertions;
 using Xunit;
 
@@ -320,6 +321,40 @@ public class DatagramSessionMalformedInputTests
         // Assert
         accepter.Reactor.Counters.DatagramsSent.Should().BeGreaterThan(sentBefore);
         accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramMalformed);
+    }
+
+    [Fact]
+    public void Pump_BurstOfValidSizeDatagramsQueuedBeyondTheMaxPayload_ReportsNoneAsTruncated()
+    {
+        // Arrange — 60 x 1200 = 72 000 bytes queued before the first Pump, above the 65 507-byte
+        // maximum UDP payload. A datagram is truncated only when the read fills the whole buffer, never
+        // because the queue holds more than one datagram's worth. 1200 bytes is not a control datagram,
+        // so each one is read, counted and discarded as malformed. The operating system, not the
+        // Reactor, bounds how many of the 60 survive in the socket's receive buffer (Windows keeps 55
+        // of them, 66 000 bytes), so the test requires at least the 55 that exceed 65 507 bytes and
+        // asserts that every datagram the Reactor read was counted exactly once.
+        const int datagramCount = 60;
+        const int datagramSize = 1200;
+        const int minimumReadCount = 55;
+        using DatagramSessionReactorHarness accepter = new();
+        using Socket sender = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        sender.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        byte[] payload = new byte[datagramSize];
+        payload.AsSpan().Fill(0xAB);
+
+        // Act
+        for (int i = 0; i < datagramCount; i++)
+        {
+            sender.SendTo(payload, accepter.Endpoint);
+        }
+
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived >= minimumReadCount);
+
+        // Assert
+        ReactorCounters counters = accepter.Reactor.Counters;
+        accepter.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramTruncated);
+        counters.DatagramsReceived.Should().BeGreaterThanOrEqualTo(minimumReadCount);
+        counters.UnknownSourceDatagrams.Should().Be(counters.DatagramsReceived);
     }
 
     private static byte[] BuildDatagramOfRandomNoise(Random random)
