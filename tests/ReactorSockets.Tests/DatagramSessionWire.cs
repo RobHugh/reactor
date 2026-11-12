@@ -10,7 +10,7 @@ namespace ReactorSockets.Tests;
 internal static class DatagramSessionWire
 {
     /// <summary>The datagram Session protocol version a well-formed Hello-with-cookie offers.</summary>
-    public const uint ProtocolVersion = 1;
+    public const uint ProtocolVersion = 2;
 
     /// <summary>The control type byte of a Hello-with-cookie, at offset 4 of the datagram.</summary>
     public const byte HelloWithCookieType = 3;
@@ -39,14 +39,48 @@ internal static class DatagramSessionWire
     /// <summary>The Linger, in milliseconds, the dialler announces unless a test overrides it.</summary>
     public const ulong DefaultLingerMilliseconds = 30_000;
 
+    /// <summary>The Fragment size in bytes the announcing end sends unless a test overrides it: the harness default.</summary>
+    public const ushort DefaultFragmentSize = 1200;
+
+    /// <summary>
+    /// The receive window in Fragments the announcing end sends unless a test overrides it: the Fragments
+    /// one <see cref="DefaultMaxMessageSize"/> Message occupies at <see cref="DefaultFragmentSize"/>, which is
+    /// what the harness resolves.
+    /// </summary>
+    public const uint DefaultReceiveWindowFragments = 4;
+
+    /// <summary>The length of an Accept body, in bytes: client nonce, the announced terms and the resume secret.</summary>
+    public const int AcceptBodyLength = 8 + TermsLength + ResumeSecretLength;
+
+    /// <summary>The control type byte of an Accept, at offset 4 of the datagram.</summary>
+    public const byte AcceptType = 4;
+
+    /// <summary>The offset of the Fragment size (u16) inside the announced terms.</summary>
+    public const int TermsFragmentSizeOffset = 4 + 4 + 8 + 8;
+
+    /// <summary>The offset of the receive window (u32) inside the announced terms.</summary>
+    public const int TermsReceiveWindowOffset = TermsFragmentSizeOffset + 2;
+
+    /// <summary>The offset of the announced terms in a Hello-with-cookie datagram: header, version, nonce, epoch, Cookie.</summary>
+    public const int HelloWithCookieTermsOffset = ControlBodyOffset + 4 + 8 + 8 + CookieLength;
+
+    /// <summary>The offset of the announced terms in an Accept datagram: header, client nonce.</summary>
+    public const int AcceptTermsOffset = ControlBodyOffset + 8;
+
+    /// <summary>The offset of the resume secret in a Hello-with-cookie datagram.</summary>
+    public const int HelloWithCookieSecretOffset = HelloWithCookieTermsOffset + TermsLength;
+
+    /// <summary>The offset of the resume secret in an Accept datagram.</summary>
+    public const int AcceptSecretOffset = AcceptTermsOffset + TermsLength;
+
     /// <summary>
     /// The length of a Hello-with-cookie body, in bytes: version, nonce, epoch, Cookie, the announced
     /// terms and the resume secret.
     /// </summary>
     public const int HelloWithCookieBodyLength = 4 + 8 + 8 + CookieLength + TermsLength + ResumeSecretLength;
 
-    /// <summary>The length of the announced terms, in bytes: session id, MaxMessageSize, send-idle interval, Linger.</summary>
-    public const int TermsLength = 4 + 4 + 8 + 8;
+    /// <summary>The length of the announced terms, in bytes: session id, MaxMessageSize, send-idle interval, Linger, FragmentSize, ReceiveWindowFragments.</summary>
+    public const int TermsLength = 4 + 4 + 8 + 8 + 2 + 4;
 
     /// <summary>
     /// Builds a 256-byte Hello-with-cookie datagram. Control datagram offsets: 0 session id (zero),
@@ -63,6 +97,8 @@ internal static class DatagramSessionWire
     /// <param name="lingerMilliseconds">The Linger the dialler announces.</param>
     /// <param name="resumeSecret">The dialler's resume secret: <see cref="ResumeSecretLength"/> bytes, or empty for all zero.</param>
     /// <param name="version">The protocol version the Hello-with-cookie offers.</param>
+    /// <param name="fragmentSize">The Fragment size the dialler announces.</param>
+    /// <param name="receiveWindowFragments">The receive window the dialler announces.</param>
     /// <returns>The datagram.</returns>
     public static byte[] BuildHelloWithCookie(
         ulong clientNonce,
@@ -73,7 +109,9 @@ internal static class DatagramSessionWire
         ulong sendIdleIntervalMilliseconds = DefaultSendIdleIntervalMilliseconds,
         ulong lingerMilliseconds = DefaultLingerMilliseconds,
         ReadOnlySpan<byte> resumeSecret = default,
-        uint version = ProtocolVersion)
+        uint version = ProtocolVersion,
+        ushort fragmentSize = DefaultFragmentSize,
+        uint receiveWindowFragments = DefaultReceiveWindowFragments)
     {
         byte[] body = new byte[HelloWithCookieBodyLength];
         WriteHelloWithCookieBody(
@@ -86,8 +124,47 @@ internal static class DatagramSessionWire
             maxMessageSize,
             sendIdleIntervalMilliseconds,
             lingerMilliseconds,
-            resumeSecret);
+            resumeSecret,
+            fragmentSize,
+            receiveWindowFragments);
         return BuildControlDatagram(HelloWithCookieType, body);
+    }
+
+    /// <summary>
+    /// Builds a 256-byte Accept datagram. Control datagram offsets: 0 session id (zero), 4 control type
+    /// (<see cref="AcceptType"/>), 5 client nonce (u64), then the terms from <see cref="AcceptTermsOffset"/>
+    /// (see <see cref="WriteTerms"/>) and the resume secret (16 bytes). The rest is zero padding. The one
+    /// writer of the Accept layout.
+    /// </summary>
+    /// <param name="clientNonce">The nonce of the dial being accepted.</param>
+    /// <param name="sessionIdForMe">The session id the accepting end asks to be addressed by.</param>
+    /// <param name="maxMessageSize">The largest Message the accepting end announces it will accept.</param>
+    /// <param name="sendIdleIntervalMilliseconds">The send-idle interval the accepting end announces.</param>
+    /// <param name="lingerMilliseconds">The Linger the accepting end announces.</param>
+    /// <param name="resumeSecret">The accepting end's resume secret: <see cref="ResumeSecretLength"/> bytes, or empty for all zero.</param>
+    /// <param name="fragmentSize">The Fragment size the accepting end announces.</param>
+    /// <param name="receiveWindowFragments">The receive window the accepting end announces.</param>
+    /// <returns>The datagram.</returns>
+    public static byte[] BuildAccept(
+        ulong clientNonce,
+        uint sessionIdForMe = DefaultSessionIdForMe,
+        uint maxMessageSize = DefaultMaxMessageSize,
+        ulong sendIdleIntervalMilliseconds = DefaultSendIdleIntervalMilliseconds,
+        ulong lingerMilliseconds = DefaultLingerMilliseconds,
+        ReadOnlySpan<byte> resumeSecret = default,
+        ushort fragmentSize = DefaultFragmentSize,
+        uint receiveWindowFragments = DefaultReceiveWindowFragments)
+    {
+        byte[] body = new byte[AcceptBodyLength];
+        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(0, 8), clientNonce);
+        int offset = WriteTerms(
+            body, 8, sessionIdForMe, maxMessageSize, sendIdleIntervalMilliseconds, lingerMilliseconds, fragmentSize, receiveWindowFragments);
+        if (!resumeSecret.IsEmpty)
+        {
+            resumeSecret.CopyTo(body.AsSpan(offset, ResumeSecretLength));
+        }
+
+        return BuildControlDatagram(AcceptType, body);
     }
 
     /// <summary>
@@ -122,6 +199,8 @@ internal static class DatagramSessionWire
     /// <param name="sendIdleIntervalMilliseconds">The send-idle interval the dialler announces.</param>
     /// <param name="lingerMilliseconds">The Linger the dialler announces.</param>
     /// <param name="resumeSecret">The dialler's resume secret, or empty for all zero.</param>
+    /// <param name="fragmentSize">The Fragment size the dialler announces.</param>
+    /// <param name="receiveWindowFragments">The receive window the dialler announces.</param>
     public static void WriteHelloWithCookieBody(
         Span<byte> body,
         uint version,
@@ -132,7 +211,9 @@ internal static class DatagramSessionWire
         uint maxMessageSize,
         ulong sendIdleIntervalMilliseconds,
         ulong lingerMilliseconds,
-        ReadOnlySpan<byte> resumeSecret)
+        ReadOnlySpan<byte> resumeSecret,
+        ushort fragmentSize = DefaultFragmentSize,
+        uint receiveWindowFragments = DefaultReceiveWindowFragments)
     {
         int offset = 0;
         BinaryPrimitives.WriteUInt32BigEndian(body.Slice(offset, 4), version);
@@ -143,7 +224,7 @@ internal static class DatagramSessionWire
         offset += 8;
         cookie[..Math.Min(cookie.Length, CookieLength)].CopyTo(body.Slice(offset, CookieLength));
         offset += CookieLength;
-        offset = WriteTerms(body, offset, sessionIdForMe, maxMessageSize, sendIdleIntervalMilliseconds, lingerMilliseconds);
+        offset = WriteTerms(body, offset, sessionIdForMe, maxMessageSize, sendIdleIntervalMilliseconds, lingerMilliseconds, fragmentSize, receiveWindowFragments);
         if (!resumeSecret.IsEmpty)
         {
             resumeSecret.CopyTo(body.Slice(offset, ResumeSecretLength));
@@ -153,7 +234,8 @@ internal static class DatagramSessionWire
     /// <summary>
     /// Writes the announced terms at <paramref name="offset"/> and returns the offset just past them.
     /// Terms offsets: 0 session id for me (u32), 4 MaxMessageSize (u32), 8 send-idle interval in
-    /// milliseconds (u64), 16 Linger in milliseconds (u64). <see cref="TermsLength"/> bytes in all.
+    /// milliseconds (u64), 16 Linger in milliseconds (u64), 24 FragmentSize (u16), 26 ReceiveWindowFragments (u32).
+    /// <see cref="TermsLength"/> bytes in all.
     /// </summary>
     /// <param name="destination">The buffer to write into.</param>
     /// <param name="offset">Where the terms start.</param>
@@ -161,6 +243,8 @@ internal static class DatagramSessionWire
     /// <param name="maxMessageSize">The largest Message the sender announces it will accept.</param>
     /// <param name="sendIdleIntervalMilliseconds">The send-idle interval the sender announces.</param>
     /// <param name="lingerMilliseconds">The Linger the sender announces.</param>
+    /// <param name="fragmentSize">The Fragment size the sender announces.</param>
+    /// <param name="receiveWindowFragments">The receive window the sender announces.</param>
     /// <returns>The offset just past the terms.</returns>
     public static int WriteTerms(
         Span<byte> destination,
@@ -168,7 +252,9 @@ internal static class DatagramSessionWire
         uint sessionIdForMe,
         uint maxMessageSize,
         ulong sendIdleIntervalMilliseconds,
-        ulong lingerMilliseconds)
+        ulong lingerMilliseconds,
+        ushort fragmentSize = DefaultFragmentSize,
+        uint receiveWindowFragments = DefaultReceiveWindowFragments)
     {
         BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(offset, 4), sessionIdForMe);
         offset += 4;
@@ -177,6 +263,10 @@ internal static class DatagramSessionWire
         BinaryPrimitives.WriteUInt64BigEndian(destination.Slice(offset, 8), sendIdleIntervalMilliseconds);
         offset += 8;
         BinaryPrimitives.WriteUInt64BigEndian(destination.Slice(offset, 8), lingerMilliseconds);
-        return offset + 8;
+        offset += 8;
+        BinaryPrimitives.WriteUInt16BigEndian(destination.Slice(offset, 2), fragmentSize);
+        offset += 2;
+        BinaryPrimitives.WriteUInt32BigEndian(destination.Slice(offset, 4), receiveWindowFragments);
+        return offset + 4;
     }
 }
