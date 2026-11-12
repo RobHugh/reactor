@@ -68,9 +68,9 @@ public class DatagramSessionFragmentSizeNegotiationTests
         // Arrange — 2300 bytes at the receiver's 600 is 4 Fragments (600, 600, 600, 500). The receiver's
         // window floor is ceil(2400 / 600) = 4, so the Message fits.
         (DatagramSessionReactorHarness dialler, DatagramSessionReactorHarness accepter, WireTap tap, PeerId peer) = Connect(900, 600, 2400);
-        using DatagramSessionReactorHarness _d = dialler;
-        using DatagramSessionReactorHarness _a = accepter;
-        using WireTap _t = tap;
+        using DatagramSessionReactorHarness diallerOwner = dialler;
+        using DatagramSessionReactorHarness accepterOwner = accepter;
+        using WireTap tapOwner = tap;
         byte[] message = Enumerable.Range(0, 2300).Select(i => (byte)i).ToArray();
 
         // Act
@@ -96,9 +96,9 @@ public class DatagramSessionFragmentSizeNegotiationTests
     {
         // Arrange — 850 fits the sender's own 900, so a cut at the local size would send it whole.
         (DatagramSessionReactorHarness dialler, DatagramSessionReactorHarness accepter, WireTap tap, PeerId peer) = Connect(900, 600, 2400);
-        using DatagramSessionReactorHarness _d = dialler;
-        using DatagramSessionReactorHarness _a = accepter;
-        using WireTap _t = tap;
+        using DatagramSessionReactorHarness diallerOwner = dialler;
+        using DatagramSessionReactorHarness accepterOwner = accepter;
+        using WireTap tapOwner = tap;
         byte[] message = Enumerable.Range(0, 850).Select(i => (byte)i).ToArray();
 
         // Act
@@ -120,9 +120,9 @@ public class DatagramSessionFragmentSizeNegotiationTests
         // Arrange — the receiver (900, MaxMessageSize 4000) has a window of ceil(4000 / 900) = 5, which
         // the options confirm. The sender cuts at 600: 4000 bytes is 7 Fragments, 3000 bytes is 5.
         (DatagramSessionReactorHarness dialler, DatagramSessionReactorHarness accepter, WireTap tap, PeerId peer) = Connect(600, 900, 4000);
-        using DatagramSessionReactorHarness _d = dialler;
-        using DatagramSessionReactorHarness _a = accepter;
-        using WireTap _t = tap;
+        using DatagramSessionReactorHarness diallerOwner = dialler;
+        using DatagramSessionReactorHarness accepterOwner = accepter;
+        using WireTap tapOwner = tap;
         accepter.Options.ResolvedReceiveWindowFragments.Should().Be(5);
 
         // Act
