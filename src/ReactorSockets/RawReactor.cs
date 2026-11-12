@@ -591,8 +591,9 @@ public sealed class RawReactor : IDisposable
     /// The read length is the smaller of the accepted read size and the arena's free space, so the
     /// arena always has room for what was read and a stream read is never lost. When the arena has no
     /// free space the Link is not read this Pump: <c>Receive</c> is not called, because an empty read
-    /// would be reported as <c>EndOfStream</c>. The bytes stay in the kernel's receive buffer, the
-    /// socket stays readable, and the next Pump dispatches the Link again.
+    /// would be reported as <c>EndOfStream</c>. The bytes stay in the kernel's receive buffer and the
+    /// socket stays readable, so each later Pump dispatches the Link again. The scan order rotates each
+    /// Pump, so the Link is read once it is scanned before the arena fills.
     /// </remarks>
     private void OnStreamLinkReadable(SlotHandle handle, StreamLinkSlot slot)
     {

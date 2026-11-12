@@ -21,7 +21,7 @@ with the Link.
 |---|---|
 | `DatagramsSent` | Datagrams `SendTo` handed to the socket, across every Link. |
 | `DatagramsReceived` | Datagrams delivered as `DatagramReceived`. Truncated datagrams are not counted. |
-| `ArenaHighWaterBytes` | The most arena bytes any single Frame used. Near `ArenaSize` means reads are being refused. |
+| `ArenaHighWaterBytes` | The most arena bytes any single Frame used. Near `ArenaSize` means stream reads are being deferred to later Pumps, or datagrams are not being delivered. |
 | `AdmissionDeferrals` | Times a listening Link left connections in the backlog, because of the admission cap or because every Slot was taken. One per listening Link per Pump, not one per connection. |
 | `SinkFaulted` | Times your Sink threw. Non-zero means diagnostics are off for the rest of this Reactor's life. |
 

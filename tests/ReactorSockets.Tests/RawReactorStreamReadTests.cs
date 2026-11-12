@@ -308,15 +308,14 @@ public class RawReactorStreamReadTests
     [Fact]
     public void Drain_ArenaWithNoRoomForASecondStreamLinksSegment_DeliversBothLinksBytesOnALaterPump()
     {
-        // Proves: when two ready stream Links share an arena that cannot hold both reads, the second
-        // Link's bytes stay in the kernel and arrive on a later Pump, and nothing is logged as lost.
-        // Arrange
+        // Arrange — two ready stream Links share an arena that cannot hold both reads, so the second
+        // Link's bytes must stay in the kernel and arrive on a later Pump, with nothing logged as lost.
         using RawReactorHarness harness = new(capacity: 3, scratchBufferSize: 1200, arenaSize: 1200);
         (_, IPEndPoint endPoint) = harness.ListenOnLoopback();
-        (Socket counterpartyA, LinkId linkA) = AcceptCounterparty(harness, endPoint);
-        (Socket counterpartyB, LinkId linkB) = AcceptCounterparty(harness, endPoint);
-        using Socket disposeA = counterpartyA;
-        using Socket disposeB = counterpartyB;
+        using Socket counterpartyA = harness.ConnectCounterpartyTo(endPoint);
+        LinkId linkA = AcceptNextLink(harness);
+        using Socket counterpartyB = harness.ConnectCounterpartyTo(endPoint);
+        LinkId linkB = AcceptNextLink(harness);
 
         byte[] payloadA = new byte[1000];
         byte[] payloadB = new byte[1000];
@@ -338,9 +337,8 @@ public class RawReactorStreamReadTests
     [Fact]
     public void Drain_SeveralLinksEachSentMoreThanTheWholeArena_DeliversEveryLinksBytesInOrder()
     {
-        // Proves: three Links each sent several times the arena all receive every byte, in order,
-        // with no ArenaExhausted logged.
-        // Arrange
+        // Arrange — three Links, each sent several times the whole arena before the first data Pump,
+        // must all receive every byte in order with no ArenaExhausted logged.
         const int perLink = 20_000;
         using RawReactorHarness harness = new(capacity: 4, scratchBufferSize: 4096, arenaSize: 4096);
         (_, IPEndPoint endPoint) = harness.ListenOnLoopback();
@@ -349,10 +347,10 @@ public class RawReactorStreamReadTests
         {
             for (int i = 0; i < 3; i++)
             {
-                (Socket socket, LinkId link) = AcceptCounterparty(harness, endPoint);
+                Socket socket = harness.ConnectCounterpartyTo(endPoint);
                 byte[] payload = new byte[perLink];
                 Random.Shared.NextBytes(payload);
-                peers.Add((socket, link, payload));
+                peers.Add((socket, AcceptNextLink(harness), payload));
             }
 
             foreach ((Socket socket, _, byte[] payload) in peers)
@@ -381,45 +379,48 @@ public class RawReactorStreamReadTests
     [Fact]
     public void Drain_StreamLinkDeferredByAFullArena_DeliversEveryByteBeforeEndOfStream()
     {
-        // Proves: a Link skipped for lack of arena room is not read with an empty span, which would
-        // report EndOfStream while it still has bytes queued; all its bytes precede its single EndOfStream.
-        // Arrange
+        // Arrange — a Link skipped for lack of arena room must not be read with an empty span, which
+        // would report EndOfStream while it still has bytes queued. Both Links are sent more than the
+        // whole arena and then shut down, so whichever Link the rotating scan reaches second in a Pump
+        // finds the arena full, and both Links' streams are checked.
         using RawReactorHarness harness = new(capacity: 3, scratchBufferSize: 1200, arenaSize: 1200);
         (_, IPEndPoint endPoint) = harness.ListenOnLoopback();
-        (Socket counterpartyA, LinkId linkA) = AcceptCounterparty(harness, endPoint);
-        (Socket counterpartyB, LinkId linkB) = AcceptCounterparty(harness, endPoint);
-        using Socket disposeA = counterpartyA;
-        using Socket disposeB = counterpartyB;
+        using Socket counterpartyA = harness.ConnectCounterpartyTo(endPoint);
+        LinkId linkA = AcceptNextLink(harness);
+        using Socket counterpartyB = harness.ConnectCounterpartyTo(endPoint);
+        LinkId linkB = AcceptNextLink(harness);
 
         byte[] payloadA = new byte[5000];
-        byte[] payloadB = new byte[1000];
+        byte[] payloadB = new byte[5000];
         Random.Shared.NextBytes(payloadA);
         Random.Shared.NextBytes(payloadB);
         counterpartyA.Send(payloadA);
         counterpartyB.Send(payloadB);
+        counterpartyA.Shutdown(SocketShutdown.Send);
         counterpartyB.Shutdown(SocketShutdown.Send);
 
         // Act
         List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpUntilDrained(
-            e => e.Any(x => x.Kind == RawEventKind.EndOfStream && x.Link == linkB)
-                && SegmentBytes(e, linkA).Length >= payloadA.Length);
+            e => e.Any(x => x.Kind == RawEventKind.EndOfStream && x.Link == linkA)
+                && e.Any(x => x.Kind == RawEventKind.EndOfStream && x.Link == linkB));
 
         // Assert
-        int endOfStreamIndex = drained.FindIndex(x => x.Kind == RawEventKind.EndOfStream && x.Link == linkB);
-        endOfStreamIndex.Should().BeGreaterThanOrEqualTo(0);
-        SegmentBytes(drained.Take(endOfStreamIndex).ToList(), linkB).Should().Equal(payloadB);
+        BytesBeforeEndOfStream(drained, linkA).Should().Equal(payloadA);
+        BytesBeforeEndOfStream(drained, linkB).Should().Equal(payloadB);
+        drained.Count(x => x.Kind == RawEventKind.EndOfStream && x.Link == linkA).Should().Be(1);
         drained.Count(x => x.Kind == RawEventKind.EndOfStream && x.Link == linkB).Should().Be(1);
     }
 
     [Fact]
     public void Drain_SingleLinkWhoseShareIsSmallerThanOneRead_ReceivesFullSizeReadsAndEveryByte()
     {
-        // Proves: a lone Link whose ReadShare (4096 / 8 = 512) is below one read still gets full-size
-        // reads, so the read is capped by the arena's free space and never by the share.
+        // Arrange — a lone Link whose per-Link share of the arena (4096 / 8 = 512 bytes) is below one
+        // read must still get full-size reads, so the read is capped by the arena's free space and
+        // never by the share.
         using RawReactorHarness harness = new(capacity: 8, scratchBufferSize: 4096, arenaSize: 4096);
         (_, IPEndPoint endPoint) = harness.ListenOnLoopback();
-        (Socket counterparty, LinkId link) = AcceptCounterparty(harness, endPoint);
-        using Socket disposeCounterparty = counterparty;
+        using Socket counterparty = harness.ConnectCounterpartyTo(endPoint);
+        LinkId link = AcceptNextLink(harness);
 
         byte[] payload = new byte[40_000];
         Random.Shared.NextBytes(payload);
@@ -436,12 +437,18 @@ public class RawReactorStreamReadTests
         harness.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.ArenaExhausted);
     }
 
-    private static (Socket Counterparty, LinkId Link) AcceptCounterparty(RawReactorHarness harness, IPEndPoint endPoint)
+    private static LinkId AcceptNextLink(RawReactorHarness harness)
     {
-        Socket counterparty = harness.ConnectCounterpartyTo(endPoint);
         List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained =
             harness.PumpUntilDrained(e => e.Any(x => x.Kind == RawEventKind.Accepted));
-        return (counterparty, drained.First(x => x.Kind == RawEventKind.Accepted).Link);
+        return drained.Should().ContainSingle(x => x.Kind == RawEventKind.Accepted).Subject.Link;
+    }
+
+    private static byte[] BytesBeforeEndOfStream(List<(RawEventKind Kind, LinkId Link, byte[] Payload)> events, LinkId link)
+    {
+        int endOfStreamIndex = events.FindIndex(x => x.Kind == RawEventKind.EndOfStream && x.Link == link);
+        endOfStreamIndex.Should().BeGreaterThanOrEqualTo(0, "the Link's EndOfStream must have been drained");
+        return SegmentBytes(events.Take(endOfStreamIndex), link);
     }
 
     private static byte[] SegmentBytes(IEnumerable<(RawEventKind Kind, LinkId Link, byte[] Payload)> events, LinkId link) =>
