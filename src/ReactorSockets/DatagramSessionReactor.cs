@@ -172,6 +172,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private readonly int _maxLegalFragmentCount;
 
     /// <summary>
+    /// The widest Fragment payload this Reactor holds: its own resolved
+    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>, the width of every receive-arena
+    /// Fragment slot (ADR 0024). A reliable Fragment wider than this closes the Peer with
+    /// <see cref="DisconnectReason.ProtocolViolation"/> in <see cref="ProcessDataDatagram"/>'s
+    /// pre-classification pass. Captured at construction, as <see cref="_maxLegalFragmentCount"/> is.
+    /// </summary>
+    private readonly int _maxLegalFragmentWidth;
+
+    /// <summary>
     /// Constructs a Reactor bound to the calling thread (ADR 0002) — every future mutating call must
     /// come from this same thread or it throws — and binds every declared endpoint in the order
     /// supplied. A bind that fails throws here, naming the endpoint: binding is part of what this
@@ -204,6 +213,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
         _maxDatagramsPerPump = options.ResolvedMaxDatagramsPerPump;
         _maxLegalFragmentCount = options.ResolvedReceiveWindowFragments;
+        _maxLegalFragmentWidth = options.ResolvedFragmentSize;
         _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
 
         _closedSessions = new ClosedSessionMemory(options.Reactor.Capacity, options.Reactor.TimeProvider);
@@ -1033,7 +1043,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // matter either way — slot is closed by that refusal, so nothing reads this timestamp again.
         slot.LastReceiveTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
 
-        // A declared fragmentCount larger than this Reactor's own receive window is refused with a
+        // Two refusals share this pass, and both close the Peer rather than discard. A Fragment wider
+        // than this Reactor's own FragmentSize (ADR 0024) could never fit a receive-arena slot, and only
+        // a non-conforming peer sends one, since the handshake announces the size. A declared
+        // fragmentCount larger than this Reactor's own receive window is refused with a
         // close, not a discard (issue #282, reworked under #264) — the record is individually legal and
         // its set internally consistent (both already proved above), but the set it claims could never
         // be held: the window is what a Fragment set actually occupies while it waits, and there is no
@@ -1050,17 +1063,25 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         while (oversizedScan.TryReadNext(out PacketRecord record))
         {
             if (record.IsFragment
-                && record.Mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered
-                && record.FragmentCount > _maxLegalFragmentCount)
+                && record.Mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
             {
-                if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                if (record.FragmentCount > _maxLegalFragmentCount)
                 {
-                    _diagnostics.Log(DiagnosticRecord.ForOversizedFragmentSet(
-                        ToPeerId(slot.Handle), record.FragmentCount, _maxLegalFragmentCount));
+                    if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                    {
+                        _diagnostics.Log(DiagnosticRecord.ForOversizedFragmentSet(
+                            ToPeerId(slot.Handle), record.FragmentCount, _maxLegalFragmentCount));
+                    }
+
+                    ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
+                    return;
                 }
 
-                ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
-                return;
+                if (record.Payload.Length > _maxLegalFragmentWidth)
+                {
+                    ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
+                    return;
+                }
             }
         }
 
@@ -2205,9 +2226,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <param name="fragmentCount">The group's declared Fragment count.</param>
     /// <param name="payload">The Fragment's payload bytes.</param>
     /// <returns>
-    /// Whether the Fragment's group is complete after this piece was held — <see langword="false"/>
-    /// whenever the payload did not fit its slot, since that leaves the slot's length at zero and the
-    /// piece effectively lost. The caller delivers the group once this is <see langword="true"/>.
+    /// Whether the Fragment's group is complete after this piece was held. The payload always fits its
+    /// slot: <see cref="ProcessDataDatagram"/> closes the Peer before classification on a Fragment
+    /// wider than <see cref="_maxLegalFragmentWidth"/>. The caller delivers the group once this is
+    /// <see langword="true"/>.
     /// </returns>
     private bool HoldFragment(
         PeerSlot slot, PacketRecordMode mode, uint sequence, int ringSlot,
@@ -2216,16 +2238,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         int spaceIndex = ReliableSpaceIndex(mode);
         Span<byte> fragmentSlot = _receiveArena.GetFragmentSlot(slot.Handle.Index, spaceIndex, ringSlot);
 
-        if (payload.Length > fragmentSlot.Length)
-        {
-            // Cannot happen from a peer whose own FragmentSize matches this Reactor's (ADR 0004's
-            // ordinary case), but fragment size is unilateral and per-direction, so nothing on the
-            // wire proves the two sides agree. Refusing to write past the slot's fixed width — rather
-            // than throwing — leaves the sequence admitted (the window already advanced past it) but
-            // this slot's length at zero, indistinguishable from an empty one: the Fragment set this
-            // piece belonged to simply never completes, exactly as if the piece had been lost.
-            return false;
-        }
+        Debug.Assert(
+            payload.Length <= fragmentSlot.Length,
+            "ProcessDataDatagram closes the Peer on a Fragment wider than the FragmentSize before any record is classified.");
 
         payload.CopyTo(fragmentSlot);
         ReceiveWindow window = _receiveWindows[slot.Handle.Index].ReliableWindow(mode);

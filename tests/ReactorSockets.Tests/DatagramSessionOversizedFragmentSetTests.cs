@@ -38,6 +38,7 @@ public class DatagramSessionOversizedFragmentSetTests
     private const int DatagramHeaderSize = 20;
     private const int UnfragmentedRecordSize = 7;
     private const int FragmentRecordSize = 11;
+    private const int DefaultFragmentSize = 1200;
 
     private const byte ModeUnreliable = 0b0000_0000;
     private const byte ModeReliableOrdered = 0b0000_0011;
@@ -324,6 +325,110 @@ public class DatagramSessionOversizedFragmentSetTests
         // Message; no Peer is closed.
         delivered.Should().ContainSingle().Which.Should().Equal(ExpectedWholeFragmentSetPayload(receiveWindowFragments));
         accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.OversizedFragmentSet);
+    }
+
+    [Fact]
+    public void Pump_FragmentOneByteWiderThanTheAccepterFragmentSize_ClosesThePeerWithProtocolViolation()
+    {
+        // Arrange — default FragmentSize is 1200; a 1201-byte Fragment of a two-piece set is
+        // individually legal and fits the window, so only the width check can refuse it.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x6000_0000_0000_0001UL);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: new byte[DefaultFragmentSize + 1]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            accepter.PumpUntilDrained(all => all.Any(e => e.Kind == SessionEventKind.PeerClosed));
+
+        // Assert
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Should().BeEquivalentTo((SessionEventKind.PeerClosed, accepterPeer, DisconnectReason.ProtocolViolation));
+    }
+
+    [Fact]
+    public void Pump_FragmentExactlyTheAccepterFragmentSize_IsHeldAndTheSetDeliveredIntact()
+    {
+        // Arrange
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x6000_0000_0000_0002UL);
+
+        byte[] first = new byte[DefaultFragmentSize];
+        Array.Fill(first, (byte)0x5A);
+        byte[] second = [0x01, 0x02, 0x03];
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: first),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: second),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> delivered = accepter.DrainPayloads();
+
+        // Assert
+        delivered.Should().ContainSingle().Which.Should().Equal([.. first, .. second]);
+    }
+
+    [Fact]
+    public void Pump_WellFormedRecordAheadOfAFragmentWiderThanTheFragmentSize_DeliversNeitherRecord()
+    {
+        // Arrange
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x6000_0000_0000_0003UL);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildRecord(ModeReliableOrdered, sequence: 0, payload: [0xBB]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 0, fragmentCount: 2, payload: new byte[DefaultFragmentSize + 1]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            accepter.PumpUntilDrained(all => all.Any(e => e.Kind == SessionEventKind.PeerClosed));
+
+        // Assert
+        drained.Should().Contain(e => e.Kind == SessionEventKind.PeerClosed && e.Reason == DisconnectReason.ProtocolViolation);
+        drained.Should().NotContain(e => e.Kind == SessionEventKind.MessageReceived);
+    }
+
+    [Fact]
+    public void Pump_UnreliableRecordWiderThanTheFragmentSizeWithNoFragmentBit_DoesNotCloseThePeer()
+    {
+        // Arrange — an unreliable record is bounded by the datagram, not by FragmentSize, so a
+        // 1201-byte one is legal and delivered.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x6000_0000_0000_0004UL);
+
+        byte[] payload = new byte[DefaultFragmentSize + 1];
+        Array.Fill(payload, (byte)0x7E);
+        byte[] datagram = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence: 0, payload: payload)];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.DrainToList();
+
+        // Assert
+        events.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
     }
 
     /// <summary>
