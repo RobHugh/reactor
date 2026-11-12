@@ -50,7 +50,7 @@ public class DatagramSessionAckBlockTests
     private const int ControlBodyOffset = 5;
     private const int CookieLength = 32;
 
-    private const uint ProtocolVersion = 1;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
 
     private const int DatagramHeaderSize = 20;
 

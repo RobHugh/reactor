@@ -174,6 +174,32 @@ public class DatagramSessionRefusalTests
     }
 
     [Fact]
+    public void OnHelloWithCookie_OfferingAnotherVersionWithIllegalFragmentTerms_IsStillRefusedForTheVersion()
+    {
+        // Arrange — a version 1 Hello-with-cookie read at the version 2 layout finds its resume secret
+        // where the Fragment terms sit, so those bytes are not this version's to judge.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawPeer peer = new();
+        const ulong clientNonce = 0x3344_5566_7788_99AAUL;
+        (long epoch, byte[] cookie) = ObtainCookie(accepter, peer, clientNonce);
+        ulong sentBefore = accepter.Reactor.Counters.DatagramsSent;
+
+        // Act
+        peer.Send(accepter.Endpoint, DatagramSessionWire.BuildHelloWithCookie(
+            clientNonce, epoch, cookie, sessionIdForMe: 1, resumeSecret: new byte[ResumeSecretLength], version: 1,
+            fragmentSize: 0, receiveWindowFragments: 0));
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsSent > sentBefore);
+        byte[] reply = peer.Receive(out _);
+
+        // Assert
+        reply[4].Should().Be(RefusalType);
+        (ulong nonce, byte reason, uint versionOffered, _) = ParseRefusal(reply);
+        nonce.Should().Be(clientNonce);
+        reason.Should().Be(RefusalReasonVersion);
+        versionOffered.Should().Be(1);
+    }
+
+    [Fact]
     public void OnHelloWithCookie_OfferingAVersionTheReactorDoesNotSpeak_LogsVersionRefusedAtWarnNotError()
     {
         // Arrange

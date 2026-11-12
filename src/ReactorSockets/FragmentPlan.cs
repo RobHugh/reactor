@@ -152,9 +152,7 @@ internal static class FragmentPlan
             DeliveryMode.ReliableOrdered or DeliveryMode.ReliableUnordered =>
                 messageLength > maxMessageLength
                     ? FragmentPlanResult.RemoteMessageTooLarge
-                    : ReliableCount(messageLength, fragmentSize) > remoteReceiveWindowFragments
-                        ? FragmentPlanResult.RemoteMessageTooLarge
-                        : FragmentPlanResult.ForFragmentCount(ReliableCount(messageLength, fragmentSize)),
+                    : WithinRemoteWindow(ReliableCount(messageLength, fragmentSize), remoteReceiveWindowFragments),
 
             // Unreliable modes never fragment (ADR 0004): over the cap is refused rather than cut,
             // because a lost Fragment here is never retransmitted. Under it, the peer's limit still
@@ -176,4 +174,10 @@ internal static class FragmentPlan
     /// <summary>The Fragments a reliable Message of <paramref name="messageLength"/> bytes is cut into at <paramref name="fragmentSize"/>; an empty Message is one.</summary>
     private static int ReliableCount(int messageLength, int fragmentSize) =>
         messageLength == 0 ? 1 : (int)(((long)messageLength + fragmentSize - 1) / fragmentSize);
+
+    /// <summary>A plan of <paramref name="fragmentCount"/> Fragments, or <see cref="FragmentPlanResult.RemoteMessageTooLarge"/> when the count exceeds <paramref name="remoteReceiveWindowFragments"/>.</summary>
+    private static FragmentPlanResult WithinRemoteWindow(int fragmentCount, uint remoteReceiveWindowFragments) =>
+        (uint)fragmentCount > remoteReceiveWindowFragments
+            ? FragmentPlanResult.RemoteMessageTooLarge
+            : FragmentPlanResult.ForFragmentCount(fragmentCount);
 }

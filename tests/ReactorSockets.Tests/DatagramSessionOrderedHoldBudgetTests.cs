@@ -21,7 +21,7 @@ public class DatagramSessionOrderedHoldBudgetTests
     private const int ControlBodyOffset = 5;
     private const int CookieLength = 32;
 
-    private const uint ProtocolVersion = 1;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
 
     private const int DatagramHeaderSize = 20;
     private const int UnfragmentedRecordSize = 7;
@@ -78,8 +78,8 @@ public class DatagramSessionOrderedHoldBudgetTests
     [Fact]
     public void Pump_ARecordWiderThanAFragmentSlotBehindAHole_CountsItOutOfWindow()
     {
-        // Arrange — nothing on the receive path stops a record being wider than this end's FragmentSize,
-        // because fragment size is unilateral (ADR 0004).
+        // Arrange — the receive path refuses only a Fragment wider than this end's FragmentSize
+        // (ADR 0024), so an unfragmented record that wide is admitted.
         using DatagramSessionReactorHarness accepter = NewAccepter();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));

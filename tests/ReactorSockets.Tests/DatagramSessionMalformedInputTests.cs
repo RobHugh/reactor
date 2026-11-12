@@ -24,7 +24,7 @@ public class DatagramSessionMalformedInputTests
 
     private const int HelloBodyLength = 12;
 
-    private const uint ProtocolVersion = 1;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
 
     /// <summary>
     /// Builds a 256-byte control datagram: the four-byte session id, the one-byte control type, the

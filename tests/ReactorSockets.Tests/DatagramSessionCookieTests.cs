@@ -24,7 +24,7 @@ public class DatagramSessionCookieTests
     private const byte CookieType = 2;
     private const int CookieLength = 32;
     private const int ResumeSecretLength = 16;
-    private const uint ProtocolVersion = 1;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
 
     // ---- Frame builders --------------------------------------------------------------------
 

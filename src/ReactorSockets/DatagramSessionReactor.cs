@@ -149,11 +149,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// The largest declared <c>fragmentCount</c> a Fragment's set may legally claim: this Reactor's own
     /// receive window, <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>, not
     /// <see cref="DatagramSessionOptions.ReceiveWindowFloor"/>. The floor is computed from <em>this
-    /// end's own</em> <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>, but fragment size is
-    /// unilateral and per-direction (ADR 0004) — a conforming peer with a smaller fragment size legally
-    /// cuts the same, within-<see cref="DatagramSessionOptions.MaxMessageSize"/> Message into more
-    /// Fragments than that floor, and bounding by the floor would close that peer as a protocol
-    /// violator for a set it was always entitled to send. The window is the right bound instead of a
+    /// end's own</em> <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>, but a conforming peer
+    /// with a smaller fragment size legally cuts the same,
+    /// within-<see cref="DatagramSessionOptions.MaxMessageSize"/> Message into more Fragments than that
+    /// floor, up to the window this end announced (ADR 0024). Bounding by the floor would close that
+    /// peer as a protocol violator for a set it was always entitled to send. The window is the right bound instead of a
     /// looser one: it is what a Fragment set actually occupies while it is held, so a declared count
     /// larger than the window can never be reassembled — there is no slot for every piece to sit in at
     /// once — and refusing it refuses exactly the sets that were never legal, whoever's fragment size
@@ -605,8 +605,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // ever consults what was already decided. An unreliable Message is never a Fragment, so the
         // peer's Fragment size does not bound it: its single-Datagram cap is this Reactor's own
         // ResolvedFragmentSize, which keeps MessageTooLarge a fact the caller's own options predict
-        // (SendOutcome.MessageTooLarge). The cap handed
-        // to FragmentPlan.Resolve is likewise this Peer's own remote-announced MaxMessageSize (issues
+        // (SendOutcome.MessageTooLarge). The cap handed to FragmentPlan.Resolve is this Peer's own
+        // remote-announced MaxMessageSize (issues
         // #284, #449; see this method's XML doc for why a Send is capped by the far end's limit rather
         // than this Reactor's own). RemoteMaxMessageSize is a uint off the wire while
         // FragmentPlan.Resolve takes an int message length, so a value above int.MaxValue is clamped
@@ -3098,8 +3098,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Establishes the dialling end's Session. Each end announces the id it wants stamped on datagrams
     /// sent <em>to it</em>, so the two ids differ and neither end has to agree with the other about
-    /// which is which. The fragment size is not announced: it is each sender's own path property, and
-    /// a receiver that reassembles by offset and length never needs to know it.
+    /// which is which. Each end also announces its Fragment size and receive window (ADR 0024): this
+    /// end stores the remote values and fixes its send Fragment size at the smaller of the two sizes,
+    /// before the Peer is Established.
     /// </summary>
     /// <remarks>
     /// Also seeds the Peer's round-trip estimate with the time since its Hello-with-cookie was sent

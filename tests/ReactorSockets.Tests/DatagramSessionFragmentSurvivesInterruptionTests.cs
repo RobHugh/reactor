@@ -230,7 +230,7 @@ public class DatagramSessionFragmentSurvivesInterruptionTests
     private const int ControlBodyOffset = 5;
     private const int CookieLength = 32;
     private const int ControlDatagramSize = 256;
-    private const uint ProtocolVersion = 1;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
     private const byte ModeReliableOrdered = 0b0000_0011;
     private const byte ModeReliableUnordered = 0b0000_0010;
 

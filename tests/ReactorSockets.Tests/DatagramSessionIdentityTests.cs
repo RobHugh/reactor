@@ -25,7 +25,7 @@ public class DatagramSessionIdentityTests
 
     private const int CookieLength = 32;
 
-    private const uint ProtocolVersion = 1;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
 
     // ---- wire helpers ----
 

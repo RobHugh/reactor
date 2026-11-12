@@ -20,8 +20,10 @@
 
 ### Breaking changes
 
-- `DatagramSessionProtocol.Version` goes from 1 to 2. A version 1 and a version 2 Datagram Session
-  Reactor refuse each other with `VersionMismatch`.
+- `DatagramSessionProtocol.Version` goes from 1 to 2, and a version 1 and a version 2 Datagram
+  Session Reactor cannot connect. A version 2 Reactor refuses a version 1 dialler with
+  `VersionMismatch`. A version 1 Reactor discards a version 2 Hello-with-cookie as malformed, so a
+  version 2 dialler's dial goes unanswered.
 - A smaller peer `FragmentSize` means more retention slots per Message, so `RetentionExhausted`
   arrives sooner. Receive memory is unchanged.
 

@@ -23,7 +23,11 @@ produce more Fragments per Message than the receiver's window floor allows.
    65 507, or a `ReceiveWindowFragments` of 0, is illegal. It is handled on the same path as an
    illegal announced interval.
 3. **`DatagramSessionProtocol.Version` goes from 1 to 2.** ADR 0009 matches versions exactly, so a
-   mixed pair gets a `VersionMismatch` Refusal instead of a silent loss.
+   mixed pair cannot connect instead of losing data silently. A version 1 dialler gets a
+   `VersionMismatch` Refusal from a version 2 Reactor. A version 2 dialler gets no answer from a
+   version 1 Reactor: the version 1 shape check requires zero padding after its own, shorter
+   Hello-with-cookie body, so it discards the longer datagram as malformed before reading the
+   version, and the dial ends as any unanswered dial does.
 4. **A Peer sends at the smaller of the two sizes.** Each Peer's send Fragment size is
    `min(local FragmentSize, remote FragmentSize)`. It is fixed once, when the Peer reaches
    Established, and does not change across a Resume.
@@ -52,8 +56,8 @@ let a receiver accept any Fragment width. It fails for three reasons:
 
 - **A peer with a smaller `FragmentSize` makes each Message need more retention slots.**
   `RetentionExhausted` arrives sooner, and it is returned straight from `Send`.
-- **A mixed-version pair can no longer connect.** A version 1 and a version 2 Reactor get
-  `VersionMismatch`.
+- **A mixed-version pair can no longer connect.** Only a version 1 dialler is told why, with
+  `VersionMismatch`. A version 2 dialler to a version 1 Reactor sees an unanswered dial.
 - **`Send` depends on two remote values.** The same Message may be accepted for one Peer and
   refused for another because of the remote `ReceiveWindowFragments`, as it already may be for the
   remote `MaxMessageSize`.

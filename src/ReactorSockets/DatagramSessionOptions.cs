@@ -181,9 +181,9 @@ public sealed class DatagramSessionOptions
     /// Reactor's receive window (<see cref="ResolvedReceiveWindowFragments"/>) is closed on its first
     /// Fragment, before any receive-window slot or Fragment-group bookkeeping exists for it. The bound
     /// is the window rather than <see cref="ReceiveWindowFloor"/> alone, because the floor is computed
-    /// from this end's own <see cref="ResolvedFragmentSize"/> and fragment size is unilateral and
-    /// per-direction (ADR 0004): a conforming peer with a smaller fragment size legally cuts the same,
-    /// within-limit Message into more Fragments than the floor. <see cref="Validate"/> already requires
+    /// from this end's own <see cref="ResolvedFragmentSize"/>: a conforming peer with a smaller fragment
+    /// size legally cuts the same, within-limit Message into more Fragments than the floor, up to the
+    /// announced window (ADR 0024). <see cref="Validate"/> already requires
     /// the window to be at least the floor, so a set at exactly this value is always admitted.
     /// </remarks>
     public required int MaxMessageSize { get; init; }
@@ -278,13 +278,14 @@ public sealed class DatagramSessionOptions
     /// (RFC 791's guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).
     /// </summary>
     /// <remarks>
-    /// Unilateral and per-direction (ADR 0004): each side of a Session cuts its own outbound Messages
-    /// by its own configured value, and the two directions need not agree. It is never announced in
-    /// the handshake, because a receiver reassembles a Fragment set from <c>fragmentIndex</c> and
-    /// <c>fragmentCount</c> alone and never needs to know the sender's choice — so two Sessions
-    /// configured with different values still interoperate, each cutting by its own. This value is
-    /// resolved once per Peer, at admission, onto that Peer's own slot; a later change to this options
-    /// instance never reaches a Peer already open. See <see cref="ResolvedFragmentSize"/>.
+    /// Announced in the handshake (ADR 0024). Each Peer cuts its reliable Messages at the smaller of
+    /// this value and the peer's announced value, fixed once when the Peer reaches Established and
+    /// unchanged across a Resume, so two Reactors configured with different values interoperate. A
+    /// reliable Fragment wider than this value closes the Peer with
+    /// <see cref="DisconnectReason.ProtocolViolation"/>, which only a non-conforming peer causes. The
+    /// single-Datagram cap of an unreliable Message is this value alone, whatever the peer announced.
+    /// A later change to this options instance never reaches a Peer already open. See
+    /// <see cref="ResolvedFragmentSize"/>.
     /// </remarks>
     public int? FragmentSize { get; init; }
 
@@ -341,10 +342,11 @@ public sealed class DatagramSessionOptions
     /// The resolved fragment size: <see cref="FragmentSize"/> if set, otherwise 1200.
     /// </summary>
     /// <remarks>
-    /// A Peer captures this value once, onto its own slot, at admission — every
-    /// <see cref="DatagramSessionReactor.Send"/> call for that Peer, and every retransmit, cuts by that
-    /// captured value rather than reading this property afresh, so fragment size cannot move mid-Session
-    /// even if this options instance later would resolve differently (ADR 0004).
+    /// This is the value the handshake announces. A Peer fixes its send Fragment size once, when it
+    /// reaches Established, at the smaller of this value and the peer's announced value (ADR 0024).
+    /// Every <see cref="DatagramSessionReactor.Send"/> call for that Peer, and every retransmit, cuts by
+    /// that fixed value rather than reading this property afresh, so fragment size cannot move
+    /// mid-Session even if this options instance later would resolve differently.
     /// </remarks>
     public int ResolvedFragmentSize => FragmentSize ?? DefaultFragmentSize;
 

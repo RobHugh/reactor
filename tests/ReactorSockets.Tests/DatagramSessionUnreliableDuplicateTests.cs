@@ -27,7 +27,7 @@ public class DatagramSessionUnreliableDuplicateTests
     private const int ControlBodyOffset = 5;
     private const int CookieLength = 32;
 
-    private const uint ProtocolVersion = 1;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
 
     private const int DatagramHeaderSize = 20;
     private const byte ModeUnreliable = 0b0000_0000;

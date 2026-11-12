@@ -20,7 +20,7 @@ public class DatagramSessionHandshakeFuzzTests
     private const int ControlBodyOffset = 5;
     private const int CookieLength = 32;
     private const int ResumeSecretLength = 16;
-    private const uint ProtocolVersion = 1;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
 
     private const byte HelloType = 1;
     private const byte CookieType = 2;
