@@ -62,6 +62,13 @@ public sealed class RawReactor : IDisposable
     private readonly ReactorCounterSet _counters;
     private readonly ShareHolderTable<LinkSlot> _links;
     private readonly byte[] _scratchBuffer;
+
+    /// <summary>
+    /// The largest datagram or stream read this Reactor accepts. <see cref="_scratchBuffer"/> is one
+    /// byte longer, so a UDP read that fills it is known to have been truncated; a TCP read is given
+    /// only the first <see cref="_acceptedSize"/> bytes, so it never exceeds what the arena was sized for.
+    /// </summary>
+    private readonly int _acceptedSize;
     private readonly List<PendingEvent> _pendingEvents = [];
     private readonly List<LinkId> _connectingLinks = [];
     private readonly int _constructingThreadId;
@@ -77,8 +84,8 @@ public sealed class RawReactor : IDisposable
     /// come from this same thread or it throws.
     /// </summary>
     /// <remarks>
-    /// <b>The memory bill</b> is one scratch buffer plus one arena — <c>scratchBufferSize + ArenaSize</c>
-    /// — neither multiplied by capacity, because Raw holds nothing for a Link across a Pump. That is
+    /// <b>The memory bill</b> is one scratch buffer plus one arena — <c>scratchBufferSize + 1 + ArenaSize</c>
+    /// (the extra byte is how a truncated datagram is recognised) — neither multiplied by capacity, because Raw holds nothing for a Link across a Pump. That is
     /// what "invents nothing on the wire" looks like from the constructor (ADR 0012).
     /// </remarks>
     /// <param name="options">
@@ -118,7 +125,8 @@ public sealed class RawReactor : IDisposable
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Sink, options.MinimumLevel, _counters);
         _links = new ShareHolderTable<LinkSlot>(options.Capacity, ReactorOrigin.Next());
-        _scratchBuffer = new byte[resolvedScratchBufferSize];
+        _acceptedSize = resolvedScratchBufferSize;
+        _scratchBuffer = new byte[resolvedScratchBufferSize + 1];
         _admissionCap = options.ResolvedAdmissionCap;
     }
 
@@ -577,7 +585,7 @@ public sealed class RawReactor : IDisposable
     /// </summary>
     private void OnStreamLinkReadable(SlotHandle handle, StreamLinkSlot slot)
     {
-        TcpLinkReceiveResult result = slot.Link.Receive(_scratchBuffer);
+        TcpLinkReceiveResult result = slot.Link.Receive(_scratchBuffer.AsSpan(0, _acceptedSize));
         switch (result.Outcome)
         {
             case TcpLinkReceiveOutcome.Delivered:
@@ -704,7 +712,7 @@ public sealed class RawReactor : IDisposable
     {
         if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
         {
-            _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(source, _scratchBuffer.Length));
+            _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(source, _acceptedSize));
         }
     }
 

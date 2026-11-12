@@ -114,7 +114,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private readonly ClosedSessionMemory _closedSessions;
 
-    private readonly byte[] _scratchBuffer = new byte[MaxUdpDatagramSize];
+    /// <summary>
+    /// The read-side buffer. One byte longer than <see cref="MaxUdpDatagramSize"/> so a read that
+    /// fills it is known to have been truncated (see <c>UdpLink.Receive</c>).
+    /// </summary>
+    private readonly byte[] _scratchBuffer = new byte[MaxUdpDatagramSize + 1];
     private readonly byte[] _sendBuffer = new byte[DatagramSessionProtocol.ControlDatagramSize];
 
     /// <summary>
@@ -820,7 +824,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 case UdpLinkReceiveOutcome.Truncated:
                     _counters.RecordDatagramReceived();
                     _counters.RecordUnknownSourceDatagram();
-                    _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(result.Source, _scratchBuffer.Length));
+                    _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(result.Source, MaxUdpDatagramSize));
                     break;
 
                 // An ICMP error queued against this socket by an earlier send, and on Linux the reason

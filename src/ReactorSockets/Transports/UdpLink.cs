@@ -121,8 +121,8 @@ internal sealed class UdpLink : IDisposable
     }
 
     /// <summary>
-    /// Reads one datagram into <paramref name="scratch"/>. A datagram larger than
-    /// <paramref name="scratch"/> is consumed and reported as <see cref="UdpLinkReceiveOutcome.Truncated"/>
+    /// Reads one datagram into <paramref name="scratch"/>. A read that fills <paramref name="scratch"/>
+    /// completely is consumed and reported as <see cref="UdpLinkReceiveOutcome.Truncated"/>
     /// rather than left at the head of the queue, identically on Windows and Unix (ADR 0008). An
     /// earlier send's ICMP port-unreachable is reported as
     /// <see cref="UdpLinkReceiveOutcome.Unreachable"/> without affecting the Link — it arrives here as
@@ -133,28 +133,23 @@ internal sealed class UdpLink : IDisposable
     /// socket is non-blocking, so this returns rather than waiting.
     /// </summary>
     /// <remarks>
-    /// Truncation is detected two ways, because no single platform-neutral signal covers both: on
-    /// Windows, an oversized read can throw <see cref="SocketError.MessageSize"/> before delivering
-    /// anything. On Unix (and observably on some Windows/.NET combinations too), the read instead
-    /// succeeds silently with exactly <paramref name="scratch"/>'s length delivered and no error, so
-    /// <see cref="Socket.Available"/> — which reports the next datagram's full size, not the
-    /// cumulative queue — is checked before reading to catch that case as well.
+    /// The caller passes a buffer one byte longer than the largest datagram it accepts. A read that
+    /// fills the whole buffer therefore means the datagram was at least one byte too large, and is
+    /// reported as truncated. This holds on every platform: Unix truncates silently and delivers
+    /// exactly <paramref name="scratch"/>'s length, while Windows throws
+    /// <see cref="SocketError.MessageSize"/>, which is the same event and is reported the same way.
+    /// A datagram of exactly the accepted size leaves one byte unused and is delivered whole.
     /// </remarks>
     public UdpLinkReceiveResult Receive(Span<byte> scratch)
     {
         EndPoint remoteEndPoint = _receiveFromPlaceholder;
         try
         {
-            bool expectingTruncation = Socket.Available > scratch.Length;
             int received = Socket.ReceiveFrom(scratch, SocketFlags.None, ref remoteEndPoint);
-            if (expectingTruncation)
-            {
-                Source truncatedSource = remoteEndPoint is IPEndPoint resolved ? Source.FromIPEndPoint(resolved) : default;
-                return UdpLinkReceiveResult.ForTruncated(truncatedSource);
-            }
-
-            Source source = Source.FromIPEndPoint((IPEndPoint)remoteEndPoint);
-            return UdpLinkReceiveResult.ForDelivered(source, scratch[..received]);
+            Source source = remoteEndPoint is IPEndPoint resolved ? Source.FromIPEndPoint(resolved) : default;
+            return received == scratch.Length
+                ? UdpLinkReceiveResult.ForTruncated(source)
+                : UdpLinkReceiveResult.ForDelivered(source, scratch[..received]);
         }
         catch (SocketException exception) when (exception.SocketErrorCode == SocketError.MessageSize)
         {

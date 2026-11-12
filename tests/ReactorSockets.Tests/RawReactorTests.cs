@@ -172,6 +172,72 @@ public class RawReactorTests
     }
 
     [Fact]
+    public void Pump_WithQueuedDatagramsTotallingMoreThanTheScratchBuffer_DeliversEveryDatagram()
+    {
+        // Arrange
+        const int scratchSize = 2048;
+        const int datagramCount = 10;
+        using RawReactorHarness harness = new(scratchBufferSize: scratchSize);
+        LinkId link = harness.Reactor.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        IPEndPoint localEndPoint = harness.Reactor.LocalOf(link);
+
+        using Socket counterparty = harness.CreateCounterpartySocket();
+        counterparty.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        List<byte[]> sent = [];
+        for (int i = 0; i < datagramCount; i++)
+        {
+            byte[] payload = new byte[500];
+            Array.Fill(payload, (byte)(i + 1));
+            sent.Add(payload);
+            counterparty.SendTo(payload, localEndPoint);
+        }
+
+        // Act
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpUntilDrained(
+            events => events.Count >= datagramCount);
+
+        // Assert
+        drained.Should().HaveCount(datagramCount);
+        drained.Select(evt => evt.Kind).Should().OnlyContain(kind => kind == RawEventKind.DatagramReceived);
+        drained.Select(evt => evt.Payload).Should().Equal(sent, (actual, expected) => actual.AsSpan().SequenceEqual(expected));
+        harness.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramTruncated);
+    }
+
+    [Fact]
+    public void Pump_WithADatagramOfExactlyTheScratchBufferSize_DeliversItWhole()
+    {
+        // Arrange
+        const int scratchSize = 64;
+        using RawReactorHarness harness = new(scratchBufferSize: scratchSize);
+        byte[] payload = SendDatagramOfSize(harness, scratchSize);
+
+        // Act
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained = harness.PumpUntilDrained(
+            events => events.Count >= 1);
+
+        // Assert
+        drained.Should().ContainSingle().Which.Payload.Should().Equal(payload);
+        harness.Sink.Received.Should().NotContain(record => record.Id == DiagnosticId.DatagramTruncated);
+    }
+
+    [Fact]
+    public void Pump_WithADatagramOneByteOverTheScratchBufferSize_RecordsOneDatagramTruncatedReportingTheScratchSize()
+    {
+        // Arrange
+        const int scratchSize = 64;
+        using RawReactorHarness harness = new(scratchBufferSize: scratchSize);
+        SendDatagramOfSize(harness, scratchSize + 1);
+
+        // Act
+        harness.PumpUntil(() => harness.Sink.Received.Any(record => record.Id == DiagnosticId.DatagramTruncated));
+
+        // Assert
+        harness.Sink.Received
+            .Where(record => record.Id == DiagnosticId.DatagramTruncated)
+            .Should().ContainSingle().Which.Value0.Should().Be(scratchSize);
+    }
+
+    [Fact]
     public void Drain_AfterSendToAClosedPort_NeverYieldsAClosedEvent()
     {
         // Arrange
@@ -313,6 +379,20 @@ public class RawReactorTests
         counterparty.SendTo(payload, localEndPoint);
 
         harness.Reactor.Pump();
+    }
+
+    /// <summary>Binds a Link on the harness's Reactor and sends it one random datagram of <paramref name="size"/> bytes.</summary>
+    private static byte[] SendDatagramOfSize(RawReactorHarness harness, int size)
+    {
+        LinkId link = harness.Reactor.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        IPEndPoint localEndPoint = harness.Reactor.LocalOf(link);
+
+        using Socket counterparty = harness.CreateCounterpartySocket();
+        counterparty.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        byte[] payload = new byte[size];
+        Random.Shared.NextBytes(payload);
+        counterparty.SendTo(payload, localEndPoint);
+        return payload;
     }
 
     /// <summary>
