@@ -572,14 +572,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <c>MaxMessageSize</c> (see the summary above) is cut into <c>ceil(length / fragmentSize)</c>
     /// Fragments, each retained and sequenced as its own ordinary reliable packet, and only a Message
     /// wider than that remote limit is refused with <see cref="SendOutcome.RemoteMessageTooLarge"/>.
-    /// That <c>fragmentSize</c> is this Peer's own <see cref="PeerSlot.FragmentSize"/>, captured from
-    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> once when the Peer was admitted — not
-    /// re-read from options on this or any later call. Fragment size is unilateral, per-direction, and
-    /// decided once, at <c>Send</c> (ADR 0004): a retransmit re-sends bytes already cut rather than
-    /// re-deciding anything, so two Messages sent to the same Peer at different times, and every
-    /// retransmit of either, are always cut with the same size. It is never announced in the handshake,
-    /// because a receiver reassembles a Fragment set by <c>fragmentIndex</c> and <c>fragmentCount</c>
-    /// alone and never needs to know the sender's choice.
+    /// That <c>fragmentSize</c> is this Peer's <see cref="PeerSlot.FragmentSize"/>: the smaller of this
+    /// Reactor's <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> and the Fragment size the
+    /// peer announced, fixed once when the Peer reached Established (ADR 0024) — not re-read on this or
+    /// any later call, and unchanged by a Resume. A retransmit re-sends bytes already cut, so two
+    /// Messages sent to the same Peer at different times, and every retransmit of either, are cut with
+    /// the same size. A reliable Message that needs more Fragments at that size than the peer's announced
+    /// receive window holds is refused with <see cref="SendOutcome.RemoteMessageTooLarge"/>, with
+    /// nothing retained or sequenced.
     /// </param>
     public SendOutcome Send(PeerId peer, DeliveryMode mode, ReadOnlySpan<byte> message)
     {
@@ -612,7 +612,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // FragmentPlan.Resolve states the too-large rule exactly once: unreliable modes refuse above one
         // Fragment's worth, and every mode refuses above that remote cap.
         int remoteMaxMessageSize = slot.RemoteMaxMessageSize > int.MaxValue ? int.MaxValue : (int)slot.RemoteMaxMessageSize;
-        FragmentPlanResult plan = FragmentPlan.Resolve(message.Length, slot.FragmentSize, mode, remoteMaxMessageSize);
+        FragmentPlanResult plan = FragmentPlan.Resolve(
+            message.Length, slot.FragmentSize, mode, slot.RemoteReceiveWindowFragments, remoteMaxMessageSize);
         if (plan.IsMessageTooLarge)
         {
             // Which limit refused it is the plan's to say (issue #449): an unreliable mode can be refused
@@ -3139,6 +3140,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         slot.RemoteLinger = remoteLinger;
         slot.RemoteFragmentSize = remoteTerms.FragmentSize;
         slot.RemoteReceiveWindowFragments = remoteTerms.ReceiveWindowFragments;
+        slot.FragmentSize = Math.Min(slot.FragmentSize, remoteTerms.FragmentSize);
         slot.EffectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
         slot.Lifecycle.Establish();
@@ -3499,7 +3501,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             AckTracker = NewAckTracker(retransmitTimer),
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
-            FragmentSize = _options.ResolvedFragmentSize,
+            FragmentSize = Math.Min(_options.ResolvedFragmentSize, remoteTerms.FragmentSize),
             OrderedDelivery = new(_options.OrderedHoldSlots, _options.ResolvedFragmentSize),
             LastSendTimestamp = now,
             LastReceiveTimestamp = now,
@@ -4328,15 +4330,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         public TimeSpan EffectiveLinger { get; set; }
 
         /// <summary>
-        /// This Peer's own fragment size, resolved from <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
-        /// once at admission and stored here rather than read afresh from options on every
-        /// <see cref="DatagramSessionReactor.Send"/>. Fragment size is unilateral and per-direction
-        /// (ADR 0004): it is decided once, when this Peer opens, and nothing consulted later — a config
-        /// change, a handshake reply, a Resume — can move it for a Session already in flight. Every
-        /// Fragment a Message is cut into and every retransmit of one uses this same value for that
-        /// Peer's whole lifetime.
+        /// This Peer's send Fragment size: the smaller of <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
+        /// and <see cref="RemoteFragmentSize"/> (ADR 0024). The accepting end sets it at admission. The
+        /// dialling end starts at its own size and lowers it once, in <see cref="DatagramSessionReactor.OnAccept"/>,
+        /// before the Peer is Established; <see cref="DatagramSessionReactor.Send"/> refuses until then.
+        /// Nothing writes it after Established, a Resume included, so every Fragment a Message is cut into
+        /// and every retransmit of one uses this same value for the Peer's whole lifetime. Never larger
+        /// than this end's own Fragment size, so a retention slot always holds a Fragment cut at it.
         /// </summary>
-        public required int FragmentSize { get; init; }
+        public required int FragmentSize { get; set; }
 
         /// <summary>The secret the remote issued for resuming this Session. The dialling end sends it in each Resume (<see cref="DatagramSessionReactor.SendResumeIfDue"/>). The accepting end stores it but never reads it: it authorises a Resume against <see cref="PeerSlot.LocalResumeSecret"/>, the secret it issued.</summary>
         public byte[] RemoteResumeSecret { get; set; } = [];

@@ -126,7 +126,7 @@ public class DatagramSessionFragmentSizeIsFixedAtSendTests
     private static uint ReadAnnouncedReceiveWindow(byte[] datagram, int termsOffset) =>
         BinaryPrimitives.ReadUInt32BigEndian(datagram.AsSpan(termsOffset + DatagramSessionWire.TermsReceiveWindowOffset, sizeof(uint)));
 
-    [Fact]
+    [Fact(Skip = "Replaced by #498")]
     public void Send_TwoSessionsWithDifferentFragmentSizes_InteroperateEachCuttingByItsOwnValue()
     {
         // Arrange — the dialler and the accepter each configure their own, different fragment size.
