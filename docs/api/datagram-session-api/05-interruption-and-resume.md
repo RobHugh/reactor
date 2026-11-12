@@ -91,9 +91,10 @@ another every `SendIdleInterval` after that. The Resume names the accepting end'
 presents the resume secret exchanged at handshake. The dialling end resumes its own Peer when it next
 receives a well-formed data Datagram for the Session.
 
-**The accepting end** never sends Resume, because it cannot know the dialler's new address. When a
-Resume arrives with the right session id and secret, what happens depends on the IP address it came
-from:
+**The accepting end** never sends Resume, because it cannot know the dialler's new address. It resumes its
+Peer when it receives a well-formed data Datagram for the Session from the exact address and port it
+sends to, and that moves nothing. When a Resume arrives with the right session id and secret, what
+happens depends on the IP address it came from:
 
 - **The same IP address the Peer is already sent to, on any port.** The accepting end points every
   later Datagram at the address the Resume came from, and resumes its Peer if it was interrupted.

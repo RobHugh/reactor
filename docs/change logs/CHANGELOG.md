@@ -18,6 +18,11 @@
   is refused like an illegal announced interval. The smaller `FragmentSize` is also the
   single-Datagram cap of the unreliable modes, so an unreliable `Send` to a peer with a smaller
   `FragmentSize` returns `MessageTooLarge` sooner.
+- An accepted Datagram Session Peer that was interrupted on its own closed with `LingerExpired` while
+  traffic flowed, because only a matched Resume could end its interruption and the dialler sends Resume
+  only when it is itself interrupted. The Peer now resumes when it receives a well-formed data Datagram
+  for its Session from the address and port it sends to (#480, ADR 0009). A Datagram from any other
+  address or port still needs a matched Resume.
 
 ### Breaking changes
 

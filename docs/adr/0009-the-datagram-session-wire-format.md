@@ -263,3 +263,27 @@ discards a version 2 Hello-with-cookie as malformed, because its padding check r
 that dial goes unanswered.
 The fields, their legal ranges and the send rule are in ADR 0024. The main cost is that a mixed-version pair
 can no longer connect.
+
+## Amendment 2026-11-11: an accepted Peer resumes on data from the address it sends to
+
+Issue #480. Only the dialling end sends a Resume, and only while it is itself Interrupted. An accepting end
+that was interrupted alone, because the dialler's loop stalled or packets were lost in one direction only,
+never received one. It kept delivering the dialler's Messages and closed with `LingerExpired` although the
+path worked.
+
+An Interrupted accepted Peer now also resumes when it receives a well-formed data Datagram for its Session
+whose `Source` equals its current `Remote`, address and port both. It raises `PeerResumed`, counts one
+`Resumes` and logs `ResumeMatched` with `Value0` 0.
+
+A data Datagram from the same IP on another port does not resume the Peer. The data path never moves the send
+address, so resuming on a new port would report a resume while sends still go to the old port. That port, and
+any other address, still needs a matched Resume, plus the path challenge for a new IP (ADR 0021).
+
+This is safe because the session id is a demultiplexing token, not an authenticator (see Identity). A forger
+able to send from the held address with the session id can already keep the receive-idle deadline fresh, so
+resuming on the same evidence grants nothing new.
+
+Resume authorisation by secret, ADR 0021's path challenge and "the accepting end moves its send address only
+on a matched Resume" do not change. The sentence "the dialler's ordinary Resume brings it back" in the
+2026-11-10 amendment is no longer the only way back: an accepted Peer interrupted by lost Accepts also resumes
+on the dialler's first data Datagram from its held address.
