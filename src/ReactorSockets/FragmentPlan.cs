@@ -102,8 +102,9 @@ internal static class FragmentPlan
     /// </param>
     /// <param name="fragmentSize">
     /// The bytes one Fragment carries — a Reactor's resolved fragment size
-    /// (<see cref="DatagramSessionOptions.ResolvedFragmentSize"/>), or for a Peer the smaller of that and the
-    /// peer's announced Fragment size (ADR 0024 point 4). Must be at least 1; this is a
+    /// (<see cref="DatagramSessionOptions.ResolvedFragmentSize"/>), the single-Datagram cap for an unreliable
+    /// mode. For a reliable mode it is the Peer's send Fragment size, the smaller of that and the peer's
+    /// announced Fragment size (ADR 0024 point 4). Must be at least 1; this is a
     /// caller invariant enforced by <see cref="DatagramSessionOptions.Validate"/> long before a Message
     /// reaches here, so it is asserted rather than reported through the return value.
     /// </param>

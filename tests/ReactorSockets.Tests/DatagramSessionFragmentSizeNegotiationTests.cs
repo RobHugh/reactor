@@ -137,4 +137,29 @@ public class DatagramSessionFragmentSizeNegotiationTests
         DiallerRecords(tap).Select(r => r.Sequence).Should().Equal(
             [0u, 1u, 2u, 3u, 4u], "the refusal sequenced nothing, so the next Message takes the first sequences");
     }
+
+    [Theory]
+    [InlineData(DeliveryMode.Unreliable)]
+    [InlineData(DeliveryMode.UnreliableSequenced)]
+    public void Send_UnreliableMessageWiderThanTheRemoteFragmentSize_IsCappedByTheLocalFragmentSizeAndDelivered(DeliveryMode mode)
+    {
+        // Arrange — 700 bytes fits the sender's own 900 but not the receiver's 600. An unreliable record
+        // is never a Fragment, so the receiver's Fragment size does not bound it.
+        (DatagramSessionReactorHarness dialler, DatagramSessionReactorHarness accepter, WireTap tap, PeerId peer) = Connect(900, 600, 2400);
+        using DatagramSessionReactorHarness diallerOwner = dialler;
+        using DatagramSessionReactorHarness accepterOwner = accepter;
+        using WireTap tapOwner = tap;
+        byte[] message = Enumerable.Range(0, 700).Select(i => (byte)i).ToArray();
+
+        // Act
+        SendOutcome outcome = dialler.Reactor.Send(peer, mode, message);
+        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
+        List<byte[]> received = accepter.DrainPayloads();
+
+        // Assert
+        outcome.Should().Be(SendOutcome.Sent, "MessageTooLarge is fixed by the sender's own FragmentSize, not the peer's");
+        DiallerRecords(tap).Should().Equal(
+            [new WireRecord(0, false, 700)], "an unreliable Message is sent whole in one record");
+        received.Should().BeEquivalentTo(new[] { message });
+    }
 }

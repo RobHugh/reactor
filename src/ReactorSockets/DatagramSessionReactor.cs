@@ -570,7 +570,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="DeliveryMode.ReliableOrdered"/> and <see cref="DeliveryMode.ReliableUnordered"/> the
     /// single-Datagram cap does not apply: a Message up to <paramref name="peer"/>'s own announced
     /// <c>MaxMessageSize</c> (see the summary above) is cut into <c>ceil(length / fragmentSize)</c>
-    /// Fragments, each retained and sequenced as its own ordinary reliable packet, and only a Message
+    /// Fragments, each retained and sequenced as its own ordinary reliable packet, and a Message
     /// wider than that remote limit is refused with <see cref="SendOutcome.RemoteMessageTooLarge"/>.
     /// That <c>fragmentSize</c> is this Peer's <see cref="PeerSlot.FragmentSize"/>: the smaller of this
     /// Reactor's <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> and the Fragment size the
@@ -600,9 +600,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return refusal;
         }
 
-        // The fragment size used to cut this Message is this Peer's own, captured on the Slot at
-        // admission (issue #248, ADR 0004) rather than read from _options here — fragment size is
-        // decided once, per Peer, and Send only ever consults what was already decided. The cap handed
+        // A reliable Message is cut at this Peer's send Fragment size, fixed on the Slot when the Peer
+        // reached Established (issue #248, ADR 0024) rather than read from _options here, so Send only
+        // ever consults what was already decided. An unreliable Message is never a Fragment, so the
+        // peer's Fragment size does not bound it: its single-Datagram cap is this Reactor's own
+        // ResolvedFragmentSize, which keeps MessageTooLarge a fact the caller's own options predict
+        // (SendOutcome.MessageTooLarge). The cap handed
         // to FragmentPlan.Resolve is likewise this Peer's own remote-announced MaxMessageSize (issues
         // #284, #449; see this method's XML doc for why a Send is capped by the far end's limit rather
         // than this Reactor's own). RemoteMaxMessageSize is a uint off the wire while
@@ -612,8 +615,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // FragmentPlan.Resolve states the too-large rule exactly once: unreliable modes refuse above one
         // Fragment's worth, and every mode refuses above that remote cap.
         int remoteMaxMessageSize = slot.RemoteMaxMessageSize > int.MaxValue ? int.MaxValue : (int)slot.RemoteMaxMessageSize;
+        int fragmentSize = isReliable ? slot.FragmentSize : _options.ResolvedFragmentSize;
         FragmentPlanResult plan = FragmentPlan.Resolve(
-            message.Length, slot.FragmentSize, mode, slot.RemoteReceiveWindowFragments, remoteMaxMessageSize);
+            message.Length, fragmentSize, mode, slot.RemoteReceiveWindowFragments, remoteMaxMessageSize);
         if (plan.IsMessageTooLarge)
         {
             // Which limit refused it is the plan's to say (issue #449): an unreliable mode can be refused
@@ -633,7 +637,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         int spaceIndex = ReliableSpaceIndex(recordMode);
-        int fragmentSize = slot.FragmentSize;
         int fragmentCount = plan.FragmentCount;
 
         // A Message's Fragments are committed as one unit (issue #247): the retention budget is sized

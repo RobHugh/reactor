@@ -50,7 +50,8 @@ public enum SendOutcome
 
     /// <summary>
     /// A Message, in any delivery mode, exceeds the <c>MaxMessageSize</c> the remote end announced during
-    /// the handshake. Nothing was copied, and the caller may retry immediately with a smaller payload.
+    /// the handshake, or a reliable Message needs more Fragments than the receive window the remote end
+    /// announced (ADR 0024). Nothing was copied, and the caller may retry immediately with a smaller payload.
     /// An unreliable Message over both limits reports <see cref="MessageTooLarge"/> instead. Distinct
     /// from <see cref="MessageTooLarge"/> purely by whose limit was exceeded: that value means a local
     /// configuration fact the caller's own settings could have predicted (the single-Datagram cap an
