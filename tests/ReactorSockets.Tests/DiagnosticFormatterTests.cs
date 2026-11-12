@@ -79,6 +79,9 @@ public class DiagnosticFormatterTests
             DiagnosticRecord.ForDatagramReadLimitReached(limit: 3, socketIndex: 1),
             "Warn DatagramReadLimitReached (209): a Pump made as many reads on bound socket 1 as it may (MaxDatagramsPerPump 3)"),
         new(
+            DiagnosticRecord.ForOversizedFragment(_peer, fragmentLength: 1201, fragmentSize: 1200),
+            $"Warn OversizedFragment (210), {PeerText}: a fragment wider than FragmentSize arrived and the Session was closed (fragment bytes 1201, FragmentSize 1200)"),
+        new(
             DiagnosticRecord.ForPeerRefusedCapacity(_source, capacity: 8),
             $"Info PeerRefused (300), {SourceText}: a dialler was refused because every capacity slot was occupied (capacity 8)"),
         new(

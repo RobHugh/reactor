@@ -25,8 +25,8 @@ this end holds anything for it: a declared Fragment <code>fragmentCount</code> l
 Reactor's receive window ([`DatagramSessionOptions.ResolvedReceiveWindowFragments`](ReactorSockets.DatagramSessionOptions.ResolvedReceiveWindowFragments.md#ReactorSockets_DatagramSessionOptions_ResolvedReceiveWindowFragments)) is closed on its first
 Fragment, before any receive-window slot or Fragment-group bookkeeping exists for it. The bound
 is the window rather than [`DatagramSessionOptions.ReceiveWindowFloor`](ReactorSockets.DatagramSessionOptions.ReceiveWindowFloor.md#ReactorSockets_DatagramSessionOptions_ReceiveWindowFloor) alone, because the floor is computed
-from this end's own [`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) and fragment size is unilateral and
-per-direction (ADR 0004): a conforming peer with a smaller fragment size legally cuts the same,
-within-limit Message into more Fragments than the floor. `Validate` already requires
+from this end's own [`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize): a conforming peer with a smaller fragment
+size legally cuts the same, within-limit Message into more Fragments than the floor, up to the
+announced window (ADR 0024). `Validate` already requires
 the window to be at least the floor, so a set at exactly this value is always admitted.
 

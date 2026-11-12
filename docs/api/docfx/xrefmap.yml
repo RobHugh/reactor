@@ -619,6 +619,12 @@ references:
   commentId: F:ReactorSockets.DiagnosticId.MalformedFraming
   fullName: ReactorSockets.DiagnosticId.MalformedFraming
   nameWithType: DiagnosticId.MalformedFraming
+- uid: ReactorSockets.DiagnosticId.OversizedFragment
+  name: OversizedFragment
+  href: ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_OversizedFragment
+  commentId: F:ReactorSockets.DiagnosticId.OversizedFragment
+  fullName: ReactorSockets.DiagnosticId.OversizedFragment
+  nameWithType: DiagnosticId.OversizedFragment
 - uid: ReactorSockets.DiagnosticId.OversizedFragmentSet
   name: OversizedFragmentSet
   href: ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_OversizedFragmentSet
@@ -940,6 +946,21 @@ references:
   commentId: Overload:ReactorSockets.DiagnosticRecord.ForMalformedFraming
   fullName: ReactorSockets.DiagnosticRecord.ForMalformedFraming
   nameWithType: DiagnosticRecord.ForMalformedFraming
+- uid: ReactorSockets.DiagnosticRecord.ForOversizedFragment(ReactorSockets.PeerId,System.Int64,System.Int64)
+  name: ForOversizedFragment(PeerId, long, long)
+  href: ReactorSockets.DiagnosticRecord.ForOversizedFragment.html#ReactorSockets_DiagnosticRecord_ForOversizedFragment_ReactorSockets_PeerId_System_Int64_System_Int64_
+  commentId: M:ReactorSockets.DiagnosticRecord.ForOversizedFragment(ReactorSockets.PeerId,System.Int64,System.Int64)
+  name.vb: ForOversizedFragment(PeerId, Long, Long)
+  fullName: ReactorSockets.DiagnosticRecord.ForOversizedFragment(ReactorSockets.PeerId, long, long)
+  fullName.vb: ReactorSockets.DiagnosticRecord.ForOversizedFragment(ReactorSockets.PeerId, Long, Long)
+  nameWithType: DiagnosticRecord.ForOversizedFragment(PeerId, long, long)
+  nameWithType.vb: DiagnosticRecord.ForOversizedFragment(PeerId, Long, Long)
+- uid: ReactorSockets.DiagnosticRecord.ForOversizedFragment*
+  name: ForOversizedFragment
+  href: ReactorSockets.DiagnosticRecord.ForOversizedFragment.html
+  commentId: Overload:ReactorSockets.DiagnosticRecord.ForOversizedFragment
+  fullName: ReactorSockets.DiagnosticRecord.ForOversizedFragment
+  nameWithType: DiagnosticRecord.ForOversizedFragment
 - uid: ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet(ReactorSockets.PeerId,System.Int64,System.Int64)
   name: ForOversizedFragmentSet(PeerId, long, long)
   href: ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet.html#ReactorSockets_DiagnosticRecord_ForOversizedFragmentSet_ReactorSockets_PeerId_System_Int64_System_Int64_

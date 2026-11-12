@@ -140,9 +140,9 @@ this end holds anything for it: a declared Fragment <code>fragmentCount</code> l
 Reactor's receive window (<a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedReceiveWindowFragments.html#ReactorSockets_DatagramSessionOptions_ResolvedReceiveWindowFragments">ResolvedReceiveWindowFragments</a>) is closed on its first
 Fragment, before any receive-window slot or Fragment-group bookkeeping exists for it. The bound
 is the window rather than <a class="xref" href="ReactorSockets.DatagramSessionOptions.ReceiveWindowFloor.html#ReactorSockets_DatagramSessionOptions_ReceiveWindowFloor">ReceiveWindowFloor</a> alone, because the floor is computed
-from this end's own <a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a> and fragment size is unilateral and
-per-direction (ADR 0004): a conforming peer with a smaller fragment size legally cuts the same,
-within-limit Message into more Fragments than the floor. <span class="xref">ReactorSockets.DatagramSessionOptions.Validate()</span> already requires
+from this end's own <a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a>: a conforming peer with a smaller fragment
+size legally cuts the same, within-limit Message into more Fragments than the floor, up to the
+announced window (ADR 0024). <span class="xref">ReactorSockets.DatagramSessionOptions.Validate()</span> already requires
 the window to be at least the floor, so a set at exactly this value is always admitted.</p>
 </div>
 

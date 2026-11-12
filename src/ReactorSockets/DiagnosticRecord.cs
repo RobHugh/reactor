@@ -154,6 +154,14 @@ public readonly record struct DiagnosticRecord
         new(DiagnosticId.OversizedFragmentSet, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, declaredFragmentCount, maxLegalFragmentCount);
 
     /// <summary>
+    /// Builds a <see cref="DiagnosticId.OversizedFragment"/> record for the Peer whose reliable Fragment
+    /// was wider than this Reactor's own Fragment size, carrying the Fragment's payload length and that
+    /// size.
+    /// </summary>
+    public static DiagnosticRecord ForOversizedFragment(PeerId peer, long fragmentLength, long fragmentSize) =>
+        new(DiagnosticId.OversizedFragment, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, fragmentLength, fragmentSize);
+
+    /// <summary>
     /// Builds a <see cref="DiagnosticId.UnreliableFragment"/> record for the claimed Source that put a
     /// Fragment on the wire in an unreliable mode, carrying the mode it claimed as the two mode bits'
     /// wire value. <c>Value1</c> is unused: the rule has no threshold to report against.

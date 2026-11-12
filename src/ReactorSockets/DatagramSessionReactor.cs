@@ -149,11 +149,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// The largest declared <c>fragmentCount</c> a Fragment's set may legally claim: this Reactor's own
     /// receive window, <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>, not
     /// <see cref="DatagramSessionOptions.ReceiveWindowFloor"/>. The floor is computed from <em>this
-    /// end's own</em> <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>, but fragment size is
-    /// unilateral and per-direction (ADR 0004) — a conforming peer with a smaller fragment size legally
-    /// cuts the same, within-<see cref="DatagramSessionOptions.MaxMessageSize"/> Message into more
-    /// Fragments than that floor, and bounding by the floor would close that peer as a protocol
-    /// violator for a set it was always entitled to send. The window is the right bound instead of a
+    /// end's own</em> <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>, but a conforming peer
+    /// with a smaller fragment size legally cuts the same,
+    /// within-<see cref="DatagramSessionOptions.MaxMessageSize"/> Message into more Fragments than that
+    /// floor, up to the window this end announced (ADR 0024). Bounding by the floor would close that
+    /// peer as a protocol violator for a set it was always entitled to send. The window is the right bound instead of a
     /// looser one: it is what a Fragment set actually occupies while it is held, so a declared count
     /// larger than the window can never be reassembled — there is no slot for every piece to sit in at
     /// once — and refusing it refuses exactly the sets that were never legal, whoever's fragment size
@@ -170,6 +170,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// no more arithmetic than a single comparison.
     /// </summary>
     private readonly int _maxLegalFragmentCount;
+
+    /// <summary>
+    /// The widest Fragment payload this Reactor holds: its own resolved
+    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>, the width of every receive-arena
+    /// Fragment slot (ADR 0024). A reliable Fragment wider than this closes the Peer with
+    /// <see cref="DisconnectReason.ProtocolViolation"/> in <see cref="ProcessDataDatagram"/>'s
+    /// pre-classification pass. Captured at construction, as <see cref="_maxLegalFragmentCount"/> is.
+    /// </summary>
+    private readonly int _maxLegalFragmentWidth;
 
     /// <summary>
     /// Constructs a Reactor bound to the calling thread (ADR 0002) — every future mutating call must
@@ -204,6 +213,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
         _maxDatagramsPerPump = options.ResolvedMaxDatagramsPerPump;
         _maxLegalFragmentCount = options.ResolvedReceiveWindowFragments;
+        _maxLegalFragmentWidth = options.ResolvedFragmentSize;
         _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
 
         _closedSessions = new ClosedSessionMemory(options.Reactor.Capacity, options.Reactor.TimeProvider);
@@ -546,8 +556,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// The Message payload, unframed. The bytes are copied before this call returns — into
     /// <see cref="_retention"/> for a reliable mode, into the queued record for an unreliable one — so
     /// the caller owns its buffer again the instant <c>Send</c> returns and may overwrite or reuse it
-    /// without changing what is eventually put on the wire. A Message wider than
-    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> cannot fit in one Datagram, and for
+    /// without changing what is eventually put on the wire. A Message wider than this Peer's send
+    /// Fragment size (<c>fragmentSize</c> below: the smaller of this Reactor's
+    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> and the peer's announced Fragment size)
+    /// cannot fit in one Datagram, and for
     /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> that cap
     /// is reported back as <see cref="SendOutcome.MessageTooLarge"/> rather than thrown, and it is
     /// permanent — no option lifts it: you may only fragment what you can retransmit (ADR 0004), because
@@ -560,16 +572,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="DeliveryMode.ReliableOrdered"/> and <see cref="DeliveryMode.ReliableUnordered"/> the
     /// single-Datagram cap does not apply: a Message up to <paramref name="peer"/>'s own announced
     /// <c>MaxMessageSize</c> (see the summary above) is cut into <c>ceil(length / fragmentSize)</c>
-    /// Fragments, each retained and sequenced as its own ordinary reliable packet, and only a Message
+    /// Fragments, each retained and sequenced as its own ordinary reliable packet, and a Message
     /// wider than that remote limit is refused with <see cref="SendOutcome.RemoteMessageTooLarge"/>.
-    /// That <c>fragmentSize</c> is this Peer's own <see cref="PeerSlot.FragmentSize"/>, captured from
-    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> once when the Peer was admitted — not
-    /// re-read from options on this or any later call. Fragment size is unilateral, per-direction, and
-    /// decided once, at <c>Send</c> (ADR 0004): a retransmit re-sends bytes already cut rather than
-    /// re-deciding anything, so two Messages sent to the same Peer at different times, and every
-    /// retransmit of either, are always cut with the same size. It is never announced in the handshake,
-    /// because a receiver reassembles a Fragment set by <c>fragmentIndex</c> and <c>fragmentCount</c>
-    /// alone and never needs to know the sender's choice.
+    /// That <c>fragmentSize</c> is this Peer's <see cref="PeerSlot.FragmentSize"/>: the smaller of this
+    /// Reactor's <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> and the Fragment size the
+    /// peer announced, fixed once when the Peer reached Established (ADR 0024) — not re-read on this or
+    /// any later call, and unchanged by a Resume. A retransmit re-sends bytes already cut, so two
+    /// Messages sent to the same Peer at different times, and every retransmit of either, are cut with
+    /// the same size. A reliable Message that needs more Fragments at that size than the peer's announced
+    /// receive window holds is refused with <see cref="SendOutcome.RemoteMessageTooLarge"/>, with
+    /// nothing retained or sequenced.
     /// </param>
     public SendOutcome Send(PeerId peer, DeliveryMode mode, ReadOnlySpan<byte> message)
     {
@@ -590,10 +602,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return refusal;
         }
 
-        // The fragment size used to cut this Message is this Peer's own, captured on the Slot at
-        // admission (issue #248, ADR 0004) rather than read from _options here — fragment size is
-        // decided once, per Peer, and Send only ever consults what was already decided. The cap handed
-        // to FragmentPlan.Resolve is likewise this Peer's own remote-announced MaxMessageSize (issues
+        // Every mode uses this Peer's send Fragment size, fixed on the Slot when the Peer reached
+        // Established (issue #248, ADR 0024) rather than read from _options here, so Send only ever
+        // consults what was already decided. A reliable Message is cut at it, and an unreliable Message
+        // wider than it is refused with MessageTooLarge. The cap handed to FragmentPlan.Resolve is this
+        // Peer's own remote-announced MaxMessageSize (issues
         // #284, #449; see this method's XML doc for why a Send is capped by the far end's limit rather
         // than this Reactor's own). RemoteMaxMessageSize is a uint off the wire while
         // FragmentPlan.Resolve takes an int message length, so a value above int.MaxValue is clamped
@@ -602,7 +615,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // FragmentPlan.Resolve states the too-large rule exactly once: unreliable modes refuse above one
         // Fragment's worth, and every mode refuses above that remote cap.
         int remoteMaxMessageSize = slot.RemoteMaxMessageSize > int.MaxValue ? int.MaxValue : (int)slot.RemoteMaxMessageSize;
-        FragmentPlanResult plan = FragmentPlan.Resolve(message.Length, slot.FragmentSize, mode, remoteMaxMessageSize);
+        int fragmentSize = slot.FragmentSize;
+        FragmentPlanResult plan = FragmentPlan.Resolve(
+            message.Length, fragmentSize, mode, slot.RemoteReceiveWindowFragments, remoteMaxMessageSize);
         if (plan.IsMessageTooLarge)
         {
             // Which limit refused it is the plan's to say (issue #449): an unreliable mode can be refused
@@ -622,7 +637,6 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         }
 
         int spaceIndex = ReliableSpaceIndex(recordMode);
-        int fragmentSize = slot.FragmentSize;
         int fragmentCount = plan.FragmentCount;
 
         // A Message's Fragments are committed as one unit (issue #247): the retention budget is sized
@@ -1033,7 +1047,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // matter either way — slot is closed by that refusal, so nothing reads this timestamp again.
         slot.LastReceiveTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
 
-        // A declared fragmentCount larger than this Reactor's own receive window is refused with a
+        // Two refusals share this pass, and both close the Peer rather than discard. A Fragment wider
+        // than this Reactor's own FragmentSize (ADR 0024) could never fit a receive-arena slot, and only
+        // a non-conforming peer sends one, since the handshake announces the size. A declared
+        // fragmentCount larger than this Reactor's own receive window is refused with a
         // close, not a discard (issue #282, reworked under #264) — the record is individually legal and
         // its set internally consistent (both already proved above), but the set it claims could never
         // be held: the window is what a Fragment set actually occupies while it waits, and there is no
@@ -1050,17 +1067,31 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         while (oversizedScan.TryReadNext(out PacketRecord record))
         {
             if (record.IsFragment
-                && record.Mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered
-                && record.FragmentCount > _maxLegalFragmentCount)
+                && record.Mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
             {
-                if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                if (record.FragmentCount > _maxLegalFragmentCount)
                 {
-                    _diagnostics.Log(DiagnosticRecord.ForOversizedFragmentSet(
-                        ToPeerId(slot.Handle), record.FragmentCount, _maxLegalFragmentCount));
+                    if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                    {
+                        _diagnostics.Log(DiagnosticRecord.ForOversizedFragmentSet(
+                            ToPeerId(slot.Handle), record.FragmentCount, _maxLegalFragmentCount));
+                    }
+
+                    ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
+                    return;
                 }
 
-                ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
-                return;
+                if (record.Payload.Length > _maxLegalFragmentWidth)
+                {
+                    if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                    {
+                        _diagnostics.Log(DiagnosticRecord.ForOversizedFragment(
+                            ToPeerId(slot.Handle), record.Payload.Length, _maxLegalFragmentWidth));
+                    }
+
+                    ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
+                    return;
+                }
             }
         }
 
@@ -2205,9 +2236,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <param name="fragmentCount">The group's declared Fragment count.</param>
     /// <param name="payload">The Fragment's payload bytes.</param>
     /// <returns>
-    /// Whether the Fragment's group is complete after this piece was held — <see langword="false"/>
-    /// whenever the payload did not fit its slot, since that leaves the slot's length at zero and the
-    /// piece effectively lost. The caller delivers the group once this is <see langword="true"/>.
+    /// Whether the Fragment's group is complete after this piece was held. The payload always fits its
+    /// slot: <see cref="ProcessDataDatagram"/> closes the Peer before classification on a Fragment
+    /// wider than <see cref="_maxLegalFragmentWidth"/>. The caller delivers the group once this is
+    /// <see langword="true"/>.
     /// </returns>
     private bool HoldFragment(
         PeerSlot slot, PacketRecordMode mode, uint sequence, int ringSlot,
@@ -2216,16 +2248,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         int spaceIndex = ReliableSpaceIndex(mode);
         Span<byte> fragmentSlot = _receiveArena.GetFragmentSlot(slot.Handle.Index, spaceIndex, ringSlot);
 
-        if (payload.Length > fragmentSlot.Length)
-        {
-            // Cannot happen from a peer whose own FragmentSize matches this Reactor's (ADR 0004's
-            // ordinary case), but fragment size is unilateral and per-direction, so nothing on the
-            // wire proves the two sides agree. Refusing to write past the slot's fixed width — rather
-            // than throwing — leaves the sequence admitted (the window already advanced past it) but
-            // this slot's length at zero, indistinguishable from an empty one: the Fragment set this
-            // piece belonged to simply never completes, exactly as if the piece had been lost.
-            return false;
-        }
+        Debug.Assert(
+            payload.Length <= fragmentSlot.Length,
+            "ProcessDataDatagram closes the Peer on a Fragment wider than the FragmentSize before any record is classified.");
 
         payload.CopyTo(fragmentSlot);
         ReceiveWindow window = _receiveWindows[slot.Handle.Index].ReliableWindow(mode);
@@ -3079,8 +3104,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Establishes the dialling end's Session. Each end announces the id it wants stamped on datagrams
     /// sent <em>to it</em>, so the two ids differ and neither end has to agree with the other about
-    /// which is which. The fragment size is not announced: it is each sender's own path property, and
-    /// a receiver that reassembles by offset and length never needs to know it.
+    /// which is which. Each end also announces its Fragment size and receive window (ADR 0024): this
+    /// end stores the remote values and fixes its send Fragment size at the smaller of the two sizes,
+    /// before the Peer is Established.
     /// </summary>
     /// <remarks>
     /// Also seeds the Peer's round-trip estimate with the time since its Hello-with-cookie was sent
@@ -3111,7 +3137,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // already trusted by the time this Peer reaches Established — an internal invariant to assert rather than input to re-validate,
         // mirroring NewAcceptedPeer's assert on the accepting path.
         Debug.Assert(
-            remoteTerms.Limits.IsLegal(speaksVersion: true),
+            remoteTerms.IsLegal(speaksVersion: true),
             "ControlDatagramCodec.TryReadAccept rejects illegal announced limits before this is called.");
 
         AnnouncedLimits remoteLimits = remoteTerms.Limits;
@@ -3122,6 +3148,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         slot.RemoteMaxMessageSize = remoteLimits.MaxMessageSize;
         slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteLimits.SendIdleIntervalMilliseconds);
         slot.RemoteLinger = remoteLinger;
+        slot.RemoteFragmentSize = remoteTerms.FragmentSize;
+        slot.RemoteReceiveWindowFragments = remoteTerms.ReceiveWindowFragments;
+        slot.FragmentSize = Math.Min(slot.FragmentSize, remoteTerms.FragmentSize);
         slot.EffectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
         slot.Lifecycle.Establish();
@@ -3453,7 +3482,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // Established, the limits are already trusted — an internal invariant to assert rather than
         // input to re-validate.
         Debug.Assert(
-            remoteTerms.Limits.IsLegal(speaksVersion: true),
+            remoteTerms.IsLegal(speaksVersion: true),
             "ControlDatagramCodec.TryReadHelloWithCookie rejects illegal announced limits before this is called.");
 
         AnnouncedLimits remoteLimits = remoteTerms.Limits;
@@ -3474,13 +3503,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RemoteMaxMessageSize = remoteLimits.MaxMessageSize,
             RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteLimits.SendIdleIntervalMilliseconds),
             RemoteLinger = remoteLinger,
+            RemoteFragmentSize = remoteTerms.FragmentSize,
+            RemoteReceiveWindowFragments = remoteTerms.ReceiveWindowFragments,
             EffectiveLinger = effectiveLinger,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
             Lifecycle = PeerLifecycle.Accepted(),
             AckTracker = NewAckTracker(retransmitTimer),
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
-            FragmentSize = _options.ResolvedFragmentSize,
+            FragmentSize = Math.Min(_options.ResolvedFragmentSize, remoteTerms.FragmentSize),
             OrderedDelivery = new(_options.OrderedHoldSlots, _options.ResolvedFragmentSize),
             LastSendTimestamp = now,
             LastReceiveTimestamp = now,
@@ -3514,11 +3545,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// The terms this end announces for <paramref name="slot"/> in its Hello-with-cookie or Accept:
-    /// the slot's own local session id and this Reactor's announced limits and intervals.
+    /// the slot's own local session id, this Reactor's announced limits and intervals, and its own
+    /// Fragment size and receive window.
     /// </summary>
     private AnnouncedSessionTerms AnnouncedTermsFor(PeerSlot slot) => new(
         slot.LocalSessionId,
-        new AnnouncedLimits((uint)_options.MaxMessageSize, AnnouncedSendIdleIntervalMilliseconds, AnnouncedLingerMilliseconds));
+        new AnnouncedLimits((uint)_options.MaxMessageSize, AnnouncedSendIdleIntervalMilliseconds, AnnouncedLingerMilliseconds),
+        (ushort)_options.ResolvedFragmentSize,
+        (uint)_options.ResolvedReceiveWindowFragments);
 
     /// <summary>
     /// Spends one unit of the per-Pump admission budget, or Discards. The cap bounds work rather than
@@ -4250,6 +4284,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         public uint RemoteMaxMessageSize { get; set; }
 
         /// <summary>
+        /// The Fragment size in bytes the peer announced during the handshake, never this end's own
+        /// <see cref="FragmentSize"/>. Set on both Established paths and always within the legal
+        /// announced range, because <see cref="ControlDatagramCodec"/> rejects any other value at parse.
+        /// </summary>
+        public ushort RemoteFragmentSize { get; set; }
+
+        /// <summary>
+        /// The receive window in Fragments the peer announced during the handshake, never this end's own.
+        /// Set on both Established paths and never zero, because <see cref="ControlDatagramCodec"/>
+        /// rejects zero at parse.
+        /// </summary>
+        public uint RemoteReceiveWindowFragments { get; set; }
+
+        /// <summary>
         /// The send-idle interval the peer itself announced during the handshake — never this end's own
         /// <see cref="DatagramSessionOptions.SendIdleInterval"/>. Set on both Established paths,
         /// <see cref="DatagramSessionReactor.NewAcceptedPeer"/> (from the Hello-with-cookie field) and
@@ -4292,15 +4340,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         public TimeSpan EffectiveLinger { get; set; }
 
         /// <summary>
-        /// This Peer's own fragment size, resolved from <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
-        /// once at admission and stored here rather than read afresh from options on every
-        /// <see cref="DatagramSessionReactor.Send"/>. Fragment size is unilateral and per-direction
-        /// (ADR 0004): it is decided once, when this Peer opens, and nothing consulted later — a config
-        /// change, a handshake reply, a Resume — can move it for a Session already in flight. Every
-        /// Fragment a Message is cut into and every retransmit of one uses this same value for that
-        /// Peer's whole lifetime.
+        /// This Peer's send Fragment size: the smaller of <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
+        /// and <see cref="RemoteFragmentSize"/> (ADR 0024). The accepting end sets it at admission. The
+        /// dialling end starts at its own size and lowers it once, in <see cref="DatagramSessionReactor.OnAccept"/>,
+        /// before the Peer is Established; <see cref="DatagramSessionReactor.Send"/> refuses until then.
+        /// Nothing writes it after Established, a Resume included, so every Fragment a Message is cut into
+        /// and every retransmit of one uses this same value for the Peer's whole lifetime. Never larger
+        /// than this end's own Fragment size, so a retention slot always holds a Fragment cut at it.
         /// </summary>
-        public required int FragmentSize { get; init; }
+        public required int FragmentSize { get; set; }
 
         /// <summary>The secret the remote issued for resuming this Session. The dialling end sends it in each Resume (<see cref="DatagramSessionReactor.SendResumeIfDue"/>). The accepting end stores it but never reads it: it authorises a Resume against <see cref="PeerSlot.LocalResumeSecret"/>, the secret it issued.</summary>
         public byte[] RemoteResumeSecret { get; set; } = [];

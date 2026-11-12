@@ -191,6 +191,7 @@ apart reads the diagnostics, which is what diagnostics are for.
 | 207 | `OversizedMessage` | `Warn` | Peer | Message length / `MaxMessageSize` |
 | 208 | `AddressPeerLimitReached` | `Warn` | Source | `MaxPeersPerAddress` / — |
 | 209 | `DatagramReadLimitReached` | `Warn` | none | `MaxDatagramsPerPump` / index in `BoundEndpoints` |
+| 210 | `OversizedFragment` | `Warn` | Peer | Fragment payload length / `ResolvedFragmentSize` |
 
 ### Stream session
 
@@ -236,6 +237,12 @@ socket per Pump. It means the limit was spent, not that datagrams remain, becaus
 cannot be read past queued errors. The Discard rule above still holds for a Hello the Reactor has read. A
 Hello this limit leaves unread waits in the socket buffer, and no counter sees it until it is read or the
 operating system drops it.
+
+**Amended (issue #479).** `OversizedFragment` takes 210. A reliable Fragment wider than the receiver's
+own `FragmentSize` closes the Peer with `ProtocolViolation` (ADR 0024). It passes the admission rule the
+way 205 does: loss and reordering never produce it, because the handshake announces the size and only a
+non-conforming peer sends a wider Fragment, and no counter carries the Peer or the width against the size.
+It closes the Session, so it fires once per Peer.
 
 **Amended (slice 4.4.4).** `ResumeUnmatched` shipped with both value slots used, where this table had
 drafted neither. It carries the number of reserved Slots the claim was checked against and the wire

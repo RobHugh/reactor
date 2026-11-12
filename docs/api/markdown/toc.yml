@@ -281,6 +281,8 @@
       href: ReactorSockets.DiagnosticRecord.ForLinkFailed.md
     - name: ForMalformedFraming
       href: ReactorSockets.DiagnosticRecord.ForMalformedFraming.md
+    - name: ForOversizedFragment
+      href: ReactorSockets.DiagnosticRecord.ForOversizedFragment.md
     - name: ForOversizedFragmentSet
       href: ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet.md
     - name: ForOversizedMessage

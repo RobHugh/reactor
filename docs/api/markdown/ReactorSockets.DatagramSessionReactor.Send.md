@@ -56,8 +56,10 @@ Which of the four delivery modes carries this Message; see <code>docs/delivery-m
 The Message payload, unframed. The bytes are copied before this call returns — into
 `_retention` for a reliable mode, into the queued record for an unreliable one — so
 the caller owns its buffer again the instant <code>Send</code> returns and may overwrite or reuse it
-without changing what is eventually put on the wire. A Message wider than
-[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) cannot fit in one Datagram, and for
+without changing what is eventually put on the wire. A Message wider than this Peer's send
+Fragment size (<code>fragmentSize</code> below: the smaller of this Reactor's
+[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) and the peer's announced Fragment size)
+cannot fit in one Datagram, and for
 [`DeliveryMode.Unreliable`](ReactorSockets.DeliveryMode.md) and [`DeliveryMode.UnreliableSequenced`](ReactorSockets.DeliveryMode.md) that cap
 is reported back as [`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md) rather than thrown, and it is
 permanent — no option lifts it: you may only fragment what you can retransmit (ADR 0004), because
@@ -70,16 +72,16 @@ on arrival; a Message over both caps reports [`SendOutcome.MessageTooLarge`](Rea
 [`DeliveryMode.ReliableOrdered`](ReactorSockets.DeliveryMode.md) and [`DeliveryMode.ReliableUnordered`](ReactorSockets.DeliveryMode.md) the
 single-Datagram cap does not apply: a Message up to <code class="paramref">peer</code>'s own announced
 <code>MaxMessageSize</code> (see the summary above) is cut into <code>ceil(length / fragmentSize)</code>
-Fragments, each retained and sequenced as its own ordinary reliable packet, and only a Message
+Fragments, each retained and sequenced as its own ordinary reliable packet, and a Message
 wider than that remote limit is refused with [`SendOutcome.RemoteMessageTooLarge`](ReactorSockets.SendOutcome.md).
-That <code>fragmentSize</code> is this Peer's own `FragmentSize`, captured from
-[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) once when the Peer was admitted — not
-re-read from options on this or any later call. Fragment size is unilateral, per-direction, and
-decided once, at <code>Send</code> (ADR 0004): a retransmit re-sends bytes already cut rather than
-re-deciding anything, so two Messages sent to the same Peer at different times, and every
-retransmit of either, are always cut with the same size. It is never announced in the handshake,
-because a receiver reassembles a Fragment set by <code>fragmentIndex</code> and <code>fragmentCount</code>
-alone and never needs to know the sender's choice.
+That <code>fragmentSize</code> is this Peer's `FragmentSize`: the smaller of this
+Reactor's [`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) and the Fragment size the
+peer announced, fixed once when the Peer reached Established (ADR 0024) — not re-read on this or
+any later call, and unchanged by a Resume. A retransmit re-sends bytes already cut, so two
+Messages sent to the same Peer at different times, and every retransmit of either, are cut with
+the same size. A reliable Message that needs more Fragments at that size than the peer's announced
+receive window holds is refused with [`SendOutcome.RemoteMessageTooLarge`](ReactorSockets.SendOutcome.md), with
+nothing retained or sequenced.
 
 ### Returns
 

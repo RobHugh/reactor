@@ -238,6 +238,20 @@ public enum DiagnosticId
     DatagramReadLimitReached = 209,
 
     /// <summary>
+    /// An established Peer's reliable Fragment carried more payload bytes than this Reactor's own
+    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>, and the Session was closed with
+    /// <see cref="DisconnectReason.ProtocolViolation"/> before anything in that Datagram was
+    /// acknowledged (ADR 0024). Subject is the Peer. <c>Value0</c> is the Fragment's payload length in
+    /// bytes; <c>Value1</c> is this Reactor's <c>ResolvedFragmentSize</c>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>, for the same reason as <see cref="DatagramMalformed"/>: a
+    /// remote can produce this at will. The handshake announces the size, so a conforming peer never
+    /// sends a wider Fragment, and the width and the size say which end is misbuilt.
+    /// </remarks>
+    OversizedFragment = 210,
+
+    /// <summary>
     /// A dialler was refused in-protocol during the stream handshake, either because it announced a
     /// different protocol version or because every capacity Slot was occupied. Subject is the claimed
     /// Source: at refusal time there is no Peer, only a claimed origin. For a capacity refusal,

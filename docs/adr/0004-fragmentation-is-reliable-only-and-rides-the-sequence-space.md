@@ -81,3 +81,12 @@ spends nothing, the outcome a reliable Message already gets for the same limit. 
 checked first, so a Message over both caps still returns `MessageTooLarge`. The main cost is that the
 refusal no longer follows from the mode alone: a consumer that read `RemoteMessageTooLarge` as
 reliable-only has to handle it for unreliable Sends too.
+
+**Amended (issue #479).** Fragment size is no longer unilateral and per-direction, which supersedes "a receiver
+reassembles by index and count and never needs to know the sender's choice" and the consequence "A misconfigured
+fragment size cannot fail silently". Each end announces its `FragmentSize` and `ReceiveWindowFragments` in the
+handshake, and a Peer sends at the smaller of the two sizes, fixed when it reaches Established. A sender whose
+Message needs more Fragments than the remote window holds gets `RemoteMessageTooLarge` from `Send`. A Fragment
+wider than the receiver's own `FragmentSize` closes the Peer with `ProtocolViolation`. ADR 0024 records the
+decision. The main cost is that a peer with a smaller `FragmentSize` makes each Message need more retention
+slots, so `RetentionExhausted` arrives sooner.

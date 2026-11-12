@@ -40,7 +40,9 @@ receiving.
 `MessageTooLarge = 3` 
 
 The Message is wider than one Datagram can carry, and the Space it was sent on cannot
-fragment it. Nothing was copied. Deliberately its own value rather than folded into
+fragment it. On the datagram profile that cap is the Peer's send Fragment size: the smaller of
+this end's [`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) and the Fragment size the
+peer announced (ADR 0024). Nothing was copied. Deliberately its own value rather than folded into
 [`SendOutcome.RetentionExhausted`](ReactorSockets.SendOutcome.md): retention exhaustion is backpressure the caller can retry
 once bytes are released, while an oversized Message will never fit however long the caller
 waits — a consumer that cannot tell the two apart cannot tell "retry later" from "split it or
@@ -51,12 +53,13 @@ use a reliable mode".
 `RemoteMessageTooLarge = 4` 
 
 A Message, in any delivery mode, exceeds the <code>MaxMessageSize</code> the remote end announced during
-the handshake. Nothing was copied, and the caller may retry immediately with a smaller payload.
+the handshake, or a reliable Message needs more Fragments than the receive window the remote end
+announced (ADR 0024). Nothing was copied, and the caller may retry immediately with a smaller payload.
 An unreliable Message over both limits reports [`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md) instead. Distinct
-from [`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md) purely by whose limit was exceeded: that value means a local
-configuration fact the caller's own settings could have predicted (the single-Datagram cap an
-unreliable mode cannot exceed); this one means the far end's announced receive limit, which the
-caller has no way to know in advance.
+from [`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md) by which limit was exceeded: that value means the
+single-Datagram cap an unreliable mode cannot exceed, which a smaller peer Fragment size lowers;
+this one means the far end's announced receive limit, its <code>MaxMessageSize</code> or its receive
+window.
 
 
 

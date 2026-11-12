@@ -155,6 +155,12 @@ Builds a [`DiagnosticId.MalformedFraming`](ReactorSockets.DiagnosticId.md) recor
 this profile's rules. <code>Value0</code> is the offending length prefix — 0 for a truncation, where
 no full prefix was ever read; <code>Value1</code> is this Reactor's own <code>MaxMessageSize</code>.
 
+ [ForOversizedFragment\(PeerId, long, long\)](ReactorSockets.DiagnosticRecord.ForOversizedFragment.md\#ReactorSockets\_DiagnosticRecord\_ForOversizedFragment\_ReactorSockets\_PeerId\_System\_Int64\_System\_Int64\_)
+
+Builds a [`DiagnosticId.OversizedFragment`](ReactorSockets.DiagnosticId.md) record for the Peer whose reliable Fragment
+was wider than this Reactor's own Fragment size, carrying the Fragment's payload length and that
+size.
+
  [ForOversizedFragmentSet\(PeerId, long, long\)](ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet.md\#ReactorSockets\_DiagnosticRecord\_ForOversizedFragmentSet\_ReactorSockets\_PeerId\_System\_Int64\_System\_Int64\_)
 
 Builds a [`DiagnosticId.OversizedFragmentSet`](ReactorSockets.DiagnosticId.md) record for the Peer whose Fragment

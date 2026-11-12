@@ -20,11 +20,12 @@ public int? FragmentSize { get; init; }
 
 ### Remarks
 
-Unilateral and per-direction (ADR 0004): each side of a Session cuts its own outbound Messages
-by its own configured value, and the two directions need not agree. It is never announced in
-the handshake, because a receiver reassembles a Fragment set from <code>fragmentIndex</code> and
-<code>fragmentCount</code> alone and never needs to know the sender's choice — so two Sessions
-configured with different values still interoperate, each cutting by its own. This value is
-resolved once per Peer, at admission, onto that Peer's own slot; a later change to this options
-instance never reaches a Peer already open. See [`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize).
+Announced in the handshake (ADR 0024). Each Peer cuts its reliable Messages at the smaller of
+this value and the peer's announced value, fixed once when the Peer reaches Established and
+unchanged across a Resume, so two Reactors configured with different values interoperate. A
+reliable Fragment wider than this value closes the Peer with
+[`DisconnectReason.ProtocolViolation`](ReactorSockets.DisconnectReason.md), which only a non-conforming peer causes. The
+same smaller value is the single-Datagram cap of an unreliable Message, refused above it with
+[`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md). A later change to this options instance never reaches a Peer already open. See
+[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize).
 

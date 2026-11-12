@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_DatagramSessionOptions_FragmentSize_" data-uid="ReactorSockets.DatagramSessionOptions.FragmentSize*" class="text-break">
-Property FragmentSize  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L289"><i class="bi bi-code-slash"></i></a>
+Property FragmentSize  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L290"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,7 +107,7 @@ Property FragmentSize  <a class="header-action link-secondary" title="View sourc
 
 <h3 id="ReactorSockets_DatagramSessionOptions_FragmentSize" data-uid="ReactorSockets.DatagramSessionOptions.FragmentSize">
   FragmentSize
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L289"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L290"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>The bytes a fragment carries, and therefore the unit every buffer here is measured in.
@@ -135,13 +135,14 @@ the one value with citable provenance for surviving an arbitrary path. Must lie 
 
 
 <h4 class="section" id="ReactorSockets_DatagramSessionOptions_FragmentSize_remarks">Remarks</h4>
-<div class="markdown level1 remarks"><p>Unilateral and per-direction (ADR 0004): each side of a Session cuts its own outbound Messages
-by its own configured value, and the two directions need not agree. It is never announced in
-the handshake, because a receiver reassembles a Fragment set from <code>fragmentIndex</code> and
-<code>fragmentCount</code> alone and never needs to know the sender's choice — so two Sessions
-configured with different values still interoperate, each cutting by its own. This value is
-resolved once per Peer, at admission, onto that Peer's own slot; a later change to this options
-instance never reaches a Peer already open. See <a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a>.</p>
+<div class="markdown level1 remarks"><p>Announced in the handshake (ADR 0024). Each Peer cuts its reliable Messages at the smaller of
+this value and the peer's announced value, fixed once when the Peer reaches Established and
+unchanged across a Resume, so two Reactors configured with different values interoperate. A
+reliable Fragment wider than this value closes the Peer with
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_ProtocolViolation">ProtocolViolation</a>, which only a non-conforming peer causes. The
+same smaller value is the single-Datagram cap of an unreliable Message, refused above it with
+<a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_MessageTooLarge">MessageTooLarge</a>. A later change to this options instance never reaches a Peer already open. See
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a>.</p>
 </div>
 
 

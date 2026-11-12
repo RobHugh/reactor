@@ -15,7 +15,7 @@ internal static class DatagramSessionProtocol
     /// lowest-common-version rule and no compatibility range: a mismatch is a Refusal naming both
     /// versions. Per-profile, so the stream Session profile's version moves independently of this one.
     /// </summary>
-    public const uint Version = 1;
+    public const uint Version = 2;
 
     /// <summary>
     /// The session id reserved to mean "this datagram is control, not data" (ADR 0009). Never
