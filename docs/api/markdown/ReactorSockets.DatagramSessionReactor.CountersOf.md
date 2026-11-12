@@ -15,8 +15,9 @@ has slid past. [`PeerCounters.MessagesReceived`](ReactorSockets.PeerCounters.Mes
 frame arena for delivery, and not a Message the arena refused.
 [`PeerCounters.Resumes`](ReactorSockets.PeerCounters.Resumes.md#ReactorSockets_PeerCounters_Resumes) counts the Peer's resumes: once per
 [`SessionEventKind.PeerResumed`](ReactorSockets.SessionEventKind.md) raised for it, on the accepting end when a matching
-Resume moves it out of Interrupted and on the dialling end when it hears its session again after
-sending a Resume, and never reset by one (ADR 0013).
+Resume, or a well-formed data Datagram from the address it sends to, moves it out of Interrupted and
+on the dialling end when it hears its session again after sending a Resume, and never reset by one
+(ADR 0013).
 [`PeerCounters.RetentionHighWaterBytes`](ReactorSockets.PeerCounters.RetentionHighWaterBytes.md#ReactorSockets_PeerCounters_RetentionHighWaterBytes) reads the true per-Peer figure — summed
 across both reliable Spaces — from `_retention`.
 
