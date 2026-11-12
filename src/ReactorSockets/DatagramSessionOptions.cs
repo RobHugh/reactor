@@ -283,8 +283,8 @@ public sealed class DatagramSessionOptions
     /// unchanged across a Resume, so two Reactors configured with different values interoperate. A
     /// reliable Fragment wider than this value closes the Peer with
     /// <see cref="DisconnectReason.ProtocolViolation"/>, which only a non-conforming peer causes. The
-    /// single-Datagram cap of an unreliable Message is this value alone, whatever the peer announced.
-    /// A later change to this options instance never reaches a Peer already open. See
+    /// same smaller value is the single-Datagram cap of an unreliable Message, refused above it with
+    /// <see cref="SendOutcome.MessageTooLarge"/>. A later change to this options instance never reaches a Peer already open. See
     /// <see cref="ResolvedFragmentSize"/>.
     /// </remarks>
     public int? FragmentSize { get; init; }
