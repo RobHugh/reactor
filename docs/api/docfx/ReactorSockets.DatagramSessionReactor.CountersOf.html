@@ -119,10 +119,10 @@ now reflect what the four per-Space receive windows have refused;
 has slid past. <a class="xref" href="ReactorSockets.PeerCounters.MessagesReceived.html#ReactorSockets_PeerCounters_MessagesReceived">MessagesReceived</a> counts whole Messages handed to the
 frame arena for delivery, and not a Message the arena refused.
 <a class="xref" href="ReactorSockets.PeerCounters.Resumes.html#ReactorSockets_PeerCounters_Resumes">Resumes</a> counts the Peer's resumes: once per
-<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerResumed">PeerResumed</a> raised for it, on the accepting end when a matching
-Resume, or a well-formed data Datagram from the address it sends to, moves it out of Interrupted and
-on the dialling end when it hears its session again after sending a Resume, and never reset by one
-(ADR 0013).
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerResumed">PeerResumed</a> raised for it, and never reset by one (ADR 0013). The
+accepting end raises it when a matching Resume or a well-formed data Datagram from the exact address
+and port it sends to moves the Peer out of Interrupted. The dialling end raises it when it hears its
+session again after sending a Resume.
 <a class="xref" href="ReactorSockets.PeerCounters.RetentionHighWaterBytes.html#ReactorSockets_PeerCounters_RetentionHighWaterBytes">RetentionHighWaterBytes</a> reads the true per-Peer figure — summed
 across both reliable Spaces — from <span class="xref">ReactorSockets.DatagramSessionReactor._retention</span>.</p>
 </div>

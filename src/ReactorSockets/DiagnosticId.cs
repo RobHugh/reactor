@@ -308,8 +308,9 @@ public enum DiagnosticId
     /// nothing about a Peer's identity is renewed by a Resume. <c>Value0</c> is the number of retained
     /// outbound bytes the match rewound to the counter the Resume reported; <c>Value1</c> is unused. On
     /// the datagram profile it is logged when a Resume control datagram matches the Peer on the
-    /// accepting end (session id and secret), and when an Interrupted dialling end that has sent a
-    /// Resume hears its session again. Nothing is rewound, because retransmission already re-sends
+    /// accepting end (session id and secret), when an Interrupted accepting end receives a well-formed
+    /// data Datagram for the Session from the exact address and port it sends to, and when an
+    /// Interrupted dialling end that has sent a Resume hears its session again. Nothing is rewound, because retransmission already re-sends
     /// anything unacknowledged, so <c>Value0</c> is 0 and <c>Value1</c> is unused.
     /// </summary>
     /// <remarks>

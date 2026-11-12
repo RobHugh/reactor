@@ -93,7 +93,7 @@ receives a well-formed data Datagram for the Session.
 
 **The accepting end** never sends Resume, because it cannot know the dialler's new address. It resumes its
 Peer when it receives a well-formed data Datagram for the Session from the exact address and port it
-sends to, and that moves nothing. When a Resume arrives with the right session id and secret, what
+sends to. That does not move its send address. When a Resume arrives with the right session id and secret, what
 happens depends on the IP address it came from:
 
 - **The same IP address the Peer is already sent to, on any port.** The accepting end points every

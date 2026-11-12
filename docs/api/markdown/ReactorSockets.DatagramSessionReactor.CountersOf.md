@@ -14,10 +14,10 @@ now reflect what the four per-Space receive windows have refused;
 has slid past. [`PeerCounters.MessagesReceived`](ReactorSockets.PeerCounters.MessagesReceived.md#ReactorSockets_PeerCounters_MessagesReceived) counts whole Messages handed to the
 frame arena for delivery, and not a Message the arena refused.
 [`PeerCounters.Resumes`](ReactorSockets.PeerCounters.Resumes.md#ReactorSockets_PeerCounters_Resumes) counts the Peer's resumes: once per
-[`SessionEventKind.PeerResumed`](ReactorSockets.SessionEventKind.md) raised for it, on the accepting end when a matching
-Resume, or a well-formed data Datagram from the address it sends to, moves it out of Interrupted and
-on the dialling end when it hears its session again after sending a Resume, and never reset by one
-(ADR 0013).
+[`SessionEventKind.PeerResumed`](ReactorSockets.SessionEventKind.md) raised for it, and never reset by one (ADR 0013). The
+accepting end raises it when a matching Resume or a well-formed data Datagram from the exact address
+and port it sends to moves the Peer out of Interrupted. The dialling end raises it when it hears its
+session again after sending a Resume.
 [`PeerCounters.RetentionHighWaterBytes`](ReactorSockets.PeerCounters.RetentionHighWaterBytes.md#ReactorSockets_PeerCounters_RetentionHighWaterBytes) reads the true per-Peer figure — summed
 across both reliable Spaces — from `_retention`.
 
