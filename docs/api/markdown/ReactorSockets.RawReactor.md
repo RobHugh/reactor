@@ -78,8 +78,9 @@ come from this same thread or it throws.
 
  [MaxUdpDatagramSize](ReactorSockets.RawReactor.MaxUdpDatagramSize.md\#ReactorSockets\_RawReactor\_MaxUdpDatagramSize)
 
-The largest a UDP datagram can be, and this Reactor's default scratch buffer size and arena
-floor: a Segment is as large as one read, so the arena must hold at least one (ADR 0012).
+The largest payload a UDP datagram can carry over IPv4, and this Reactor's default scratch
+buffer size and arena floor: a Segment is as large as one read, so the arena must hold at least
+one (ADR 0012). An IPv6 datagram can carry up to 65 527 bytes, more than this bound.
 
 ## Properties
 

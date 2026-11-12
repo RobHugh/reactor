@@ -51,8 +51,9 @@ namespace ReactorSockets;
 public sealed class RawReactor : IDisposable
 {
     /// <summary>
-    /// The largest a UDP datagram can be, and this Reactor's default scratch buffer size and arena
-    /// floor: a Segment is as large as one read, so the arena must hold at least one (ADR 0012).
+    /// The largest payload a UDP datagram can carry over IPv4, and this Reactor's default scratch
+    /// buffer size and arena floor: a Segment is as large as one read, so the arena must hold at least
+    /// one (ADR 0012). An IPv6 datagram can carry up to 65 527 bytes, more than this bound.
     /// </summary>
     public const int MaxUdpDatagramSize = 65_507;
 
@@ -62,6 +63,13 @@ public sealed class RawReactor : IDisposable
     private readonly ReactorCounterSet _counters;
     private readonly ShareHolderTable<LinkSlot> _links;
     private readonly byte[] _scratchBuffer;
+
+    /// <summary>
+    /// The largest datagram or stream read this Reactor accepts. <see cref="_scratchBuffer"/> is one
+    /// byte longer, so a UDP read that fills it is known to have been truncated; a TCP read is given
+    /// only the first <see cref="_acceptedSize"/> bytes, so it never exceeds what the arena was sized for.
+    /// </summary>
+    private readonly int _acceptedSize;
     private readonly List<PendingEvent> _pendingEvents = [];
     private readonly List<LinkId> _connectingLinks = [];
     private readonly int _constructingThreadId;
@@ -77,9 +85,10 @@ public sealed class RawReactor : IDisposable
     /// come from this same thread or it throws.
     /// </summary>
     /// <remarks>
-    /// <b>The memory bill</b> is one scratch buffer plus one arena — <c>scratchBufferSize + ArenaSize</c>
-    /// — neither multiplied by capacity, because Raw holds nothing for a Link across a Pump. That is
-    /// what "invents nothing on the wire" looks like from the constructor (ADR 0012).
+    /// <b>The memory bill</b> is one scratch buffer plus one arena — <c>scratchBufferSize + 1 + ArenaSize</c>
+    /// (the extra byte is how a truncated datagram is recognised) — neither multiplied by capacity,
+    /// because Raw holds nothing for a Link across a Pump. That is what "invents nothing on the wire"
+    /// looks like from the constructor (ADR 0012).
     /// </remarks>
     /// <param name="options">
     /// The shared options value. Every knob on it is validated here, and
@@ -89,8 +98,9 @@ public sealed class RawReactor : IDisposable
     /// <param name="scratchBufferSize">
     /// The single scratch buffer every Link's receive lands in, reused across Links since only one is
     /// read at any instant inside a single-threaded Pump (ADR 0012). Defaults to
-    /// <see cref="MaxUdpDatagramSize"/>. Provenance: the largest payload a UDP datagram can carry, at
-    /// which truncation is unreachable. This is the profile-specific
+    /// <see cref="MaxUdpDatagramSize"/>. Provenance: the largest payload a UDP datagram can carry over
+    /// IPv4, at which an IPv4 datagram cannot be truncated. An IPv6 datagram of 65 508 to 65 527 bytes
+    /// exceeds it and is reported as truncated. This is the profile-specific
     /// knob a consumer lowers to opt into truncation, kept off <see cref="ReactorOptions"/> because it
     /// has no meaning outside Raw's datagram surface.
     /// </param>
@@ -118,7 +128,8 @@ public sealed class RawReactor : IDisposable
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Sink, options.MinimumLevel, _counters);
         _links = new ShareHolderTable<LinkSlot>(options.Capacity, ReactorOrigin.Next());
-        _scratchBuffer = new byte[resolvedScratchBufferSize];
+        _acceptedSize = resolvedScratchBufferSize;
+        _scratchBuffer = new byte[resolvedScratchBufferSize + 1];
         _admissionCap = options.ResolvedAdmissionCap;
     }
 
@@ -577,7 +588,7 @@ public sealed class RawReactor : IDisposable
     /// </summary>
     private void OnStreamLinkReadable(SlotHandle handle, StreamLinkSlot slot)
     {
-        TcpLinkReceiveResult result = slot.Link.Receive(_scratchBuffer);
+        TcpLinkReceiveResult result = slot.Link.Receive(_scratchBuffer.AsSpan(0, _acceptedSize));
         switch (result.Outcome)
         {
             case TcpLinkReceiveOutcome.Delivered:
@@ -704,7 +715,7 @@ public sealed class RawReactor : IDisposable
     {
         if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
         {
-            _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(source, _scratchBuffer.Length));
+            _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(source, _acceptedSize));
         }
     }
 

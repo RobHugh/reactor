@@ -40,6 +40,35 @@ public class RawReactorStreamReadTests
     }
 
     [Fact]
+    public void Drain_CounterpartyWritesMoreThanTheScratchBufferSize_NoSegmentExceedsTheScratchBufferSize()
+    {
+        // Arrange — the scratch buffer is one byte longer than scratchBufferSize so a UDP read can
+        // detect truncation. A stream read must still be given only scratchBufferSize bytes.
+        const int scratchSize = 64;
+        using RawReactorHarness harness = new(capacity: 4, scratchBufferSize: scratchSize);
+        (_, IPEndPoint localEndPoint) = harness.ListenOnLoopback();
+        using Socket counterparty = harness.ConnectCounterpartyTo(localEndPoint);
+        harness.Reactor.Pump();
+        LinkId acceptedLink = harness.FirstAcceptedLink();
+
+        byte[] payload = new byte[scratchSize * 20];
+        Random.Shared.NextBytes(payload);
+        counterparty.Send(payload);
+
+        // Act
+        List<(RawEventKind Kind, LinkId Link, byte[] Payload)> drained =
+            harness.PumpUntilDrained(e => e.Where(x => x.Kind == RawEventKind.SegmentReceived && x.Link == acceptedLink).Sum(x => x.Payload.Length) >= payload.Length);
+
+        // Assert
+        List<byte[]> segments = drained
+            .Where(evt => evt.Kind == RawEventKind.SegmentReceived && evt.Link == acceptedLink)
+            .Select(evt => evt.Payload)
+            .ToList();
+        segments.SelectMany(segment => segment).Should().Equal(payload);
+        segments.Should().OnlyContain(segment => segment.Length <= scratchSize);
+    }
+
+    [Fact]
     public void Drain_OneLinkDeliveringALargeRun_IsServedAcrossSeveralPumpsWithoutStarvingAnother()
     {
         // Arrange — a small scratch buffer so a run much larger than one read needs several Pumps, and

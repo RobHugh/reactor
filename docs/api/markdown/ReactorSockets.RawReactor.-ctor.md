@@ -24,14 +24,16 @@ combination that cannot work throws at construction and nowhere else.
 
 The single scratch buffer every Link's receive lands in, reused across Links since only one is
 read at any instant inside a single-threaded Pump (ADR 0012). Defaults to
-[`RawReactor.MaxUdpDatagramSize`](ReactorSockets.RawReactor.MaxUdpDatagramSize.md). Provenance: the largest payload a UDP datagram can carry, at
-which truncation is unreachable. This is the profile-specific
+[`RawReactor.MaxUdpDatagramSize`](ReactorSockets.RawReactor.MaxUdpDatagramSize.md). Provenance: the largest payload a UDP datagram can carry over
+IPv4, at which an IPv4 datagram cannot be truncated. An IPv6 datagram of 65 508 to 65 527 bytes
+exceeds it and is reported as truncated. This is the profile-specific
 knob a consumer lowers to opt into truncation, kept off [`ReactorOptions`](ReactorSockets.ReactorOptions.md) because it
 has no meaning outside Raw's datagram surface.
 
 ### Remarks
 
-<b>The memory bill</b> is one scratch buffer plus one arena — <code>scratchBufferSize + ArenaSize</code>
-— neither multiplied by capacity, because Raw holds nothing for a Link across a Pump. That is
-what "invents nothing on the wire" looks like from the constructor (ADR 0012).
+<b>The memory bill</b> is one scratch buffer plus one arena — <code>scratchBufferSize + 1 + ArenaSize</code>
+(the extra byte is how a truncated datagram is recognised) — neither multiplied by capacity,
+because Raw holds nothing for a Link across a Pump. That is what "invents nothing on the wire"
+looks like from the constructor (ADR 0012).
 

@@ -37,7 +37,7 @@ appears that is not in the audited list below.
 
 | Knob | Default | Provenance |
 |---|---|---|
-| `scratchBufferSize` | 65 507 | The largest UDP payload, at which truncation cannot happen. |
+| `scratchBufferSize` | 65 507 | The largest UDP payload over IPv4, at which an IPv4 datagram cannot be truncated. An IPv6 datagram can carry up to 65 527 bytes, so one of 65 508 to 65 527 bytes is reported as truncated. |
 
 ### Datagram Session (`DatagramSessionOptions`)
 
@@ -139,10 +139,11 @@ brings it back. `HeldRecordBudgetBytes` reports this line, bookkeeping included,
 ### Raw
 
 ```
-scratchBufferSize + ArenaSize
+scratchBufferSize + 1 + ArenaSize
 ```
 
-One scratch buffer and one arena, neither multiplied by capacity. Raw holds nothing for a Link across a
+One scratch buffer and one arena, neither multiplied by capacity. The scratch buffer is one byte longer
+than `scratchBufferSize`, so a read that fills it is known to be a truncated datagram. Raw holds nothing for a Link across a
 Pump. That is what inventing nothing on the wire looks like from the constructor.
 
 The frame arena (`ArenaSize`) is also allocated by both Session profiles, once per Reactor, on top of

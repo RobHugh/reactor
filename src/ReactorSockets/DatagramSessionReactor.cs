@@ -55,8 +55,10 @@ namespace ReactorSockets;
 public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 {
     /// <summary>
-    /// The largest a UDP datagram can be, and this Reactor's scratch buffer size — at which
-    /// truncation is unreachable, so a datagram is never silently shortened into a different one.
+    /// The largest payload a UDP datagram can carry over IPv4, and the largest datagram this Reactor
+    /// reads. An IPv4 datagram is never truncated. An IPv6 datagram can carry up to 65 527 bytes, so
+    /// one of 65 508 to 65 527 bytes is reported as truncated and discarded. In both cases a datagram is
+    /// never silently shortened into a different one.
     /// </summary>
     private const int MaxUdpDatagramSize = 65_507;
 
@@ -114,7 +116,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private readonly ClosedSessionMemory _closedSessions;
 
-    private readonly byte[] _scratchBuffer = new byte[MaxUdpDatagramSize];
+    /// <summary>
+    /// The read-side buffer. One byte longer than <see cref="MaxUdpDatagramSize"/> so a read that
+    /// fills it is known to have been truncated (see <c>UdpLink.Receive</c>).
+    /// </summary>
+    private readonly byte[] _scratchBuffer = new byte[MaxUdpDatagramSize + 1];
     private readonly byte[] _sendBuffer = new byte[DatagramSessionProtocol.ControlDatagramSize];
 
     /// <summary>
@@ -122,7 +128,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="_scratchBuffer"/> — which is read-side and reused within one
     /// <see cref="OnLinkReadable"/> call — and from <see cref="_sendBuffer"/>, which is sized for a
     /// control datagram only and far too small for a coalesced data one. Sized at
-    /// <see cref="MaxUdpDatagramSize"/> like <see cref="_scratchBuffer"/> so it can hold whatever a
+    /// <see cref="MaxUdpDatagramSize"/>, the largest datagram one send can carry, so it can hold whatever a
     /// Pump packs into it; reused across every Peer flushed by one Pump rather than allocated per Peer.
     /// </summary>
     private readonly byte[] _outboundDatagramBuffer = new byte[MaxUdpDatagramSize];
@@ -820,7 +826,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 case UdpLinkReceiveOutcome.Truncated:
                     _counters.RecordDatagramReceived();
                     _counters.RecordUnknownSourceDatagram();
-                    _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(result.Source, _scratchBuffer.Length));
+                    _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(result.Source, MaxUdpDatagramSize));
                     break;
 
                 // An ICMP error queued against this socket by an earlier send, and on Linux the reason
