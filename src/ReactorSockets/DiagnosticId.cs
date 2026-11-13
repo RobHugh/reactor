@@ -139,8 +139,8 @@ public enum DiagnosticId
     /// This Peer's <see cref="RetransmissionTimer"/> backed off: a Pump's expiry sweep
     /// (<see cref="Session.OutstandingReliableSequences.CollectExpired"/>) found at least one overdue
     /// sequence on either reliable Space, so <see cref="RetransmissionTimer.BackOff"/> was called once
-    /// for the Peer and every sequence the sweep reported re-armed at the single resulting RTO. Subject
-    /// is the Peer. <c>Value0</c> is the new RTO in milliseconds —
+    /// for the Peer. Each sequence the sweep reported arms again at the RTO current when its resend is
+    /// packed. Subject is the Peer. <c>Value0</c> is the new RTO in milliseconds —
     /// <see cref="RetransmissionTimer.EffectiveTimeout"/> at the moment of the backoff; <c>Value1</c> is
     /// <see cref="RetransmissionTimer.ConsecutiveBackoffs"/> after this backoff.
     /// </summary>

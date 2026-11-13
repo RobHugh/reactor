@@ -1210,18 +1210,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// back off the shared timer twice on a Pump where both Spaces expired something, doubling the RTO
     /// twice and raising <see cref="RetransmissionTimer.ConsecutiveBackoffs"/> by two for one loss
     /// event. This method instead sweeps both Spaces first, decides the backoff once here at the Peer
-    /// level from their combined count, and only then re-arms each Space's findings —
-    /// <see cref="OutstandingReliableSequences.ReArmExpired"/> — at the single resulting
-    /// <see cref="RetransmissionTimer.EffectiveTimeout"/>, matching how a horizon slide arms everything
-    /// it newly covers from one shared moment and RTO.
+    /// level from their combined count. Each expired sequence stays disarmed until
+    /// <see cref="FlushOneDatagram"/> packs its resend and arms it at the
+    /// <see cref="RetransmissionTimer.EffectiveTimeout"/> current then (issue #542).
     /// </para>
     /// <para>
     /// A single scan over <see cref="_peers"/> (<see cref="ShareHolderTable{T}.OccupantAt"/>), the same
     /// shape <see cref="StreamSessionReactor.EnforceIdleTimers"/> uses for its own per-Pump-per-Peer
     /// sweep: it costs at most <see cref="ShareHolderTable{T}.Capacity"/> array reads against
     /// already-allocated state, so it allocates nothing itself, and
-    /// <see cref="OutstandingReliableSequences.CollectExpired"/> and
-    /// <see cref="OutstandingReliableSequences.ReArmExpired"/> allocate nothing either — including on
+    /// <see cref="OutstandingReliableSequences.CollectExpired"/> allocates nothing either — including on
     /// the steady path where nothing has expired. A Peer still mid-handshake has recorded nothing on
     /// either reliable Space yet (<see cref="OutstandingReliableSequences.RecordSent"/> is only ever
     /// called for a sent record), so restricting the scan to <see cref="PeerLifecycle.IsEstablished"/>
@@ -1269,7 +1267,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             // Acting on the stall signature (issue #302): the round just recorded above is the only
             // place RoundsSinceFirstUnackedFragment can advance, so it is the earliest and only point a
             // false IsFragmentSizeStall can newly turn true — no separate per-Pump sweep is needed.
-            // Closing here, before the re-arm below, means the expired sequences QueueForRetransmission
+            // Closing here means the expired sequences QueueForRetransmission
             // just queued onto slot.PendingSends never reach FlushOutboundDatagrams: ClosePeer removes
             // the slot from every table that keeps it reachable, so nothing about this Peer survives to
             // be flushed, backed off, or traced. Removing the occupant at this index leaves the Slot
@@ -1281,12 +1279,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger);
-            slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableOrdered, effectiveRto);
-            slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableUnordered, effectiveRto);
-
             if (_diagnostics.IsEnabled(DiagnosticLevel.Trace))
             {
+                TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger);
                 _diagnostics.Log(DiagnosticRecord.ForRetransmissionTimerBackedOff(
                     ToPeerId(slot.Handle),
                     newRtoMilliseconds: (long)effectiveRto.TotalMilliseconds,
@@ -1973,17 +1968,22 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             // Arming happens here, at the moment the record actually reaches a Datagram, rather than in
             // Send: a sequence queued but not yet flushed has not been transmitted, and starting its
             // retransmit deadline before it leaves would spend part of that deadline on this end's own
-            // queue (subtask 6.6.8, issue #218). A resend is skipped — ReArmExpired has already given it
-            // this Pump's single backed-off deadline. The horizon gate lives inside RecordSent, so a
-            // sequence too far ahead of the ack horizon still has its timer withheld rather than
-            // started, exactly as #185 requires.
-            if (!pending.IsRetransmission && IsReliable(pending.Mode))
+            // queue (subtask 6.6.8, issue #218). A resend follows the same rule (issue #542): its deadline
+            // stopped when it expired and restarts here, at the RTO current now, so a resend waiting behind
+            // a long queue is not reported again before it leaves. The horizon gate lives inside
+            // RecordSent, so a sequence too far ahead of the ack horizon still has its timer withheld
+            // rather than started, exactly as #185 requires.
+            if (IsReliable(pending.Mode))
             {
-                slot.AckTracker.RecordSent(
-                    pending.Mode,
-                    pending.Sequence,
-                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger),
-                    isFragment);
+                TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger);
+                if (pending.IsRetransmission)
+                {
+                    slot.AckTracker.RecordResent(pending.Mode, pending.Sequence, effectiveRto);
+                }
+                else
+                {
+                    slot.AckTracker.RecordSent(pending.Mode, pending.Sequence, effectiveRto, isFragment);
+                }
             }
 
             // StallSignature.RecordFragmentSent opens the unacked-Fragment window on the first Fragment
@@ -3993,10 +3993,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <summary>
         /// Whether this queue entry is a resend rather than a first transmission. What it decides at
         /// flush time is one thing: a first transmission arms its retransmit deadline through
-        /// <see cref="OutstandingReliableSequences.RecordSent"/>, while a resend has already been
-        /// re-armed by <see cref="OutstandingReliableSequences.ReArmExpired"/> at the single RTO its
-        /// Peer's one backoff for that Pump produced. Recording a resend as newly sent would overwrite
-        /// that deadline with a second one and count the sequence as outstanding twice.
+        /// <see cref="OutstandingReliableSequences.RecordSent"/>, while a resend arms its deadline again
+        /// through <see cref="OutstandingReliableSequences.RecordResent"/>, which keeps the sequence's
+        /// retransmitted mark for Karn's rule.
         /// </summary>
         public bool IsRetransmission { get; init; }
 
