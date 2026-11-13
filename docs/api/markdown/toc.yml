@@ -62,6 +62,8 @@
       href: ReactorSockets.DatagramSessionOptions.ResolvedPeerLimitIPv6PrefixLength.md
     - name: ResolvedReceiveWindowFragments
       href: ReactorSockets.DatagramSessionOptions.ResolvedReceiveWindowFragments.md
+    - name: ResolvedUnreliableQueueBytes
+      href: ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes.md
     - name: RetentionBytes
       href: ReactorSockets.DatagramSessionOptions.RetentionBytes.md
     - name: RetentionSlots
@@ -70,6 +72,10 @@
       href: ReactorSockets.DatagramSessionOptions.SendBudgetBytes.md
     - name: SendIdleInterval
       href: ReactorSockets.DatagramSessionOptions.SendIdleInterval.md
+    - name: UnreliableQueueBudgetBytes
+      href: ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes.md
+    - name: UnreliableQueueBytes
+      href: ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.md
   - name: DatagramSessionReactor
     href: ReactorSockets.DatagramSessionReactor.md
     items:

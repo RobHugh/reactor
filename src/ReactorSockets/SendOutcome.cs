@@ -72,4 +72,15 @@ public enum SendOutcome
     /// out before this end knows the far end's version and announced <c>MaxMessageSize</c>.
     /// </summary>
     NotEstablished = 5,
+
+    /// <summary>
+    /// An <c>Unreliable</c> or <c>UnreliableSequenced</c> Message would take the bytes this Peer has queued
+    /// for those two modes past <see cref="DatagramSessionOptions.UnreliableQueueBytes"/>. Nothing was
+    /// copied and no sequence was spent. The queue frees as this end's Pumps write it, not on an
+    /// acknowledgement, so the caller may retry after a later Pump, or drop the Message. Its own value
+    /// rather than <see cref="RetentionExhausted"/>: that value means reliable retention is full and frees
+    /// only when the far end acknowledges.
+    /// Datagram profile only.
+    /// </summary>
+    SendQueueFull = 6,
 }

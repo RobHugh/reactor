@@ -155,6 +155,16 @@ handshake record. Nothing was copied and nothing about the Session changed. Wait
 than queueing keeps a Message from reaching a socket whose connect has not resolved, or going
 out before this end knows the far end's version and announced <code>MaxMessageSize</code>.</p>
 </dd>
+    <dt id="ReactorSockets_SendOutcome_SendQueueFull"><code>SendQueueFull = 6</code></dt>
+  
+  <dd><p>An <code>Unreliable</code> or <code>UnreliableSequenced</code> Message would take the bytes this Peer has queued
+for those two modes past <a class="xref" href="ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.html#ReactorSockets_DatagramSessionOptions_UnreliableQueueBytes">UnreliableQueueBytes</a>. Nothing was
+copied and no sequence was spent. The queue frees as this end's Pumps write it, not on an
+acknowledgement, so the caller may retry after a later Pump, or drop the Message. Its own value
+rather than <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RetentionExhausted">RetentionExhausted</a>: that value means reliable retention is full and frees
+only when the far end acknowledges.
+Datagram profile only.</p>
+</dd>
   </dl>
 
 

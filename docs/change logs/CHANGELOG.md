@@ -32,6 +32,23 @@
   Session with `ProtocolViolation`. It returns `RemoteMessageTooLarge` and copies nothing, as the
   datagram profile does (#484). A consumer that switches over `SendOutcome` for a stream Reactor
   handles the new value.
+- `DatagramSessionOptions.FragmentSize` accepts at most 65 476, not 65 507 (#486). A larger Fragment
+  fits no Datagram once the 20-byte Datagram header and the 11-byte Fragment record header are added,
+  so a reliable Message cut into one returned `Sent` and was never written, and every Message queued
+  behind it for that Peer waited forever. A value from 65 477 to 65 507 now throws
+  `ArgumentOutOfRangeException` at construction.
+- Datagram profile: a data Datagram is at most `FragmentSize + 31` bytes, and one Pump writes up to
+  `65 507 / (FragmentSize + 31)` of them per Peer. A Peer's queue was packed into one Datagram of up
+  to 65 507 bytes, which the network split or dropped (#485).
+- Datagram profile: unreliable Sends are bounded by `UnreliableQueueBytes` and queued in storage
+  allocated at construction. They queued without limit, one heap copy each (#485).
+
+### Features
+
+- `SendOutcome.SendQueueFull` (6) and `DatagramSessionOptions.UnreliableQueueBytes`, defaulting to
+  `RetentionSlots × (FragmentSize + 7)`, with `ResolvedUnreliableQueueBytes` and
+  `UnreliableQueueBudgetBytes`. The datagram memory bill gains a third line, `Capacity ×
+  UnreliableQueueBytes`. A consumer switching over `SendOutcome` handles the new value (#485).
 
 ### Breaking changes
 

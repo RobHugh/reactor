@@ -367,16 +367,20 @@ public class DatagramSessionFragmentSizeUnviableTests
         // Act — after the close, a Message wider than the fragment size, sent to the second Peer.
         byte[] messageToPeerB = Enumerable.Range(0, BigMessageLength).Select(i => (byte)(i % 256)).ToArray();
         node.Reactor.Send(peerB, DeliveryMode.ReliableOrdered, messageToPeerB).Should().Be(SendOutcome.Sent);
+        int expectedFragments = (BigMessageLength + FragmentSize - 1) / FragmentSize;
         List<byte[]> peerBDatagrams = [];
-        PumpAndCollect(node, clientB, peerBDatagrams, events);
-        byte[] datagramToPeerB = peerBDatagrams.Last();
+        PumpDeadline fragmentDeadline = PumpDeadline.Start();
+        while (peerBDatagrams.Sum(CountRecords) < expectedFragments && !fragmentDeadline.Expired)
+        {
+            PumpAndCollect(node, clientB, peerBDatagrams, events);
+        }
 
         // Assert — proven observably rather than against the test's own init-only options object: the
         // Message reaching the second Peer is still cut at the configured fragment size, unaffected by
         // the first Peer's close.
-        CountRecords(datagramToPeerB).Should().Be(
-            (BigMessageLength + FragmentSize - 1) / FragmentSize, "the fragment size configured at construction is unchanged after the first Peer closed");
-        FirstRecordLength(datagramToPeerB).Should().Be(
+        peerBDatagrams.Sum(CountRecords).Should().Be(
+            expectedFragments, "the fragment size configured at construction is unchanged after the first Peer closed");
+        FirstRecordLength(peerBDatagrams[0]).Should().Be(
             (ushort)FragmentSize, "the second Peer's Message is cut to the same fragment size the first Peer's was, proving the setting itself never moved");
 
         // Act — the second Peer sends its own record back, unreliable so no ack machinery is needed to

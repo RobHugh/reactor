@@ -38,6 +38,9 @@ public class MemoryBillTests
     /// <summary>Mirrors the six-byte waiting-group entry (#259).</summary>
     private const int PendingGroupEntryBytes = 6;
 
+    /// <summary>The unfragmented record header each queued unreliable Message is charged beside its payload.</summary>
+    private const int UnreliableRecordHeaderBytes = 7;
+
     [Fact]
     public void Construct_StreamProfile_AllocatesCapacityTimesRetentionPlusReceiveBufferPlusBoundaryRing()
     {
@@ -70,7 +73,7 @@ public class MemoryBillTests
     }
 
     [Fact]
-    public void Construct_DatagramProfile_AllocatesTheReceiveLineAndTheSendLine()
+    public void Construct_DatagramProfile_AllocatesTheReceiveSendAndUnreliableQueueLines()
     {
         // Arrange
         const int fragmentSize = 1200;
@@ -96,10 +99,26 @@ public class MemoryBillTests
         DatagramSessionOptions options = DatagramOptions(fragmentSize: 1200, windowFragments: 7, retentionBytes: 5000);
 
         // Act
-        long published = options.ReceiveBudgetBytes + options.SendBudgetBytes;
+        long published = options.ReceiveBudgetBytes + options.SendBudgetBytes + options.UnreliableQueueBudgetBytes;
 
         // Assert
         published.Should().Be(DatagramFormula(options));
+    }
+
+    [Fact]
+    public void Construct_DatagramProfile_AllocatesCapacityTimesTheUnreliableQueueBudget()
+    {
+        // Arrange
+        DatagramSessionOptions small = DatagramOptions(fragmentSize: 1200, windowFragments: 8, retentionBytes: 1200, unreliableQueueBytes: 2000);
+        DatagramSessionOptions large = DatagramOptions(fragmentSize: 1200, windowFragments: 8, retentionBytes: 1200, unreliableQueueBytes: 10_000);
+
+        // Act
+        Measure(() => SampleDatagram(small));
+        Measure(() => SampleDatagram(large));
+        long measured = Measure(() => SampleDatagram(large)) - Measure(() => SampleDatagram(small));
+
+        // Assert
+        measured.Should().Be((long)MeasurementCapacity * (10_000 - 2000));
     }
 
     [Fact]
@@ -134,7 +153,8 @@ public class MemoryBillTests
     /// The datagram bill as documented. Receive: <c>Capacity × 2 × window × fragmentSize</c> of payload,
     /// with each payload slot's bookkeeping, one admission byte per slot for all four Spaces, and the
     /// waiting-group entries. Send: <c>Capacity × 2 × RetentionBytes</c>, in whole fragment slots, each
-    /// with its bookkeeping.
+    /// with its bookkeeping. The unreliable queue: <c>Capacity × UnreliableQueueBytes</c>, defaulting to
+    /// <c>RetentionSlots × (fragmentSize + 7)</c>.
     /// </summary>
     private static long DatagramFormula(DatagramSessionOptions options)
     {
@@ -147,7 +167,8 @@ public class MemoryBillTests
             + (capacity * 4 * window)
             + (capacity * 2 * pendingGroups * PendingGroupEntryBytes);
         long send = capacity * 2 * (options.RetentionBytes / fragmentSize) * (fragmentSize + RetentionSlotBookkeepingBytes);
-        return receive + send;
+        long unreliableQueue = capacity * (options.UnreliableQueueBytes ?? ((options.RetentionBytes / fragmentSize) * (fragmentSize + UnreliableRecordHeaderBytes)));
+        return receive + send + unreliableQueue;
     }
 
     private static StreamSessionOptions StreamOptions(int maxMessageSize, int retentionBytes, int receiveBufferSize) =>
@@ -161,7 +182,7 @@ public class MemoryBillTests
             Linger = TimeSpan.FromSeconds(1),
         };
 
-    private static DatagramSessionOptions DatagramOptions(int fragmentSize, int windowFragments, int retentionBytes) =>
+    private static DatagramSessionOptions DatagramOptions(int fragmentSize, int windowFragments, int retentionBytes, int? unreliableQueueBytes = null) =>
         new()
         {
             Reactor = new ReactorOptions { Capacity = MeasurementCapacity },
@@ -169,6 +190,7 @@ public class MemoryBillTests
             FragmentSize = fragmentSize,
             ReceiveWindowFragments = windowFragments,
             RetentionBytes = retentionBytes,
+            UnreliableQueueBytes = unreliableQueueBytes,
             MaxPeersPerAddress = MeasurementCapacity,
             SendIdleInterval = TimeSpan.FromSeconds(1),
             Linger = TimeSpan.FromSeconds(1),

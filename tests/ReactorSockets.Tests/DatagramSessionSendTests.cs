@@ -132,10 +132,12 @@ public class DatagramSessionSendTests
         // it; a long run of Unreliable and UnreliableSequenced Sends must all still succeed, because
         // neither consumes retention at all (#43). RetentionHighWaterBytes is monotonic and never falls,
         // so it staying at zero after this run also certifies retained bytes never rose above zero at
-        // any point during it.
+        // any point during it. The unreliable queue is sized to hold all 200 three-byte Messages
+        // (200 × 10 bytes), so the queue budget is not what this test measures.
         const int fragmentSize = 600;
         using DatagramSessionReactorHarness harness = new(
-            bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize);
+            bindLoopback: false, fragmentSize: fragmentSize, retentionBytes: fragmentSize, maxMessageSize: fragmentSize,
+            unreliableQueueBytes: 2000);
         using DatagramSessionReactorHarness remote = new();
         PeerId peer = harness.Reactor.Connect(remote.Endpoint);
         DatagramSessionReactorHarness.PumpBothUntilConnected(harness, remote);

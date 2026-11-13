@@ -34,8 +34,8 @@ SendOutcome outcome = reactor.Send(peer, DeliveryMode.ReliableOrdered, payload);
 ```
 
 `Send` copies the Message and queues it on that Peer. **Nothing reaches the socket here.** The next
-`Pump` packs everything queued for the Peer into one Datagram, in Send order. What does not fit goes
-in the next Pump's Datagram.
+`Pump` packs what is queued for the Peer into Datagrams of at most `FragmentSize + 31` bytes, in
+Send order, up to `65 507 / (FragmentSize + 31)` of them. What does not fit waits for the next Pump.
 
 The bytes are copied before `Send` returns, so you own your buffer again immediately. An empty
 Message is legal and is delivered as an empty `Payload`.
@@ -44,13 +44,15 @@ Message is legal and is delivered as an empty `Payload`.
 |---|---|---|
 | `Sent` | Queued, and retained if the mode is reliable. | Nothing. |
 | `RetentionExhausted` | The mode's reliable Space has too few free slots. Nothing was copied. | Retry after a later Pump. |
+| `SendQueueFull` | An unreliable Message would take the Peer's queued unreliable bytes past `UnreliableQueueBytes`. Nothing was copied. | Retry after the next Pump, or drop it. |
 | `Closed` | The Peer is not open, or a Goodbye has passed in one direction or the other. | Stop sending to this Peer. |
 | `NotEstablished` | The handshake has not finished. Nothing was copied. | Wait for `PeerConnected`. |
 | `MessageTooLarge` | An unreliable Message is larger than one fragment, the smaller of your `FragmentSize` and the peer's. | Split it, or use a reliable mode. |
 | `RemoteMessageTooLarge` | A Message in any mode is larger than the `MaxMessageSize` the peer announced, or a reliable Message needs more Fragments than the `ReceiveWindowFragments` the peer announced. Nothing was retained or sequenced. | Send something smaller. |
 
 The checks run in this order: Peer not open or peer's Goodbye delivered (`Closed`), handshake
-unfinished (`NotEstablished`), your own `Close` in progress (`Closed`), size, then retention. A
+unfinished (`NotEstablished`), your own `Close` in progress (`Closed`), size, then retention. For an
+unreliable mode, `SendQueueFull` is checked last. A
 refused `Send` changes nothing on the Session — no sequence number is spent and no retention is
 taken.
 
@@ -120,7 +122,7 @@ Nothing unreliable is retransmitted.
 
 ## Backpressure
 
-`RetentionExhausted` is the only backpressure this library has. Retention never blocks, never grows
+`RetentionExhausted` is the reliable modes' backpressure, and `SendQueueFull` is the unreliable modes'. Retention never blocks, never grows
 and never drops — a Space without enough free slots fails the `Send` and nothing else.
 
 Retention is per Peer and per reliable Space, never shared. A stalled Peer can exhaust only its own,
@@ -136,7 +138,12 @@ Three things reach `RetentionExhausted`:
 The remedy is the same in all three: stop sending reliable Messages to that Peer, pump, and retry.
 Treat it as your flow-control signal, not as an error.
 
-The unreliable modes have no backpressure. Their Messages queue until the next Pump writes them.
+The unreliable modes share one queue per Peer, `UnreliableQueueBytes`, charged at each Message's
+length plus 7 bytes. A Send past it returns `SendQueueFull`. The queue empties as your Pumps write
+it, not when the peer acknowledges, so pump and retry, or drop the Message if it is already stale.
+Unreliable Messages wait in Send order behind any reliable Messages queued before them, so a
+reliable backlog can hold the queue for more than one Pump. Reliable Sends are never charged
+against it.
 
 ## Receiving
 

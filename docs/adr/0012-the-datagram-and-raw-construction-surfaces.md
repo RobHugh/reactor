@@ -182,6 +182,10 @@ The memory documentation therefore has two lines rather than one — `capacity �
 fragmentSize` for receive and `capacity × 2 × retention` for send — with `fragmentSize` in one and not
 the other, because the window counts packets and retention counts bytes.
 
+**Amended (issue #485).** The memory documentation has a third line, `capacity × UnreliableQueueBytes`,
+for the unreliable send queue. `UnreliableQueueBytes` defaults to `RetentionSlots × (fragmentSize + 7)`,
+derived from retention, so it passes this ADR's rule. See ADR 0025.
+
 ## Datagram liveness adopts the stream profile's shape
 
 ADR 0009 called the liveness deadline and Linger *"consumer knobs with policy defaults"*. The first half
@@ -213,6 +217,10 @@ The rest of the datagram surface passes the rule unchanged. Fragment size's 1200
 under the 1280-byte IPv6 minimum MTU, and its range `[576, 65507]` is RFC 791's minimum reassembly and
 UDP's maximum payload — citable, all of it. `MaxMessageSize` is required, as on the stream profile. The
 receive window keeps its derived floor.
+
+**Amended (issue #486).** Fragment size's range is `[576, 65476]`. Its upper bound is UDP's maximum
+payload less the 20-byte Datagram header and the 11-byte Fragment record header: the largest Fragment
+one Datagram has room for, so it is still derived rather than chosen (ADR 0004).
 
 ## Raw: one buffer, and it is not per Link
 

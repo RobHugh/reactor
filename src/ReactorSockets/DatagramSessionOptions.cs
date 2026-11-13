@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
+using ReactorSockets.Session;
 
 namespace ReactorSockets;
 
@@ -27,7 +28,7 @@ namespace ReactorSockets;
 /// </para>
 /// <para>
 /// <b>The memory bill.</b> A Reactor built from these options preallocates, and the whole of it is
-/// these two lines:
+/// these three lines:
 /// </para>
 /// <list type="bullet">
 /// <item><description>
@@ -38,6 +39,10 @@ namespace ReactorSockets;
 /// send: <c>Capacity × 2 × RetentionBytes</c> — the same two Spaces retain what they have sent until
 /// it is acknowledged, per Peer.
 /// </description></item>
+/// <item><description>
+/// unreliable queue: <c>Capacity × UnreliableQueueBytes</c> — the bytes of Messages Sent in the two
+/// unreliable modes that wait for the next Pump, per Peer.
+/// </description></item>
 /// </list>
 /// <para>
 /// <c>FragmentSize</c> is in one line and not the other because the window counts packets and retention
@@ -47,7 +52,7 @@ namespace ReactorSockets;
 /// default fragment size.
 /// </para>
 /// <para>
-/// The frame arena (<see cref="ReactorOptions.ArenaSize"/>) is over and above those two lines and is
+/// The frame arena (<see cref="ReactorOptions.ArenaSize"/>) is over and above those three lines and is
 /// shared across the whole Reactor rather than multiplied by capacity.
 /// </para>
 /// <para>
@@ -93,11 +98,14 @@ public sealed class DatagramSessionOptions
     private const int MinimumFragmentSize = 576;
 
     /// <summary>
-    /// The largest fragment size this profile will accept, in bytes: the maximum UDP payload, being
-    /// 65 535 less the 20-byte IPv4 header and the 8-byte UDP header. Above this there is no datagram
-    /// to put a fragment in.
+    /// The largest fragment size this profile will accept, in bytes: 65 476, the maximum UDP payload
+    /// (65 507) less the 20-byte Datagram header and the 11-byte Fragment record header, the largest
+    /// record header on the wire. At this size one full Fragment fills one maximum UDP datagram
+    /// exactly. A larger Fragment fits no Datagram, so a Message cut into one would never be sent
+    /// (issue #486).
     /// </summary>
-    private const int MaximumFragmentSize = 65_507;
+    private const int MaximumFragmentSize =
+        RawReactor.MaxUdpDatagramSize - DatagramSessionProtocol.DatagramHeaderSize - DatagramSessionProtocol.FragmentRecordSize;
 
     /// <summary>
     /// The default fragment size, in bytes: QUIC's own floor, being the 1280-byte IPv6 minimum MTU
@@ -275,7 +283,10 @@ public sealed class DatagramSessionOptions
     /// The bytes a fragment carries, and therefore the unit every buffer here is measured in.
     /// Defaults to 1200. Provenance: QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000),
     /// the one value with citable provenance for surviving an arbitrary path. Must lie between 576
-    /// (RFC 791's guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).
+    /// (RFC 791's guaranteed reassembly minimum) and 65 476 (the 65 507-byte maximum UDP payload less the
+    /// 20-byte Datagram header and the 11-byte Fragment record header). A data Datagram carries at most
+    /// this many payload bytes plus a 31-byte header, so at the default a Datagram is at most 1231 bytes,
+    /// which with IPv6 and UDP headers fits the 1280-byte minimum MTU.
     /// </summary>
     /// <remarks>
     /// Announced in the handshake (ADR 0024). Each Peer cuts its reliable Messages at the smaller of
@@ -288,6 +299,40 @@ public sealed class DatagramSessionOptions
     /// <see cref="ResolvedFragmentSize"/>.
     /// </remarks>
     public int? FragmentSize { get; init; }
+
+    /// <summary>
+    /// The most bytes one Peer may have queued for <see cref="DeliveryMode.Unreliable"/> and
+    /// <see cref="DeliveryMode.UnreliableSequenced"/> until a Pump writes them, counting each Message's payload plus
+    /// its 7-byte record header. A Send that would go past it returns <see cref="SendOutcome.SendQueueFull"/>.
+    /// <see langword="null"/> means <see cref="RetentionSlots"/> × (<see cref="ResolvedFragmentSize"/> + 7):
+    /// as many full unreliable Messages as one reliable Space retains Fragments. Provenance: derived from
+    /// <see cref="RetentionBytes"/> and <see cref="FragmentSize"/>, so the unreliable queue holds as much as
+    /// a reliable Space does. Must be at least
+    /// <see cref="ResolvedFragmentSize"/> + 7, one full unreliable Message.
+    /// </summary>
+    /// <remarks>
+    /// The queue is preallocated, <see cref="UnreliableQueueBudgetBytes"/> in total, so an unreliable Send
+    /// allocates nothing. A Pump writes up to one maximum UDP payload's worth of Datagrams per Peer, so a
+    /// budget above about 65 507 bytes takes more than one Pump to drain.
+    /// </remarks>
+    public int? UnreliableQueueBytes { get; init; }
+
+    /// <summary>
+    /// <see cref="UnreliableQueueBytes"/> with its default applied, clamped to <see cref="int.MaxValue"/>.
+    /// </summary>
+    public int ResolvedUnreliableQueueBytes
+    {
+        get
+        {
+            if (UnreliableQueueBytes is int configured)
+            {
+                return configured;
+            }
+
+            long derived = (long)RetentionSlots * (ResolvedFragmentSize + DatagramSessionProtocol.UnfragmentedRecordSize);
+            return derived > int.MaxValue ? int.MaxValue : (int)derived;
+        }
+    }
 
     /// <summary>
     /// The fragments each reliable Space may have outstanding per Peer. Defaults to exactly the
@@ -456,6 +501,12 @@ public sealed class DatagramSessionOptions
             * (ResolvedFragmentSize + Core.RetentionPool.SlotBookkeepingBytes);
 
     /// <summary>
+    /// The unreliable-queue line of the memory bill in bytes: <c>Capacity × </c><see cref="ResolvedUnreliableQueueBytes"/>,
+    /// one region per Peer, allocated at construction.
+    /// </summary>
+    public long UnreliableQueueBudgetBytes => (long)Reactor.Capacity * ResolvedUnreliableQueueBytes;
+
+    /// <summary>
     /// The uniform retention slots one reliable Space holds per Peer: <see cref="RetentionBytes"/>
     /// divided by <see cref="ResolvedFragmentSize"/>, truncating any remainder. Stays derived from the
     /// byte bound rather than a knob of its own (ADR 0012) so it cannot drift from
@@ -499,7 +550,9 @@ public sealed class DatagramSessionOptions
                 fragmentSize,
                 $"fragment size of {fragmentSize} bytes lies outside {MinimumFragmentSize}-{MaximumFragmentSize} — " +
                 $"{MinimumFragmentSize} is the reassembly buffer RFC 791 guarantees every host provides, and " +
-                $"{MaximumFragmentSize} is the largest payload a UDP datagram has room for.");
+                $"{MaximumFragmentSize} is the largest UDP payload ({RawReactor.MaxUdpDatagramSize}) less this profile's " +
+                $"{DatagramSessionProtocol.DatagramHeaderSize}-byte Datagram header and " +
+                $"{DatagramSessionProtocol.FragmentRecordSize}-byte Fragment record header.");
         }
 
         if (RetentionBytes < fragmentSize)
@@ -508,6 +561,16 @@ public sealed class DatagramSessionOptions
                 $"retention of {RetentionBytes} bytes cannot hold one {fragmentSize}-byte fragment, so a Space would " +
                 "have nothing to retransmit the moment it sent anything — raise RetentionBytes to at least the fragment size.",
                 nameof(RetentionBytes));
+        }
+
+        int unreliableRecordFloor = fragmentSize + DatagramSessionProtocol.UnfragmentedRecordSize;
+        if (ResolvedUnreliableQueueBytes < unreliableRecordFloor)
+        {
+            throw new ArgumentException(
+                $"an unreliable send queue of {ResolvedUnreliableQueueBytes} bytes cannot hold one {fragmentSize}-byte " +
+                $"Message and its {DatagramSessionProtocol.UnfragmentedRecordSize}-byte record header, so an unreliable " +
+                $"Send at the fragment size would always return SendQueueFull — raise UnreliableQueueBytes to at least {unreliableRecordFloor}.",
+                nameof(UnreliableQueueBytes));
         }
 
         int window = ResolvedReceiveWindowFragments;
@@ -611,7 +674,7 @@ public sealed class DatagramSessionOptions
     }
 
     /// <summary>
-    /// Rejects a combination whose preallocation could not be made, naming both lines of the memory
+    /// Rejects a combination whose preallocation could not be made, naming all three lines of the memory
     /// bill and their total. The check is arithmetic rather than an attempted allocation because the
     /// point is to tell the caller which knob to change, and a caught allocation failure knows only
     /// that something was too big.
@@ -620,7 +683,8 @@ public sealed class DatagramSessionOptions
     {
         long receive = ReceiveBudgetBytes;
         long send = SendBudgetBytes;
-        long total = receive + send;
+        long unreliableQueue = UnreliableQueueBudgetBytes;
+        long total = receive + send + unreliableQueue;
 
         if (total > Array.MaxLength)
         {
@@ -633,7 +697,8 @@ public sealed class DatagramSessionOptions
                 $"{PendingGroupsPerSpace} waiting groups × {PendingGroupEntryBytes} bytes = {receive}; send is " +
                 $"Capacity {Reactor.Capacity} × {ReliableSpaceCount} reliable Spaces × {RetentionSlots} slots × " +
                 $"({ResolvedFragmentSize} payload bytes + {Core.RetentionPool.SlotBookkeepingBytes} bookkeeping bytes) = " +
-                $"{send}. Lower Capacity, MaxMessageSize, ReceiveWindowFragments or RetentionBytes.",
+                $"{send}; the unreliable queue is Capacity {Reactor.Capacity} × {ResolvedUnreliableQueueBytes} bytes = {unreliableQueue}. " +
+                "Lower Capacity, MaxMessageSize, ReceiveWindowFragments, RetentionBytes or UnreliableQueueBytes.",
                 nameof(Reactor));
         }
     }

@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Net;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Time.Testing;
@@ -48,7 +49,8 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
         RandomNumberGenerator? entropy = null,
         FakeTimeProvider? timeProvider = null,
         TimeSpan? linger = null,
-        TimeSpan? sendIdleInterval = null)
+        TimeSpan? sendIdleInterval = null,
+        int? unreliableQueueBytes = null)
     {
         IReactorDiagnostics? installedSink = withoutDiagnostics ? null : sinkOverride ?? Sink;
         Entropy = entropy ?? RandomNumberGenerator.Create();
@@ -73,6 +75,7 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
             ReceiveWindowFragments = receiveWindowFragments,
             MissedHeartbeats = missedHeartbeats,
             MaxDatagramsPerPump = maxDatagramsPerPump,
+            UnreliableQueueBytes = unreliableQueueBytes,
             // Defaults far out (issue #340): a test that never mentions the send-idle timer should
             // never see a Ping arrive uninvited mid-scenario and upset a wire-count assertion it wrote
             // long before the Ping existed. Tests exercising the timer itself pass their own short value.
@@ -403,6 +406,37 @@ internal sealed class DatagramSessionReactorHarness : IDisposable
         tap.Pump();
         accepter.Reactor.Pump();
         tap.Pump();
+    }
+
+    /// <summary>
+    /// Pumps <paramref name="dialler"/> once, then pumps <paramref name="tap"/> until it has relayed
+    /// <paramref name="dataDatagrams"/> data Datagrams from the dialler after its first
+    /// <paramref name="capturesBefore"/> captures, and returns them in the order they were relayed. A
+    /// Raw Link delivers one datagram per Pump, so a dialler Pump that writes several Datagrams needs as
+    /// many tap Pumps. The accepter is not pumped. A data Datagram is one whose session id is not the
+    /// reserved 0. Returns whatever arrived by the deadline, so assert the count on the result.
+    /// </summary>
+    public static List<byte[]> PumpOnceAndRelayDataDatagrams(
+        DatagramSessionReactorHarness dialler, WireTap tap, int capturesBefore, int dataDatagrams)
+    {
+        dialler.Reactor.Pump();
+        PumpDeadline deadline = PumpDeadline.Start();
+        while (true)
+        {
+            tap.Pump();
+            List<byte[]> relayed = tap.Captures
+                .Skip(capturesBefore)
+                .Where(c => c.Direction == TapDirection.DiallerToAccepter
+                    && BinaryPrimitives.ReadUInt32BigEndian(c.Payload.AsSpan(0, 4)) != 0)
+                .Select(c => c.Payload)
+                .ToList();
+            if (relayed.Count >= dataDatagrams || deadline.Expired)
+            {
+                return relayed;
+            }
+
+            PumpDeadline.Yield();
+        }
     }
 
     /// <summary>

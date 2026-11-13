@@ -289,6 +289,18 @@ references:
   commentId: Overload:ReactorSockets.DatagramSessionOptions.ResolvedReceiveWindowFragments
   fullName: ReactorSockets.DatagramSessionOptions.ResolvedReceiveWindowFragments
   nameWithType: DatagramSessionOptions.ResolvedReceiveWindowFragments
+- uid: ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes
+  name: ResolvedUnreliableQueueBytes
+  href: ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes.html#ReactorSockets_DatagramSessionOptions_ResolvedUnreliableQueueBytes
+  commentId: P:ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes
+  fullName: ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes
+  nameWithType: DatagramSessionOptions.ResolvedUnreliableQueueBytes
+- uid: ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes*
+  name: ResolvedUnreliableQueueBytes
+  href: ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes.html
+  commentId: Overload:ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes
+  fullName: ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes
+  nameWithType: DatagramSessionOptions.ResolvedUnreliableQueueBytes
 - uid: ReactorSockets.DatagramSessionOptions.RetentionBytes
   name: RetentionBytes
   href: ReactorSockets.DatagramSessionOptions.RetentionBytes.html#ReactorSockets_DatagramSessionOptions_RetentionBytes
@@ -337,6 +349,30 @@ references:
   commentId: Overload:ReactorSockets.DatagramSessionOptions.SendIdleInterval
   fullName: ReactorSockets.DatagramSessionOptions.SendIdleInterval
   nameWithType: DatagramSessionOptions.SendIdleInterval
+- uid: ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes
+  name: UnreliableQueueBudgetBytes
+  href: ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes.html#ReactorSockets_DatagramSessionOptions_UnreliableQueueBudgetBytes
+  commentId: P:ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes
+  fullName: ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes
+  nameWithType: DatagramSessionOptions.UnreliableQueueBudgetBytes
+- uid: ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes*
+  name: UnreliableQueueBudgetBytes
+  href: ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes.html
+  commentId: Overload:ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes
+  fullName: ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes
+  nameWithType: DatagramSessionOptions.UnreliableQueueBudgetBytes
+- uid: ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes
+  name: UnreliableQueueBytes
+  href: ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.html#ReactorSockets_DatagramSessionOptions_UnreliableQueueBytes
+  commentId: P:ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes
+  fullName: ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes
+  nameWithType: DatagramSessionOptions.UnreliableQueueBytes
+- uid: ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes*
+  name: UnreliableQueueBytes
+  href: ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.html
+  commentId: Overload:ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes
+  fullName: ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes
+  nameWithType: DatagramSessionOptions.UnreliableQueueBytes
 - uid: ReactorSockets.DatagramSessionReactor
   name: DatagramSessionReactor
   href: ReactorSockets.DatagramSessionReactor.html
@@ -2455,6 +2491,12 @@ references:
   commentId: F:ReactorSockets.SendOutcome.RetentionExhausted
   fullName: ReactorSockets.SendOutcome.RetentionExhausted
   nameWithType: SendOutcome.RetentionExhausted
+- uid: ReactorSockets.SendOutcome.SendQueueFull
+  name: SendQueueFull
+  href: ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_SendQueueFull
+  commentId: F:ReactorSockets.SendOutcome.SendQueueFull
+  fullName: ReactorSockets.SendOutcome.SendQueueFull
+  nameWithType: SendOutcome.SendQueueFull
 - uid: ReactorSockets.SendOutcome.Sent
   name: Sent
   href: ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_Sent

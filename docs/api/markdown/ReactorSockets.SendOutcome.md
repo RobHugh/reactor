@@ -75,6 +75,18 @@ out before this end knows the far end's version and announced <code>MaxMessageSi
 
 
 
+`SendQueueFull = 6` 
+
+An <code>Unreliable</code> or <code>UnreliableSequenced</code> Message would take the bytes this Peer has queued
+for those two modes past [`DatagramSessionOptions.UnreliableQueueBytes`](ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.md#ReactorSockets_DatagramSessionOptions_UnreliableQueueBytes). Nothing was
+copied and no sequence was spent. The queue frees as this end's Pumps write it, not on an
+acknowledgement, so the caller may retry after a later Pump, or drop the Message. Its own value
+rather than [`SendOutcome.RetentionExhausted`](ReactorSockets.SendOutcome.md): that value means reliable retention is full and frees
+only when the far end acknowledges.
+Datagram profile only.
+
+
+
 ## Remarks
 
 <p>

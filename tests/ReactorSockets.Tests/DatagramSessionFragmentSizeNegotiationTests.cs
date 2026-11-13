@@ -125,10 +125,12 @@ public class DatagramSessionFragmentSizeNegotiationTests
         using WireTap tapOwner = tap;
         accepter.Options.ResolvedReceiveWindowFragments.Should().Be(5);
 
+        int capturesBefore = tap.Captures.Count;
+
         // Act
         SendOutcome tooLarge = dialler.Reactor.Send(peer, mode, new byte[4000]);
         SendOutcome fits = dialler.Reactor.Send(peer, mode, new byte[3000]);
-        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
+        DatagramSessionReactorHarness.PumpOnceAndRelayDataDatagrams(dialler, tap, capturesBefore, 5);
 
         // Assert — the refused Message spent no sequence: the accepted one starts at sequence 0 and its
         // five Fragments are 0 to 4, so nothing was sequenced or retained for the 4000-byte Message.
