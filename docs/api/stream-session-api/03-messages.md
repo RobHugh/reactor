@@ -42,14 +42,17 @@ in one write.
 | `RetentionExhausted` | No room. Nothing was copied. | Retry after a later Pump. |
 | `Closed` | A Goodbye already passed in one direction or the other. | Stop sending to this Peer. |
 | `NotEstablished` | The handshake has not finished. Nothing was copied. | Wait for `PeerConnected`. |
+| `RemoteMessageTooLarge` | The Message is longer than the `MaxMessageSize` the peer announced. Nothing was copied. | Send something smaller. |
 
 A dialled Peer is addressable from `Connect`, but it accepts no Message until `PeerConnected`.
 `Closed` is checked first, so a Peer you closed before its handshake finished returns `Closed`.
+`RemoteMessageTooLarge` is checked after `NotEstablished`, because the peer's limit arrives in its Hello.
 
 `Send` throws:
 
 - `ArgumentException` if `message` is empty. A zero-length prefix is illegal on the wire.
-- `ArgumentException` if `message.Length > MaxMessageSize`.
+- `ArgumentException` if `message.Length` is above your own `MaxMessageSize`. This is checked before
+  any outcome above.
 - `ArgumentException` if the `PeerId` names no open Peer.
 
 A stale `PeerId` throwing is deliberate: sending to a Peer you were told was gone is a bug in your
@@ -89,7 +92,8 @@ delivery and no coalescing of two Messages into one event.
 
 `MaxMessageSize` is announced to the peer during the handshake as your receive limit, so the far end
 cannot legally frame something you would have to reject. If it does anyway, the Session ends with
-`ProtocolViolation`.
+`ProtocolViolation`. Your own `Send` applies the peer's announced limit the same way and returns
+`RemoteMessageTooLarge`, so this library never frames a Message the peer would reject.
 
 ## Message size and framing failures
 

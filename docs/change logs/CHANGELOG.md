@@ -28,6 +28,10 @@
   A re-dial counts as resumed only when the listening side answers (#481, ADR 0011).
 - A Message sent to an Interrupted stream Peer stayed unsent after the Peer resumed until the next
   `Send`. It is now written once the Peer resumes, on both ends (#481).
+- A stream `Send` above the peer's announced `MaxMessageSize` returned `Sent`, and the peer closed the
+  Session with `ProtocolViolation`. It returns `RemoteMessageTooLarge` and copies nothing, as the
+  datagram profile does (#484). A consumer that switches over `SendOutcome` for a stream Reactor
+  handles the new value.
 
 ### Breaking changes
 

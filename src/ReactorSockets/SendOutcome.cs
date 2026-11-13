@@ -51,10 +51,12 @@ public enum SendOutcome
     MessageTooLarge = 3,
 
     /// <summary>
-    /// A Message, in any delivery mode, exceeds the <c>MaxMessageSize</c> the remote end announced during
-    /// the handshake, or a reliable Message needs more Fragments than the receive window the remote end
-    /// announced (ADR 0024). Nothing was copied, and the caller may retry immediately with a smaller payload.
-    /// An unreliable Message over both limits reports <see cref="MessageTooLarge"/> instead. Distinct
+    /// A Message exceeds the <c>MaxMessageSize</c> the remote end announced during the handshake, on either
+    /// Session profile and in any datagram delivery mode, or a reliable datagram Message needs more Fragments
+    /// than the receive window the remote end announced (ADR 0024). Nothing was copied, and the caller may
+    /// retry immediately with a smaller payload. On the datagram profile an unreliable Message over both
+    /// limits reports <see cref="MessageTooLarge"/> instead. On the stream profile a Message over this end's
+    /// own <c>MaxMessageSize</c> throws <see cref="System.ArgumentException"/> before this is checked. Distinct
     /// from <see cref="MessageTooLarge"/> by which limit was exceeded: that value means the
     /// single-Datagram cap an unreliable mode cannot exceed, which a smaller peer Fragment size lowers;
     /// this one means the far end's announced receive limit, its <c>MaxMessageSize</c> or its receive

@@ -52,10 +52,12 @@ use a reliable mode".
 
 `RemoteMessageTooLarge = 4` 
 
-A Message, in any delivery mode, exceeds the <code>MaxMessageSize</code> the remote end announced during
-the handshake, or a reliable Message needs more Fragments than the receive window the remote end
-announced (ADR 0024). Nothing was copied, and the caller may retry immediately with a smaller payload.
-An unreliable Message over both limits reports [`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md) instead. Distinct
+A Message exceeds the <code>MaxMessageSize</code> the remote end announced during the handshake, on either
+Session profile and in any datagram delivery mode, or a reliable datagram Message needs more Fragments
+than the receive window the remote end announced (ADR 0024). Nothing was copied, and the caller may
+retry immediately with a smaller payload. On the datagram profile an unreliable Message over both
+limits reports [`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md) instead. On the stream profile a Message over this end's
+own <code>MaxMessageSize</code> throws [`ArgumentException`](https://learn.microsoft.com/dotnet/api/system.argumentexception) before this is checked. Distinct
 from [`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md) by which limit was exceeded: that value means the
 single-Datagram cap an unreliable mode cannot exceed, which a smaller peer Fragment size lowers;
 this one means the far end's announced receive limit, its <code>MaxMessageSize</code> or its receive

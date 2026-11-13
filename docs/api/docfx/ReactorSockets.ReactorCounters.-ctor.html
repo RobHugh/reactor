@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_ReactorCounters__ctor_" data-uid="ReactorSockets.ReactorCounters.#ctor*" class="text-break">
-Constructor ReactorCounters  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/ReactorCounters.cs/#L86"><i class="bi bi-code-slash"></i></a>
+Constructor ReactorCounters  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/ReactorCounters.cs/#L85"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,7 +107,7 @@ Constructor ReactorCounters  <a class="header-action link-secondary" title="View
 
 <h3 id="ReactorSockets_ReactorCounters__ctor_System_UInt64_System_UInt64_System_UInt64_System_UInt64_System_UInt64_System_UInt64_System_UInt64_System_UInt64_" data-uid="ReactorSockets.ReactorCounters.#ctor(System.UInt64,System.UInt64,System.UInt64,System.UInt64,System.UInt64,System.UInt64,System.UInt64,System.UInt64)">
   ReactorCounters(ulong, ulong, ulong, ulong, ulong, ulong, ulong, ulong)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/ReactorCounters.cs/#L86"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/ReactorCounters.cs/#L85"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>A point-in-time snapshot of the Reactor-scope counters (ADR 0013): monotonic figures running
@@ -144,10 +144,9 @@ sizes the Arena.</p>
 </dd>
   <dt><code>AdmissionDeferrals</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.uint64">ulong</a></dt>
   <dd><p>Admissions declined that left the work where it was, for a later Pump to take. Moves on the
-transports where declined work waits — Raw and the stream Session profile. On the stream profile both the admission cap and the limit of
-<a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a> connections held waiting for their first record decline this way.
-Counted once per
-declining rather than once per piece of work turned away, which makes it coarse where the work
+transports where declined work waits — Raw and the stream Session profile. On the stream profile
+both the admission cap and the limit of <a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a> connections held
+waiting for their first record decline this way. Counted once per declining rather than once per piece of work turned away, which makes it coarse where the work
 sits in an OS backlog: one listening Link or bound endpoint declines its whole backlog with one
 declining, because that depth is unknowable without accepting. Where the Reactor already holds
 the work — a stream Session handshake accepted but not completed — one declining is one piece of

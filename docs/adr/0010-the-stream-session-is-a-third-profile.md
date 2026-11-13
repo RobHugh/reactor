@@ -42,6 +42,14 @@ fragments and no RTO, because TCP provides what they were built for.
 - **A framed capacity Refusal**, carrying the `DisconnectReason` ADR 0007 deferred.
 - **Goodbye, Closing, Interrupted, Linger and Resume**, meaning exactly what they mean in the glossary.
 
+**Amended (issue #484).** `MaxMessageSize` is also a send limit. `Send` refuses a Message longer than
+the limit the peer announced in its Hello with `RemoteMessageTooLarge` and copies nothing, the outcome
+the datagram profile gives for the same limit (ADR 0004, #449). The check runs after `NotEstablished`,
+because the limit arrives in the Hello. A Message longer than this end's own `MaxMessageSize` still
+throws `ArgumentException`: the caller's own options predict it, and retention is floored by that
+limit. The main cost is that `Send` is no longer decided by this Reactor's options alone, so a stream
+consumer handles `RemoteMessageTooLarge` too.
+
 ## Resumption, on the premise that drops are ordinary
 
 This profile is designed for connections that half-open and drop often, not rarely. That premise is

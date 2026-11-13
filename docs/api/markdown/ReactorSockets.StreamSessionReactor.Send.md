@@ -20,7 +20,11 @@ already [`SessionEventKind.PeerClosing`](ReactorSockets.SessionEventKind.md) or 
 refuses a Peer whose handshake has not reached `Established` with
 [`SendOutcome.NotEstablished`](ReactorSockets.SendOutcome.md): flushing that Message would write to a socket whose
 connect has not resolved, closing the Peer with [`DisconnectReason.TransportFailed`](ReactorSockets.DisconnectReason.md),
-or send it before the far end's handshake record has been read.
+or send it before the far end's handshake record has been read. Once the Peer is established,
+refuses a Message longer than the <code>MaxMessageSize</code> it announced in its Hello
+(`RemoteMaxMessageSize`) with [`SendOutcome.RemoteMessageTooLarge`](ReactorSockets.SendOutcome.md),
+copying nothing: the far end would close the Session with
+[`DisconnectReason.ProtocolViolation`](ReactorSockets.DisconnectReason.md) on its length prefix.
 
 ```csharp
 public SendOutcome Send(PeerId peer, ReadOnlySpan<byte> message)
@@ -34,9 +38,10 @@ The Peer to send to. Throws if not open, matching [`StreamSessionReactor.Counter
 
 `message` [ReadOnlySpan](https://learn.microsoft.com/dotnet/api/system.readonlyspan\-1)<[byte](https://learn.microsoft.com/dotnet/api/system.byte)\>
 
-The Message payload, unframed. Throws if empty or longer than
-[`StreamSessionOptions.MaxMessageSize`](ReactorSockets.StreamSessionOptions.MaxMessageSize.md#ReactorSockets_StreamSessionOptions_MaxMessageSize) — the same bounds the receive side enforces, so
-this can never frame a Message the far end would reject.
+The Message payload, unframed. Throws if empty or longer than this Reactor's own
+[`StreamSessionOptions.MaxMessageSize`](ReactorSockets.StreamSessionOptions.MaxMessageSize.md#ReactorSockets_StreamSessionOptions_MaxMessageSize). A Message within that limit but longer than the
+Peer's announced limit returns [`SendOutcome.RemoteMessageTooLarge`](ReactorSockets.SendOutcome.md), so this never frames
+a Message the far end would reject.
 
 ### Returns
 

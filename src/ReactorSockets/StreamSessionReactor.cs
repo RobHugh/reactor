@@ -450,7 +450,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// refuses a Peer whose handshake has not reached <see cref="HandshakeState.Established"/> with
     /// <see cref="SendOutcome.NotEstablished"/>: flushing that Message would write to a socket whose
     /// connect has not resolved, closing the Peer with <see cref="DisconnectReason.TransportFailed"/>,
-    /// or send it before the far end's handshake record has been read.
+    /// or send it before the far end's handshake record has been read. Once the Peer is established,
+    /// refuses a Message longer than the <c>MaxMessageSize</c> it announced in its Hello
+    /// (<see cref="PeerSlot.RemoteMaxMessageSize"/>) with <see cref="SendOutcome.RemoteMessageTooLarge"/>,
+    /// copying nothing: the far end would close the Session with
+    /// <see cref="DisconnectReason.ProtocolViolation"/> on its length prefix.
     /// </summary>
     /// <remarks>
     /// <see cref="PeerSlot.IsInterrupted"/> is deliberately not one of the refusal conditions above
@@ -467,9 +471,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// </remarks>
     /// <param name="peer">The Peer to send to. Throws if not open, matching <see cref="CountersOf"/>.</param>
     /// <param name="message">
-    /// The Message payload, unframed. Throws if empty or longer than
-    /// <see cref="StreamSessionOptions.MaxMessageSize"/> — the same bounds the receive side enforces, so
-    /// this can never frame a Message the far end would reject.
+    /// The Message payload, unframed. Throws if empty or longer than this Reactor's own
+    /// <see cref="StreamSessionOptions.MaxMessageSize"/>. A Message within that limit but longer than the
+    /// Peer's announced limit returns <see cref="SendOutcome.RemoteMessageTooLarge"/>, so this never frames
+    /// a Message the far end would reject.
     /// </param>
     public SendOutcome Send(PeerId peer, ReadOnlySpan<byte> message)
     {
@@ -504,6 +509,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         if (slot.State != HandshakeState.Established)
         {
             return SendOutcome.NotEstablished;
+        }
+
+        // The Peer's limit arrives in its Hello, so it is known only once the Peer is Established.
+        if ((uint)message.Length > slot.RemoteMaxMessageSize)
+        {
+            return SendOutcome.RemoteMessageTooLarge;
         }
 
         Span<byte> framed = new byte[MessageFramingCodec.LengthPrefixSize + message.Length];
@@ -3431,7 +3442,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// <summary>The protocol version the remote's handshake record offered.</summary>
         public uint RemoteVersion { get; set; }
 
-        /// <summary>The largest Message the remote said it will accept.</summary>
+        /// <summary>
+        /// The largest Message the remote said it will accept. <see cref="Send"/> refuses a longer one with
+        /// <see cref="SendOutcome.RemoteMessageTooLarge"/>.
+        /// </summary>
         public uint RemoteMaxMessageSize { get; set; }
 
         /// <summary>The send-idle interval the remote announced.</summary>
