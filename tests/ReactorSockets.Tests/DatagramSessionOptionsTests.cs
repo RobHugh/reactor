@@ -690,6 +690,24 @@ public class DatagramSessionOptionsTests
     }
 
     [Fact]
+    public void HeldRecordBudgetBytes_WindowAtIntMaxValue_CountsTwoWindowsWithoutWrapping()
+    {
+        // Arrange — issue #540: twice this window wraps int negative. With Capacity 1 the budget still fits
+        // long, so a wrapped slot count would show as a negative figure rather than saturate.
+        DatagramSessionOptions options = CreateOptions(
+            capacity: 1,
+            maxMessageSize: 1000,
+            fragmentSize: 1000,
+            receiveWindowFragments: int.MaxValue);
+
+        // Act
+        long budget = options.HeldRecordBudgetBytes;
+
+        // Assert — each slot is a whole fragment plus 44 bytes of bookkeeping.
+        budget.Should().Be(2L * int.MaxValue * (1000 + 44));
+    }
+
+    [Fact]
     public void SendBudgetBytes_WorkedExample_EqualsCapacityTimesTwoTimesWholeRetentionSlotsWithTheirBookkeeping()
     {
         // Arrange — distinct numbers so a transposed factor in the formula is caught, and a retention
