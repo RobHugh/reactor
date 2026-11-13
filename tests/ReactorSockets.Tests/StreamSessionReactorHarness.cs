@@ -15,6 +15,8 @@ namespace ReactorSockets.Tests;
 /// </summary>
 internal sealed class StreamSessionReactorHarness : IDisposable
 {
+    private readonly int _missedHeartbeats;
+
     public StreamSessionReactorHarness(
         int capacity = 4,
         int? maxPeersPerAddress = null,
@@ -40,6 +42,7 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         Capacity = capacity;
         SendIdleInterval = sendIdleInterval ?? TimeSpan.FromSeconds(1);
         Linger = linger ?? TimeSpan.FromSeconds(1);
+        _missedHeartbeats = missedHeartbeats ?? 3;
         TimeProvider = timeProvider ?? new FakeTimeProvider();
         IReactorDiagnostics? installedSink = withoutDiagnostics ? null : sinkOverride ?? Sink;
         Entropy = entropy ?? RandomNumberGenerator.Create();
@@ -94,6 +97,14 @@ internal sealed class StreamSessionReactorHarness : IDisposable
     /// ceiling to bite sets it below the cadence it pumps at, since that ceiling is the Linger.
     /// </summary>
     public TimeSpan Linger { get; }
+
+    /// <summary>
+    /// How long this Reactor holds an accepted connection waiting for its first handshake record:
+    /// <see cref="SendIdleInterval"/> × the missed-heartbeat count it was built with (3 unless the
+    /// constructor's <c>missedHeartbeats</c> overrides it). Computed on read, so a harness built with
+    /// intervals whose product overflows a <see cref="TimeSpan"/> still constructs.
+    /// </summary>
+    public TimeSpan PendingAdmissionDeadline => SendIdleInterval * _missedHeartbeats;
 
     /// <summary>The recording Sink installed on the Reactor, unless the harness was told to override or omit it.</summary>
     public RecordingDiagnosticsSink Sink { get; } = new();
@@ -360,6 +371,20 @@ internal sealed class StreamSessionReactorHarness : IDisposable
         PeerId id = StreamSessionTestRecords.EstablishSession(this, counterparty.Send);
         byte[] hello = counterparty.Receive(StreamSessionTestRecords.HandshakeRecordSize);
         return new HeldPeer(id, counterparty, StreamSessionTestRecords.ReadResumeSecretFromHello(hello));
+    }
+
+    /// <summary>
+    /// Opens a <see cref="RawStreamPeer"/> that sends nothing, then pumps for <paramref name="budget"/> of
+    /// real time, 200 ms unless given, so this Reactor has accepted it and holds it waiting for its first
+    /// handshake record. The clock does not move. The caller owns disposing the returned counterparty.
+    /// </summary>
+    /// <param name="localAddress">The address the connection is made from, loopback when null.</param>
+    /// <param name="budget">How long to pump after connecting.</param>
+    public RawStreamPeer HoldSilentConnection(IPAddress? localAddress = null, TimeSpan? budget = null)
+    {
+        RawStreamPeer counterparty = new(Endpoint, localAddress);
+        PumpUntil(() => false, budget ?? TimeSpan.FromMilliseconds(200));
+        return counterparty;
     }
 
     /// <summary>

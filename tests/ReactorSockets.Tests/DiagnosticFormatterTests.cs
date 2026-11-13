@@ -114,6 +114,9 @@ public class DiagnosticFormatterTests
         new(
             DiagnosticRecord.ForDeliveryCounterRefused(_peer, claimedCount: 10, appendedMessageCount: 4),
             $"Warn DeliveryCounterRefused (308), {PeerText}: the Peer claimed delivery of more Messages than were sent and the Session was closed (count claimed 10, count appended 4)"),
+        new(
+            DiagnosticRecord.ForPendingAdmissionExpired(_source, bytesReceived: 1, deadlineMilliseconds: 3000),
+            $"Warn PendingAdmissionExpired (309), {SourceText}: an accepted connection sent no whole handshake record within its deadline and was closed (bytes received 1, deadline 3000 ms)"),
     ];
 
     /// <summary>Every snapshot row, as xUnit theory data.</summary>

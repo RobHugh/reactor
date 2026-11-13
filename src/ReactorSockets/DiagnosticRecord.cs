@@ -286,4 +286,12 @@ public readonly record struct DiagnosticRecord
     /// </summary>
     public static DiagnosticRecord ForDeliveryCounterRefused(PeerId peer, long claimedCount, long appendedMessageCount) =>
         new(DiagnosticId.DeliveryCounterRefused, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, claimedCount, appendedMessageCount);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.PendingAdmissionExpired"/> record for the claimed Source of an
+    /// accepted stream connection closed for sending no whole first record within its deadline.
+    /// <c>Value0</c> is the bytes of that record it had sent; <c>Value1</c> is the deadline in milliseconds.
+    /// </summary>
+    public static DiagnosticRecord ForPendingAdmissionExpired(Source source, int bytesReceived, long deadlineMilliseconds) =>
+        new(DiagnosticId.PendingAdmissionExpired, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, bytesReceived, deadlineMilliseconds);
 }
