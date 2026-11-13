@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using FluentAssertions;
 using Xunit;
 
@@ -244,6 +245,86 @@ public class DatagramSessionUnreliableQueueTests
     }
 
     [Fact]
+    public void Send_AfterASendQueueFullRefusal_SpendsNoSequence()
+    {
+        // Arrange: the budget holds two 1200-byte Messages.
+        using DatagramSessionReactorHarness dialler = new(
+            bindLoopback: false, capacity: 1, unreliableQueueBytes: 2 * (1200 + RecordHeaderBytes));
+        using DatagramSessionReactorHarness accepter = new(capacity: 1);
+        using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
+        PeerId peer = dialler.Reactor.Connect(tap.PublicEndPoint);
+        DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
+        int capturesBefore = tap.Captures.Count;
+        dialler.Reactor.Send(peer, DeliveryMode.Unreliable, new byte[1200]).Should().Be(SendOutcome.Sent);
+        dialler.Reactor.Send(peer, DeliveryMode.Unreliable, new byte[1200]).Should().Be(SendOutcome.Sent);
+
+        // Act
+        SendOutcome refused = dialler.Reactor.Send(peer, DeliveryMode.Unreliable, new byte[1200]);
+        DatagramSessionReactorHarness.PumpOnceAndRelayDataDatagrams(dialler, tap, capturesBefore, 2);
+        SendOutcome retried = dialler.Reactor.Send(peer, DeliveryMode.Unreliable, new byte[1200]);
+        DatagramSessionReactorHarness.PumpOnceAndRelayDataDatagrams(dialler, tap, capturesBefore, 3);
+
+        // Assert
+        refused.Should().Be(SendOutcome.SendQueueFull);
+        retried.Should().Be(SendOutcome.Sent);
+        DiallerSequences(tap).Should().Equal([0u, 1u, 2u], "the refused Message took no sequence, so the retry follows the second");
+    }
+
+    [Fact]
+    public void Pump_TwoPeersQueueingUnreliableMessages_EachReceiverGetsItsOwnBytes()
+    {
+        // Arrange: one Datagram per Pump per Peer, so each Pump sends one Message to each receiver and
+        // compacts both queues while they still hold bytes.
+        const int size = 32_738;
+        using DatagramSessionReactorHarness sender = new(
+            bindLoopback: false, capacity: 2, maxMessageSize: size, fragmentSize: size, retentionBytes: size,
+            unreliableQueueBytes: 3 * (size + RecordHeaderBytes));
+        using DatagramSessionReactorHarness receiverA = new(
+            capacity: 1, maxMessageSize: size, fragmentSize: size, retentionBytes: size, arenaSize: 4 * size);
+        using DatagramSessionReactorHarness receiverB = new(
+            capacity: 1, maxMessageSize: size, fragmentSize: size, retentionBytes: size, arenaSize: 4 * size);
+        PeerId peerA = sender.Reactor.Connect(receiverA.Endpoint);
+        PeerId peerB = sender.Reactor.Connect(receiverB.Endpoint);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(sender, receiverA);
+        DatagramSessionReactorHarness.PumpBothUntilConnected(sender, receiverB);
+        byte[][] toA = [StreamOf(size, 1), StreamOf(size, 2), StreamOf(size, 3), StreamOf(size, 4)];
+        byte[][] toB = [StreamOf(size, 101), StreamOf(size, 102), StreamOf(size, 103), StreamOf(size, 104)];
+        for (int i = 0; i < 3; i++)
+        {
+            sender.Reactor.Send(peerA, DeliveryMode.Unreliable, toA[i]).Should().Be(SendOutcome.Sent);
+            sender.Reactor.Send(peerB, DeliveryMode.Unreliable, toB[i]).Should().Be(SendOutcome.Sent);
+        }
+
+        // Act: the first Pump sends Message 1 to each and compacts 2 and 3 to the front of each region.
+        sender.Reactor.Pump();
+        SendOutcome fourthA = sender.Reactor.Send(peerA, DeliveryMode.Unreliable, toA[3]);
+        SendOutcome fourthB = sender.Reactor.Send(peerB, DeliveryMode.Unreliable, toB[3]);
+        List<byte[]> deliveredA = [];
+        List<byte[]> deliveredB = [];
+        PumpDeadline deadline = PumpDeadline.Start();
+        while ((deliveredA.Count < 4 || deliveredB.Count < 4) && !deadline.Expired)
+        {
+            receiverA.Reactor.Pump();
+            receiverB.Reactor.Pump();
+            deliveredA.AddRange(receiverA.DrainPayloads());
+            deliveredB.AddRange(receiverB.DrainPayloads());
+            sender.Reactor.Pump();
+            PumpDeadline.Yield();
+        }
+
+        // Assert
+        fourthA.Should().Be(SendOutcome.Sent);
+        fourthB.Should().Be(SendOutcome.Sent);
+        deliveredA.Should().HaveCount(4);
+        deliveredB.Should().HaveCount(4);
+        for (int i = 0; i < 4; i++)
+        {
+            deliveredA[i].Should().Equal(toA[i]);
+            deliveredB[i].Should().Equal(toB[i]);
+        }
+    }
+
+    [Fact]
     public void Send_UnreliableAfterTheQueueHasCycled_AllocatesNothing()
     {
         // Arrange: two fill-and-flush cycles grow the queue list to its working size.
@@ -271,6 +352,30 @@ public class DatagramSessionUnreliableQueueTests
 
         // Assert
         allocated.Should().Be(0, "queued unreliable bytes live in storage allocated at construction");
+    }
+
+    /// <summary>The sequence of every unfragmented record in every data datagram the tap relayed from the dialler, in capture order.</summary>
+    private static List<uint> DiallerSequences(WireTap tap)
+    {
+        const int datagramHeaderSize = 20;
+        List<uint> sequences = [];
+        foreach (byte[] datagram in tap.PayloadsInDirection(TapDirection.DiallerToAccepter))
+        {
+            if (BinaryPrimitives.ReadUInt32BigEndian(datagram.AsSpan(0, 4)) == 0)
+            {
+                continue;
+            }
+
+            int offset = datagramHeaderSize;
+            while (offset < datagram.Length)
+            {
+                sequences.Add(BinaryPrimitives.ReadUInt32BigEndian(datagram.AsSpan(offset + 1, 4)));
+                ushort length = BinaryPrimitives.ReadUInt16BigEndian(datagram.AsSpan(offset + 5, 2));
+                offset += RecordHeaderBytes + length;
+            }
+        }
+
+        return sequences;
     }
 
     private static byte[] StreamOf(int length, byte seed) =>

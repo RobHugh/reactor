@@ -65,6 +65,53 @@ public class DatagramSessionFlushSizeTests
     }
 
     [Fact]
+    public void Pump_APeerWhoseSendSizeIsTheSmallerNegotiatedOne_WritesNoDatagramAboveThatSizePlusHeaders()
+    {
+        // Arrange: the dialler is configured for 1200 and the accepter for 600, so the Peer sends at 600.
+        const int sendSize = 600;
+        const int unreliableCount = 20;
+        using DatagramSessionReactorHarness dialler = new(
+            bindLoopback: false, capacity: 1, maxMessageSize: 3000, retentionBytes: 6000, fragmentSize: FragmentSize);
+        using DatagramSessionReactorHarness accepter = new(
+            capacity: 1, maxMessageSize: 3000, retentionBytes: 6000, fragmentSize: sendSize, arenaSize: 16_384);
+        using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
+        PeerId peer = dialler.Reactor.Connect(tap.PublicEndPoint);
+        DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
+        int capturesBefore = tap.Captures.Count;
+
+        for (int i = 0; i < unreliableCount; i++)
+        {
+            dialler.Reactor.Send(peer, DeliveryMode.Unreliable, StreamOf(100, (byte)i)).Should().Be(SendOutcome.Sent);
+        }
+
+        dialler.Reactor.Send(peer, DeliveryMode.ReliableOrdered, StreamOf(1500, 0xA0)).Should().Be(SendOutcome.Sent);
+        dialler.Reactor.Send(peer, DeliveryMode.ReliableUnordered, StreamOf(50, 0xB0)).Should().Be(SendOutcome.Sent);
+
+        // Act
+        dialler.Reactor.Pump();
+        List<byte[]> delivered = [];
+        PumpDeadline deadline = PumpDeadline.Start();
+        while (delivered.Count < unreliableCount + 2 && !deadline.Expired)
+        {
+            tap.Pump();
+            accepter.Reactor.Pump();
+            delivered.AddRange(accepter.DrainPayloads());
+            PumpDeadline.Yield();
+        }
+
+        List<byte[]> written = tap.Captures
+            .Skip(capturesBefore)
+            .Where(c => c.Direction == TapDirection.DiallerToAccepter)
+            .Select(c => c.Payload)
+            .ToList();
+
+        // Assert
+        delivered.Should().HaveCount(unreliableCount + 2, "every queued Message crosses, however many Datagrams it takes");
+        written.Should().HaveCountGreaterThan(1, "the queue is wider than one Datagram of this size");
+        written.Should().AllSatisfy(d => d.Length.Should().BeLessThanOrEqualTo(DatagramHeaderSize + FragmentRecordSize + sendSize));
+    }
+
+    [Fact]
     public void Pump_AQueueOfSixtyFullRecords_WritesFiftyThreeDatagramsThenSevenThenNone()
     {
         // Arrange: each 1200-byte record needs its own 1231-byte Datagram, and 65 507 / 1231 = 53.

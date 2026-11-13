@@ -302,7 +302,7 @@ public sealed class DatagramSessionOptions
 
     /// <summary>
     /// The most bytes one Peer may have queued for <see cref="DeliveryMode.Unreliable"/> and
-    /// <see cref="DeliveryMode.UnreliableSequenced"/> between Pumps, counting each Message's payload plus
+    /// <see cref="DeliveryMode.UnreliableSequenced"/> until a Pump writes them, counting each Message's payload plus
     /// its 7-byte record header. A Send that would go past it returns <see cref="SendOutcome.SendQueueFull"/>.
     /// <see langword="null"/> means <see cref="RetentionSlots"/> × (<see cref="ResolvedFragmentSize"/> + 7):
     /// as many full unreliable Messages as one reliable Space retains Fragments. Provenance: derived from
@@ -329,7 +329,7 @@ public sealed class DatagramSessionOptions
                 return configured;
             }
 
-            long derived = (long)RetentionSlots * (ResolvedFragmentSize + Session.DatagramSessionProtocol.UnfragmentedRecordSize);
+            long derived = (long)RetentionSlots * (ResolvedFragmentSize + DatagramSessionProtocol.UnfragmentedRecordSize);
             return derived > int.MaxValue ? int.MaxValue : (int)derived;
         }
     }
@@ -563,12 +563,12 @@ public sealed class DatagramSessionOptions
                 nameof(RetentionBytes));
         }
 
-        int unreliableRecordFloor = fragmentSize + Session.DatagramSessionProtocol.UnfragmentedRecordSize;
+        int unreliableRecordFloor = fragmentSize + DatagramSessionProtocol.UnfragmentedRecordSize;
         if (ResolvedUnreliableQueueBytes < unreliableRecordFloor)
         {
             throw new ArgumentException(
                 $"an unreliable send queue of {ResolvedUnreliableQueueBytes} bytes cannot hold one {fragmentSize}-byte " +
-                $"Message and its {Session.DatagramSessionProtocol.UnfragmentedRecordSize}-byte record header, so an unreliable " +
+                $"Message and its {DatagramSessionProtocol.UnfragmentedRecordSize}-byte record header, so an unreliable " +
                 $"Send at the fragment size would always return SendQueueFull — raise UnreliableQueueBytes to at least {unreliableRecordFloor}.",
                 nameof(UnreliableQueueBytes));
         }

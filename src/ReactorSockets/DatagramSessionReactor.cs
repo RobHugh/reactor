@@ -100,6 +100,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>One Peer's region of <see cref="_unreliableQueue"/>: <see cref="DatagramSessionOptions.ResolvedUnreliableQueueBytes"/>.</summary>
     private readonly int _unreliableQueueBytesPerPeer;
 
+    /// <summary>
+    /// <paramref name="slot"/>'s region of <see cref="_unreliableQueue"/>: <see cref="_unreliableQueueBytesPerPeer"/>
+    /// bytes starting at its Slot index, so no two Peers share a byte.
+    /// </summary>
+    private Span<byte> UnreliableRegion(PeerSlot slot) =>
+        _unreliableQueue.AsSpan(slot.Handle.Index * _unreliableQueueBytesPerPeer, _unreliableQueueBytesPerPeer);
+
     private readonly CookieMinter _cookies;
     private readonly RandomNumberGenerator _entropy;
     private readonly PumpIntervalObserver _pumpIntervalObserver;
@@ -650,7 +657,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             }
 
             int offset = slot.UnreliableQueuedPayloadEnd;
-            message.CopyTo(_unreliableQueue.AsSpan((slot.Handle.Index * _unreliableQueueBytesPerPeer) + offset, message.Length));
+            message.CopyTo(UnreliableRegion(slot).Slice(offset, message.Length));
             slot.UnreliableQueuedPayloadEnd = offset + message.Length;
             slot.UnreliableQueuedBytes += charge;
             slot.PendingSends.Add(new PendingOutboundRecord
@@ -1839,21 +1846,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         if (shift > 0)
         {
-            Span<byte> region = _unreliableQueue.AsSpan(slot.Handle.Index * _unreliableQueueBytesPerPeer, _unreliableQueueBytesPerPeer);
+            Span<byte> region = UnreliableRegion(slot);
             region[shift..slot.UnreliableQueuedPayloadEnd].CopyTo(region);
             for (int i = 0; i < queue.Count; i++)
             {
                 PendingOutboundRecord pending = queue[i];
                 if (!IsReliable(pending.Mode))
                 {
-                    queue[i] = new PendingOutboundRecord
-                    {
-                        Mode = pending.Mode,
-                        Sequence = pending.Sequence,
-                        IsRetransmission = pending.IsRetransmission,
-                        UnreliableOffset = pending.UnreliableOffset - shift,
-                        UnreliableLength = pending.UnreliableLength,
-                    };
+                    queue[i] = pending with { UnreliableOffset = pending.UnreliableOffset - shift };
                 }
             }
         }
@@ -2030,7 +2030,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     {
         if (!IsReliable(pending.Mode))
         {
-            payload = _unreliableQueue.AsSpan((slot.Handle.Index * _unreliableQueueBytesPerPeer) + pending.UnreliableOffset, pending.UnreliableLength);
+            payload = UnreliableRegion(slot).Slice(pending.UnreliableOffset, pending.UnreliableLength);
             isFragment = false;
             fragmentIndex = 0;
             fragmentCount = 0;
