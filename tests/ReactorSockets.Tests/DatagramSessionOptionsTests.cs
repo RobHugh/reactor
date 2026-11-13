@@ -896,20 +896,35 @@ public class DatagramSessionOptionsTests
     }
 
     [Fact]
-    public void Constructor_CapacityAndRetentionAtIntMaxValue_ThrowsTheMemoryBillWithNoNegativeBudget()
+    public void BudgetProperties_CapacityAndRetentionAtIntMaxValue_AreNotNegative()
     {
-        // Arrange — issue #537: at the default 1200-byte fragment the send line wrapped to
-        // -9 108 083 578 401 664 126, and construction failed with OutOfMemoryException.
+        // Arrange — issue #537: at the default 1200-byte fragment the send line is above
+        // long.MaxValue and must saturate rather than wrap negative.
+        DatagramSessionOptions options = CreateOptions(capacity: int.MaxValue, maxMessageSize: 1200, retentionBytes: int.MaxValue);
+
+        // Act
+        long[] budgets =
+        [
+            options.ReceiveBudgetBytes,
+            options.HeldRecordBudgetBytes,
+            options.SendBudgetBytes,
+            options.UnreliableQueueBudgetBytes,
+        ];
+
+        // Assert
+        budgets.Should().OnlyContain(budget => budget > 0);
+    }
+
+    [Fact]
+    public void Constructor_CapacityAndRetentionAtIntMaxValue_ThrowsTheMemoryBill()
+    {
+        // Arrange — issue #537: the memory bill rejects this combination by name, before any allocation.
         DatagramSessionOptions options = CreateOptions(capacity: int.MaxValue, maxMessageSize: 1200, retentionBytes: int.MaxValue);
 
         // Act
         Action act = () => new DatagramSessionReactor(options);
 
         // Assert
-        options.ReceiveBudgetBytes.Should().BePositive();
-        options.HeldRecordBudgetBytes.Should().BePositive();
-        options.SendBudgetBytes.Should().Be(long.MaxValue);
-        options.UnreliableQueueBudgetBytes.Should().BePositive();
         act.Should().Throw<ArgumentException>()
             .WithParameterName(nameof(DatagramSessionOptions.Reactor))
             .Which.Message.Should()
