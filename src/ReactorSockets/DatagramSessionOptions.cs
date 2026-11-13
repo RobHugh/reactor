@@ -477,7 +477,9 @@ public sealed class DatagramSessionOptions
     /// How many sequences from its send-order head one <c>ReliableOrdered</c> Space will hold ordinary
     /// records for: twice <see cref="ResolvedReceiveWindowFragments"/>. Honest traffic reaches no
     /// further while a Fragment group holds the head, because a group spans at most one window and the
-    /// receive window then spans one more from the group's last admitted piece.
+    /// receive window then spans one more from the group's last admitted piece. The product cannot wrap
+    /// for a constructed Reactor: a window above 2^30 fragments puts the receive line above
+    /// <see cref="Array.MaxLength"/> for one Peer, so <see cref="ValidateMemoryBill"/> rejects it first.
     /// </summary>
     internal int OrderedHoldSlots => 2 * ResolvedReceiveWindowFragments;
 

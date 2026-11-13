@@ -896,6 +896,27 @@ public class DatagramSessionOptionsTests
     }
 
     [Fact]
+    public void Constructor_CapacityAndRetentionAtIntMaxValue_ThrowsTheMemoryBillWithNoNegativeBudget()
+    {
+        // Arrange — issue #537: at the default 1200-byte fragment the send line wrapped to
+        // -9 108 083 578 401 664 126, and construction failed with OutOfMemoryException.
+        DatagramSessionOptions options = CreateOptions(capacity: int.MaxValue, maxMessageSize: 1200, retentionBytes: int.MaxValue);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options);
+
+        // Assert
+        options.ReceiveBudgetBytes.Should().BePositive();
+        options.HeldRecordBudgetBytes.Should().BePositive();
+        options.SendBudgetBytes.Should().Be(long.MaxValue);
+        options.UnreliableQueueBudgetBytes.Should().BePositive();
+        act.Should().Throw<ArgumentException>()
+            .WithParameterName(nameof(DatagramSessionOptions.Reactor))
+            .Which.Message.Should()
+            .NotMatchRegex("(?<![0-9])-[0-9]");
+    }
+
+    [Fact]
     public void Constructor_ReceiveLineAboveLongMaxValue_ThrowsArgumentExceptionNamingTheExactLine()
     {
         // Arrange — issue #488: 2 000 000 Peers × a 2 000 000 000-fragment window wrapped the receive
