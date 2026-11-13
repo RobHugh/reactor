@@ -8,7 +8,8 @@ Assembly: ReactorSockets.dll
 The largest Message, in bytes, this Reactor will accept or deliver. Required: it is a
 statement about the consumer's own protocol that nothing here can derive. It is also the knob
 that multiplies this profile's memory bill in more than one direction — the class remarks on
-[`DatagramSessionOptions`](ReactorSockets.DatagramSessionOptions.md) say what it floors and what raising it costs.
+[`DatagramSessionOptions`](ReactorSockets.DatagramSessionOptions.md) say what it floors and what raising it costs. At most
+[`MaxLength`](https://learn.microsoft.com/dotnet/api/system.array.maxlength), 2 147 483 591, so the frame arena can hold one maximum Message.
 
 ```csharp
 public required int MaxMessageSize { get; init; }

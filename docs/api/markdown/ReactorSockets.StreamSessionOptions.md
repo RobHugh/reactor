@@ -113,7 +113,8 @@ The largest Message, in bytes, this Reactor will accept or deliver. Required: it
 statement about the consumer's own protocol that nothing here can derive. It is also
 announced to the remote as a receive limit, and floors both the receive buffer and
 [`StreamSessionOptions.RetentionBytes`](ReactorSockets.StreamSessionOptions.RetentionBytes.md#ReactorSockets_StreamSessionOptions_RetentionBytes) — an arena that cannot hold one maximum Message could never
-deliver one.
+deliver one. At most 2 147 483 587, [`MaxLength`](https://learn.microsoft.com/dotnet/api/system.array.maxlength) less the 4-byte length prefix,
+so one framed maximum Message fits one array.
 
  [MaxPeersPerAddress](ReactorSockets.StreamSessionOptions.MaxPeersPerAddress.md\#ReactorSockets\_StreamSessionOptions\_MaxPeersPerAddress)
 

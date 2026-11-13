@@ -133,7 +133,8 @@ which with IPv6 and UDP headers fits the 1280-byte minimum MTU.
 
 The most heap, in bytes, a Reactor's <code>ReliableOrdered</code> Spaces can hold in ordinary records
 waiting behind a gap, across all its Peers: <code>Capacity × 2 × ReceiveWindowFragments ×
-FragmentSize</code>, with each slot's bookkeeping.
+FragmentSize</code>, with each slot's bookkeeping. A figure above [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue) reads as
+[`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue).
 
  [Linger](ReactorSockets.DatagramSessionOptions.Linger.md\#ReactorSockets\_DatagramSessionOptions\_Linger)
 
@@ -154,7 +155,8 @@ least 1.
 The largest Message, in bytes, this Reactor will accept or deliver. Required: it is a
 statement about the consumer's own protocol that nothing here can derive. It is also the knob
 that multiplies this profile's memory bill in more than one direction — the class remarks on
-[`DatagramSessionOptions`](ReactorSockets.DatagramSessionOptions.md) say what it floors and what raising it costs.
+[`DatagramSessionOptions`](ReactorSockets.DatagramSessionOptions.md) say what it floors and what raising it costs. At most
+[`MaxLength`](https://learn.microsoft.com/dotnet/api/system.array.maxlength), 2 147 483 591, so the frame arena can hold one maximum Message.
 
  [MaxPeersPerAddress](ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress.md\#ReactorSockets\_DatagramSessionOptions\_MaxPeersPerAddress)
 
@@ -189,7 +191,7 @@ has no default of its own.
 
 The receive line of the memory bill in bytes, as a <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/integral-numeric-types">long</a> so that a
 combination too large to allocate is a value this can report rather than an overflow it
-silently wraps through.
+silently wraps through. A figure above [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue) reads as [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue).
 
  [ReceiveWindowFloor](ReactorSockets.DatagramSessionOptions.ReceiveWindowFloor.md\#ReactorSockets\_DatagramSessionOptions\_ReceiveWindowFloor)
 
@@ -213,7 +215,8 @@ The resolved fragment size: [`DatagramSessionOptions.FragmentSize`](ReactorSocke
  [ResolvedMaxDatagramsPerPump](ReactorSockets.DatagramSessionOptions.ResolvedMaxDatagramsPerPump.md\#ReactorSockets\_DatagramSessionOptions\_ResolvedMaxDatagramsPerPump)
 
 The resolved per-socket read limit: [`DatagramSessionOptions.MaxDatagramsPerPump`](ReactorSockets.DatagramSessionOptions.MaxDatagramsPerPump.md#ReactorSockets_DatagramSessionOptions_MaxDatagramsPerPump) if set, otherwise one receive
-window for every Space of every Peer, plus every handshake the admission cap allows in one Pump.
+window for every Space of every Peer, plus every handshake the admission cap allows in one Pump,
+clamped to [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int32.maxvalue).
 
  [ResolvedMaxPeersPerAddress](ReactorSockets.DatagramSessionOptions.ResolvedMaxPeersPerAddress.md\#ReactorSockets\_DatagramSessionOptions\_ResolvedMaxPeersPerAddress)
 
@@ -255,7 +258,8 @@ requires retention to hold at least one fragment, so this is always at least 1.
 The send line of the memory bill in bytes, reported the same way: [`DatagramSessionOptions.RetentionSlots`](ReactorSockets.DatagramSessionOptions.RetentionSlots.md#ReactorSockets_DatagramSessionOptions_RetentionSlots)
 whole fragment slots per reliable Space per Peer, each priced at its payload plus the 15 bytes
 of bookkeeping that records what it holds. Exact, like the receive line, so it can be below
-<code>Capacity × 2 × RetentionBytes</code> when retention is not a whole number of fragments.
+<code>Capacity × 2 × RetentionBytes</code> when retention is not a whole number of fragments. A figure
+above [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue) reads as [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue).
 
  [SendIdleInterval](ReactorSockets.DatagramSessionOptions.SendIdleInterval.md\#ReactorSockets\_DatagramSessionOptions\_SendIdleInterval)
 

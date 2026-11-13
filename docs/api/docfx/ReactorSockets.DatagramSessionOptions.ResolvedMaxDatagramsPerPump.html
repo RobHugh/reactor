@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_DatagramSessionOptions_ResolvedMaxDatagramsPerPump_" data-uid="ReactorSockets.DatagramSessionOptions.ResolvedMaxDatagramsPerPump*" class="text-break">
-Property ResolvedMaxDatagramsPerPump  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L412"><i class="bi bi-code-slash"></i></a>
+Property ResolvedMaxDatagramsPerPump  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L414"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,11 +107,12 @@ Property ResolvedMaxDatagramsPerPump  <a class="header-action link-secondary" ti
 
 <h3 id="ReactorSockets_DatagramSessionOptions_ResolvedMaxDatagramsPerPump" data-uid="ReactorSockets.DatagramSessionOptions.ResolvedMaxDatagramsPerPump">
   ResolvedMaxDatagramsPerPump
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L412"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L414"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>The resolved per-socket read limit: <a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxDatagramsPerPump.html#ReactorSockets_DatagramSessionOptions_MaxDatagramsPerPump">MaxDatagramsPerPump</a> if set, otherwise one receive
-window for every Space of every Peer, plus every handshake the admission cap allows in one Pump.</p>
+window for every Space of every Peer, plus every handshake the admission cap allows in one Pump,
+clamped to <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32.maxvalue">MaxValue</a>.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 
