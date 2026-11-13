@@ -6,7 +6,7 @@
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <meta name="title" content="Property AdmissionDeferrals | ReactorSockets API reference ">
       
-      
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_ReactorCounters_AdmissionDeferrals_.md&amp;value=---%0Auid%3A%20ReactorSockets.ReactorCounters.AdmissionDeferrals*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <link rel="icon" href="favicon.ico">
       <link rel="stylesheet" href="public/docfx.min.css">
       <link rel="stylesheet" href="public/main.css">
@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_ReactorCounters_AdmissionDeferrals_.md&amp;value=---%0Auid%3A%20ReactorSockets.ReactorCounters.AdmissionDeferrals*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -111,10 +111,9 @@ Property AdmissionDeferrals  <a class="header-action link-secondary" title="View
 </h3>
 
 <div class="markdown level1 summary"><p>Admissions declined that left the work where it was, for a later Pump to take. Moves on the
-transports where declined work waits — Raw and the stream Session profile. On the stream profile both the admission cap and the limit of
-<a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a> connections held waiting for their first record decline this way.
-Counted once per
-declining rather than once per piece of work turned away, which makes it coarse where the work
+transports where declined work waits — Raw and the stream Session profile. On the stream profile
+both the admission cap and the limit of <a class="xref" href="ReactorSockets.ReactorOptions.Capacity.html#ReactorSockets_ReactorOptions_Capacity">Capacity</a> connections held
+waiting for their first record decline this way. Counted once per declining rather than once per piece of work turned away, which makes it coarse where the work
 sits in an OS backlog: one listening Link or bound endpoint declines its whole backlog with one
 declining, because that depth is unknowable without accepting. Where the Reactor already holds
 the work — a stream Session handshake accepted but not completed — one declining is one piece of

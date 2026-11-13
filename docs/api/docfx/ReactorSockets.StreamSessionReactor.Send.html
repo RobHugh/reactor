@@ -6,7 +6,7 @@
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <meta name="title" content="Method Send | ReactorSockets API reference ">
       
-      
+      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_StreamSessionReactor_Send_.md&amp;value=---%0Auid%3A%20ReactorSockets.StreamSessionReactor.Send*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
       <link rel="icon" href="favicon.ico">
       <link rel="stylesheet" href="public/docfx.min.css">
       <link rel="stylesheet" href="public/main.css">
@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="">
       
       
-      <meta name="docfx:docurl" content="https://github.com/RobHugh/reactor/new/main/apiSpec/new?filename=ReactorSockets_StreamSessionReactor_Send_.md&amp;value=---%0Auid%3A%20ReactorSockets.StreamSessionReactor.Send*%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -125,7 +125,11 @@ already <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSocket
 refuses a Peer whose handshake has not reached <span class="xref">ReactorSockets.StreamSessionReactor.HandshakeState.Established</span> with
 <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_NotEstablished">NotEstablished</a>: flushing that Message would write to a socket whose
 connect has not resolved, closing the Peer with <a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_TransportFailed">TransportFailed</a>,
-or send it before the far end's handshake record has been read.</p>
+or send it before the far end's handshake record has been read. Once the Peer is established,
+refuses a Message longer than the <code>MaxMessageSize</code> it announced in its Hello
+(<span class="xref">ReactorSockets.StreamSessionReactor.PeerSlot.RemoteMaxMessageSize</span>) with <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RemoteMessageTooLarge">RemoteMessageTooLarge</a>,
+copying nothing: the far end would close the Session with
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_ProtocolViolation">ProtocolViolation</a> on its length prefix.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 
@@ -139,9 +143,10 @@ or send it before the far end's handshake record has been read.</p>
   <dd><p>The Peer to send to. Throws if not open, matching <a class="xref" href="ReactorSockets.StreamSessionReactor.CountersOf.html#ReactorSockets_StreamSessionReactor_CountersOf_ReactorSockets_PeerId_">CountersOf(PeerId)</a>.</p>
 </dd>
   <dt><code>message</code> <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.readonlyspan-1">ReadOnlySpan</a>&lt;<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.byte">byte</a>&gt;</dt>
-  <dd><p>The Message payload, unframed. Throws if empty or longer than
-<a class="xref" href="ReactorSockets.StreamSessionOptions.MaxMessageSize.html#ReactorSockets_StreamSessionOptions_MaxMessageSize">MaxMessageSize</a> — the same bounds the receive side enforces, so
-this can never frame a Message the far end would reject.</p>
+  <dd><p>The Message payload, unframed. Throws if empty or longer than this Reactor's own
+<a class="xref" href="ReactorSockets.StreamSessionOptions.MaxMessageSize.html#ReactorSockets_StreamSessionOptions_MaxMessageSize">MaxMessageSize</a>. A Message within that limit but longer than the
+Peer's announced limit returns <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RemoteMessageTooLarge">RemoteMessageTooLarge</a>, so this never frames
+a Message the far end would reject.</p>
 </dd>
 </dl>
 

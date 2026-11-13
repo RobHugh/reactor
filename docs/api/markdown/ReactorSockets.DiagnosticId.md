@@ -389,7 +389,8 @@ is the bytes of that record it had sent, 0 to 40; <code>Value1</code> is the dea
 nothing, and a consumer can act on it by blocking the address or, if conforming diallers are being
 closed, by raising [`StreamSessionOptions.SendIdleInterval`](ReactorSockets.StreamSessionOptions.SendIdleInterval.md#ReactorSockets_StreamSessionOptions_SendIdleInterval). One record per connection,
 because it names the address. The deadline is fixed at accept, so bytes that arrive do not extend it.
-At most [`ReactorOptions.Capacity`](ReactorSockets.ReactorOptions.Capacity.md#ReactorSockets_ReactorOptions_Capacity) connections are held, so no more records than that are logged in one Pump.
+At most [`ReactorOptions.Capacity`](ReactorSockets.ReactorOptions.Capacity.md#ReactorSockets_ReactorOptions_Capacity) connections are held, so no more records than that
+are logged in one Pump.
 
 `PendingAdmissionLimitReached = 310` 
 
