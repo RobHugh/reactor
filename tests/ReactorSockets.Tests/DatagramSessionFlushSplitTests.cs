@@ -5,8 +5,8 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// A record queued past what one data Datagram can hold waits for the next Pump instead of
-/// being dropped, and the split preserves Send order within a Space and the one-Datagram-per-Peer-per-
-/// Pump rule. Every assertion below reads only the four things the public seam allows (tests/CLAUDE.md):
+/// being dropped, and the split preserves Send order within a Space and the per-Peer Datagram count of one
+/// Pump. Every assertion below reads only the four things the public seam allows (tests/CLAUDE.md):
 /// the value <see cref="DatagramSessionReactor.Send"/> and <see cref="DatagramSessionReactor.Pump"/>
 /// leave observable through Events, <see cref="DatagramSessionReactor.Counters"/> and
 /// <see cref="DatagramSessionReactor.CountersOf"/>.
@@ -16,10 +16,8 @@ public class DatagramSessionFlushSplitTests
     /// <summary>
     /// <see cref="DatagramSessionOptions.FragmentSize"/> and <see cref="DatagramSessionOptions.MaxMessageSize"/>
     /// set so one Message occupies exactly this many bytes on the wire (7-byte record header +
-    /// payload), and the outbound Datagram buffer (65 507 bytes, minus the 20-byte header) holds
-    /// exactly two of them: 65 487 / 30 007 = 2, with 5 473 bytes left over — not enough for a third.
-    /// A large-but-not-enormous payload reaches the capacity boundary in three Sends rather than
-    /// hundreds.
+    /// payload). A data Datagram holds one of them (30 000 + 31 bytes), and one Pump writes at most
+    /// 65 507 / 30 031 = 2 such Datagrams per Peer, so three Sends reach the boundary.
     /// </summary>
     private const int PayloadSize = 30_000;
 
@@ -85,7 +83,7 @@ public class DatagramSessionFlushSplitTests
     }
 
     [Fact]
-    public void Pump_WhileAPeersQueueDrainsAcrossPumps_SendsAtMostOneDataDatagramEachPump()
+    public void Pump_WhileAPeersQueueDrainsAcrossPumps_SendsAtMostTheUdpMaximumsWorthOfDatagramsEachPump()
     {
         // Arrange
         using DatagramSessionReactorHarness sender = NewHarness(bindLoopback: false);
@@ -111,7 +109,7 @@ public class DatagramSessionFlushSplitTests
         ulong afterThirdPump = sender.Reactor.Counters.DatagramsSent;
 
         // Assert
-        (afterFirstPump - beforeFirstPump).Should().Be(1UL, "the first Pump sends exactly one data Datagram for this Peer");
+        (afterFirstPump - beforeFirstPump).Should().Be(2UL, "one Pump sends at most 65 507 / 30 031 = 2 data Datagrams for this Peer, one record each");
         (afterSecondPump - beforeSecondPump).Should().Be(1UL, "the second Pump sends the remainder as exactly one more data Datagram");
         (afterThirdPump - beforeThirdPump).Should().Be(0UL, "the queue drained on the second Pump, so the third sends nothing");
     }

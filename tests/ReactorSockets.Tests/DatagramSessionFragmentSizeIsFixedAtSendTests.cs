@@ -40,10 +40,6 @@ public class DatagramSessionFragmentSizeIsFixedAtSendTests
         return count;
     }
 
-    /// <summary>The most recent datagram travelling in <paramref name="direction"/> whose session id names a live Session rather than the reserved control session id.</summary>
-    private static byte[] LastDataDatagram(WireTap tap, TapDirection direction) =>
-        tap.PayloadsInDirection(direction).Last(payload => BinaryPrimitives.ReadUInt32BigEndian(payload.AsSpan(0, 4)) != 0);
-
     [Fact]
     public void Send_TwoMessagesToTheSamePeerAtDifferentTimes_AreBothCutWithThatPeersOwnFragmentSize()
     {
@@ -64,24 +60,26 @@ public class DatagramSessionFragmentSizeIsFixedAtSendTests
         // could plausibly resolve a fragment size afresh: not this Peer's own Slot, since nothing wrote
         // FragmentSize a second time; not options, since Send no longer reads them for this.
         byte[] firstMessage = Enumerable.Range(0, 1000).Select(i => (byte)i).ToArray();
+        int firstCapturesBefore = tap.Captures.Count;
         dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, firstMessage).Should().Be(SendOutcome.Sent);
-        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
-        byte[] firstDatagram = LastDataDatagram(tap, TapDirection.DiallerToAccepter);
+        List<byte[]> firstDatagrams = DatagramSessionReactorHarness.PumpOnceAndRelayDataDatagrams(
+            dialler, tap, firstCapturesBefore, (1000 + fragmentSize - 1) / fragmentSize);
 
         dialler.TimeProvider.Advance(TimeSpan.FromMilliseconds(200));
 
         byte[] secondMessage = Enumerable.Range(0, 1900).Select(i => (byte)(i % 256)).ToArray();
+        int secondCapturesBefore = tap.Captures.Count;
         dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableUnordered, secondMessage).Should().Be(SendOutcome.Sent);
-        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
-        byte[] secondDatagram = LastDataDatagram(tap, TapDirection.DiallerToAccepter);
+        List<byte[]> secondDatagrams = DatagramSessionReactorHarness.PumpOnceAndRelayDataDatagrams(
+            dialler, tap, secondCapturesBefore, (1900 + fragmentSize - 1) / fragmentSize);
 
         // Assert — both Messages are wider than one Fragment, so each cut into more than one piece, and
         // the first piece of each is exactly fragmentSize: the same value, both times.
-        CountRecords(firstDatagram).Should().Be((1000 + fragmentSize - 1) / fragmentSize);
-        CountRecords(secondDatagram).Should().Be((1900 + fragmentSize - 1) / fragmentSize);
-        FirstRecordLength(firstDatagram).Should().Be((ushort)fragmentSize, "the first Send cut its Message to this Peer's fragment size");
-        FirstRecordLength(secondDatagram).Should().Be(
-            FirstRecordLength(firstDatagram), "a later Send to the same Peer cuts with the same fragment size as the first — it was captured once, not re-resolved");
+        firstDatagrams.Sum(CountRecords).Should().Be((1000 + fragmentSize - 1) / fragmentSize);
+        secondDatagrams.Sum(CountRecords).Should().Be((1900 + fragmentSize - 1) / fragmentSize);
+        FirstRecordLength(firstDatagrams[0]).Should().Be((ushort)fragmentSize, "the first Send cut its Message to this Peer's fragment size");
+        FirstRecordLength(secondDatagrams[0]).Should().Be(
+            FirstRecordLength(firstDatagrams[0]), "a later Send to the same Peer cuts with the same fragment size as the first — it was captured once, not re-resolved");
     }
 
     [Fact]

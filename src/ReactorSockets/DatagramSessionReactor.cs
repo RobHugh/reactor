@@ -124,12 +124,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private readonly byte[] _sendBuffer = new byte[DatagramSessionProtocol.ControlDatagramSize];
 
     /// <summary>
-    /// The scratch buffer <see cref="FlushPeer"/> packs one Peer's data Datagram into, separate from
+    /// The scratch buffer <see cref="FlushOneDatagram"/> packs each data Datagram into, separate from
     /// <see cref="_scratchBuffer"/> — which is read-side and reused within one
     /// <see cref="OnLinkReadable"/> call — and from <see cref="_sendBuffer"/>, which is sized for a
     /// control datagram only and far too small for a coalesced data one. Sized at
-    /// <see cref="MaxUdpDatagramSize"/>, the largest datagram one send can carry, so it can hold whatever a
-    /// Pump packs into it; reused across every Peer flushed by one Pump rather than allocated per Peer.
+    /// <see cref="MaxUdpDatagramSize"/>, the largest datagram one send can carry, so it can hold the largest
+    /// data Datagram any Peer's fragment size allows; reused across every Peer flushed by one Pump rather than allocated per Peer.
     /// </summary>
     private readonly byte[] _outboundDatagramBuffer = new byte[MaxUdpDatagramSize];
 
@@ -518,12 +518,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// the same as every other (<see cref="OutboundSequenceSpaces"/>) — but retain nothing, because
     /// nothing unreliable is ever retransmitted. A Message this call accepts is queued on
     /// <paramref name="peer"/>'s Slot (<see cref="PeerSlot.PendingSends"/>) and leaves as one packet
-    /// record inside the next <see cref="Pump"/>'s single coalesced Datagram to that Peer, in Send
-    /// order (<see cref="FlushOutboundDatagrams"/>) — nothing reaches the wire before that Pump runs,
-    /// and a <c>Send</c> with no following Pump puts nothing on the wire at all. That next Pump is only
-    /// the first one this record is <em>eligible</em> to leave in: if this Peer already has more queued
-    /// than one Datagram holds, a record queued behind the boundary waits for however many further
-    /// Pumps it takes to reach the front, still in the order it was Sent.
+    /// record in a data Datagram written by a later <see cref="Pump"/>, in Send
+    /// order (<see cref="FlushOutboundDatagrams"/>). Nothing reaches the wire before that Pump runs. One
+    /// Pump writes a bounded number of Datagrams per Peer (<see cref="FlushPeer"/>), so a record queued
+    /// behind a backlog waits for however many Pumps it takes to reach the front.
     /// </summary>
     /// <remarks>
     /// <b><see cref="SendOutcome.RetentionExhausted"/> is reachable from one <c>Send</c> call</b> (ADR
@@ -1358,8 +1356,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Puts every Established Peer's Sent-since-last-flush records on the wire, once per
-    /// <see cref="Pump"/>: a Peer with nothing queued in <see cref="PeerSlot.PendingSends"/> is skipped
+    /// Puts every Established Peer's queued records on the wire, through one <see cref="FlushPeer"/>
+    /// call per Peer per <see cref="Pump"/>: a Peer with nothing queued in <see cref="PeerSlot.PendingSends"/> is skipped
     /// entirely, so a Pump following no <see cref="Send"/> puts nothing on the wire for that Peer. A
     /// Peer still mid-handshake has nothing to flush to either — <see cref="Send"/> can queue against
     /// it, but nothing here reaches it until it reaches <see cref="PeerPhase.Open"/>, the
@@ -1372,7 +1370,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// array reads, and a Peer with an empty queue costs nothing more than that one read.
     /// <see cref="FlushPeer"/> itself trims <see cref="PeerSlot.PendingSends"/> down to whatever it
     /// could not pack this Pump, so there is nothing left for this method to clear — a Peer whose queue
-    /// drained completely is left with an empty list by that trim, which is exactly what makes the next
+    /// drained completely is left with an empty list, which is exactly what makes the next
     /// Pump's <c>Count == 0</c> check above skip it and send no header-only Datagram.
     /// </remarks>
     private void FlushOutboundDatagrams()
@@ -1736,8 +1734,46 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Packs as much as fits of <paramref name="slot"/>'s queue into one data Datagram, in Send order,
-    /// and sends it: the 20-byte header — this Peer's own <see cref="PeerSlot.RemoteSessionId"/>
+    /// Writes <paramref name="slot"/>'s queue as data Datagrams of at most
+    /// <see cref="DatagramSessionProtocol.DatagramHeaderSize"/> + <see cref="DatagramSessionProtocol.FragmentRecordSize"/>
+    /// + <see cref="PeerSlot.FragmentSize"/> bytes each, in Send order, until the queue is empty or this Pump
+    /// has written <see cref="MaxUdpDatagramSize"/> divided by that limit of them for this Peer (issue #485).
+    /// </summary>
+    /// <remarks>
+    /// The limit is the one Datagram size that always holds a full Fragment, so a Datagram never exceeds
+    /// <see cref="DatagramSessionOptions.FragmentSize"/> plus this profile's headers and is not split by IP.
+    /// The Datagram count keeps one Pump's bytes for one Peer at or below one maximum UDP payload, so a
+    /// backlog leaves over several Pumps instead of in one burst a receiver's socket buffer would drop.
+    /// What is left waits, in order, for the next Pump. The first Datagram is written even with nothing
+    /// queued when the Peer's final ack is due (<see cref="PeerLifecycle.IsFinalAckDue"/>).
+    /// </remarks>
+    private void FlushPeer(PeerSlot slot)
+    {
+        int datagramLimit = DatagramSessionProtocol.DatagramHeaderSize + DatagramSessionProtocol.FragmentRecordSize + slot.FragmentSize;
+        int datagramBudget = MaxUdpDatagramSize / datagramLimit;
+        int datagramsWritten = 0;
+        do
+        {
+            int queuedBefore = slot.PendingSends.Count;
+            if (FlushOneDatagram(slot, datagramLimit))
+            {
+                datagramsWritten++;
+            }
+
+            Debug.Assert(
+                queuedBefore == 0 || slot.PendingSends.Count < queuedBefore,
+                "every queued record fits an empty Datagram of datagramLimit bytes, so each pass consumes at least one.");
+            if (slot.PendingSends.Count == queuedBefore)
+            {
+                break;
+            }
+        }
+        while (slot.PendingSends.Count > 0 && datagramsWritten < datagramBudget);
+    }
+
+    /// <summary>
+    /// Packs as much as fits of <paramref name="slot"/>'s queue into one data Datagram of at most
+    /// <paramref name="datagramLimit"/> bytes, in Send order, and sends it: the 20-byte header — this Peer's own <see cref="PeerSlot.RemoteSessionId"/>
     /// stamped as the session, since that is the id the far end asked to be stamped on datagrams sent to
     /// it — followed by both reliable Spaces' ack blocks read fresh from
     /// <see cref="_receiveWindows"/>, so an admission this same Pump's read pass just made is reflected
@@ -1755,16 +1791,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// acknowledged.
     /// </para>
     /// <para>
-    /// <b>A record that does not fit waits for the next Pump</b>. Packing stops at the first record
-    /// <see cref="DatagramRecordPacker.TryPackRecord"/> refuses — this Datagram is full — and
-    /// everything from there to the end of <see cref="PeerSlot.PendingSends"/>, in the order it was
-    /// queued, is left on the Slot rather than discarded: <see cref="List{T}.RemoveRange"/> trims only
-    /// the prefix this call actually consumed, so those records are exactly what the next
-    /// <see cref="FlushOutboundDatagrams"/> sees at the front of the same queue. A Datagram is flushed
-    /// once per Peer per Pump (the loop above never calls this twice in one Pump), so the remainder does
-    /// not go out as a second Datagram this Pump — it rides the next one. A record whose payload failed
-    /// to resolve — a reliable sequence already released from retention — is consumed rather than left
-    /// queued: retrying it later cannot succeed either, since nothing repopulates a released slot.
+    /// <b>A record that does not fit waits for the next Datagram.</b> Packing stops at the first record
+    /// <see cref="DatagramRecordPacker.TryPackRecord"/> refuses, and everything from there to the end of
+    /// <see cref="PeerSlot.PendingSends"/> stays queued in order: <see cref="List{T}.RemoveRange"/> trims
+    /// only the prefix this call consumed. <see cref="FlushPeer"/> starts the next Datagram there, or the
+    /// next Pump does once this Pump's Datagram count for the Peer is spent. A record whose payload failed
+    /// to resolve, a reliable sequence already released from retention, is consumed rather than left
+    /// queued, since nothing repopulates a released slot.
     /// </para>
     /// <para>
     /// <b>Arming still happens only where the record actually reached a Datagram.</b> A record that did
@@ -1776,12 +1809,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// wasted flush rather than a header-only Datagram with no records in it.
     /// </para>
     /// </remarks>
-    private void FlushPeer(PeerSlot slot)
+    /// <param name="slot">The Peer whose queue is packed.</param>
+    /// <param name="datagramLimit">The most bytes this Datagram may hold, header included.</param>
+    /// <returns><see langword="true"/> if a Datagram was written.</returns>
+    private bool FlushOneDatagram(PeerSlot slot, int datagramLimit)
     {
         (AckBlock reliableOrdered, AckBlock reliableUnordered) = _receiveWindows[slot.Handle.Index].GenerateAckBlocks();
 
         DatagramRecordPacker packer = new(
-            _outboundDatagramBuffer,
+            _outboundDatagramBuffer.AsSpan(0, datagramLimit),
             slot.RemoteSessionId,
             reliableOrdered.Base,
             reliableOrdered.Bits,
@@ -1850,7 +1886,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // and ack blocks alone, the one datagram that can still tell the remote its Goodbye arrived.
         if (packer.RecordsPacked == 0 && !slot.Lifecycle.IsFinalAckDue)
         {
-            return;
+            return false;
         }
 
         UdpLinkSendResult result = slot.Link.SendTo(slot.Remote, _outboundDatagramBuffer.AsSpan(0, packer.BytesWritten));
@@ -1867,6 +1903,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // sent datagram exactly like any other, which is what keeps a Session that has nothing but
         // Pings to send from ever emitting a second one before the next interval elapses.
         slot.LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+        return true;
     }
 
     /// <summary>
@@ -4440,9 +4477,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>
         /// Records this Peer has Sent since its last flush, in Send order: appended to by
-        /// <see cref="DatagramSessionReactor.Send"/> once a record is accepted, packed into one data
-        /// Datagram by <see cref="FlushPeer"/> on the next <see cref="Pump"/> that finds this
-        /// non-empty, and cleared immediately after by <see cref="FlushOutboundDatagrams"/>. A fresh
+        /// <see cref="DatagramSessionReactor.Send"/> once a record is accepted, packed into data
+        /// Datagrams by <see cref="FlushPeer"/> on the next <see cref="Pump"/>, which trims what it sent
+        /// and leaves the rest, in order, for the Pump after. A fresh
         /// Slot always starts with an empty queue — <see cref="Connect"/> and the accepted-Peer path in
         /// <see cref="OnHelloWithCookie"/> both construct a brand new <see cref="PeerSlot"/> rather than
         /// reusing one, so a Slot a later Peer occupies never inherits a previous occupant's queue.

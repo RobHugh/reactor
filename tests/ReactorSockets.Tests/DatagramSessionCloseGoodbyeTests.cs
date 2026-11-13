@@ -218,10 +218,10 @@ public class DatagramSessionCloseGoodbyeTests
     /// <summary>
     /// The Goodbye writer refuses a destination shorter than its seven-byte record (issue #395), and the
     /// flush carries the Goodbye in the next datagram. The Message is sized so its datagram leaves only
-    /// <paramref name="leftover"/> bytes, fewer than a Goodbye needs. The Message's near-maximum datagram
-    /// is proven by the dialler's own byte and write counts, because whether a <see cref="WireTap"/>
-    /// relays a datagram that close to the UDP maximum depends on the platform's loopback. The Goodbye's
-    /// datagram is picked from the captures by its size and decoded.
+    /// <paramref name="leftover"/> bytes, fewer than a Goodbye needs. A data Datagram holds 31 bytes of
+    /// header beside FragmentSize, so a whole Message of FragmentSize + 4 - leftover bytes leaves
+    /// leftover bytes. The Message's datagram is proven by the dialler's own byte and write counts. The
+    /// Goodbye's datagram is picked from the captures by its size and decoded.
     /// </summary>
     [Theory]
     [InlineData(4)]
@@ -229,11 +229,12 @@ public class DatagramSessionCloseGoodbyeTests
     public void Close_WhenTheGoodbyeDoesNotFitTheMessagesDatagram_CarriesTheGoodbyeAloneInTheNextOne(int leftover)
     {
         // Arrange: a Message that leaves fewer bytes than a Goodbye record needs in its datagram
-        int payloadSize = RawReactor.MaxUdpDatagramSize - DatagramHeaderBytes - RecordHeaderBytes - leftover;
-        int messageDatagramBytes = RawReactor.MaxUdpDatagramSize - leftover;
+        const int fragmentSize = 1200;
+        int payloadSize = fragmentSize + 4 - leftover;
+        int messageDatagramBytes = DatagramHeaderBytes + RecordHeaderBytes + payloadSize;
         const int goodbyeDatagramBytes = DatagramHeaderBytes + RecordHeaderBytes;
-        DatagramSessionReactorHarness dialler = new(bindLoopback: false, maxMessageSize: payloadSize, fragmentSize: payloadSize, retentionBytes: payloadSize * 2, arenaSize: payloadSize * 4);
-        DatagramSessionReactorHarness accepter = new(maxMessageSize: payloadSize, fragmentSize: payloadSize, retentionBytes: payloadSize * 2, arenaSize: payloadSize * 4);
+        DatagramSessionReactorHarness dialler = new(bindLoopback: false, maxMessageSize: payloadSize, fragmentSize: fragmentSize, retentionBytes: fragmentSize * 2, arenaSize: fragmentSize * 4);
+        DatagramSessionReactorHarness accepter = new(maxMessageSize: payloadSize, fragmentSize: fragmentSize, retentionBytes: fragmentSize * 2, arenaSize: fragmentSize * 4);
         WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
         using (dialler)
         using (accepter)

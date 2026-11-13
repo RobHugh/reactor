@@ -280,7 +280,9 @@ public sealed class DatagramSessionOptions
     /// Defaults to 1200. Provenance: QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000),
     /// the one value with citable provenance for surviving an arbitrary path. Must lie between 576
     /// (RFC 791's guaranteed reassembly minimum) and 65 476 (the 65 507-byte maximum UDP payload less the
-    /// 20-byte Datagram header and the 11-byte Fragment record header).
+    /// 20-byte Datagram header and the 11-byte Fragment record header). A data Datagram carries at most
+    /// this many payload bytes plus a 31-byte header, so at the default a Datagram is at most 1231 bytes,
+    /// which with IPv6 and UDP headers fits the 1280-byte minimum MTU.
     /// </summary>
     /// <remarks>
     /// Announced in the handshake (ADR 0024). Each Peer cuts its reliable Messages at the smaller of
