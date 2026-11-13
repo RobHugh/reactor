@@ -251,6 +251,54 @@ public class StreamSessionOptionsTests
         act.Should().NotThrow();
     }
 
+    [Theory]
+    [InlineData(int.MaxValue)]
+    [InlineData(int.MaxValue - 1)]
+    [InlineData(int.MaxValue - 3)]
+    public void ReceiveBufferFloor_UnvalidatedMaxMessageSizeNearIntMaxValue_SaturatesAtIntMaxValue(int maxMessageSize)
+    {
+        // Arrange — never constructed, so Validate never rejects the out-of-limit MaxMessageSize.
+        StreamSessionOptions options = CreateOptions(maxMessageSize: maxMessageSize);
+
+        // Act
+        int floor = options.ReceiveBufferFloor;
+
+        // Assert
+        floor.Should().Be(int.MaxValue);
+    }
+
+    [Theory]
+    [InlineData(int.MaxValue)]
+    [InlineData(int.MaxValue - 1)]
+    [InlineData(int.MaxValue - 3)]
+    public void ResolvedReceiveBufferSize_UnvalidatedMaxMessageSizeNearIntMaxValueAndUnset_SaturatesAtIntMaxValue(
+        int maxMessageSize)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(maxMessageSize: maxMessageSize);
+
+        // Act
+        int resolved = options.ResolvedReceiveBufferSize;
+
+        // Assert
+        resolved.Should().Be(int.MaxValue);
+    }
+
+    [Theory]
+    [InlineData(2_147_483_587)] // The MaxMessageSize limit: Array.MaxLength minus the 4-byte prefix.
+    [InlineData(4096)]
+    public void ReceiveBufferFloor_MaxMessageSizeAtOrBelowTheLimit_IsMaxMessageSizePlusFour(int maxMessageSize)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(maxMessageSize: maxMessageSize);
+
+        // Act
+        int floor = options.ReceiveBufferFloor;
+
+        // Assert
+        floor.Should().Be(maxMessageSize + 4);
+    }
+
     [Fact]
     public void ResolvedReceiveBufferSize_ReceiveBufferSizeUnset_DefaultsToMaxMessageSizePlusFour()
     {

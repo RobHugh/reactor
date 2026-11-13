@@ -218,8 +218,14 @@ public sealed class StreamSessionOptions
     /// </summary>
     public int? MissedHeartbeats { get; init; }
 
-    /// <summary>The floor both <see cref="RetentionBytes"/> and the receive buffer are held to: one maximum Message plus its length prefix.</summary>
-    public int ReceiveBufferFloor => MaxMessageSize + LengthPrefixSize;
+    /// <summary>
+    /// The floor both <see cref="RetentionBytes"/> and the receive buffer are held to: one maximum
+    /// Message plus its length prefix. The sum is computed in <see langword="long"/> and saturates at
+    /// <see cref="int.MaxValue"/>, so on options not yet validated a <see cref="MaxMessageSize"/> near
+    /// <see cref="int.MaxValue"/> reads as <see cref="int.MaxValue"/> rather than wrapping negative.
+    /// Construction rejects any <see cref="MaxMessageSize"/> whose floor would saturate.
+    /// </summary>
+    public int ReceiveBufferFloor => int.CreateSaturating((long)MaxMessageSize + LengthPrefixSize);
 
     /// <summary>The resolved receive buffer: <see cref="ReceiveBufferSize"/> if set, otherwise <see cref="ReceiveBufferFloor"/>.</summary>
     public int ResolvedReceiveBufferSize => ReceiveBufferSize ?? ReceiveBufferFloor;
