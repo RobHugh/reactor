@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
+using ReactorSockets.Session;
 
 namespace ReactorSockets;
 
@@ -93,11 +94,14 @@ public sealed class DatagramSessionOptions
     private const int MinimumFragmentSize = 576;
 
     /// <summary>
-    /// The largest fragment size this profile will accept, in bytes: the maximum UDP payload, being
-    /// 65 535 less the 20-byte IPv4 header and the 8-byte UDP header. Above this there is no datagram
-    /// to put a fragment in.
+    /// The largest fragment size this profile will accept, in bytes: 65 476, the maximum UDP payload
+    /// (65 507) less the 20-byte Datagram header and the 11-byte Fragment record header, the largest
+    /// record header on the wire. At this size one full Fragment fills one maximum UDP datagram
+    /// exactly. A larger Fragment fits no Datagram, so a Message cut into one would never be sent
+    /// (issue #486).
     /// </summary>
-    private const int MaximumFragmentSize = 65_507;
+    private const int MaximumFragmentSize =
+        RawReactor.MaxUdpDatagramSize - DatagramSessionProtocol.DatagramHeaderSize - DatagramSessionProtocol.FragmentRecordSize;
 
     /// <summary>
     /// The default fragment size, in bytes: QUIC's own floor, being the 1280-byte IPv6 minimum MTU
@@ -275,7 +279,8 @@ public sealed class DatagramSessionOptions
     /// The bytes a fragment carries, and therefore the unit every buffer here is measured in.
     /// Defaults to 1200. Provenance: QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000),
     /// the one value with citable provenance for surviving an arbitrary path. Must lie between 576
-    /// (RFC 791's guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).
+    /// (RFC 791's guaranteed reassembly minimum) and 65 476 (the 65 507-byte maximum UDP payload less the
+    /// 20-byte Datagram header and the 11-byte Fragment record header).
     /// </summary>
     /// <remarks>
     /// Announced in the handshake (ADR 0024). Each Peer cuts its reliable Messages at the smaller of
@@ -499,7 +504,9 @@ public sealed class DatagramSessionOptions
                 fragmentSize,
                 $"fragment size of {fragmentSize} bytes lies outside {MinimumFragmentSize}-{MaximumFragmentSize} — " +
                 $"{MinimumFragmentSize} is the reassembly buffer RFC 791 guarantees every host provides, and " +
-                $"{MaximumFragmentSize} is the largest payload a UDP datagram has room for.");
+                $"{MaximumFragmentSize} is the largest UDP payload ({RawReactor.MaxUdpDatagramSize}) less this profile's " +
+                $"{DatagramSessionProtocol.DatagramHeaderSize}-byte Datagram header and " +
+                $"{DatagramSessionProtocol.FragmentRecordSize}-byte Fragment record header.");
         }
 
         if (RetentionBytes < fragmentSize)

@@ -224,7 +224,7 @@ public class DatagramSessionCloseGoodbyeTests
     /// datagram is picked from the captures by its size and decoded.
     /// </summary>
     [Theory]
-    [InlineData(1)]
+    [InlineData(4)]
     [InlineData(6)]
     public void Close_WhenTheGoodbyeDoesNotFitTheMessagesDatagram_CarriesTheGoodbyeAloneInTheNextOne(int leftover)
     {

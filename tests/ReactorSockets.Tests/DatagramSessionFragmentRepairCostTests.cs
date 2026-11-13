@@ -47,7 +47,7 @@ public class DatagramSessionFragmentRepairCostTests
     /// <summary>
     /// Bytes a Fragment carries in this test: just over half the 65 507-byte UDP payload ceiling, so
     /// two Fragment records (11-byte header apiece) plus the 20-byte Datagram header never both fit in
-    /// one Datagram — only one ever does. Comfortably inside the [576, 65 507] range
+    /// one Datagram — only one ever does. Comfortably inside the [576, 65 476] range
     /// <see cref="DatagramSessionOptions.FragmentSize"/> accepts.
     /// </summary>
     private const int FragmentSize = 32_750;

@@ -276,7 +276,7 @@ public class DatagramSessionOptionsTests
     public void Constructor_FragmentSizeAboveMaximum_ThrowsArgumentOutOfRangeException()
     {
         // Arrange
-        DatagramSessionOptions options = CreateOptions(fragmentSize: 65_508, retentionBytes: 65_508);
+        DatagramSessionOptions options = CreateOptions(fragmentSize: 65_477, retentionBytes: 65_477);
 
         // Act
         Action act = () => new DatagramSessionReactor(options);
@@ -290,7 +290,7 @@ public class DatagramSessionOptionsTests
     {
         // Arrange — retention must cover one fragment at the maximum fragment size, or the retention
         // check below would fire instead of exercising the fragment-size ceiling.
-        DatagramSessionOptions options = CreateOptions(fragmentSize: 65_507, retentionBytes: 65_507);
+        DatagramSessionOptions options = CreateOptions(fragmentSize: 65_476, retentionBytes: 65_476);
 
         // Act
         Action act = () => new DatagramSessionReactor(options);
