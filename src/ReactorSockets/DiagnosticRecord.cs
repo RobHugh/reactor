@@ -294,4 +294,12 @@ public readonly record struct DiagnosticRecord
     /// </summary>
     public static DiagnosticRecord ForPendingAdmissionExpired(Source source, int bytesReceived, long deadlineMilliseconds) =>
         new(DiagnosticId.PendingAdmissionExpired, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, bytesReceived, deadlineMilliseconds);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.PendingAdmissionLimitReached"/> record. No subject. Carries the
+    /// held-connection limit and the Admissions declined this Pump, counted as
+    /// <see cref="ForAdmissionCapReached"/>'s are.
+    /// </summary>
+    public static DiagnosticRecord ForPendingAdmissionLimitReached(int limit, int declined) =>
+        new(DiagnosticId.PendingAdmissionLimitReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, default, limit, declined);
 }

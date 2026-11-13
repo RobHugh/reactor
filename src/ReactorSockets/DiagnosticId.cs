@@ -432,6 +432,21 @@ public enum DiagnosticId
     /// nothing, and a consumer can act on it by blocking the address or, if conforming diallers are being
     /// closed, by raising <see cref="StreamSessionOptions.SendIdleInterval"/>. One record per connection,
     /// because it names the address. The deadline is fixed at accept, so bytes that arrive do not extend it.
+    /// At most <see cref="ReactorOptions.Capacity"/> connections are held, so no more records than that are logged in one Pump.
     /// </remarks>
     PendingAdmissionExpired = 309,
+
+    /// <summary>
+    /// A stream Reactor already held <see cref="ReactorOptions.Capacity"/> accepted connections waiting
+    /// for their first handshake record, so it accepted no more that Pump and left the rest in the OS
+    /// backlog. No subject. <c>Value0</c> is the limit, which is the capacity; <c>Value1</c> is the count
+    /// of Admissions declined, counted as <see cref="AdmissionCapReached"/>'s are: once per listening Link
+    /// left with a pending connection.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>: a remote can produce this at will by opening connections and
+    /// sending nothing. One record per Pump. The held connections close at their deadline
+    /// (<see cref="PendingAdmissionExpired"/>), so the backlog is accepted again within that time.
+    /// </remarks>
+    PendingAdmissionLimitReached = 310,
 }

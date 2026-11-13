@@ -117,6 +117,9 @@ public class DiagnosticFormatterTests
         new(
             DiagnosticRecord.ForPendingAdmissionExpired(_source, bytesReceived: 1, deadlineMilliseconds: 3000),
             $"Warn PendingAdmissionExpired (309), {SourceText}: an accepted connection sent no whole handshake record within its deadline and was closed (bytes received 1, deadline 3000 ms)"),
+        new(
+            DiagnosticRecord.ForPendingAdmissionLimitReached(limit: 4, declined: 1),
+            "Warn PendingAdmissionLimitReached (310): the Reactor held as many accepted connections waiting for a handshake record as it may and left the rest in the backlog (limit 4, admissions declined 1)"),
     ];
 
     /// <summary>Every snapshot row, as xUnit theory data.</summary>

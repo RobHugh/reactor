@@ -126,6 +126,8 @@ public static class DiagnosticFormatter
                 $"the Peer claimed delivery of more Messages than were sent and the Session was closed (count claimed {v0}, count appended {v1})"),
             DiagnosticId.PendingAdmissionExpired => Invariant(
                 $"an accepted connection sent no whole handshake record within its deadline and was closed (bytes received {v0}, deadline {v1} ms)"),
+            DiagnosticId.PendingAdmissionLimitReached => Invariant(
+                $"the Reactor held as many accepted connections waiting for a handshake record as it may and left the rest in the backlog (limit {v0}, admissions declined {v1})"),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(record), record.Id, $"{record.Id} is not a recognised DiagnosticId."),
         };

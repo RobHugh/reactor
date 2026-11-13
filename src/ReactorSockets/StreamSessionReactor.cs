@@ -56,7 +56,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly List<SlotHandle> _connectingPeers = [];
     private readonly List<PendingEvent> _pendingEvents = [];
     private readonly List<RefusalSlot> _refusals = [];
-    private readonly List<PendingAdmission> _pendingAdmissions = [];
+    private readonly List<PendingAdmission> _pendingAdmissions;
     private readonly HashSet<SlotHandle> _peersWithBufferedMessages = [];
     private readonly HashSet<SlotHandle> _peersWithPendingRetentionWrites = [];
     private readonly HashSet<SlotHandle> _peersWithGoodbyeOwed = [];
@@ -77,6 +77,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly long _pendingAdmissionDeadlineMilliseconds;
     private int _admissionsThisFrame;
     private int _capDeferralsThisFrame;
+    private readonly int _pendingAdmissionLimit;
+    private int _pendingLimitDeferralsThisFrame;
 
     /// <summary>
     /// Validates <paramref name="options"/> — every knob and cross-check, then the frame arena's
@@ -110,6 +112,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity, ReactorOrigin.Next());
         _entropy = options.Entropy;
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
+        // Each held connection is a claim on a Slot, a fresh dial asking for one or a Resume reclaiming
+        // one, so a Reactor never needs to hold more of them than it has Slots (ADR 0012, #482 amendment).
+        _pendingAdmissionLimit = options.Reactor.Capacity;
+        _pendingAdmissions = new List<PendingAdmission>(_pendingAdmissionLimit);
         _pendingAdmissionDeadlineMilliseconds = (long)options.SendIdleInterval.TotalMilliseconds * options.ResolvedMissedHeartbeats;
         _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
 
@@ -217,6 +223,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             _arena.Reset();
             _admissionsThisFrame = 0;
             _capDeferralsThisFrame = 0;
+            _pendingLimitDeferralsThisFrame = 0;
             RetryPeersPendingClose();
             RetryPeersWithBufferedMessages();
             RetryGoodbyeAppends();
@@ -602,7 +609,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// connection is admitted as a Peer or, if this Reactor has no capacity Slot free, refused
     /// in-protocol and closed: a burst of connections beyond capacity is an accept-refuse-close cycle
     /// inside the admission budget, never a silent drop and never left waiting in the backlog the way a
-    /// cap-exhausted Frame's remainder is.
+    /// cap-exhausted Frame's remainder is. It also stops once <see cref="_pendingAdmissionLimit"/> connections
+    /// are held waiting for their first record, leaving the rest in the backlog, because a held connection
+    /// costs a readiness check every Pump until it resolves or expires.
     /// </summary>
     private void OnListeningLinkReadable(TcpListenLink link)
     {
@@ -613,6 +622,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 if (link.HasPendingConnection)
                 {
                     _capDeferralsThisFrame++;
+                }
+
+                return;
+            }
+
+            if (_pendingAdmissions.Count >= _pendingAdmissionLimit)
+            {
+                if (link.HasPendingConnection)
+                {
+                    _pendingLimitDeferralsThisFrame++;
                 }
 
                 return;
@@ -2853,23 +2872,36 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// never a Deferral left for a later Pump, and the two counters this method feeds must stay
     /// untouched by it (see <see cref="RefuseForCapacity"/>). That holds whether the Slot the dial was
     /// refused for holds an established Peer or is reserved by an Interrupted one — a reservation
-    /// changes which dials are refused, never how a refusal is counted.
+    /// changes which dials are refused, never how a refusal is counted. A Frame that stopped accepting
+    /// because the held-connection limit was reached is reported the same way, as Deferrals and one
+    /// <see cref="DiagnosticId.PendingAdmissionLimitReached"/> record.
     /// </summary>
     private void ReportDeclinedAdmissions()
     {
-        if (_capDeferralsThisFrame == 0)
+        if (_capDeferralsThisFrame > 0)
         {
-            return;
+            for (int i = 0; i < _capDeferralsThisFrame; i++)
+            {
+                _counters.RecordAdmissionDeferral();
+            }
+
+            if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForAdmissionCapReached(_admissionCap, _capDeferralsThisFrame));
+            }
         }
 
-        for (int i = 0; i < _capDeferralsThisFrame; i++)
+        if (_pendingLimitDeferralsThisFrame > 0)
         {
-            _counters.RecordAdmissionDeferral();
-        }
+            for (int i = 0; i < _pendingLimitDeferralsThisFrame; i++)
+            {
+                _counters.RecordAdmissionDeferral();
+            }
 
-        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
-        {
-            _diagnostics.Log(DiagnosticRecord.ForAdmissionCapReached(_admissionCap, _capDeferralsThisFrame));
+            if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForPendingAdmissionLimitReached(_pendingAdmissionLimit, _pendingLimitDeferralsThisFrame));
+            }
         }
     }
 
