@@ -3442,7 +3442,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// <summary>The protocol version the remote's handshake record offered.</summary>
         public uint RemoteVersion { get; set; }
 
-        /// <summary>The largest Message the remote said it will accept. <see cref="Send"/> refuses a longer one with <see cref="SendOutcome.RemoteMessageTooLarge"/>.</summary>
+        /// <summary>
+        /// The largest Message the remote said it will accept. <see cref="Send"/> refuses a longer one with
+        /// <see cref="SendOutcome.RemoteMessageTooLarge"/>.
+        /// </summary>
         public uint RemoteMaxMessageSize { get; set; }
 
         /// <summary>The send-idle interval the remote announced.</summary>

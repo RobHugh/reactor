@@ -41,8 +41,8 @@ public class StreamSessionRemoteMessageSizeTests
         List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> Receiver)
         PumpUntilReceived(StreamSessionReactorHarness sender, StreamSessionReactorHarness receiver)
     {
-        List<(SessionEventKind, PeerId, DisconnectReason, byte[])> senderEvents = [];
-        List<(SessionEventKind Kind, PeerId, DisconnectReason, byte[])> receiverEvents = [];
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> senderEvents = [];
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason, byte[] Payload)> receiverEvents = [];
         PumpDeadline deadline = PumpDeadline.Start();
         while (true)
         {
@@ -83,7 +83,7 @@ public class StreamSessionRemoteMessageSizeTests
     }
 
     [Fact]
-    public void Send_OneByteAboveTheDiallersAnnouncedLimit_FromTheAccepter_ReturnsRemoteMessageTooLarge()
+    public void Send_FromTheAccepterOneByteAboveTheDiallersAnnouncedLimit_ReturnsRemoteMessageTooLarge()
     {
         // Arrange
         using StreamSessionReactorHarness dialler = new(bindLoopback: false, maxMessageSize: SmallLimit, retentionBytes: SmallLimit + 4);
