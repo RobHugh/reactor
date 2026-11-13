@@ -340,11 +340,15 @@ lost its transport, not a condition a consumer needs to act on.
 
 `RedialFailed = 307` 
 
-A re-dial attempt could not connect (ADR 0011). Subject is the Peer, which this never closes —
-it stays Interrupted and waits out the schedule's next delay, leaving Linger, not an attempt
-count, the only thing that ever closes it. <code>Value0</code> carries the platform
-[`SocketError`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror) as its underlying integer value; <code>Value1</code> is
-the attempt number that failed.
+A re-dial attempt could not connect, or connected and ended before the listener confirmed the
+Resume (ADR 0011). Subject is the Peer, which this never closes — it stays Interrupted and
+waits out the schedule's next delay, leaving Linger, not an attempt count, the only thing that
+ever closes it. <code>Value0</code> carries the platform [`SocketError`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror)
+as its underlying integer value: for a connection that ended before confirmation it is
+[`Disconnecting`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror.disconnecting) for an end of stream, or the read's
+error. It is [`TimedOut`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror.timedout) when the listener did not
+answer within the receive-idle deadline, and [`SocketError`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror.socketerror)
+when the Resume record could not be sent. <code>Value1</code> is the attempt number that failed.
 
 [`DiagnosticLevel.Info`](ReactorSockets.DiagnosticLevel.md) rather than [`DiagnosticLevel.Warn`](ReactorSockets.DiagnosticLevel.md): under this
 profile's premise a failed reconnection attempt is an ordinary, expected outcome, and raising it

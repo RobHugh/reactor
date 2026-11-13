@@ -110,7 +110,7 @@ public class DiagnosticFormatterTests
             $"Info RedialAttempted (306), {PeerText}: a re-dial attempt began (attempt 2, waited 250 ms)"),
         new(
             DiagnosticRecord.ForRedialFailed(_peer, SocketError.ConnectionRefused, attemptNumber: 2),
-            $"Info RedialFailed (307), {PeerText}: a re-dial attempt could not connect (socket error ConnectionRefused 10061, attempt 2)"),
+            $"Info RedialFailed (307), {PeerText}: a re-dial attempt failed (socket error ConnectionRefused 10061, attempt 2)"),
         new(
             DiagnosticRecord.ForDeliveryCounterRefused(_peer, claimedCount: 10, appendedMessageCount: 4),
             $"Warn DeliveryCounterRefused (308), {PeerText}: the Peer claimed delivery of more Messages than were sent and the Session was closed (count claimed 10, count appended 4)"),

@@ -400,11 +400,15 @@ lost its transport, not a condition a consumer needs to act on.</p>
 </dd>
   
     <dt id="ReactorSockets_DiagnosticId_RedialFailed"><code>RedialFailed = 307</code></dt>
-  <dd><p>A re-dial attempt could not connect (ADR 0011). Subject is the Peer, which this never closes —
-it stays Interrupted and waits out the schedule's next delay, leaving Linger, not an attempt
-count, the only thing that ever closes it. <code>Value0</code> carries the platform
-<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> as its underlying integer value; <code>Value1</code> is
-the attempt number that failed.</p>
+  <dd><p>A re-dial attempt could not connect, or connected and ended before the listener confirmed the
+Resume (ADR 0011). Subject is the Peer, which this never closes — it stays Interrupted and
+waits out the schedule's next delay, leaving Linger, not an attempt count, the only thing that
+ever closes it. <code>Value0</code> carries the platform <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a>
+as its underlying integer value: for a connection that ended before confirmation it is
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror#system-net-sockets-socketerror-disconnecting">Disconnecting</a> for an end of stream, or the read's
+error. It is <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror#system-net-sockets-socketerror-timedout">TimedOut</a> when the listener did not
+answer within the receive-idle deadline, and <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror#system-net-sockets-socketerror-socketerror">SocketError</a>
+when the Resume record could not be sent. <code>Value1</code> is the attempt number that failed.</p>
 <p><a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Info">Info</a> rather than <a class="xref" href="ReactorSockets.DiagnosticLevel.html#ReactorSockets_DiagnosticLevel_Warn">Warn</a>: under this
 profile's premise a failed reconnection attempt is an ordinary, expected outcome, and raising it
 to Warn would train a consumer to ignore Warn.</p>

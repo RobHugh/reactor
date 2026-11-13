@@ -23,6 +23,11 @@
   only when it is itself interrupted. The Peer now resumes when it receives a well-formed data Datagram
   for its Session from the address and port it sends to (#480, ADR 0009). A Datagram from any other
   address or port still needs a matched Resume.
+- A stream dialler whose listener no longer held the Session (restarted, or closed the Peer) re-dialled
+  forever and never closed. It now raises one `PeerInterrupted` and closes with `LingerExpired` on time.
+  A re-dial counts as resumed only when the listening side answers (#481, ADR 0011).
+- A Message sent to an Interrupted stream Peer stayed unsent after the Peer resumed until the next
+  `Send`. It is now written once the Peer resumes, on both ends (#481).
 
 ### Breaking changes
 
