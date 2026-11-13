@@ -75,7 +75,7 @@
 
 
   <h1 id="ReactorSockets_DatagramSessionOptions" data-uid="ReactorSockets.DatagramSessionOptions" class="text-break">
-Class DatagramSessionOptions  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L86"><i class="bi bi-code-slash"></i></a>
+Class DatagramSessionOptions  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L91"><i class="bi bi-code-slash"></i></a>
   </h1>
 
   <div class="facts text-secondary">
@@ -151,7 +151,7 @@ constants. Changing one changes what a datagram means, which is a version, not a
 </p>
 <p>
 <b>The memory bill.</b> A Reactor built from these options preallocates, and the whole of it is
-these two lines:
+these three lines:
 </p>
 <ul><li>
 receive: <code>Capacity × 2 × ReceiveWindowFragments × FragmentSize</code> — two of the four Spaces are
@@ -159,6 +159,9 @@ reliable and reassemble, and each holds a window of whole fragment slots per Pee
 </li><li>
 send: <code>Capacity × 2 × RetentionBytes</code> — the same two Spaces retain what they have sent until
 it is acknowledged, per Peer.
+</li><li>
+unreliable queue: <code>Capacity × UnreliableQueueBytes</code> — the bytes of Messages Sent in the two
+unreliable modes that wait for the next Pump, per Peer.
 </li></ul>
 <p>
 <code>FragmentSize</code> is in one line and not the other because the window counts packets and retention
@@ -168,7 +171,7 @@ Each line also carries a few bytes of bookkeeping per fragment slot, which
 default fragment size.
 </p>
 <p>
-The frame arena (<a class="xref" href="ReactorSockets.ReactorOptions.ArenaSize.html#ReactorSockets_ReactorOptions_ArenaSize">ArenaSize</a>) is over and above those two lines and is
+The frame arena (<a class="xref" href="ReactorSockets.ReactorOptions.ArenaSize.html#ReactorSockets_ReactorOptions_ArenaSize">ArenaSize</a>) is over and above those three lines and is
 shared across the whole Reactor rather than multiplied by capacity.
 </p>
 <p>
@@ -231,7 +234,10 @@ only because that default is derived rather than guessed. Provenance: the platfo
     <dd><p>The bytes a fragment carries, and therefore the unit every buffer here is measured in.
 Defaults to 1200. Provenance: QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000),
 the one value with citable provenance for surviving an arbitrary path. Must lie between 576
-(RFC 791's guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).</p>
+(RFC 791's guaranteed reassembly minimum) and 65 476 (the 65 507-byte maximum UDP payload less the
+20-byte Datagram header and the 11-byte Fragment record header). A data Datagram carries at most
+this many payload bytes plus a 31-byte header, so at the default a Datagram is at most 1231 bytes,
+which with IPv6 and UDP headers fits the 1280-byte minimum MTU.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -355,6 +361,11 @@ window for every Space of every Peer, plus every handshake the admission cap all
 </dd>
   </dl>
   <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes.html#ReactorSockets_DatagramSessionOptions_ResolvedUnreliableQueueBytes">ResolvedUnreliableQueueBytes</a></dt>
+    <dd><p><a class="xref" href="ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.html#ReactorSockets_DatagramSessionOptions_UnreliableQueueBytes">UnreliableQueueBytes</a> with its default applied, clamped to <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32.maxvalue">MaxValue</a>.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.RetentionBytes.html#ReactorSockets_DatagramSessionOptions_RetentionBytes">RetentionBytes</a></dt>
     <dd><p>The bytes each reliable Space retains per Peer for retransmission, until what it holds is
 acknowledged. Required: this is the consumer trading their memory against their tolerance for
@@ -386,6 +397,24 @@ knows which they would rather spend. There is no option to disable this: every E
 that has sent no data datagram for this long is always sent one seven-byte control record,
 whatever else it did or did not receive. At most 2^32 - 1 milliseconds (about 49.7 days), the
 most a handshake may announce.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes.html#ReactorSockets_DatagramSessionOptions_UnreliableQueueBudgetBytes">UnreliableQueueBudgetBytes</a></dt>
+    <dd><p>The unreliable-queue line of the memory bill in bytes: <code>Capacity × </code><a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes.html#ReactorSockets_DatagramSessionOptions_ResolvedUnreliableQueueBytes">ResolvedUnreliableQueueBytes</a>,
+one region per Peer, allocated at construction.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.html#ReactorSockets_DatagramSessionOptions_UnreliableQueueBytes">UnreliableQueueBytes</a></dt>
+    <dd><p>The most bytes one Peer may have queued for <a class="xref" href="ReactorSockets.DeliveryMode.html#ReactorSockets_DeliveryMode_Unreliable">Unreliable</a> and
+<a class="xref" href="ReactorSockets.DeliveryMode.html#ReactorSockets_DeliveryMode_UnreliableSequenced">UnreliableSequenced</a> between Pumps, counting each Message's payload plus
+its 7-byte record header. A Send that would go past it returns <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_SendQueueFull">SendQueueFull</a>.
+<a href="https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/null">null</a> means <a class="xref" href="ReactorSockets.DatagramSessionOptions.RetentionSlots.html#ReactorSockets_DatagramSessionOptions_RetentionSlots">RetentionSlots</a> × (<a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a> + 7):
+as many full unreliable Messages as one reliable Space retains Fragments. Provenance: derived from
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.RetentionBytes.html#ReactorSockets_DatagramSessionOptions_RetentionBytes">RetentionBytes</a> and <a class="xref" href="ReactorSockets.DatagramSessionOptions.FragmentSize.html#ReactorSockets_DatagramSessionOptions_FragmentSize">FragmentSize</a>, so the unreliable queue holds as much as
+a reliable Space does. Must be at least
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a> + 7, one full unreliable Message.</p>
 </dd>
   </dl>
 

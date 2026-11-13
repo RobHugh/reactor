@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_DatagramSessionReactor_Send_" data-uid="ReactorSockets.DatagramSessionReactor.Send*" class="text-break">
-Method Send  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionReactor.cs/#L587"><i class="bi bi-code-slash"></i></a>
+Method Send  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionReactor.cs/#L602"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,7 +107,7 @@ Method Send  <a class="header-action link-secondary" title="View source" href="h
 
 <h3 id="ReactorSockets_DatagramSessionReactor_Send_ReactorSockets_PeerId_ReactorSockets_DeliveryMode_System_ReadOnlySpan_System_Byte__" data-uid="ReactorSockets.DatagramSessionReactor.Send(ReactorSockets.PeerId,ReactorSockets.DeliveryMode,System.ReadOnlySpan{System.Byte})">
   Send(PeerId, DeliveryMode, ReadOnlySpan&lt;byte&gt;)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionReactor.cs/#L587"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionReactor.cs/#L602"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>Sends <code class="paramref">message</code> to <code class="paramref">peer</code> under <code class="paramref">mode</code> (ADR
@@ -135,12 +135,13 @@ that is never sent; <a class="xref" href="ReactorSockets.DeliveryMode.html#React
 the same as every other (<span class="xref">ReactorSockets.Session.OutboundSequenceSpaces</span>) — but retain nothing, because
 nothing unreliable is ever retransmitted. A Message this call accepts is queued on
 <code class="paramref">peer</code>'s Slot (<span class="xref">ReactorSockets.DatagramSessionReactor.PeerSlot.PendingSends</span>) and leaves as one packet
-record inside the next <a class="xref" href="ReactorSockets.DatagramSessionReactor.Pump.html#ReactorSockets_DatagramSessionReactor_Pump">Pump()</a>'s single coalesced Datagram to that Peer, in Send
-order (<span class="xref">ReactorSockets.DatagramSessionReactor.FlushOutboundDatagrams()</span>) — nothing reaches the wire before that Pump runs,
-and a <code>Send</code> with no following Pump puts nothing on the wire at all. That next Pump is only
-the first one this record is <em>eligible</em> to leave in: if this Peer already has more queued
-than one Datagram holds, a record queued behind the boundary waits for however many further
-Pumps it takes to reach the front, still in the order it was Sent.</p>
+record in a data Datagram written by a later <a class="xref" href="ReactorSockets.DatagramSessionReactor.Pump.html#ReactorSockets_DatagramSessionReactor_Pump">Pump()</a>, in Send
+order (<span class="xref">ReactorSockets.DatagramSessionReactor.FlushOutboundDatagrams()</span>). Nothing reaches the wire before that Pump runs. One
+Pump writes a bounded number of Datagrams per Peer (<span class="xref">ReactorSockets.DatagramSessionReactor.FlushPeer(ReactorSockets.DatagramSessionReactor.PeerSlot)</span>), so a record queued
+behind a backlog waits for however many Pumps it takes to reach the front. An unreliable Message
+is charged its length plus a 7-byte record header against
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.html#ReactorSockets_DatagramSessionOptions_UnreliableQueueBytes">UnreliableQueueBytes</a> and refused with
+<a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_SendQueueFull">SendQueueFull</a> past it, with nothing copied and no sequence spent.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 

@@ -45,7 +45,7 @@ constants. Changing one changes what a datagram means, which is a version, not a
 </p>
 <p>
 <b>The memory bill.</b> A Reactor built from these options preallocates, and the whole of it is
-these two lines:
+these three lines:
 </p>
 <ul><li>
 receive: <code>Capacity × 2 × ReceiveWindowFragments × FragmentSize</code> — two of the four Spaces are
@@ -53,6 +53,9 @@ reliable and reassemble, and each holds a window of whole fragment slots per Pee
 </li><li>
 send: <code>Capacity × 2 × RetentionBytes</code> — the same two Spaces retain what they have sent until
 it is acknowledged, per Peer.
+</li><li>
+unreliable queue: <code>Capacity × UnreliableQueueBytes</code> — the bytes of Messages Sent in the two
+unreliable modes that wait for the next Pump, per Peer.
 </li></ul>
 <p>
 <code>FragmentSize</code> is in one line and not the other because the window counts packets and retention
@@ -62,7 +65,7 @@ Each line also carries a few bytes of bookkeeping per fragment slot, which
 default fragment size.
 </p>
 <p>
-The frame arena ([`ReactorOptions.ArenaSize`](ReactorSockets.ReactorOptions.ArenaSize.md#ReactorSockets_ReactorOptions_ArenaSize)) is over and above those two lines and is
+The frame arena ([`ReactorOptions.ArenaSize`](ReactorSockets.ReactorOptions.ArenaSize.md#ReactorSockets_ReactorOptions_ArenaSize)) is over and above those three lines and is
 shared across the whole Reactor rather than multiplied by capacity.
 </p>
 <p>
@@ -121,7 +124,10 @@ only because that default is derived rather than guessed. Provenance: the platfo
 The bytes a fragment carries, and therefore the unit every buffer here is measured in.
 Defaults to 1200. Provenance: QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000),
 the one value with citable provenance for surviving an arbitrary path. Must lie between 576
-(RFC 791's guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).
+(RFC 791's guaranteed reassembly minimum) and 65 476 (the 65 507-byte maximum UDP payload less the
+20-byte Datagram header and the 11-byte Fragment record header). A data Datagram carries at most
+this many payload bytes plus a 31-byte header, so at the default a Datagram is at most 1231 bytes,
+which with IPv6 and UDP headers fits the 1280-byte minimum MTU.
 
  [HeldRecordBudgetBytes](ReactorSockets.DatagramSessionOptions.HeldRecordBudgetBytes.md\#ReactorSockets\_DatagramSessionOptions\_HeldRecordBudgetBytes)
 
@@ -226,6 +232,10 @@ The resolved IPv6 grouping length: [`DatagramSessionOptions.PeerLimitIPv6PrefixL
 
 The resolved receive window: [`DatagramSessionOptions.ReceiveWindowFragments`](ReactorSockets.DatagramSessionOptions.ReceiveWindowFragments.md#ReactorSockets_DatagramSessionOptions_ReceiveWindowFragments) if set, otherwise [`DatagramSessionOptions.ReceiveWindowFloor`](ReactorSockets.DatagramSessionOptions.ReceiveWindowFloor.md#ReactorSockets_DatagramSessionOptions_ReceiveWindowFloor).
 
+ [ResolvedUnreliableQueueBytes](ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes.md\#ReactorSockets\_DatagramSessionOptions\_ResolvedUnreliableQueueBytes)
+
+[`DatagramSessionOptions.UnreliableQueueBytes`](ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.md#ReactorSockets_DatagramSessionOptions_UnreliableQueueBytes) with its default applied, clamped to [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int32.maxvalue).
+
  [RetentionBytes](ReactorSockets.DatagramSessionOptions.RetentionBytes.md\#ReactorSockets\_DatagramSessionOptions\_RetentionBytes)
 
 The bytes each reliable Space retains per Peer for retransmission, until what it holds is
@@ -255,4 +265,20 @@ knows which they would rather spend. There is no option to disable this: every E
 that has sent no data datagram for this long is always sent one seven-byte control record,
 whatever else it did or did not receive. At most 2^32 - 1 milliseconds (about 49.7 days), the
 most a handshake may announce.
+
+ [UnreliableQueueBudgetBytes](ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes.md\#ReactorSockets\_DatagramSessionOptions\_UnreliableQueueBudgetBytes)
+
+The unreliable-queue line of the memory bill in bytes: <code>Capacity × </code>[`DatagramSessionOptions.ResolvedUnreliableQueueBytes`](ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes.md#ReactorSockets_DatagramSessionOptions_ResolvedUnreliableQueueBytes),
+one region per Peer, allocated at construction.
+
+ [UnreliableQueueBytes](ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.md\#ReactorSockets\_DatagramSessionOptions\_UnreliableQueueBytes)
+
+The most bytes one Peer may have queued for [`DeliveryMode.Unreliable`](ReactorSockets.DeliveryMode.md) and
+[`DeliveryMode.UnreliableSequenced`](ReactorSockets.DeliveryMode.md) between Pumps, counting each Message's payload plus
+its 7-byte record header. A Send that would go past it returns [`SendOutcome.SendQueueFull`](ReactorSockets.SendOutcome.md).
+<a href="https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/null">null</a> means [`DatagramSessionOptions.RetentionSlots`](ReactorSockets.DatagramSessionOptions.RetentionSlots.md#ReactorSockets_DatagramSessionOptions_RetentionSlots) × ([`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) + 7):
+as many full unreliable Messages as one reliable Space retains Fragments. Provenance: derived from
+[`DatagramSessionOptions.RetentionBytes`](ReactorSockets.DatagramSessionOptions.RetentionBytes.md#ReactorSockets_DatagramSessionOptions_RetentionBytes) and [`DatagramSessionOptions.FragmentSize`](ReactorSockets.DatagramSessionOptions.FragmentSize.md#ReactorSockets_DatagramSessionOptions_FragmentSize), so the unreliable queue holds as much as
+a reliable Space does. Must be at least
+[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) + 7, one full unreliable Message.
 
