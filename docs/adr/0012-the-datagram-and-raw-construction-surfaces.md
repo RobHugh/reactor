@@ -182,6 +182,10 @@ The memory documentation therefore has two lines rather than one — `capacity �
 fragmentSize` for receive and `capacity × 2 × retention` for send — with `fragmentSize` in one and not
 the other, because the window counts packets and retention counts bytes.
 
+**Amended (issue #485).** The memory documentation has a third line, `capacity × UnreliableQueueBytes`,
+for the unreliable send queue. `UnreliableQueueBytes` defaults to `RetentionSlots × (fragmentSize + 7)`,
+derived from retention, so it passes this ADR's rule. See ADR 0025.
+
 ## Datagram liveness adopts the stream profile's shape
 
 ADR 0009 called the liveness deadline and Linger *"consumer knobs with policy defaults"*. The first half

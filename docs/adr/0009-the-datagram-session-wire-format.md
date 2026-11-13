@@ -6,6 +6,10 @@ defines, so the protocol borrows it rather than inventing a timer. Every record 
 with its own sequence number, so ADR 0004's promise holds unchanged: the ack and retransmit machinery
 operates purely on sequence numbers and does not know Fragments exist.
 
+**Amended (issue #485).** A Peer's records are flushed as up to `65 507 / (FragmentSize + 31)` data
+Datagrams per Pump, each at most `FragmentSize + 31` bytes, not as one Datagram of up to 65 507 bytes.
+See ADR 0025.
+
 ```
 datagram header
   u32  session

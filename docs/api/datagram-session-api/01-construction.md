@@ -70,6 +70,8 @@ Fragment fills one maximum Datagram.
 - Leave it at 1200 unless you control every path between the two ends.
 - It caps the unreliable modes: an `Unreliable` or `UnreliableSequenced` Message can be no larger
   than one fragment.
+- It caps every Datagram: a data Datagram is at most `FragmentSize + 31` bytes, 1231 at the default,
+  which with IPv6 and UDP headers fits the 1280-byte minimum MTU.
 - It is per direction and never negotiated. Two ends with different values interoperate, each
   cutting its own Messages by its own size.
 - Each Peer captures the value when it is admitted. Nothing changes it mid-Session.

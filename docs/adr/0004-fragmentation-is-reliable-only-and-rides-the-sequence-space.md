@@ -34,6 +34,10 @@ demands per-Peer path state and dynamically sized buffers, which contradicts pre
 everything at construction, and ICMP-based discovery produces confident wrong answers on exactly the
 filtered paths where being wrong hurts.
 
+**Amended (issue #485).** A data Datagram carries at most one Fragment of `FragmentSize` bytes and 31
+bytes of header, so a backlog of small records never forms a Datagram larger than a Fragment's. See
+ADR 0025.
+
 `MaxMessageSize` is announced in the handshake and is honestly a *receive* limit. A sender validates
 against the peer's announced value, so an oversized payload fails synchronously at `Send` rather
 than as an unexplained remote disconnect part-way through a transfer.

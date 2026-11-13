@@ -52,6 +52,7 @@ appears that is not in the audited list below.
 | `Linger` | required | A prompt teardown against a clean one. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Endpoints` | empty | No declaration. The first dial binds a wildcard, port-zero socket. |
 | `FragmentSize` | 1200 | QUIC's floor under the 1280-byte IPv6 minimum MTU. Range 576 (RFC 791) to 65 476 (the 65 507-byte UDP payload less 31 header bytes). Announced at handshake. A Peer's send size is the smaller of the two ends' sizes, fixed when the Peer reaches Established. A reliable Message is cut at it, and an unreliable Message wider than it returns `MessageTooLarge`. |
+| `UnreliableQueueBytes` | `RetentionSlots × (FragmentSize + 7)` | `RetentionBytes` and `FragmentSize`. As many full unreliable Messages per Peer as one reliable Space retains Fragments. Each queued Message costs its length plus 7. At least `FragmentSize + 7`. |
 | `ReceiveWindowFragments` | fragments in one maximum Message | `MaxMessageSize` and `FragmentSize`. A narrower window deadlocks (ADR 0004). |
 | `MissedHeartbeats` | 3 | RFC 4271's hold time. At least 2. |
 | `Entropy` | the platform CSPRNG | The platform. |
@@ -118,14 +119,19 @@ a size, and the OS may double it or hold it to its own floor.
 ### Datagram
 
 ```
-receive:  Capacity × 2 × ReceiveWindowFragments × FragmentSize
-send:     Capacity × 2 × RetentionBytes
+receive:     Capacity × 2 × ReceiveWindowFragments × FragmentSize
+send:        Capacity × 2 × RetentionBytes
+unreliable:  Capacity × UnreliableQueueBytes
 ```
 
 `FragmentSize` appears in one line and not the other, because the window counts packets and retention
 counts bytes. The 2 is the two reliable Spaces, the only ones that reassemble and retransmit. Each line
 also carries a few bytes of bookkeeping per fragment slot, under 2% at the default fragment size.
 `ReceiveBudgetBytes` and `SendBudgetBytes` report both lines exactly, bookkeeping included.
+
+The unreliable line is the queue for `Unreliable` and `UnreliableSequenced` Messages waiting for the
+next Pump. Its default is one reliable Space's retention plus 7 bytes per slot, so by default it adds
+about half the send line. `UnreliableQueueBudgetBytes` reports it.
 
 One further cost is a ceiling rather than a preallocation, so nothing allocates it at construction:
 

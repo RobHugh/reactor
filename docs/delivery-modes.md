@@ -76,6 +76,7 @@ receiver closes the Peer with `ProtocolViolation`.
 | `MessageTooLarge` | `Unreliable`, `UnreliableSequenced` | Wider than one Datagram at the smaller of the two ends' `FragmentSize` values. Split it or use a reliable mode. |
 | `RemoteMessageTooLarge` | all | Wider than the `MaxMessageSize` this Peer announced at handshake. In a reliable mode it also covers a Message that needs more Fragments, at the size this Peer is sent at, than the `ReceiveWindowFragments` this Peer announced. Another Peer may accept it. |
 | `RetentionExhausted` | `ReliableOrdered`, `ReliableUnordered` | The mode's Space has no `RetentionBytes` left. This is backpressure: retry after the Peer acknowledges. |
+| `SendQueueFull` | `Unreliable`, `UnreliableSequenced` | The Peer's queued unreliable bytes would pass `UnreliableQueueBytes`. This is backpressure: retry after the next Pump. |
 | `Closed` | all | The Session is ending: a Goodbye has passed in either direction, or the Reactor no longer holds the Peer. |
 
 Each reliable Space has its own retention, so a full `ReliableOrdered` Space does not refuse a
