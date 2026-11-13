@@ -144,8 +144,11 @@ public sealed class StreamSessionOptions
     /// <summary>
     /// How long a closing Session stays alive to retransmit its Goodbye and absorb what is still in
     /// flight. Required, for the same reason as <see cref="SendIdleInterval"/>: it trades a prompt
-    /// teardown against a clean one. At most 2^32 - 1 milliseconds (about 49.7 days), the most a handshake
-    /// may announce.
+    /// teardown against a clean one. It also bounds a dial: a Peer this end dialled that has not
+    /// established one Linger after <see cref="StreamSessionReactor.Connect"/> closes with
+    /// <see cref="DisconnectReason.TransportFailed"/>, so a Linger shorter than the round trip plus the
+    /// far end's Pump interval closes a dial before its answer arrives. At most 2^32 - 1 milliseconds
+    /// (about 49.7 days), the most a handshake may announce.
     /// </summary>
     public required TimeSpan Linger { get; init; }
 

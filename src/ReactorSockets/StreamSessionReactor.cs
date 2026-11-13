@@ -195,7 +195,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="StreamSessionOptions.SendIdleInterval"/> sends the same delivery-counter record as a
     /// heartbeat, unconditionally and regardless of whether anything was ever received from it. Every
     /// accepted connection still waiting for its first handshake record once its deadline has passed is
-    /// then closed (<see cref="ExpirePendingAdmissions"/>). Once
+    /// then closed (<see cref="ExpirePendingAdmissions"/>). The same scan closes with
+    /// <see cref="DisconnectReason.TransportFailed"/> every Peer this Reactor dialled that has not
+    /// established one <see cref="StreamSessionOptions.Linger"/> after <see cref="Connect"/>. Once
     /// idle timers may have closed an Interrupted Peer on Linger expiry, every Interrupted Peer this
     /// Reactor itself dialled is given its re-dial attempt for this Frame
     /// (<see cref="ProcessRedials"/>) — a schedule derived from the observed Pump interval just
@@ -251,7 +253,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// does in <see cref="RawReactor"/>: the handshake is work this Reactor is holding, and pretending
     /// otherwise would let a consumer dial past capacity and discover it only on the far side of a
     /// round trip. <see cref="SessionEventKind.PeerConnected"/> or <see cref="SessionEventKind.PeerClosed"/>
-    /// resolves it on a later Pump.
+    /// resolves it on a later Pump. A dial that has not established one
+    /// <see cref="StreamSessionOptions.Linger"/> after this call closes with
+    /// <see cref="DisconnectReason.TransportFailed"/>, whether its TCP connect is still pending or the far
+    /// end connected and sent no handshake record.
     /// </summary>
     public PeerId Connect(IPEndPoint destination)
     {
@@ -274,6 +279,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             ReceiveBuffer = new byte[_options.ResolvedReceiveBufferSize],
             DeliveryCounterRecord = new byte[MessageFramingCodec.DeliveryCounterRecordSize],
             DialedEndpoint = destination,
+            DialStartTimestamp = _options.Reactor.TimeProvider.GetTimestamp(),
         };
 
         // `HasFreeSlot` was just checked and this Reactor is single-threaded (ADR 0002), so `TryAdd`
@@ -1806,6 +1812,17 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _options.Reactor.TimeProvider.GetElapsedTime(slot.InterruptedTimestamp) >= slot.EffectiveLinger;
 
     /// <summary>
+    /// Whether <paramref name="slot"/> is a Peer this Reactor dialled and one
+    /// <see cref="StreamSessionOptions.Linger"/> has passed since <see cref="Connect"/>. Called only for a
+    /// Peer that has not established. The deadline is this end's own Linger because no other is known
+    /// before the far end's Hello announces one, and it is the bound the datagram profile puts on a
+    /// pending dial (ADR 0011, amendment for issue #483).
+    /// </summary>
+    private bool HasDialExpired(PeerSlot slot) =>
+        slot.DialedEndpoint is not null
+        && _options.Reactor.TimeProvider.GetElapsedTime(slot.DialStartTimestamp) >= _options.Linger;
+
+    /// <summary>
     /// Reactor's two independent idle timers: runs once per <see cref="Pump"/>, after
     /// <see cref="FlushPendingRetentionWrites"/>, over a single scan of every occupied Slot
     /// (<see cref="ShareHolderTable{T}.OccupantAt"/>) rather than two, since neither timer's trigger
@@ -1841,13 +1858,31 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// attempt as a re-dial attempt (<see cref="FailUnconfirmedResume"/>), and Linger is checked first,
     /// so a Peer whose Linger has run out closes instead.
     /// </para>
+    /// <para>
+    /// A Peer this Reactor dialled that has not established has neither timer. It is checked only against
+    /// its dial deadline (<see cref="HasDialExpired"/>) and closes with
+    /// <see cref="DisconnectReason.TransportFailed"/> once that passes. This scan runs after the readiness
+    /// pass, so a Hello already in the socket buffer establishes the Peer first, and before
+    /// <see cref="ProcessConnectingPeers"/>, so a dial closed here is never polled again.
+    /// </para>
     /// </remarks>
     private void EnforceIdleTimers()
     {
         for (int index = 0; index < _peers.Capacity; index++)
         {
-            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            if (_peers.OccupantAt(index) is not PeerSlot slot)
             {
+                continue;
+            }
+
+            if (slot.State != HandshakeState.Established)
+            {
+                // A Peer still in its handshake has no idle timer, only its dial deadline.
+                if (HasDialExpired(slot))
+                {
+                    ClosePeer(slot.Handle, DisconnectReason.TransportFailed);
+                }
+
                 continue;
             }
 
@@ -3505,6 +3540,14 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// endpoint — there is no rebinding and no address discovery.
         /// </summary>
         public IPEndPoint? DialedEndpoint { get; init; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> value at <see cref="Connect"/>. A dial still short of
+        /// <see cref="HandshakeState.Established"/> one <see cref="StreamSessionOptions.Linger"/> later is
+        /// closed with <see cref="DisconnectReason.TransportFailed"/> (<see cref="HasDialExpired"/>). Unused
+        /// on an accepted Peer.
+        /// </summary>
+        public long DialStartTimestamp { get; init; }
 
         /// <summary>
         /// This Peer's re-dial schedule (<see cref="Session.RedialSchedule"/>), or

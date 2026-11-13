@@ -60,6 +60,10 @@ public enum DisconnectReason
     /// answer: one still pending its own <see cref="DatagramSessionOptions.Linger"/> after
     /// <see cref="DatagramSessionReactor.Connect"/>, its handshake resent throughout (ADR 0009, amendment
     /// of 2026-11-10).
+    /// The stream profile produces it for a dial that has not established one
+    /// <see cref="StreamSessionOptions.Linger"/> after <see cref="StreamSessionReactor.Connect"/>, whether
+    /// its TCP connect is still pending or the far end connected and sent no handshake record (ADR 0011,
+    /// amendment for issue #483).
     /// </remarks>
     TransportFailed = 3,
 
