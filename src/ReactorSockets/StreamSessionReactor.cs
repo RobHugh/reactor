@@ -2494,7 +2494,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                     if (slot.AwaitingResumeCounter)
                     {
                         RetentionRewindOutcome rewindOutcome = _retention.RewindSentToMessageCount(
-                            handle.Index, confirmedThroughMessage, out ulong bytesRewound);
+                            handle.Index, confirmedThroughMessage, out _);
                         slot.AwaitingResumeCounter = false;
 
                         if (rewindOutcome != RetentionRewindOutcome.Rewound)
