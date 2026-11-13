@@ -25,7 +25,7 @@ public class ReactorOptionsTests
         {
             Reactor = reactor,
             MaxMessageSize = 4096,
-            RetentionBytes = 4100,
+            RetentionBytes = 4100, // One Message plus its 4-byte length prefix.
             SendIdleInterval = TimeSpan.FromSeconds(1),
             Linger = TimeSpan.FromSeconds(1),
         }),

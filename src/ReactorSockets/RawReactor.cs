@@ -103,8 +103,8 @@ public sealed class RawReactor : IDisposable
     /// exceeds it and is reported as truncated. This is the profile-specific
     /// knob a consumer lowers to opt into truncation, kept off <see cref="ReactorOptions"/> because it
     /// has no meaning outside Raw's datagram surface. It must be at least 1 and at most
-    /// <see cref="Array.MaxLength"/> minus 1, because the scratch allocation adds one truncation byte;
-    /// a value outside that range throws <see cref="ArgumentOutOfRangeException"/>.
+    /// <see cref="Array.MaxLength"/> minus 1, because the scratch allocation adds one truncation byte.
+    /// A value outside that range throws <see cref="ArgumentOutOfRangeException"/>.
     /// </param>
     public RawReactor(ReactorOptions options, int? scratchBufferSize = null)
     {

@@ -131,7 +131,9 @@ public sealed class ReactorOptions
     /// <summary>
     /// Applies <see cref="ArenaSize"/> against a profile's arena floor — one maximum deliverable
     /// unit — defaulting to the floor when unset, and throwing <see cref="ArgumentException"/>
-    /// naming the arithmetic when an explicit value falls short of it.
+    /// naming the arithmetic when an explicit value falls short of it. An explicit value above
+    /// <see cref="Array.MaxLength"/> throws <see cref="ArgumentOutOfRangeException"/> naming
+    /// <see cref="ArenaSize"/>. An unset value is not checked, because each profile bounds its own floor.
     /// </summary>
     /// <param name="arenaFloor">The profile's minimum arena size, in bytes.</param>
     /// <param name="floorDescription">
