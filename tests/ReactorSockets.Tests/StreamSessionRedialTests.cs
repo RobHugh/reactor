@@ -26,7 +26,7 @@ public class StreamSessionRedialTests
     private static readonly TimeSpan _harnessLinger = TimeSpan.FromSeconds(1);
 
     /// <summary>
-    /// Dials <paramref name="dialer"/> at <paramref name="listener"/>, completes the handshake by hand
+    /// (this Reactor's own Hello, then a raw Hello reply announcing <paramref name="resumeSecret"/> and <paramref name="lingerMs"/>), and
     /// (this Reactor's own Hello, then a raw Hello reply announcing <paramref name="resumeSecret"/>), and
     /// returns the established <see cref="PeerId"/> paired with the raw socket now holding the far end,
     /// leaving <paramref name="dialer"/>'s clock advanced by a small, known amount between the two Pumps
@@ -34,7 +34,7 @@ public class StreamSessionRedialTests
     /// the moment a later interruption begins this Peer's re-dial schedule.
     /// </summary>
     private static (PeerId Peer, RawStreamListener.Accepted Far) EstablishDialledSession(
-        StreamSessionReactorHarness dialer, RawStreamListener listener, byte[] resumeSecret)
+        StreamSessionReactorHarness dialer, RawStreamListener listener, byte[] resumeSecret, ulong lingerMs = 1000)
     {
         PeerId peer = dialer.Reactor.Connect(listener.Endpoint);
         RawStreamListener.Accepted far = listener.Accept();
@@ -44,7 +44,7 @@ public class StreamSessionRedialTests
         hello[0].Should().Be(StreamSessionTestRecords.HelloRecordType);
 
         dialer.TimeProvider.Advance(_cadence);
-        far.Send(StreamSessionTestRecords.BuildHello(resumeSecret: resumeSecret));
+        far.Send(StreamSessionTestRecords.BuildHello(lingerMs: lingerMs, resumeSecret: resumeSecret));
 
         PeerId? connected = null;
         for (int i = 0; i < 20 && connected is null; i++)
@@ -650,6 +650,50 @@ public class StreamSessionRedialTests
         attempts.Select(r => r.Value1).Should().Equal(50, 100, 200);
         dialer.Sink.Received.Where(r => r.Id == DiagnosticId.RedialFailed)
             .Select(r => r.Value1).Should().Equal(1, 2, 3);
+    }
+
+    [Fact]
+    public void Pump_ReDialTheListenerNeverAnswers_FailsAtTheReceiveIdleDeadlineAndDialsAgain()
+    {
+        // Arrange
+        using StreamSessionReactorHarness dialer = new(entropy: new ConstantByteJitter(0xFF), linger: TimeSpan.FromSeconds(10));
+        using RawStreamListener listener = new();
+        byte[] resumeSecret = StreamSessionTestRecords.PayloadOf(StreamSessionTestRecords.ResumeSecretLength, 47);
+        (PeerId peer, RawStreamListener.Accepted far) = EstablishDialledSession(dialer, listener, resumeSecret, lingerMs: 10_000);
+        InterruptDialledPeer(dialer, far, peer);
+        far.Dispose();
+        dialer.Sink.Received.Clear();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> collected = [];
+
+        // Act — the first attempt connects and sends its Resume, then the listener stays silent.
+        dialer.TimeProvider.Advance(TimeSpan.FromMilliseconds(50));
+        dialer.Reactor.Pump();
+        collected.AddRange(dialer.DrainToList());
+        listener.TryAccept(out RawStreamListener.Accepted silent, timeoutMs: 2000).Should().BeTrue();
+        bool resumeArrived = false;
+        PumpCollectingUntil(dialer, collected, () =>
+            resumeArrived = silent.TryReceiveWithinTimeout(StreamSessionTestRecords.HandshakeRecordSize, out _, timeoutMs: 20));
+        resumeArrived.Should().BeTrue();
+        dialer.TimeProvider.Advance(TimeSpan.FromSeconds(3));
+        dialer.Reactor.Pump();
+        collected.AddRange(dialer.DrainToList());
+        dialer.TimeProvider.Advance(TimeSpan.FromMilliseconds(100));
+        dialer.Reactor.Pump();
+        collected.AddRange(dialer.DrainToList());
+        bool secondAccepted = listener.TryAccept(out RawStreamListener.Accepted second, timeoutMs: 2000);
+
+        // Assert
+        using (silent)
+        using (second)
+        {
+            DiagnosticRecord failed = dialer.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.RedialFailed).Subject;
+            ((SocketError)failed.Value0).Should().Be(SocketError.TimedOut);
+            failed.Value1.Should().Be(1);
+            secondAccepted.Should().BeTrue();
+            collected.Should().NotContain(e => e.Kind == SessionEventKind.PeerInterrupted);
+            collected.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+            dialer.Sink.Received.Last(r => r.Id == DiagnosticId.RedialAttempted).Value0.Should().Be(2);
+        }
     }
 
     [Fact]

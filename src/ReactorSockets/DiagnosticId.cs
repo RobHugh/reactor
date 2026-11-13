@@ -386,7 +386,9 @@ public enum DiagnosticId
     /// ever closes it. <c>Value0</c> carries the platform <see cref="System.Net.Sockets.SocketError"/>
     /// as its underlying integer value: for a connection that ended before confirmation it is
     /// <see cref="System.Net.Sockets.SocketError.Disconnecting"/> for an end of stream, or the read's
-    /// error. <c>Value1</c> is the attempt number that failed.
+    /// error. It is <see cref="System.Net.Sockets.SocketError.TimedOut"/> when the listener did not
+    /// answer within the receive-idle deadline, and <see cref="System.Net.Sockets.SocketError.SocketError"/>
+    /// when the Resume record could not be sent. <c>Value1</c> is the attempt number that failed.
     /// </summary>
     /// <remarks>
     /// <see cref="DiagnosticLevel.Info"/> rather than <see cref="DiagnosticLevel.Warn"/>: under this

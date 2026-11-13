@@ -1387,6 +1387,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// would interleave it into the still-unfinished one. This queues it in
     /// <see cref="PeerSlot.QueuedHandshakeSend"/> instead; <see cref="OnPeerWritable"/> sends it, in
     /// order, once the pending remainder is fully flushed.
+    /// <para>
+    /// A record that fails to send while <see cref="PeerSlot.AwaitingResumeCounter"/> is set is the
+    /// Resume of an unconfirmed re-dial. That is a failed re-dial attempt
+    /// (<see cref="FailUnconfirmedResume"/>), not a close.
+    /// </para>
     /// </remarks>
     private void SendRecordOrArm(SlotHandle handle, PeerSlot slot, byte[] record, DisconnectReason? closeReasonAfterSend)
     {
@@ -1399,6 +1404,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         switch (SendPendingRecord(slot.Link, slot.Counters, record, out ReadOnlyMemory<byte> remainder))
         {
             case PendingRecordSendOutcome.Failed:
+                if (slot.AwaitingResumeCounter)
+                {
+                    FailUnconfirmedResume(handle, slot, SocketError.SocketError);
+                    break;
+                }
+
                 ClosePeer(handle, closeReasonAfterSend ?? DisconnectReason.TransportFailed);
                 break;
 
@@ -1439,6 +1450,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             switch (SendPendingRecord(slot.Link, slot.Counters, pending, out ReadOnlyMemory<byte> remainder))
             {
                 case PendingRecordSendOutcome.Failed:
+                    if (slot.AwaitingResumeCounter)
+                    {
+                        FailUnconfirmedResume(handle, slot, SocketError.SocketError);
+                        return;
+                    }
+
                     ClosePeer(handle, slot.PendingCloseReason ?? DisconnectReason.TransportFailed);
                     return;
 
@@ -1813,6 +1830,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="InterruptOrCloseOnTransportFailure"/>, since that helper answers "a live Peer's
     /// transport just failed" and this is "an already-Interrupted Peer's Linger ran out", a different
     /// question with an already-known answer.
+    /// <para>
+    /// An Interrupted Peer whose re-dial is connected and unconfirmed
+    /// (<see cref="PeerSlot.AwaitingResumeCounter"/>) is also held to the receive-idle deadline,
+    /// measured from the moment the attempt connected. A listener that stays silent past it fails the
+    /// attempt as a re-dial attempt (<see cref="FailUnconfirmedResume"/>), and Linger is checked first,
+    /// so a Peer whose Linger has run out closes instead.
+    /// </para>
     /// </remarks>
     private void EnforceIdleTimers()
     {
@@ -1828,6 +1852,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 if (HasExceededLinger(slot))
                 {
                     ClosePeer(slot.Handle, DisconnectReason.LingerExpired);
+                }
+                else if (slot.AwaitingResumeCounter && HasExceededReceiveIdleDeadline(slot))
+                {
+                    FailUnconfirmedResume(slot.Handle, slot, SocketError.TimedOut);
                 }
 
                 continue;
