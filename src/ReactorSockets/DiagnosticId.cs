@@ -380,11 +380,13 @@ public enum DiagnosticId
     RedialAttempted = 306,
 
     /// <summary>
-    /// A re-dial attempt could not connect (ADR 0011). Subject is the Peer, which this never closes —
-    /// it stays Interrupted and waits out the schedule's next delay, leaving Linger, not an attempt
-    /// count, the only thing that ever closes it. <c>Value0</c> carries the platform
-    /// <see cref="System.Net.Sockets.SocketError"/> as its underlying integer value; <c>Value1</c> is
-    /// the attempt number that failed.
+    /// A re-dial attempt could not connect, or connected and ended before the listener confirmed the
+    /// Resume (ADR 0011). Subject is the Peer, which this never closes — it stays Interrupted and
+    /// waits out the schedule's next delay, leaving Linger, not an attempt count, the only thing that
+    /// ever closes it. <c>Value0</c> carries the platform <see cref="System.Net.Sockets.SocketError"/>
+    /// as its underlying integer value: for a connection that ended before confirmation it is
+    /// <see cref="System.Net.Sockets.SocketError.Disconnecting"/> for an end of stream, or the read's
+    /// error. <c>Value1</c> is the attempt number that failed.
     /// </summary>
     /// <remarks>
     /// <see cref="DiagnosticLevel.Info"/> rather than <see cref="DiagnosticLevel.Warn"/>: under this

@@ -121,7 +121,7 @@ public static class DiagnosticFormatter
             DiagnosticId.RedialAttempted => Invariant(
                 $"a re-dial attempt began (attempt {v0}, waited {v1} ms)"),
             DiagnosticId.RedialFailed => Invariant(
-                $"a re-dial attempt could not connect (socket error {SocketErrorText(v0)}, attempt {v1})"),
+                $"a re-dial attempt failed (socket error {SocketErrorText(v0)}, attempt {v1})"),
             DiagnosticId.DeliveryCounterRefused => Invariant(
                 $"the Peer claimed delivery of more Messages than were sent and the Session was closed (count claimed {v0}, count appended {v1})"),
             _ => throw new ArgumentOutOfRangeException(
