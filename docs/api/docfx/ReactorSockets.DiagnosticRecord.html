@@ -336,8 +336,12 @@ computed delay before jitter.</p>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForRedialFailed.html#ReactorSockets_DiagnosticRecord_ForRedialFailed_ReactorSockets_PeerId_System_Net_Sockets_SocketError_System_Int64_">ForRedialFailed(PeerId, SocketError, long)</a></dt>
     <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_RedialFailed">RedialFailed</a> record for the Peer whose re-dial attempt
-could not connect. <code>Value0</code> carries the platform <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> as its
-underlying integer value; <code>Value1</code> is the attempt number that failed.</p>
+could not connect, or connected and ended before the listener confirmed the Resume.
+<code>Value0</code> carries the platform <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> as its underlying integer value
+(<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror#system-net-sockets-socketerror-disconnecting">Disconnecting</a> for an end of stream before confirmation, or the
+read's error, <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror#system-net-sockets-socketerror-timedout">TimedOut</a> when the listener did not answer within the
+receive-idle deadline, <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror#system-net-sockets-socketerror-socketerror">SocketError</a> when the Resume record could not
+be sent); <code>Value1</code> is the attempt number that failed.</p>
 </dd>
   </dl>
   <dl class="jumplist">
