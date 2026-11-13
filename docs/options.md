@@ -89,6 +89,7 @@ keep consistent with them.
 | Re-dial schedule (stream) | Starts at the observed Pump interval, doubles, stops at the effective Linger, with full jitter |
 | Handshake resend schedule (datagram) | The re-dial schedule's rule, with this end's `Linger` as the ceiling. A pending dial resends its Hello or Hello-with-cookie on it |
 | Pending dial timeout (datagram) | This end's `Linger` after `Connect`. The dial closes with `TransportFailed` |
+| Pending dial timeout (stream) | This end's `Linger` after `Connect`, covering the TCP connect and the wait for the far end's Hello. The dial closes with `TransportFailed`, so a `Linger` below the round trip plus the far end's Pump interval closes it early |
 | Held connection deadline (stream) | This end's `SendIdleInterval` × `MissedHeartbeats` from accept. A connection that has not sent its whole first record by then is closed |
 | Held connection limit (stream) | `Capacity`. Past it the Reactor stops accepting until one resolves, and the rest wait in the OS backlog |
 | Per-share-holder read cap | `ArenaSize ÷ Capacity` bytes per Pump, with one whole unit always allowed |

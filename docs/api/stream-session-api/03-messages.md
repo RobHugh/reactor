@@ -12,8 +12,14 @@ capacity Slot from this moment — the handshake is work the Reactor is holding.
 The dial resolves on a later Pump, as one of:
 
 - `PeerConnected` — the Session is established.
-- `PeerClosed` with `TransportFailed` — the connection never happened.
+- `PeerClosed` with `TransportFailed` — the connection never happened, or the far end sent no
+  handshake record within this Reactor's `Linger` of `Connect`.
 - `PeerClosed` with `VersionMismatch` or `RemoteAtCapacity` — the far end refused in protocol.
+
+The `Linger` deadline covers the TCP connect as well as the wait for the far end's Hello, so a dial
+resolves within `Linger` of `Connect` even where the operating system would keep retrying the connect
+for longer. It is measured on the Reactor's `TimeProvider` and checked inside `Pump`. A `Linger`
+shorter than the round trip plus the far end's Pump interval closes a dial before its answer arrives.
 
 `Connect` throws `InvalidOperationException` if the Reactor is already at capacity. Check your own
 Peer count before dialling if that is reachable in your application.
