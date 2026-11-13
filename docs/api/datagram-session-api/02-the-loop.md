@@ -41,7 +41,8 @@ Pumping less often is not free:
   `Pump` puts nothing on the wire.**
 - Each `Pump` writes up to `65 507 / (FragmentSize + 31)` Datagrams per Peer, 53 at the default,
   each at most `FragmentSize + 31` bytes. Whatever does not fit waits, in order, for the next
-  `Pump`. Your Pump rate times about 64 KB is a ceiling on each Peer's send rate.
+  `Pump`. Your Pump rate times about 64 KB is a ceiling on each Peer's send rate. `FragmentSize`
+  here is the Peer's send Fragment size, the smaller of the two ends' values.
 - Datagrams the kernel receives while you are not pumping wait in its receive buffer, and a full
   buffer drops them.
 - Retransmission, heartbeats, Resume, Linger expiry and every other timer are evaluated inside

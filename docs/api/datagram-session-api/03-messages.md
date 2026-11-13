@@ -139,9 +139,11 @@ The remedy is the same in all three: stop sending reliable Messages to that Peer
 Treat it as your flow-control signal, not as an error.
 
 The unreliable modes share one queue per Peer, `UnreliableQueueBytes`, charged at each Message's
-length plus 7 bytes. A Send past it returns `SendQueueFull`. The queue empties as each Pump writes
-it, whatever the peer does, so pump and retry, or drop the Message if it is already stale. Reliable
-Sends are never charged against it.
+length plus 7 bytes. A Send past it returns `SendQueueFull`. The queue empties as your Pumps write
+it, not when the peer acknowledges, so pump and retry, or drop the Message if it is already stale.
+Unreliable Messages wait in Send order behind any reliable Messages queued before them, so a
+reliable backlog can hold the queue for more than one Pump. Reliable Sends are never charged
+against it.
 
 ## Receiving
 

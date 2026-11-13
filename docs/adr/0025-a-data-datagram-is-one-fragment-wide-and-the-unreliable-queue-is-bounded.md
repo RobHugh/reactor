@@ -22,6 +22,10 @@ already had. Draining the whole queue in one Pump was tried and rejected: 57 Dat
 one Pump overran a loopback receive buffer and were retransmitted. It is a derived constant, not an
 option.
 
+In both bounds `FragmentSize` is the Peer's send Fragment size, the smaller of the two ends' values
+(ADR 0024). Against a peer configured at 576 a Datagram is at most 607 bytes, and one Pump writes up
+to 107 of them.
+
 **Unreliable Sends are charged against a per-Peer byte budget**, `UnreliableQueueBytes`, at payload
 plus the 7-byte record header each, so empty Messages are bounded too. Both unreliable modes share
 it. A Send past it returns the new `SendOutcome.SendQueueFull` and spends nothing, not even a
@@ -36,7 +40,7 @@ front of the region in one copy.
 ## Rejected
 
 - **Reusing `RetentionExhausted`.** Its name and documentation define it by reliable retention,
-  which frees only when the far end acknowledges. This queue frees on this end's next Pump.
+  which frees only when the far end acknowledges. This queue frees as this end's Pumps write it.
 - **A default of 65 507 bytes.** One maximum UDP payload per Peer costs `Capacity × 64 KB` before
   anything is sent.
 - **An option for the Datagram count per Pump.** The derived count keeps ADR 0009's per-Pump byte
