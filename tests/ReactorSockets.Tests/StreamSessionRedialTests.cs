@@ -660,6 +660,54 @@ public class StreamSessionRedialTests
     }
 
     [Fact]
+    public void Pump_ReDialsTheListenerResetsBeforeConfirming_ContinueTheScheduleWithoutANewInterruption()
+    {
+        // Arrange
+        using StreamSessionReactorHarness dialer = new(entropy: new ConstantByteJitter(0xFF));
+        using RawStreamListener listener = new();
+        byte[] resumeSecret = StreamSessionTestRecords.PayloadOf(StreamSessionTestRecords.ResumeSecretLength, 59);
+        (PeerId peer, RawStreamListener.Accepted far) = EstablishDialledSession(dialer, listener, resumeSecret);
+        using IDisposable farGuard = far;
+        InterruptDialledPeer(dialer, far, peer);
+        far.Dispose();
+        dialer.Sink.Received.Clear();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> collected = [];
+
+        // Act: three attempts connect and send their Resume, and the listener resets each one, so the read fails.
+        int[] delays = [50, 100, 200];
+        for (int n = 1; n <= delays.Length; n++)
+        {
+            dialer.TimeProvider.Advance(TimeSpan.FromMilliseconds(delays[n - 1]));
+            dialer.Reactor.Pump();
+            collected.AddRange(dialer.DrainToList());
+            listener.TryAccept(out RawStreamListener.Accepted redialed, timeoutMs: 2000).Should().BeTrue();
+            using (redialed)
+            {
+                bool resumeArrived = false;
+                PumpCollectingUntil(dialer, collected, () =>
+                    resumeArrived = redialed.TryReceiveWithinTimeout(StreamSessionTestRecords.HandshakeRecordSize, out _, timeoutMs: 20));
+                resumeArrived.Should().BeTrue("the re-dial must send its Resume before the listener resets it");
+                redialed.ResetAbruptly();
+            }
+
+            int expectedFailures = n;
+            PumpCollectingUntil(dialer, collected, () =>
+                dialer.Sink.Received.Count(r => r.Id == DiagnosticId.RedialFailed) >= expectedFailures);
+        }
+
+        // Assert
+        collected.Should().NotContain(e => e.Kind == SessionEventKind.PeerInterrupted);
+        collected.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+        List<DiagnosticRecord> attempts = [.. dialer.Sink.Received.Where(r => r.Id == DiagnosticId.RedialAttempted)];
+        attempts.Select(r => r.Value0).Should().Equal(1, 2, 3);
+        attempts.Select(r => r.Value1).Should().Equal(50, 100, 200);
+        dialer.Sink.Received.Where(r => r.Id == DiagnosticId.RedialFailed)
+            .Select(r => r.Value1).Should().Equal(1, 2, 3);
+        dialer.Sink.Received.Where(r => r.Id == DiagnosticId.RedialFailed)
+            .Select(r => (SocketError)r.Value0).Should().OnlyContain(e => e == SocketError.ConnectionReset);
+    }
+
+    [Fact]
     public void Pump_ReDialTheListenerNeverAnswers_FailsAtTheReceiveIdleDeadlineAndDialsAgain()
     {
         // Arrange
