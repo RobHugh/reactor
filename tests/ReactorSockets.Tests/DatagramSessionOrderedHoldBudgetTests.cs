@@ -76,7 +76,7 @@ public class DatagramSessionOrderedHoldBudgetTests
     }
 
     [Fact]
-    public void Pump_RecordsPastTheSlotsHeldRecordBudgetBytesCounts_CountsThemOutOfWindow()
+    public void Pump_RecordsPastTheBudgetsSlotCount_CountsThemOutOfWindow()
     {
         // Arrange — issue #540: the slot count is read back from the stated budget, not restated, so the
         // Reactor's limit and the budget must come from one hold rule. Each slot is a whole fragment plus
