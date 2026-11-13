@@ -67,6 +67,13 @@ Peers you expect behind one NAT or proxy, and well below `Capacity` if strangers
 If every Peer shares one address, for example behind one proxy, set it to `Capacity`, or the default
 leaves one Slot unused.
 
+The same limit applies to connections the Reactor has accepted but not yet decided, those waiting for
+their first handshake record. One address may have at most `MaxPeersPerAddress` of them, and at most
+`Capacity` are held in all. A connection over the per-address limit is closed with nothing sent unless
+its whole record arrived with it, and every held connection is closed if its record has not arrived
+within this end's `SendIdleInterval` × `MissedHeartbeats`. A dialler sends its record as soon as TCP
+connects, so a conforming one meets neither unless that product is shorter than its Pump interval.
+
 The limit counts addresses, not ports, because one host can connect from many ports. Peers this
 Reactor dialled do not count, and a Resume is never refused by it, because the Peer it names already
 owns its Slot.
