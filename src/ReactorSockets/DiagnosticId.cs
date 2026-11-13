@@ -420,4 +420,18 @@ public enum DiagnosticId
     /// </para>
     /// </remarks>
     DeliveryCounterRefused = 308,
+
+    /// <summary>
+    /// A connection the stream profile accepted sent no whole first handshake record within this end's
+    /// <see cref="StreamSessionOptions.SendIdleInterval"/> × <see cref="StreamSessionOptions.MissedHeartbeats"/>
+    /// of being accepted, and was closed with nothing sent. Subject is the claimed Source. <c>Value0</c>
+    /// is the bytes of that record it had sent, 0 to 40; <c>Value1</c> is the deadline in milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>: a remote can produce this at will by connecting and sending
+    /// nothing, and a consumer can act on it by blocking the address or, if conforming diallers are being
+    /// closed, by raising <see cref="StreamSessionOptions.SendIdleInterval"/>. One record per connection,
+    /// because it names the address. The deadline is fixed at accept, so bytes that arrive do not extend it.
+    /// </remarks>
+    PendingAdmissionExpired = 309,
 }

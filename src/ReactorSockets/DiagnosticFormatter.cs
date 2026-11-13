@@ -124,6 +124,8 @@ public static class DiagnosticFormatter
                 $"a re-dial attempt failed (socket error {SocketErrorText(v0)}, attempt {v1})"),
             DiagnosticId.DeliveryCounterRefused => Invariant(
                 $"the Peer claimed delivery of more Messages than were sent and the Session was closed (count claimed {v0}, count appended {v1})"),
+            DiagnosticId.PendingAdmissionExpired => Invariant(
+                $"an accepted connection sent no whole handshake record within its deadline and was closed (bytes received {v0}, deadline {v1} ms)"),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(record), record.Id, $"{record.Id} is not a recognised DiagnosticId."),
         };
