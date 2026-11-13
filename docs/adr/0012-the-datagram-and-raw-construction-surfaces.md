@@ -131,6 +131,30 @@ dialler's Linger. The default is sized for traffic rather than latency and reach
 hundreds of thousands of reads with a large `MaxMessageSize`, so a consumer that needs a shorter Pump sets
 it lower and accepts a longer wait.
 
+**Amended (issue #482).** The stream profile held every accepted connection until its first handshake
+record arrived, with no limit on how many and no deadline. A remote that connected and sent nothing added
+a socket to every Pump's readiness check for as long as it kept the connection open. The admission cap
+bounds how many connections one Pump accepts, not how many stay held. Two derived bounds close this:
+
+- **A held connection has a deadline of this end's `SendIdleInterval` × `MissedHeartbeats`, fixed at
+  accept.** It is the silence an established Peer is allowed before it is lost, and a dialler sends its
+  Hello as soon as TCP connects, so a conforming dialler needs far less. Bytes that arrive do not move the
+  deadline, or a sender of one byte per deadline would hold its socket for 41 deadlines. A connection
+  still held at the deadline is closed with nothing sent and reported as `PendingAdmissionExpired`. The
+  check runs after the readiness pass, so a record already in the socket buffer is read before its
+  connection can expire.
+- **At most `Capacity` connections are held at once.** Each held connection is a claim on a Slot, a fresh
+  dial asking for one or a Resume reclaiming one, and a Reactor has `Capacity` Slots. At the limit the
+  Reactor stops accepting for that Pump, and the rest wait in the OS backlog, as the excess of the
+  admission cap does. Each declining counts as an `AdmissionDeferral`, and the Pump logs one
+  `PendingAdmissionLimitReached`. The admission cap was rejected as the source of the limit because it
+  can be set to 1, and one silent connection would then stop every accept until its deadline.
+
+The cost is that remotes holding `Capacity` silent connections delay every new connection by up to the
+deadline. ADR 0014's per-address limit keeps one address from doing that alone. A Reactor whose
+`SendIdleInterval` × `MissedHeartbeats` is shorter than a dialler's Pump interval closes that dialler
+before its Hello arrives.
+
 ## Datagram retention: slots, not a ring
 
 **Retention is a byte bound, per Peer, per reliable Space.**
