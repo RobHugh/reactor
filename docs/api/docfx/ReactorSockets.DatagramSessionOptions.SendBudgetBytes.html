@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_DatagramSessionOptions_SendBudgetBytes_" data-uid="ReactorSockets.DatagramSessionOptions.SendBudgetBytes*" class="text-break">
-Property SendBudgetBytes  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L499"><i class="bi bi-code-slash"></i></a>
+Property SendBudgetBytes  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L508"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,13 +107,14 @@ Property SendBudgetBytes  <a class="header-action link-secondary" title="View so
 
 <h3 id="ReactorSockets_DatagramSessionOptions_SendBudgetBytes" data-uid="ReactorSockets.DatagramSessionOptions.SendBudgetBytes">
   SendBudgetBytes
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L499"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/DatagramSessionOptions.cs/#L508"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>The send line of the memory bill in bytes, reported the same way: <a class="xref" href="ReactorSockets.DatagramSessionOptions.RetentionSlots.html#ReactorSockets_DatagramSessionOptions_RetentionSlots">RetentionSlots</a>
 whole fragment slots per reliable Space per Peer, each priced at its payload plus the 15 bytes
 of bookkeeping that records what it holds. Exact, like the receive line, so it can be below
-<code>Capacity × 2 × RetentionBytes</code> when retention is not a whole number of fragments.</p>
+<code>Capacity × 2 × RetentionBytes</code> when retention is not a whole number of fragments. A figure
+above <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int64.maxvalue">MaxValue</a> reads as <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int64.maxvalue">MaxValue</a>.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 

@@ -181,7 +181,8 @@ public sealed class DatagramSessionOptions
     /// The largest Message, in bytes, this Reactor will accept or deliver. Required: it is a
     /// statement about the consumer's own protocol that nothing here can derive. It is also the knob
     /// that multiplies this profile's memory bill in more than one direction — the class remarks on
-    /// <see cref="DatagramSessionOptions"/> say what it floors and what raising it costs.
+    /// <see cref="DatagramSessionOptions"/> say what it floors and what raising it costs. At most
+    /// <see cref="Array.MaxLength"/>, 2 147 483 591, so the frame arena can hold one maximum Message.
     /// </summary>
     /// <remarks>
     /// Announced to the peer at the handshake precisely so an oversized claim can be refused before
@@ -400,19 +401,19 @@ public sealed class DatagramSessionOptions
     /// fragments one maximum Message occupies.
     /// </summary>
     public int ReceiveWindowFloor =>
-        (MaxMessageSize + ResolvedFragmentSize - 1) / ResolvedFragmentSize;
+        (int)(((long)MaxMessageSize + ResolvedFragmentSize - 1) / ResolvedFragmentSize);
 
     /// <summary>The resolved receive window: <see cref="ReceiveWindowFragments"/> if set, otherwise <see cref="ReceiveWindowFloor"/>.</summary>
     public int ResolvedReceiveWindowFragments => ReceiveWindowFragments ?? ReceiveWindowFloor;
 
     /// <summary>
     /// The resolved per-socket read limit: <see cref="MaxDatagramsPerPump"/> if set, otherwise one receive
-    /// window for every Space of every Peer, plus every handshake the admission cap allows in one Pump.
+    /// window for every Space of every Peer, plus every handshake the admission cap allows in one Pump,
+    /// clamped to <see cref="int.MaxValue"/>.
     /// </summary>
     public int ResolvedMaxDatagramsPerPump =>
-        MaxDatagramsPerPump ?? (int)Math.Min(
-            ((long)Reactor.Capacity * ResolvedReceiveWindowFragments * SpaceCount) + Reactor.ResolvedAdmissionCap,
-            int.MaxValue);
+        MaxDatagramsPerPump ?? int.CreateSaturating(
+            ((Int128)Reactor.Capacity * ResolvedReceiveWindowFragments * SpaceCount) + Reactor.ResolvedAdmissionCap);
 
     /// <summary>
     /// The resolved per-address limit: <see cref="MaxPeersPerAddress"/> if set, otherwise one fewer than
@@ -431,7 +432,7 @@ public sealed class DatagramSessionOptions
     /// <summary>
     /// The receive line of the memory bill in bytes, as a <see langword="long"/> so that a
     /// combination too large to allocate is a value this can report rather than an overflow it
-    /// silently wraps through.
+    /// silently wraps through. A figure above <see cref="long.MaxValue"/> reads as <see cref="long.MaxValue"/>.
     /// </summary>
     /// <remarks>
     /// Four things per Peer scale with the window, and this figure covers all four. Payload slots —
@@ -452,10 +453,16 @@ public sealed class DatagramSessionOptions
     /// receive-side cost outside it, and they have their own ceiling,
     /// <see cref="HeldRecordBudgetBytes"/>.
     /// </remarks>
-    public long ReceiveBudgetBytes =>
-        ((long)Reactor.Capacity * ResolvedReceiveWindowFragments
-            * (((long)ReliableSpaceCount * (ResolvedFragmentSize + FragmentLengthBytes + FragmentGroupEntryBytes)) + SpaceCount))
-        + ((long)Reactor.Capacity * ReliableSpaceCount * PendingGroupsPerSpace * PendingGroupEntryBytes);
+    public long ReceiveBudgetBytes => long.CreateSaturating(ExactReceiveBudgetBytes);
+
+    /// <summary>
+    /// <see cref="ReceiveBudgetBytes"/> without saturation. Every operand is an <see langword="int"/>, so
+    /// the product cannot overflow <see cref="Int128"/>.
+    /// </summary>
+    private Int128 ExactReceiveBudgetBytes =>
+        ((Int128)Reactor.Capacity * ResolvedReceiveWindowFragments
+            * (((Int128)ReliableSpaceCount * ((Int128)ResolvedFragmentSize + FragmentLengthBytes + FragmentGroupEntryBytes)) + SpaceCount))
+        + ((Int128)Reactor.Capacity * ReliableSpaceCount * PendingGroupsPerSpace * PendingGroupEntryBytes);
 
     /// <summary>
     /// The completed Fragment groups one reliable Space can have waiting for delivery at once: half
@@ -477,7 +484,8 @@ public sealed class DatagramSessionOptions
     /// <summary>
     /// The most heap, in bytes, a Reactor's <c>ReliableOrdered</c> Spaces can hold in ordinary records
     /// waiting behind a gap, across all its Peers: <c>Capacity × 2 × ReceiveWindowFragments ×
-    /// FragmentSize</c>, with each slot's bookkeeping.
+    /// FragmentSize</c>, with each slot's bookkeeping. A figure above <see cref="long.MaxValue"/> reads as
+    /// <see cref="long.MaxValue"/>.
     /// </summary>
     /// <remarks>
     /// This is a ceiling reached only under traffic, not a line allocated at construction, so
@@ -487,18 +495,25 @@ public sealed class DatagramSessionOptions
     /// retransmission brings it back when the Space has moved. The figure counts what stays held, not
     /// the short-lived arrays the ring leaves behind each time it grows.
     /// </remarks>
-    public long HeldRecordBudgetBytes =>
-        (long)Reactor.Capacity * OrderedHoldSlots * (ResolvedFragmentSize + HeldRecordSlotBookkeepingBytes);
+    public long HeldRecordBudgetBytes => long.CreateSaturating(
+        (Int128)Reactor.Capacity * 2 * ResolvedReceiveWindowFragments * ((Int128)ResolvedFragmentSize + HeldRecordSlotBookkeepingBytes));
 
     /// <summary>
     /// The send line of the memory bill in bytes, reported the same way: <see cref="RetentionSlots"/>
     /// whole fragment slots per reliable Space per Peer, each priced at its payload plus the 15 bytes
     /// of bookkeeping that records what it holds. Exact, like the receive line, so it can be below
-    /// <c>Capacity × 2 × RetentionBytes</c> when retention is not a whole number of fragments.
+    /// <c>Capacity × 2 × RetentionBytes</c> when retention is not a whole number of fragments. A figure
+    /// above <see cref="long.MaxValue"/> reads as <see cref="long.MaxValue"/>.
     /// </summary>
-    public long SendBudgetBytes =>
-        (long)Reactor.Capacity * ReliableSpaceCount * RetentionSlots
-            * (ResolvedFragmentSize + Core.RetentionPool.SlotBookkeepingBytes);
+    public long SendBudgetBytes => long.CreateSaturating(ExactSendBudgetBytes);
+
+    /// <summary>
+    /// <see cref="SendBudgetBytes"/> without saturation. Every operand is an <see langword="int"/>, so
+    /// the product cannot overflow <see cref="Int128"/>.
+    /// </summary>
+    private Int128 ExactSendBudgetBytes =>
+        (Int128)Reactor.Capacity * ReliableSpaceCount * RetentionSlots
+            * ((Int128)ResolvedFragmentSize + Core.RetentionPool.SlotBookkeepingBytes);
 
     /// <summary>
     /// The unreliable-queue line of the memory bill in bytes: <c>Capacity × </c><see cref="ResolvedUnreliableQueueBytes"/>,
@@ -540,6 +555,15 @@ public sealed class DatagramSessionOptions
                 nameof(MaxMessageSize),
                 MaxMessageSize,
                 $"maximum message size of {MaxMessageSize} bytes carries nothing — it must be at least 1.");
+        }
+
+        if (MaxMessageSize > Array.MaxLength)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxMessageSize),
+                MaxMessageSize,
+                $"maximum message size of {MaxMessageSize} bytes is above {Array.MaxLength}, the largest .NET array. " +
+                "The frame arena holds one maximum Message whole, so a larger one could never be allocated.");
         }
 
         int fragmentSize = ResolvedFragmentSize;
@@ -677,14 +701,15 @@ public sealed class DatagramSessionOptions
     /// Rejects a combination whose preallocation could not be made, naming all three lines of the memory
     /// bill and their total. The check is arithmetic rather than an attempted allocation because the
     /// point is to tell the caller which knob to change, and a caught allocation failure knows only
-    /// that something was too big.
+    /// that something was too big. It sums the exact lines as <see cref="Int128"/>, so no figure in its
+    /// message is saturated.
     /// </summary>
     private void ValidateMemoryBill()
     {
-        long receive = ReceiveBudgetBytes;
-        long send = SendBudgetBytes;
+        Int128 receive = ExactReceiveBudgetBytes;
+        Int128 send = ExactSendBudgetBytes;
         long unreliableQueue = UnreliableQueueBudgetBytes;
-        long total = receive + send + unreliableQueue;
+        Int128 total = receive + send + unreliableQueue;
 
         if (total > Array.MaxLength)
         {

@@ -222,6 +222,12 @@ receive window keeps its derived floor.
 payload less the 20-byte Datagram header and the 11-byte Fragment record header: the largest Fragment
 one Datagram has room for, so it is still derived rather than chosen (ADR 0004).
 
+**Amended (issue #488).** `MaxMessageSize` is at most `Array.MaxLength`, 2 147 483 591, so the frame
+arena can hold one maximum Message. The receive-window floor is computed in `long`, because
+`MaxMessageSize + FragmentSize - 1` can pass `int.MaxValue`. The memory-bill lines are computed as
+`Int128`: a budget property whose true figure passes `long.MaxValue` reads as `long.MaxValue`, and the
+construction check compares the exact figures.
+
 ## Raw: one buffer, and it is not per Link
 
 **Raw does not reassemble.** L1 keeps a persistent per-connection buffer because a partial Message tail

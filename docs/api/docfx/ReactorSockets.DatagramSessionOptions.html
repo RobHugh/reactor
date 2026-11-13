@@ -244,7 +244,8 @@ which with IPv6 and UDP headers fits the 1280-byte minimum MTU.</p>
     <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.HeldRecordBudgetBytes.html#ReactorSockets_DatagramSessionOptions_HeldRecordBudgetBytes">HeldRecordBudgetBytes</a></dt>
     <dd><p>The most heap, in bytes, a Reactor's <code>ReliableOrdered</code> Spaces can hold in ordinary records
 waiting behind a gap, across all its Peers: <code>Capacity × 2 × ReceiveWindowFragments ×
-FragmentSize</code>, with each slot's bookkeeping.</p>
+FragmentSize</code>, with each slot's bookkeeping. A figure above <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int64.maxvalue">MaxValue</a> reads as
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int64.maxvalue">MaxValue</a>.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -268,7 +269,8 @@ least 1.</p>
     <dd><p>The largest Message, in bytes, this Reactor will accept or deliver. Required: it is a
 statement about the consumer's own protocol that nothing here can derive. It is also the knob
 that multiplies this profile's memory bill in more than one direction — the class remarks on
-<a class="xref" href="ReactorSockets.DatagramSessionOptions.html">DatagramSessionOptions</a> say what it floors and what raising it costs.</p>
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.html">DatagramSessionOptions</a> say what it floors and what raising it costs. At most
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.array.maxlength">MaxLength</a>, 2 147 483 591, so the frame arena can hold one maximum Message.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -308,7 +310,7 @@ has no default of its own.</p>
     <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.ReceiveBudgetBytes.html#ReactorSockets_DatagramSessionOptions_ReceiveBudgetBytes">ReceiveBudgetBytes</a></dt>
     <dd><p>The receive line of the memory bill in bytes, as a <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/integral-numeric-types">long</a> so that a
 combination too large to allocate is a value this can report rather than an overflow it
-silently wraps through.</p>
+silently wraps through. A figure above <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int64.maxvalue">MaxValue</a> reads as <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int64.maxvalue">MaxValue</a>.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -336,7 +338,8 @@ can never be reassembled, since there is no slot to hold every one of its pieces
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedMaxDatagramsPerPump.html#ReactorSockets_DatagramSessionOptions_ResolvedMaxDatagramsPerPump">ResolvedMaxDatagramsPerPump</a></dt>
     <dd><p>The resolved per-socket read limit: <a class="xref" href="ReactorSockets.DatagramSessionOptions.MaxDatagramsPerPump.html#ReactorSockets_DatagramSessionOptions_MaxDatagramsPerPump">MaxDatagramsPerPump</a> if set, otherwise one receive
-window for every Space of every Peer, plus every handshake the admission cap allows in one Pump.</p>
+window for every Space of every Peer, plus every handshake the admission cap allows in one Pump,
+clamped to <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32.maxvalue">MaxValue</a>.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -386,7 +389,8 @@ requires retention to hold at least one fragment, so this is always at least 1.<
     <dd><p>The send line of the memory bill in bytes, reported the same way: <a class="xref" href="ReactorSockets.DatagramSessionOptions.RetentionSlots.html#ReactorSockets_DatagramSessionOptions_RetentionSlots">RetentionSlots</a>
 whole fragment slots per reliable Space per Peer, each priced at its payload plus the 15 bytes
 of bookkeeping that records what it holds. Exact, like the receive line, so it can be below
-<code>Capacity × 2 × RetentionBytes</code> when retention is not a whole number of fragments.</p>
+<code>Capacity × 2 × RetentionBytes</code> when retention is not a whole number of fragments. A figure
+above <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int64.maxvalue">MaxValue</a> reads as <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int64.maxvalue">MaxValue</a>.</p>
 </dd>
   </dl>
   <dl class="jumplist">

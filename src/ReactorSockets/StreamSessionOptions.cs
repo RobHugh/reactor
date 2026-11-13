@@ -78,7 +78,8 @@ public sealed class StreamSessionOptions
     /// statement about the consumer's own protocol that nothing here can derive. It is also
     /// announced to the remote as a receive limit, and floors both the receive buffer and
     /// <see cref="RetentionBytes"/> — an arena that cannot hold one maximum Message could never
-    /// deliver one.
+    /// deliver one. At most 2 147 483 587, <see cref="Array.MaxLength"/> less the 4-byte length prefix,
+    /// so one framed maximum Message fits one array.
     /// </summary>
     public required int MaxMessageSize { get; init; }
 
@@ -292,6 +293,17 @@ public sealed class StreamSessionOptions
                 $"maximum message size of {MaxMessageSize} bytes carries nothing — it must be at least 1.");
         }
 
+        int maxMessageSizeLimit = Array.MaxLength - LengthPrefixSize;
+        if (MaxMessageSize > maxMessageSizeLimit)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxMessageSize),
+                MaxMessageSize,
+                $"maximum message size of {MaxMessageSize} bytes is above {maxMessageSizeLimit}, the largest Message that " +
+                $"fits one .NET array of {Array.MaxLength} bytes with its {LengthPrefixSize}-byte length prefix. Retention and the receive " +
+                "buffer each hold one framed maximum Message, so a larger one could never be allocated.");
+        }
+
         int receiveBufferFloor = ReceiveBufferFloor;
 
         if (RetentionBytes < receiveBufferFloor)
@@ -404,14 +416,15 @@ public sealed class StreamSessionOptions
     /// Rejects a combination whose preallocation could not be made, naming both lines of the memory
     /// bill and their total. The check is arithmetic rather than an attempted allocation because the
     /// point is to tell the caller which knob to change, and a caught allocation failure knows only
-    /// that something was too big.
+    /// that something was too big. The total is an <see cref="Int128"/>, because each line can approach
+    /// 2^62 bytes and their sum can pass <see cref="long.MaxValue"/>.
     /// </summary>
     private void ValidateMemoryBill()
     {
         long receive = ReceiveBudgetBytes;
         long send = SendBudgetBytes;
         long boundaryRing = BoundaryRingBudgetBytes;
-        long total = receive + send + boundaryRing;
+        Int128 total = (Int128)receive + send + boundaryRing;
 
         if (total > Array.MaxLength)
         {

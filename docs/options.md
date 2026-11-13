@@ -127,7 +127,9 @@ unreliable:  Capacity × UnreliableQueueBytes
 `FragmentSize` appears in one line and not the other, because the window counts packets and retention
 counts bytes. The 2 is the two reliable Spaces, the only ones that reassemble and retransmit. Each line
 also carries a few bytes of bookkeeping per fragment slot, under 2% at the default fragment size.
-`ReceiveBudgetBytes` and `SendBudgetBytes` report both lines exactly, bookkeeping included.
+`ReceiveBudgetBytes` and `SendBudgetBytes` report both lines exactly, bookkeeping included. A line
+whose true figure passes `long.MaxValue` reads as `long.MaxValue`, and construction still rejects it
+with the exact figure. `HeldRecordBudgetBytes` below saturates the same way.
 
 The unreliable line is the queue for `Unreliable` and `UnreliableSequenced` Messages waiting for the
 next Pump. Its default is one reliable Space's retention plus 7 bytes per slot, so by default it adds
@@ -170,6 +172,12 @@ On the stream profile the buffer is the receive buffer and both floors apply dir
 profile the buffer is the receive window, which is per Peer and per reliable Space, and retention is
 floored by one fragment instead of one Message, because a reliable Space retransmits fragment by
 fragment. On both, `MaxMessageSize` also floors the shared arena.
+
+`MaxMessageSize` has an upper limit, so every buffer it floors fits one .NET array: 2 147 483 587 on
+the stream profile (`Array.MaxLength` less the 4-byte length prefix) and 2 147 483 591 on the datagram
+profile (`Array.MaxLength`). A larger value throws `ArgumentOutOfRangeException` naming
+`MaxMessageSize`. The memory bill rejects much smaller values first, because a Peer's buffers each hold
+one maximum Message.
 
 The limit that caps a `Send` is the receiving end's: a Message above the peer's announced
 `MaxMessageSize` returns `RemoteMessageTooLarge` on both profiles. The stream profile also throws

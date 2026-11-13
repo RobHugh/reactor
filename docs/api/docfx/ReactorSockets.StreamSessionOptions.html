@@ -225,7 +225,8 @@ far end's Pump interval closes a dial before its answer arrives. At most 2^32 - 
 statement about the consumer's own protocol that nothing here can derive. It is also
 announced to the remote as a receive limit, and floors both the receive buffer and
 <a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a> — an arena that cannot hold one maximum Message could never
-deliver one.</p>
+deliver one. At most 2 147 483 587, <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.array.maxlength">MaxLength</a> less the 4-byte length prefix,
+so one framed maximum Message fits one array.</p>
 </dd>
   </dl>
   <dl class="jumplist">
