@@ -55,7 +55,9 @@ public sealed class ReactorOptions
     /// The frame arena's size in bytes. Left unset, a Reactor defaults it to its own profile floor.
     /// Provenance: derived from the profile — one maximum deliverable unit, since below it that unit
     /// could never be delivered, and only the profile's constructor knows what it must exceed
-    /// (ADR 0012). A value below that floor throws at construction, naming the arithmetic.
+    /// (ADR 0012). A value below that floor throws at construction, naming the arithmetic. A value
+    /// above <see cref="Array.MaxLength"/> throws <see cref="ArgumentOutOfRangeException"/> at
+    /// construction, because the arena is one array and the runtime cannot allocate a larger one.
     /// </summary>
     public int? ArenaSize { get; init; }
 
@@ -138,6 +140,14 @@ public sealed class ReactorOptions
     /// </param>
     internal int ResolveArenaSize(int arenaFloor, string floorDescription)
     {
+        if (ArenaSize > Array.MaxLength)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(ArenaSize),
+                ArenaSize,
+                $"arena of {ArenaSize} bytes exceeds the largest array the runtime can allocate — lower ArenaSize to at most {Array.MaxLength}.");
+        }
+
         int arenaSize = ArenaSize ?? arenaFloor;
         if (arenaSize < arenaFloor)
         {

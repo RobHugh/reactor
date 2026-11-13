@@ -102,7 +102,9 @@ public sealed class RawReactor : IDisposable
     /// IPv4, at which an IPv4 datagram cannot be truncated. An IPv6 datagram of 65 508 to 65 527 bytes
     /// exceeds it and is reported as truncated. This is the profile-specific
     /// knob a consumer lowers to opt into truncation, kept off <see cref="ReactorOptions"/> because it
-    /// has no meaning outside Raw's datagram surface.
+    /// has no meaning outside Raw's datagram surface. It must be at least 1 and at most
+    /// <see cref="Array.MaxLength"/> minus 1, because the scratch allocation adds one truncation byte;
+    /// a value outside that range throws <see cref="ArgumentOutOfRangeException"/>.
     /// </param>
     public RawReactor(ReactorOptions options, int? scratchBufferSize = null)
     {
@@ -116,6 +118,14 @@ public sealed class RawReactor : IDisposable
                 nameof(scratchBufferSize),
                 resolvedScratchBufferSize,
                 $"scratch buffer of {resolvedScratchBufferSize} bytes cannot hold anything — scratch buffer size must be at least 1.");
+        }
+
+        if (resolvedScratchBufferSize > Array.MaxLength - 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(scratchBufferSize),
+                resolvedScratchBufferSize,
+                $"scratch buffer of {resolvedScratchBufferSize} bytes leaves no room for the truncation byte within the largest array the runtime can allocate — scratch buffer size must be at most {Array.MaxLength - 1}.");
         }
 
         int arenaSize = options.ResolveArenaSize(
