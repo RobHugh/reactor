@@ -171,7 +171,9 @@ than a full Reactor's worth, and the remainder waits in the OS backlog or is dro
     <dd><p>The frame arena's size in bytes. Left unset, a Reactor defaults it to its own profile floor.
 Provenance: derived from the profile — one maximum deliverable unit, since below it that unit
 could never be delivered, and only the profile's constructor knows what it must exceed
-(ADR 0012). A value below that floor throws at construction, naming the arithmetic.</p>
+(ADR 0012). A value below that floor throws at construction, naming the arithmetic. A value
+above <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.array.maxlength">MaxLength</a> throws <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.argumentoutofrangeexception">ArgumentOutOfRangeException</a> at
+construction, because the arena is one array and the runtime cannot allocate a larger one.</p>
 </dd>
   </dl>
   <dl class="jumplist">

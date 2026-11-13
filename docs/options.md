@@ -28,7 +28,7 @@ appears that is not in the audited list below.
 |---|---|---|
 | `Capacity` | required | None exists. It counts share-holders and multiplies every allocation. |
 | `AdmissionCap` | `Capacity` | Another knob. One Pump never admits more than a full Reactor's worth. |
-| `ArenaSize` | the profile's floor | The profile. One maximum deliverable unit, below which nothing can be delivered. |
+| `ArenaSize` | the profile's floor | The profile. One maximum deliverable unit, below which nothing can be delivered. A set value is at most `Array.MaxLength` (2 147 483 591), the largest array the runtime allocates. |
 | `TimeProvider` | `TimeProvider.System` | The framework. The only requirement is monotonic reads. |
 | `Sink` | absent (diagnostics off) | With no Sink there is nowhere for a record to go. |
 | `MinimumLevel` | absent, only with `Sink` | Supplied with `Sink` or not at all. A default level would be a guess. |
@@ -37,7 +37,7 @@ appears that is not in the audited list below.
 
 | Knob | Default | Provenance |
 |---|---|---|
-| `scratchBufferSize` | 65 507 | The largest UDP payload over IPv4, at which an IPv4 datagram cannot be truncated. An IPv6 datagram can carry up to 65 527 bytes, so one of 65 508 to 65 527 bytes is reported as truncated. |
+| `scratchBufferSize` | 65 507 | The largest UDP payload over IPv4, at which an IPv4 datagram cannot be truncated. An IPv6 datagram can carry up to 65 527 bytes, so one of 65 508 to 65 527 bytes is reported as truncated. At least 1 and at most `Array.MaxLength - 1` (2 147 483 590), because the scratch buffer is one byte longer than this value. |
 
 ### Datagram Session (`DatagramSessionOptions`)
 

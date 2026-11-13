@@ -55,7 +55,9 @@ public sealed class ReactorOptions
     /// The frame arena's size in bytes. Left unset, a Reactor defaults it to its own profile floor.
     /// Provenance: derived from the profile — one maximum deliverable unit, since below it that unit
     /// could never be delivered, and only the profile's constructor knows what it must exceed
-    /// (ADR 0012). A value below that floor throws at construction, naming the arithmetic.
+    /// (ADR 0012). A value below that floor throws at construction, naming the arithmetic. A value
+    /// above <see cref="Array.MaxLength"/> throws <see cref="ArgumentOutOfRangeException"/> at
+    /// construction, because the arena is one array and the runtime cannot allocate a larger one.
     /// </summary>
     public int? ArenaSize { get; init; }
 
@@ -129,7 +131,9 @@ public sealed class ReactorOptions
     /// <summary>
     /// Applies <see cref="ArenaSize"/> against a profile's arena floor — one maximum deliverable
     /// unit — defaulting to the floor when unset, and throwing <see cref="ArgumentException"/>
-    /// naming the arithmetic when an explicit value falls short of it.
+    /// naming the arithmetic when an explicit value falls short of it. An explicit value above
+    /// <see cref="Array.MaxLength"/> throws <see cref="ArgumentOutOfRangeException"/> naming
+    /// <see cref="ArenaSize"/>. An unset value is not checked, because each profile bounds its own floor.
     /// </summary>
     /// <param name="arenaFloor">The profile's minimum arena size, in bytes.</param>
     /// <param name="floorDescription">
@@ -138,6 +142,14 @@ public sealed class ReactorOptions
     /// </param>
     internal int ResolveArenaSize(int arenaFloor, string floorDescription)
     {
+        if (ArenaSize > Array.MaxLength)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(ArenaSize),
+                ArenaSize,
+                $"arena of {ArenaSize} bytes exceeds the largest array the runtime can allocate — lower ArenaSize to at most {Array.MaxLength}.");
+        }
+
         int arenaSize = ArenaSize ?? arenaFloor;
         if (arenaSize < arenaFloor)
         {

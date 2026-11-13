@@ -49,6 +49,10 @@
   datagram profile. A memory bill whose true total passes `long.MaxValue` is rejected instead of
   wrapping negative and passing. `DatagramSessionOptions.ReceiveBudgetBytes`, `SendBudgetBytes` and
   `HeldRecordBudgetBytes` saturate at `long.MaxValue`.
+- `ReactorOptions.ArenaSize` above `Array.MaxLength` (2 147 483 591), and a Raw `scratchBufferSize`
+  above `Array.MaxLength - 1` (2 147 483 590), threw `OutOfMemoryException` at construction (#526).
+  Both now throw `ArgumentOutOfRangeException` naming the option. The scratch buffer's limit is one
+  byte lower because its allocation holds one truncation byte past `scratchBufferSize`.
 
 ### Features
 
