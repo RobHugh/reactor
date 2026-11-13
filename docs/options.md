@@ -127,7 +127,9 @@ unreliable:  Capacity × UnreliableQueueBytes
 `FragmentSize` appears in one line and not the other, because the window counts packets and retention
 counts bytes. The 2 is the two reliable Spaces, the only ones that reassemble and retransmit. Each line
 also carries a few bytes of bookkeeping per fragment slot, under 2% at the default fragment size.
-`ReceiveBudgetBytes` and `SendBudgetBytes` report both lines exactly, bookkeeping included.
+`ReceiveBudgetBytes` and `SendBudgetBytes` report both lines exactly, bookkeeping included. A line
+whose true figure passes `long.MaxValue` reads as `long.MaxValue`, and construction still rejects it
+with the exact figure. `HeldRecordBudgetBytes` below saturates the same way.
 
 The unreliable line is the queue for `Unreliable` and `UnreliableSequenced` Messages waiting for the
 next Pump. Its default is one reliable Space's retention plus 7 bytes per slot, so by default it adds

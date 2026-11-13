@@ -300,7 +300,7 @@ public sealed class StreamSessionOptions
                 nameof(MaxMessageSize),
                 MaxMessageSize,
                 $"maximum message size of {MaxMessageSize} bytes is above {maxMessageSizeLimit}, the largest Message that " +
-                $"fits one .NET array of {Array.MaxLength} bytes with its 4-byte length prefix. Retention and the receive " +
+                $"fits one .NET array of {Array.MaxLength} bytes with its {LengthPrefixSize}-byte length prefix. Retention and the receive " +
                 "buffer each hold one framed maximum Message, so a larger one could never be allocated.");
         }
 

@@ -818,12 +818,48 @@ public class DatagramSessionOptionsTests
         // Act
         long receive = options.ReceiveBudgetBytes;
         long held = options.HeldRecordBudgetBytes;
-        int perPump = options.ResolvedMaxDatagramsPerPump;
 
         // Assert
         receive.Should().Be(long.MaxValue);
         held.Should().Be(long.MaxValue);
+    }
+
+    [Fact]
+    public void ResolvedMaxDatagramsPerPump_TrueFigureAboveIntMaxValue_SaturatesInsteadOfWrapping()
+    {
+        // Arrange — issue #488: capacity and window at int.MaxValue wrapped the default read limit negative.
+        DatagramSessionOptions options = CreateOptions(capacity: int.MaxValue, maxMessageSize: 1000, retentionBytes: 1200, receiveWindowFragments: int.MaxValue);
+
+        // Act
+        int perPump = options.ResolvedMaxDatagramsPerPump;
+
+        // Assert
         perPump.Should().Be(int.MaxValue);
+    }
+
+    [Fact]
+    public void Constructor_EachLineBelowLongMaxValueButTotalAbove_ThrowsArgumentExceptionNamingTheExactTotal()
+    {
+        // Arrange — the receive line is about 4.05 × 10^18 and the send line about 5.58 × 10^18. Each fits
+        // long, and their sum does not, so a long total would wrap negative and pass.
+        DatagramSessionOptions options = CreateOptions(
+            capacity: int.MaxValue, maxMessageSize: 1000, retentionBytes: 2_200_000 * 576, fragmentSize: 576, receiveWindowFragments: 1_600_000);
+        long receive = options.ReceiveBudgetBytes;
+        long send = options.SendBudgetBytes;
+        Int128 expectedTotal = (Int128)receive + send + options.UnreliableQueueBudgetBytes;
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options);
+
+        // Assert
+        receive.Should().BeLessThan(long.MaxValue);
+        send.Should().BeLessThan(long.MaxValue);
+        expectedTotal.Should().BeGreaterThan(long.MaxValue);
+        act.Should().Throw<ArgumentException>()
+            .WithParameterName(nameof(DatagramSessionOptions.Reactor))
+            .Which.Message.Should()
+            .Contain($"ask for {expectedTotal} bytes")
+            .And.NotMatchRegex("(?<![0-9])-[0-9]");
     }
 
     [Fact]

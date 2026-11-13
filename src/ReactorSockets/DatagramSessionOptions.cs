@@ -502,7 +502,8 @@ public sealed class DatagramSessionOptions
     /// The send line of the memory bill in bytes, reported the same way: <see cref="RetentionSlots"/>
     /// whole fragment slots per reliable Space per Peer, each priced at its payload plus the 15 bytes
     /// of bookkeeping that records what it holds. Exact, like the receive line, so it can be below
-    /// <c>Capacity × 2 × RetentionBytes</c> when retention is not a whole number of fragments.
+    /// <c>Capacity × 2 × RetentionBytes</c> when retention is not a whole number of fragments. A figure
+    /// above <see cref="long.MaxValue"/> reads as <see cref="long.MaxValue"/>.
     /// </summary>
     public long SendBudgetBytes => long.CreateSaturating(ExactSendBudgetBytes);
 
