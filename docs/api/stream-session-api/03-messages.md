@@ -60,7 +60,7 @@ code, not a race.
 
 ## Backpressure
 
-`RetentionExhausted` is the only backpressure this library has. Retention never blocks, never grows
+`RetentionExhausted` is the only backpressure the stream profile has. Retention never blocks, never grows
 and never drops — a full ring fails the `Send` and nothing else.
 
 Retention is per Peer and never shared, so a stalled Peer can only ever exhaust its own. A healthy

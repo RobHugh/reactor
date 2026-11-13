@@ -72,9 +72,10 @@ Fragment fills one maximum Datagram.
   than one fragment.
 - It caps every Datagram: a data Datagram is at most `FragmentSize + 31` bytes, 1231 at the default,
   which with IPv6 and UDP headers fits the 1280-byte minimum MTU.
-- It is per direction and never negotiated. Two ends with different values interoperate, each
-  cutting its own Messages by its own size.
-- Each Peer captures the value when it is admitted. Nothing changes it mid-Session.
+- Each end announces its value in the handshake, and a Peer sends at the smaller of the two. Two
+  ends with different values interoperate.
+- Each Peer fixes its send size when it reaches Established. Nothing changes it mid-Session, not
+  even a Resume.
 
 A size larger than the path will carry ends the Session with `FragmentSizeUnviable`. See
 [Closing](04-closing.md).
