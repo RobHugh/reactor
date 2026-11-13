@@ -111,7 +111,7 @@ Property UnreliableQueueBytes  <a class="header-action link-secondary" title="Vi
 </h3>
 
 <div class="markdown level1 summary"><p>The most bytes one Peer may have queued for <a class="xref" href="ReactorSockets.DeliveryMode.html#ReactorSockets_DeliveryMode_Unreliable">Unreliable</a> and
-<a class="xref" href="ReactorSockets.DeliveryMode.html#ReactorSockets_DeliveryMode_UnreliableSequenced">UnreliableSequenced</a> between Pumps, counting each Message's payload plus
+<a class="xref" href="ReactorSockets.DeliveryMode.html#ReactorSockets_DeliveryMode_UnreliableSequenced">UnreliableSequenced</a> until a Pump writes them, counting each Message's payload plus
 its 7-byte record header. A Send that would go past it returns <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_SendQueueFull">SendQueueFull</a>.
 <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/null">null</a> means <a class="xref" href="ReactorSockets.DatagramSessionOptions.RetentionSlots.html#ReactorSockets_DatagramSessionOptions_RetentionSlots">RetentionSlots</a> × (<a class="xref" href="ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.html#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize">ResolvedFragmentSize</a> + 7):
 as many full unreliable Messages as one reliable Space retains Fragments. Provenance: derived from

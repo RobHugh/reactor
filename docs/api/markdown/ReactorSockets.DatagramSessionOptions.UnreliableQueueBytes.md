@@ -6,7 +6,7 @@ Assembly: ReactorSockets.dll
 ## <a id="ReactorSockets_DatagramSessionOptions_UnreliableQueueBytes"></a> UnreliableQueueBytes
 
 The most bytes one Peer may have queued for [`DeliveryMode.Unreliable`](ReactorSockets.DeliveryMode.md) and
-[`DeliveryMode.UnreliableSequenced`](ReactorSockets.DeliveryMode.md) between Pumps, counting each Message's payload plus
+[`DeliveryMode.UnreliableSequenced`](ReactorSockets.DeliveryMode.md) until a Pump writes them, counting each Message's payload plus
 its 7-byte record header. A Send that would go past it returns [`SendOutcome.SendQueueFull`](ReactorSockets.SendOutcome.md).
 <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/null">null</a> means [`DatagramSessionOptions.RetentionSlots`](ReactorSockets.DatagramSessionOptions.RetentionSlots.md#ReactorSockets_DatagramSessionOptions_RetentionSlots) × ([`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) + 7):
 as many full unreliable Messages as one reliable Space retains Fragments. Provenance: derived from
