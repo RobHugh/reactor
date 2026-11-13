@@ -797,6 +797,42 @@ public class StreamSessionRedialTests
     }
 
     [Fact]
+    public void Pump_LingerAndTheReceiveIdleDeadlinePassInOnePump_ClosesWithLingerExpiredRatherThanFailingTheAttempt()
+    {
+        // Arrange: the raw Hello announces a 1 s Linger and a 1 s send-idle interval, so an unconfirmed attempt's
+        // receive-idle deadline is 3 s after it connects and Linger runs out 1 s after the interruption.
+        using StreamSessionReactorHarness dialer = new(entropy: new ConstantByteJitter(0xFF));
+        using RawStreamListener listener = new();
+        byte[] resumeSecret = StreamSessionTestRecords.PayloadOf(StreamSessionTestRecords.ResumeSecretLength, 67);
+        (PeerId peer, RawStreamListener.Accepted far) = EstablishDialledSession(dialer, listener, resumeSecret);
+        using IDisposable farGuard = far;
+        InterruptDialledPeer(dialer, far, peer);
+        far.Dispose();
+        dialer.Sink.Received.Clear();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> collected = [];
+        dialer.TimeProvider.Advance(TimeSpan.FromMilliseconds(50));
+        dialer.Reactor.Pump();
+        collected.AddRange(dialer.DrainToList());
+        listener.TryAccept(out RawStreamListener.Accepted silent, timeoutMs: 2000).Should().BeTrue();
+        using IDisposable silentGuard = silent;
+        bool resumeArrived = false;
+        PumpCollectingUntil(dialer, collected, () =>
+            resumeArrived = silent.TryReceiveWithinTimeout(StreamSessionTestRecords.HandshakeRecordSize, out _, timeoutMs: 20));
+        resumeArrived.Should().BeTrue();
+        collected.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+
+        // Act: one advance passes both deadlines, so a single Pump sees both.
+        dialer.TimeProvider.Advance(TimeSpan.FromSeconds(3) + TimeSpan.FromMilliseconds(10));
+        dialer.Reactor.Pump();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> deadlinePump = dialer.DrainToList();
+
+        // Assert
+        deadlinePump.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.LingerExpired);
+        dialer.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.RedialFailed);
+    }
+
+    [Fact]
     public void Pump_ReDialAwaitingTheListenersCounter_IsNotDialledAgainBeforeItFails()
     {
         // Arrange
