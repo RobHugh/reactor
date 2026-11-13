@@ -105,6 +105,10 @@ public class DatagramSessionFragmentRepairCostTests
         SendOutcome outcome = dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, message);
         outcome.Should().Be(SendOutcome.Sent, "retention was sized to hold every one of the 57 Fragments this Message cuts into");
 
+        // The accepter acknowledges on its own one Pump after each Fragment arrives (ADR 0026). Those
+        // acks are held back until the transfer is done, so the clock that never moves between rounds
+        // cannot feed the estimator zero round-trip samples and collapse the RTO under the transfer.
+        proxy.SetPayloadDropRule(RelayDirection.UpstreamToClient, _ => true);
         for (int round = 0; round < FragmentCount; round++)
         {
             if (round == dropIndex)
@@ -119,6 +123,7 @@ public class DatagramSessionFragmentRepairCostTests
         // admitted while the dropped Fragment was still missing — travel back before the deadline
         // passes. Without this reply nothing the accepter received would ever be acknowledged, and every
         // Fragment the sender is still tracking would eventually expire alongside the one truly lost.
+        proxy.SetPayloadDropRule(RelayDirection.UpstreamToClient, null);
         accepter.Reactor.Send(accepterPeer, DeliveryMode.Unreliable, [0]).Should().Be(SendOutcome.Sent);
         accepter.Reactor.Pump();
         tap.Pump();
