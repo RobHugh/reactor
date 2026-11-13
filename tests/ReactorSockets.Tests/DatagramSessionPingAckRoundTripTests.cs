@@ -48,10 +48,9 @@ public class DatagramSessionPingAckRoundTripTests
 
         int wireCountAfterPing = tap.CountInDirection(TapDirection.DiallerToAccepter);
 
-        // The Ping is admitted into the receiver's ReliableUnordered receive window on arrival, but an
-        // ack only rides an outbound datagram, and a wholly silent receiver sends none of its own — the
-        // same reason DatagramSessionPingReceiveTests and DatagramSessionRetransmitResendTests both make
-        // the far end Send something to carry the ack back.
+        // The Ping is admitted into the receiver's ReliableUnordered receive window on arrival, and the
+        // reply's Datagram carries the ack back. Without the reply the receiver would send it on its own
+        // on its next Pump (ADR 0026).
         receiver.Reactor.Send(receiverPeer, DeliveryMode.Unreliable, [0x01]).Should().Be(SendOutcome.Sent);
         DatagramSessionReactorHarness.PumpRoundThroughTap(sender, tap, receiver);
 

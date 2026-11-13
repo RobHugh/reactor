@@ -82,6 +82,12 @@ receiver closes the Peer with `ProtocolViolation`.
 Each reliable Space has its own retention, so a full `ReliableOrdered` Space does not refuse a
 `ReliableUnordered` Send.
 
+Retention frees when the receiver acknowledges, and every Datagram carries the acknowledgements. A
+receiver that has nothing of its own to send acknowledges on its next Pump with a 20-byte Datagram, at
+most one per Peer per Pump. A one-way reliable flow therefore frees retention at the receiver's Pump
+rate. A reply queued before that Pump carries the acknowledgement instead, so request and reply
+traffic sends no extra Datagram.
+
 ## Modes do not interfere with each other
 
 Each mode has its own Space, so a hole in one cannot stall another. A large `ReliableOrdered` transfer

@@ -103,9 +103,8 @@ public class DatagramSessionRetransmitResendTests
         PumpRoundsCollectingPayloads(sender, proxy, receiver, rounds: 12)
             .Should().ContainSingle("the Message arrived on its first transmission");
 
-        // An ack block rides a Datagram and a Datagram is only sent for a Peer with records queued, so
-        // the acknowledgement needs traffic in the reverse direction to travel on. A reply provides it
-        // here without waiting for the receiver's send-idle Ping.
+        // A reply carries the acknowledgement here. Without it the receiver would send the ack on its own
+        // on its next Pump (ADR 0026).
         receiver.Reactor.Send(receiverPeer, DeliveryMode.Unreliable, [1]);
         PumpRoundsCollectingPayloads(sender, proxy, receiver, rounds: 4);
 

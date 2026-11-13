@@ -160,6 +160,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private readonly int _maxDatagramsPerPump;
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
+
+    /// <summary>
+    /// How many Pumps have started on this Reactor. A Peer's ack is due once it has been owed since an
+    /// earlier Pump than the current one (<see cref="IsAckDue"/>).
+    /// </summary>
+    private long _pumpNumber;
     private int _capDiscardsThisFrame;
     private int _capacityDiscardsThisFrame;
 
@@ -346,6 +352,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         try
         {
             _pumpIntervalObserver.Observe();
+            _pumpNumber++;
             _pendingEvents.Clear();
             _arena.Reset();
             _admissionsThisFrame = 0;
@@ -1406,7 +1413,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="FlushPeer"/> itself trims <see cref="PeerSlot.PendingSends"/> down to whatever it
     /// could not pack this Pump, so there is nothing left for this method to clear — a Peer whose queue
     /// drained completely is left with an empty list, which is exactly what makes the next
-    /// Pump's <c>Count == 0</c> check above skip it and send no header-only Datagram.
+    /// Pump's <c>Count == 0</c> check above skip it and send no header-only Datagram, unless its final
+    /// ack or its delayed ack (<see cref="IsAckDue"/>) is due.
     /// </remarks>
     private void FlushOutboundDatagrams()
     {
@@ -1420,8 +1428,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             // A Peer whose Goodbye close is due is flushed even with nothing queued: its Slot is freed
             // right after, so this datagram is the last that could carry the ack of the Goodbye.
             // The same holds for a Closing Peer that just acknowledged the remote's Goodbye (AckDue): that
-            // datagram is what tells the remote its Goodbye arrived.
-            if (slot.PendingSends.Count == 0 && !slot.Lifecycle.IsFinalAckDue)
+            // datagram is what tells the remote its Goodbye arrived. A Peer whose ack has been owed since
+            // an earlier Pump is flushed too, as one header-only Datagram (ADR 0026).
+            if (slot.PendingSends.Count == 0 && !IsHeaderOnlyDatagramDue(slot))
             {
                 continue;
             }
@@ -1430,6 +1439,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             slot.Lifecycle.FinalAckFlushed();
         }
     }
+
+    /// <summary>
+    /// Whether <paramref name="slot"/> owes an acknowledgement that no Datagram has carried since an
+    /// earlier Pump than this one (ADR 0026). The Pump that classified the record does not send the ack
+    /// on its own, so a reply queued before the next Pump carries it instead.
+    /// </summary>
+    private bool IsAckDue(PeerSlot slot) => slot.AckOwedSincePump < _pumpNumber;
+
+    /// <summary>
+    /// Whether a flush of <paramref name="slot"/> sends the header and ack blocks even with no record:
+    /// its final ack (<see cref="PeerLifecycle.IsFinalAckDue"/>) or its delayed ack (<see cref="IsAckDue"/>) is due.
+    /// </summary>
+    private bool IsHeaderOnlyDatagramDue(PeerSlot slot) => slot.Lifecycle.IsFinalAckDue || IsAckDue(slot);
 
     /// <summary>
     /// Whether <paramref name="slot"/> has gone silent past this end's receive-idle deadline: elapsed
@@ -1780,7 +1802,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// The Datagram count keeps one Pump's bytes for one Peer at or below one maximum UDP payload, so a
     /// backlog leaves over several Pumps instead of in one burst a receiver's socket buffer would drop.
     /// What is left waits, in order, for the next Pump. The first Datagram is written even with nothing
-    /// queued when the Peer's final ack is due (<see cref="PeerLifecycle.IsFinalAckDue"/>).
+    /// queued when the Peer's final ack is due (<see cref="PeerLifecycle.IsFinalAckDue"/>) or its
+    /// delayed ack is due (<see cref="IsAckDue"/>).
     /// </remarks>
     private void FlushPeer(PeerSlot slot)
     {
@@ -1897,7 +1920,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="DatagramRecordPacker.TryPackRecord"/> just accepted, never for the one that broke the
     /// loop, so a queued-but-unsent record is armed on whichever later Pump actually packs it. Nothing
     /// is sent at all if nothing ended up packed, so a queue whose one record failed to resolve costs a
-    /// wasted flush rather than a header-only Datagram with no records in it.
+    /// wasted flush rather than a header-only Datagram with no records in it, unless an ack is due and
+    /// the header-only Datagram is what carries it.
     /// </para>
     /// </remarks>
     /// <param name="slot">The Peer whose queue is packed.</param>
@@ -1973,9 +1997,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         slot.PendingSends.RemoveRange(0, consumed);
 
-        // Nothing packed sends nothing, except for a Peer whose Goodbye close is due: it sends the header
-        // and ack blocks alone, the one datagram that can still tell the remote its Goodbye arrived.
-        if (packer.RecordsPacked == 0 && !slot.Lifecycle.IsFinalAckDue)
+        // Nothing packed sends nothing, except for a Peer whose Goodbye close is due, which sends the
+        // header and ack blocks alone as the one datagram that can still tell the remote its Goodbye
+        // arrived, and a Peer whose ack is due, which sends them alone as its delayed ack (ADR 0026).
+        if (packer.RecordsPacked == 0 && !IsHeaderOnlyDatagramDue(slot))
         {
             return false;
         }
@@ -1988,12 +2013,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             _counters.RecordDatagramSent();
         }
 
-        // A data datagram just left for this Peer — this flush packed at least one record, or the
-        // RecordsPacked == 0 return above would already have exited — so the send-idle interval
-        // restarts from now (issue #340): the Ping this same flush may just have packed counts as a
-        // sent datagram exactly like any other, which is what keeps a Session that has nothing but
-        // Pings to send from ever emitting a second one before the next interval elapses.
+        // A data datagram just left for this Peer, so the send-idle interval restarts from now (issue
+        // #340): a Ping or a header-only ack counts as a sent datagram like any other, which keeps an idle
+        // Session at one Datagram per end per interval. Its ack blocks acknowledge everything classified
+        // so far, so nothing is owed any more.
         slot.LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+        slot.AckOwedSincePump = null;
         return true;
     }
 
@@ -2150,6 +2175,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ReceiveClassification classification = windows.Window(record.Mode).Classify(record.Sequence);
         ReceiveWindowOutcome outcome = classification.Outcome;
         int ringSlot = classification.RingSlot;
+
+        // Any reliable record classified here is owed an ack, a duplicate included: a repeat means the
+        // ack that covered it was lost (ADR 0026).
+        if (IsReliable(record.Mode))
+        {
+            slot.AckOwedSincePump ??= _pumpNumber;
+        }
 
         // The moment a Fragment set's slot is discarded is the last moment anyone can say how much of
         // it had arrived (issue #297): Classify just clobbered such a slot if this is set. This
@@ -4519,6 +4551,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// start its idle clock earlier than the moment it actually became a Session.
         /// </summary>
         public long LastSendTimestamp { get; set; }
+
+        /// <summary>
+        /// The <see cref="DatagramSessionReactor._pumpNumber"/> of the Pump that first classified a
+        /// reliable record from this Peer since this end last sent it a data Datagram, or
+        /// <see langword="null"/> when every such record has been acknowledged on the wire. Set by
+        /// <see cref="DatagramSessionReactor.ClassifyRecord"/> and cleared by
+        /// <see cref="DatagramSessionReactor.FlushOneDatagram"/> whenever a Datagram leaves, since every
+        /// data Datagram carries both ack blocks (ADR 0026).
+        /// </summary>
+        public long? AckOwedSincePump { get; set; }
 
         /// <summary>
         /// The <see cref="TimeProvider.GetTimestamp"/> reading of the most recent moment this Peer's
