@@ -165,6 +165,10 @@ profile the buffer is the receive window, which is per Peer and per reliable Spa
 floored by one fragment instead of one Message, because a reliable Space retransmits fragment by
 fragment. On both, `MaxMessageSize` also floors the shared arena.
 
+The limit that caps a `Send` is the receiving end's: a Message above the peer's announced
+`MaxMessageSize` returns `RemoteMessageTooLarge` on both profiles. The stream profile also throws
+`ArgumentException` for a Message above your own limit, because its retention is floored by that limit.
+
 ## Every per-Pump cost a remote party can inflate is bounded at construction
 
 One property, five mechanisms.
