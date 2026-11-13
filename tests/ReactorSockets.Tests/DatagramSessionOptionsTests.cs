@@ -690,6 +690,23 @@ public class DatagramSessionOptionsTests
     }
 
     [Fact]
+    public void HeldRecordBudgetBytes_WindowAtIntMaxValue_CountsTwoWindowsWithoutWrapping()
+    {
+        // Arrange — issue #540: twice this window wraps int negative, and the budget fits long at one Peer.
+        DatagramSessionOptions options = CreateOptions(
+            capacity: 1,
+            maxMessageSize: 1000,
+            fragmentSize: 1000,
+            receiveWindowFragments: int.MaxValue);
+
+        // Act
+        long budget = options.HeldRecordBudgetBytes;
+
+        // Assert
+        budget.Should().Be(2L * int.MaxValue * (1000 + 44));
+    }
+
+    [Fact]
     public void SendBudgetBytes_WorkedExample_EqualsCapacityTimesTwoTimesWholeRetentionSlotsWithTheirBookkeeping()
     {
         // Arrange — distinct numbers so a transposed factor in the formula is caught, and a retention

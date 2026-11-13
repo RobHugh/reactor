@@ -76,6 +76,32 @@ public class DatagramSessionOrderedHoldBudgetTests
     }
 
     [Fact]
+    public void Pump_RecordsPastTheSlotsHeldRecordBudgetBytesCounts_CountsThemOutOfWindow()
+    {
+        // Arrange — issue #540: the slot count is read back from the stated budget, not restated, so the
+        // Reactor's limit and the budget must come from one hold rule. Each slot is a whole fragment plus
+        // 44 bytes of bookkeeping.
+        using DatagramSessionReactorHarness accepter = NewAccepter();
+        long budgetSlots = accepter.Options.HeldRecordBudgetBytes
+            / ((long)accepter.Options.Reactor.Capacity * (FragmentSize + 44));
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId peer = FindAccepterPeer(accepter);
+        StallTheHeadAtSequenceZero(accepter, client, clientLink, sessionId);
+
+        // Act — sequences from 2 up to the budget's slot count are held, and the ten after them are not.
+        const int recordsPastTheLimit = 10;
+        for (uint sequence = 2; sequence < budgetSlots + recordsPastTheLimit; sequence++)
+        {
+            SendAndPump(accepter, client, clientLink, sessionId, Record(ModeReliableOrdered, sequence, [0x01]));
+        }
+
+        // Assert
+        accepter.Reactor.CountersOf(peer).OutOfWindowPackets.Should().Be(recordsPastTheLimit);
+    }
+
+    [Fact]
     public void Pump_ARecordWiderThanAFragmentSlotBehindAHole_CountsItOutOfWindow()
     {
         // Arrange — the receive path refuses only a Fragment wider than this end's FragmentSize

@@ -431,7 +431,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
-            OrderedDelivery = new(_options.OrderedHoldSlots, _options.ResolvedFragmentSize),
+            OrderedDelivery = new(checked((int)_options.OrderedHoldSlots), _options.ResolvedFragmentSize),
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
@@ -3686,7 +3686,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = Math.Min(_options.ResolvedFragmentSize, remoteTerms.FragmentSize),
-            OrderedDelivery = new(_options.OrderedHoldSlots, _options.ResolvedFragmentSize),
+            OrderedDelivery = new(checked((int)_options.OrderedHoldSlots), _options.ResolvedFragmentSize),
             LastSendTimestamp = now,
             LastReceiveTimestamp = now,
         };

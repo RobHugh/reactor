@@ -477,11 +477,14 @@ public sealed class DatagramSessionOptions
     /// How many sequences from its send-order head one <c>ReliableOrdered</c> Space will hold ordinary
     /// records for: twice <see cref="ResolvedReceiveWindowFragments"/>. Honest traffic reaches no
     /// further while a Fragment group holds the head, because a group spans at most one window and the
-    /// receive window then spans one more from the group's last admitted piece. The product cannot wrap
-    /// for a constructed Reactor: a window of 2^30 fragments or more puts the receive line above
-    /// <see cref="Array.MaxLength"/> for one Peer, so <see cref="ValidateMemoryBill"/> rejects it first.
+    /// receive window then spans one more from the group's last admitted piece. This is the one statement
+    /// of the hold rule: <see cref="HeldRecordBudgetBytes"/> prices these slots, and each Peer's
+    /// <see cref="Session.OrderedDeliveryQueue"/> is built with them. It is a <see langword="long"/> so it
+    /// cannot wrap. A constructed Reactor's figure fits <see langword="int"/>: a window of 2^30 fragments
+    /// or more puts the receive line above <see cref="Array.MaxLength"/> for one Peer, so
+    /// <see cref="ValidateMemoryBill"/> rejects it first.
     /// </summary>
-    internal int OrderedHoldSlots => 2 * ResolvedReceiveWindowFragments;
+    internal long OrderedHoldSlots => 2L * ResolvedReceiveWindowFragments;
 
     /// <summary>
     /// The most heap, in bytes, a Reactor's <c>ReliableOrdered</c> Spaces can hold in ordinary records
@@ -498,7 +501,7 @@ public sealed class DatagramSessionOptions
     /// the short-lived arrays the ring leaves behind each time it grows.
     /// </remarks>
     public long HeldRecordBudgetBytes => long.CreateSaturating(
-        (Int128)Reactor.Capacity * 2 * ResolvedReceiveWindowFragments * ((Int128)ResolvedFragmentSize + HeldRecordSlotBookkeepingBytes));
+        (Int128)Reactor.Capacity * OrderedHoldSlots * ((Int128)ResolvedFragmentSize + HeldRecordSlotBookkeepingBytes));
 
     /// <summary>
     /// The send line of the memory bill in bytes, reported the same way: <see cref="RetentionSlots"/>
