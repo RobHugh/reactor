@@ -46,6 +46,8 @@ public class DiagnosticIdTests
         [DiagnosticId.RedialAttempted] = new(306, DiagnosticLevel.Info),
         [DiagnosticId.RedialFailed] = new(307, DiagnosticLevel.Info),
         [DiagnosticId.DeliveryCounterRefused] = new(308, DiagnosticLevel.Warn),
+        [DiagnosticId.PendingAdmissionExpired] = new(309, DiagnosticLevel.Warn),
+        [DiagnosticId.PendingAdmissionLimitReached] = new(310, DiagnosticLevel.Warn),
     };
 
     /// <summary>
@@ -89,6 +91,8 @@ public class DiagnosticIdTests
         new(DiagnosticId.RedialAttempted, typeof(StreamSessionRedialTests), nameof(StreamSessionRedialTests.Pump_AReDialAttempt_LogsRedialAttemptedAtInfoNamingThePeerItBelongsTo)),
         new(DiagnosticId.RedialFailed, typeof(StreamSessionRedialTests), nameof(StreamSessionRedialTests.Pump_ReDialAttemptThatFails_LeavesThePeerInterruptedRatherThanClosingIt)),
         new(DiagnosticId.DeliveryCounterRefused, typeof(StreamSessionDeliveryCounterFramingTests), nameof(StreamSessionDeliveryCounterFramingTests.DeliverCompleteMessages_ACountAboveWhatThisEndEverSent_LogsDeliveryCounterRefusedRatherThanMalformedFraming)),
+        new(DiagnosticId.PendingAdmissionExpired, typeof(StreamSessionPendingAdmissionDeadlineTests), nameof(StreamSessionPendingAdmissionDeadlineTests.Pump_SilentConnectionPastItsDeadline_LogsPendingAdmissionExpiredNamingTheSource)),
+        new(DiagnosticId.PendingAdmissionLimitReached, typeof(StreamSessionPendingAdmissionLimitTests), nameof(StreamSessionPendingAdmissionLimitTests.Pump_AFrameThatDefersPastTheLimit_EmitsExactlyOneRecordCarryingTheLimit)),
     ];
 
     /// <summary>Every member the enum declares, read from the enum rather than from <see cref="_roster"/>.</summary>

@@ -179,7 +179,7 @@ public readonly record struct DiagnosticRecord
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.AddressPeerLimitReached"/> record for the claimed Source whose
-    /// handshake was refused, carrying the per-address limit and the prefix length its address was
+    /// handshake was refused, or whose held stream connection was closed, carrying the per-address limit and the prefix length its address was
     /// counted by: 32 for IPv4, and the IPv6 grouping length for IPv6 (ADR 0014).
     /// </summary>
     public static DiagnosticRecord ForAddressPeerLimitReached(Source source, int limit, int prefixLength) =>
@@ -286,4 +286,20 @@ public readonly record struct DiagnosticRecord
     /// </summary>
     public static DiagnosticRecord ForDeliveryCounterRefused(PeerId peer, long claimedCount, long appendedMessageCount) =>
         new(DiagnosticId.DeliveryCounterRefused, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, claimedCount, appendedMessageCount);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.PendingAdmissionExpired"/> record for the claimed Source of an
+    /// accepted stream connection closed for sending no whole first record within its deadline.
+    /// <c>Value0</c> is the bytes of that record it had sent; <c>Value1</c> is the deadline in milliseconds.
+    /// </summary>
+    public static DiagnosticRecord ForPendingAdmissionExpired(Source source, int bytesReceived, long deadlineMilliseconds) =>
+        new(DiagnosticId.PendingAdmissionExpired, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, bytesReceived, deadlineMilliseconds);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.PendingAdmissionLimitReached"/> record. No subject. Carries the
+    /// held-connection limit and the Admissions declined this Pump, counted as
+    /// <see cref="ForAdmissionCapReached"/>'s are.
+    /// </summary>
+    public static DiagnosticRecord ForPendingAdmissionLimitReached(int limit, int declined) =>
+        new(DiagnosticId.PendingAdmissionLimitReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, default, limit, declined);
 }

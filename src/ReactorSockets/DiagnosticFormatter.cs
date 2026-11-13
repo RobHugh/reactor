@@ -94,7 +94,7 @@ public static class DiagnosticFormatter
             DiagnosticId.OversizedMessage => Invariant(
                 $"a Message larger than MaxMessageSize was discarded (bytes {v0}, MaxMessageSize {v1})"),
             DiagnosticId.AddressPeerLimitReached => Invariant(
-                $"a handshake was refused because its address holds as many Peers as it may (MaxPeersPerAddress {v0}, counted by its /{v1})"),
+                $"an admission was refused because its address holds as many Peers or held connections as it may (MaxPeersPerAddress {v0}, counted by its /{v1})"),
             DiagnosticId.DatagramReadLimitReached => Invariant(
                 $"a Pump made as many reads on bound socket {v1} as it may (MaxDatagramsPerPump {v0})"),
 
@@ -124,6 +124,10 @@ public static class DiagnosticFormatter
                 $"a re-dial attempt failed (socket error {SocketErrorText(v0)}, attempt {v1})"),
             DiagnosticId.DeliveryCounterRefused => Invariant(
                 $"the Peer claimed delivery of more Messages than were sent and the Session was closed (count claimed {v0}, count appended {v1})"),
+            DiagnosticId.PendingAdmissionExpired => Invariant(
+                $"an accepted connection sent no whole handshake record within its deadline and was closed (bytes received {v0}, deadline {v1} ms)"),
+            DiagnosticId.PendingAdmissionLimitReached => Invariant(
+                $"the Reactor held as many accepted connections waiting for a handshake record as it may and left the rest in the backlog (limit {v0}, admissions declined {v1})"),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(record), record.Id, $"{record.Id} is not a recognised DiagnosticId."),
         };

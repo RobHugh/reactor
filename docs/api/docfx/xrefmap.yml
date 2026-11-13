@@ -643,6 +643,18 @@ references:
   commentId: F:ReactorSockets.DiagnosticId.PeerRefused
   fullName: ReactorSockets.DiagnosticId.PeerRefused
   nameWithType: DiagnosticId.PeerRefused
+- uid: ReactorSockets.DiagnosticId.PendingAdmissionExpired
+  name: PendingAdmissionExpired
+  href: ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_PendingAdmissionExpired
+  commentId: F:ReactorSockets.DiagnosticId.PendingAdmissionExpired
+  fullName: ReactorSockets.DiagnosticId.PendingAdmissionExpired
+  nameWithType: DiagnosticId.PendingAdmissionExpired
+- uid: ReactorSockets.DiagnosticId.PendingAdmissionLimitReached
+  name: PendingAdmissionLimitReached
+  href: ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_PendingAdmissionLimitReached
+  commentId: F:ReactorSockets.DiagnosticId.PendingAdmissionLimitReached
+  fullName: ReactorSockets.DiagnosticId.PendingAdmissionLimitReached
+  nameWithType: DiagnosticId.PendingAdmissionLimitReached
 - uid: ReactorSockets.DiagnosticId.RedialAttempted
   name: RedialAttempted
   href: ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_RedialAttempted
@@ -1021,6 +1033,36 @@ references:
   commentId: Overload:ReactorSockets.DiagnosticRecord.ForPeerRefusedVersion
   fullName: ReactorSockets.DiagnosticRecord.ForPeerRefusedVersion
   nameWithType: DiagnosticRecord.ForPeerRefusedVersion
+- uid: ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired(ReactorSockets.Source,System.Int32,System.Int64)
+  name: ForPendingAdmissionExpired(Source, int, long)
+  href: ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired.html#ReactorSockets_DiagnosticRecord_ForPendingAdmissionExpired_ReactorSockets_Source_System_Int32_System_Int64_
+  commentId: M:ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired(ReactorSockets.Source,System.Int32,System.Int64)
+  name.vb: ForPendingAdmissionExpired(Source, Integer, Long)
+  fullName: ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired(ReactorSockets.Source, int, long)
+  fullName.vb: ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired(ReactorSockets.Source, Integer, Long)
+  nameWithType: DiagnosticRecord.ForPendingAdmissionExpired(Source, int, long)
+  nameWithType.vb: DiagnosticRecord.ForPendingAdmissionExpired(Source, Integer, Long)
+- uid: ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired*
+  name: ForPendingAdmissionExpired
+  href: ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired.html
+  commentId: Overload:ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired
+  fullName: ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired
+  nameWithType: DiagnosticRecord.ForPendingAdmissionExpired
+- uid: ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached(System.Int32,System.Int32)
+  name: ForPendingAdmissionLimitReached(int, int)
+  href: ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached.html#ReactorSockets_DiagnosticRecord_ForPendingAdmissionLimitReached_System_Int32_System_Int32_
+  commentId: M:ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached(System.Int32,System.Int32)
+  name.vb: ForPendingAdmissionLimitReached(Integer, Integer)
+  fullName: ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached(int, int)
+  fullName.vb: ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached(Integer, Integer)
+  nameWithType: DiagnosticRecord.ForPendingAdmissionLimitReached(int, int)
+  nameWithType.vb: DiagnosticRecord.ForPendingAdmissionLimitReached(Integer, Integer)
+- uid: ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached*
+  name: ForPendingAdmissionLimitReached
+  href: ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached.html
+  commentId: Overload:ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached
+  fullName: ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached
+  nameWithType: DiagnosticRecord.ForPendingAdmissionLimitReached
 - uid: ReactorSockets.DiagnosticRecord.ForRedialAttempted(ReactorSockets.PeerId,System.Int64,System.Int64)
   name: ForRedialAttempted(PeerId, long, long)
   href: ReactorSockets.DiagnosticRecord.ForRedialAttempted.html#ReactorSockets_DiagnosticRecord_ForRedialAttempted_ReactorSockets_PeerId_System_Int64_System_Int64_

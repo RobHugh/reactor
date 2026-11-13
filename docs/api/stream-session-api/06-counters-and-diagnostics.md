@@ -20,7 +20,7 @@ Interrupted Peer, right up to the close.
 | Member | Meaning |
 |---|---|
 | `ArenaHighWaterBytes` | The most arena bytes any single Frame used. Approaching `ArenaSize` means Messages are being held to later Pumps. |
-| `AdmissionDeferrals` | Times a listening endpoint turned its backlog away because the admission cap was reached. Coarse — one declining per endpoint, not per connection. |
+| `AdmissionDeferrals` | Times a listening endpoint turned its backlog away because the admission cap was reached, or because `Capacity` connections were already held waiting for their first record. Coarse — one declining per endpoint, not per connection. |
 | `SinkFaulted` | Times your Sink threw. Non-zero means diagnostics are off for the rest of this Reactor's life. |
 
 `DatagramsSent`, `DatagramsReceived`, `AdmissionDiscards`, `UnknownSourceDatagrams` and
@@ -87,7 +87,7 @@ Source or none) and two numeric slots whose meaning is documented per id.
 |---|---|---|---|
 | `AdmissionCapReached` (1) | Warn | — | A Pump hit its admission cap with work still waiting. `Value0` the cap, `Value1` the declinings. |
 | `ArenaExhausted` (2) | Warn | Peer | The arena had no room for a Message, which is held for a later Pump. `Value0` bytes requested, `Value1` bytes free. |
-| `AddressPeerLimitReached` (208) | Warn | Source | A connection was refused because its address holds `MaxPeersPerAddress` Peers while Slots are free. `Value0` the limit, `Value1` the prefix length the address was counted by: 32 for IPv4, `PeerLimitIPv6PrefixLength` for IPv6. |
+| `AddressPeerLimitReached` (208) | Warn | Source | A connection was refused because its address holds `MaxPeersPerAddress` Peers while Slots are free, or closed because its address already has `MaxPeersPerAddress` connections waiting for their first record. `Value0` the limit, `Value1` the prefix length the address was counted by: 32 for IPv4, `PeerLimitIPv6PrefixLength` for IPv6. |
 | `PeerRefused` (300) | Info | Source | A dialler was refused: version (`Value0` offered, `Value1` required) or capacity (`Value0` = capacity). |
 | `LingerNegotiated` (301) | Info | Peer | A handshake completed. `Value0` your Linger in ms, `Value1` the effective one. |
 | `MalformedFraming` (302) | Warn | Peer | A framing violation closed a Session. `Value0` the offending prefix, `Value1` your `MaxMessageSize`. |
@@ -97,6 +97,8 @@ Source or none) and two numeric slots whose meaning is documented per id.
 | `RedialAttempted` (306) | Info | Peer | A re-dial began. `Value0` attempt number, `Value1` ms actually waited. |
 | `RedialFailed` (307) | Info | Peer | A re-dial failed: it could not connect, or the listening side closed it or stayed silent before answering the Resume. `Value0` the `SocketError`, `Value1` the attempt number. |
 | `DeliveryCounterRefused` (308) | Warn | Peer | A peer claimed more Messages than you ever sent it. `Value0` claimed, `Value1` actually appended. |
+| `PendingAdmissionExpired` (309) | Warn | Source | An accepted connection sent no whole first record within `SendIdleInterval` × `MissedHeartbeats` and was closed. `Value0` bytes of the record received (0 means it sent nothing), `Value1` the deadline in ms. |
+| `PendingAdmissionLimitReached` (310) | Warn | — | `Capacity` connections were held waiting for their first record, so the Pump left the rest in the backlog. `Value0` the limit, `Value1` the declinings. |
 
 Neither re-dial record closes a Peer. Only Linger does.
 
@@ -110,4 +112,6 @@ Neither re-dial record closes a Peer. Only Linger does.
   interrupted Peers.
 - `AddressPeerLimitReached` — one address is asking for more than its share. Raise the limit if it is a
   NAT or proxy, or block it.
+- `PendingAdmissionExpired` or `PendingAdmissionLimitReached` — something is opening connections and not
+  completing the handshake. A 309 `Value0` above 0 points at a slow path, and 0 at a silent remote.
 - Any `SinkFaulted` at all — you are blind from that point on.

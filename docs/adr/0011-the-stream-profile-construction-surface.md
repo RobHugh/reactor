@@ -300,3 +300,33 @@ with `LingerExpired` on time. "Linger bounds the activity" holds.
 
 The Resume record, the delivery counter's wire format, the listening side's match and refusal paths, and
 the schedule's derivation do not change.
+
+## Amendment 2026-11-12: a pending dial times out
+
+Issue #483. A dial had no deadline once TCP connected. The idle timers cover established Peers only, so a
+far end that accepted the connection and sent no handshake record left the dial waiting for a Hello,
+holding its Slot, with `Send` returning `NotEstablished`, until the consumer closed it. The TCP connect
+phase was bounded only by the operating system's connect retries, which differ by platform.
+
+**Timeout.** A dial that has not established one `Linger` after `Connect` closes, whether its TCP connect is
+still pending or the far end connected and sent nothing. No knob is added. `Linger` is this end's declared
+bound on how long it waits for a silent remote, it is the only `Linger` a dial knows before the far end's
+Hello announces one, and it is the bound ADR 0009's amendment of 2026-11-10 puts on a pending datagram
+dial, so both profiles behave alike. The check runs in the Pump's idle-timer scan, after the readiness
+pass, so a Hello already in the socket buffer establishes the Peer first.
+
+**Close reason.** `TransportFailed`, for the reason ADR 0009's amendment gives: it already names a dial that
+could not connect, and a new public member would be permanent for a condition an existing one covers.
+
+**No diagnostic.** The `PeerClosed` event names the Peer the consumer dialled, and the consumer knows the
+endpoint it gave `Connect`. The datagram profile logs nothing for the same condition, and a member added to
+one profile alone would make the two disagree. Telling a timed-out dial from a refused connect would be one
+member for both profiles, decided in its own issue.
+
+**Accepting end.** No change. An accepted connection gets a Slot only once its whole Hello has arrived, and
+it establishes in the same call, so no accepted Peer waits in the handshake. A connection held before that
+is covered by issue #482, with its own deadline of `SendIdleInterval` × `MissedHeartbeats`: a held
+connection has no Slot, and a dial has one.
+
+The cost is that a `Linger` shorter than the round trip plus the far end's Pump interval closes a dial
+before its answer arrives, as it already does on the datagram profile.

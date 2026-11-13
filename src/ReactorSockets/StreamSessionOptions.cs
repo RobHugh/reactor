@@ -115,6 +115,9 @@ public sealed class StreamSessionOptions
     /// never refused by this limit, because the Peer it names already owns its Slot (ADR 0011). A dialled
     /// Peer is not charged: this Reactor chose to make it. A connection over the limit is refused the same way as
     /// one at a full Reactor, and reported with <see cref="DiagnosticId.AddressPeerLimitReached"/>.
+    /// The same limit applies to accepted connections still waiting for their first handshake record:
+    /// one address may have at most this many of them held, and a further one that has not sent its
+    /// whole record with its connection is closed at once with nothing sent.
     /// </para>
     /// </remarks>
     public int? MaxPeersPerAddress { get; init; }
@@ -144,8 +147,11 @@ public sealed class StreamSessionOptions
     /// <summary>
     /// How long a closing Session stays alive to retransmit its Goodbye and absorb what is still in
     /// flight. Required, for the same reason as <see cref="SendIdleInterval"/>: it trades a prompt
-    /// teardown against a clean one. At most 2^32 - 1 milliseconds (about 49.7 days), the most a handshake
-    /// may announce.
+    /// teardown against a clean one. It also bounds a dial: a Peer this end dialled that has not
+    /// established one Linger after <see cref="StreamSessionReactor.Connect"/> closes with
+    /// <see cref="DisconnectReason.TransportFailed"/>, so a Linger shorter than the round trip plus the
+    /// far end's Pump interval closes a dial before its answer arrives. At most 2^32 - 1 milliseconds
+    /// (about 49.7 days), the most a handshake may announce.
     /// </summary>
     public required TimeSpan Linger { get; init; }
 

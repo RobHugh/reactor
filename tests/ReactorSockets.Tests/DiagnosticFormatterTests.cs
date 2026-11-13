@@ -74,7 +74,7 @@ public class DiagnosticFormatterTests
             $"Warn OversizedMessage (207), {PeerText}: a Message larger than MaxMessageSize was discarded (bytes 5000, MaxMessageSize 4096)"),
         new(
             DiagnosticRecord.ForAddressPeerLimitReached(_source, limit: 2, prefixLength: 32),
-            $"Warn AddressPeerLimitReached (208), {SourceText}: a handshake was refused because its address holds as many Peers as it may (MaxPeersPerAddress 2, counted by its /32)"),
+            $"Warn AddressPeerLimitReached (208), {SourceText}: an admission was refused because its address holds as many Peers or held connections as it may (MaxPeersPerAddress 2, counted by its /32)"),
         new(
             DiagnosticRecord.ForDatagramReadLimitReached(limit: 3, socketIndex: 1),
             "Warn DatagramReadLimitReached (209): a Pump made as many reads on bound socket 1 as it may (MaxDatagramsPerPump 3)"),
@@ -114,6 +114,12 @@ public class DiagnosticFormatterTests
         new(
             DiagnosticRecord.ForDeliveryCounterRefused(_peer, claimedCount: 10, appendedMessageCount: 4),
             $"Warn DeliveryCounterRefused (308), {PeerText}: the Peer claimed delivery of more Messages than were sent and the Session was closed (count claimed 10, count appended 4)"),
+        new(
+            DiagnosticRecord.ForPendingAdmissionExpired(_source, bytesReceived: 1, deadlineMilliseconds: 3000),
+            $"Warn PendingAdmissionExpired (309), {SourceText}: an accepted connection sent no whole handshake record within its deadline and was closed (bytes received 1, deadline 3000 ms)"),
+        new(
+            DiagnosticRecord.ForPendingAdmissionLimitReached(limit: 4, declined: 1),
+            "Warn PendingAdmissionLimitReached (310): the Reactor held as many accepted connections waiting for a handshake record as it may and left the rest in the backlog (limit 4, admissions declined 1)"),
     ];
 
     /// <summary>Every snapshot row, as xUnit theory data.</summary>

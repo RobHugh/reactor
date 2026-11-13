@@ -99,6 +99,8 @@ still shows.
   first record and then decides in order: resume match, capacity, per-address limit. A version
   mismatch or a full Reactor gets an in-protocol Refusal. Linger is negotiated to the minimum of the
   two ends.
+- A dial that has not established one Linger after `Connect` closes with `TransportFailed`, whether
+  its TCP connect is still pending or the far end sent no handshake record.
 - Messages: `u32` length-prefixed framing, delivered as `MessageReceived` within the per-Peer read
   share. Malformed framing closes with `ProtocolViolation`.
 - `Send` appends into a preallocated per-Peer retention ring and returns `Sent`,
@@ -254,9 +256,11 @@ still shows.
 - One address could take every capacity Slot, on both profiles and through an IPv6 prefix.
 - A datagram flood could keep one `Pump` from returning.
 - A refused stream connection was drained without limit.
+- A stream connection that sent no whole first record was held without a deadline or a limit.
 - The stream codec accepted a zero `MaxMessageSize`, an unmapped refusal reason and non-zero
   padding.
 - A lost handshake datagram left a datagram dial pending forever.
+- A stream dial whose far end connected and sent no handshake record stayed pending forever.
 
 ### Counters and documentation
 
@@ -272,9 +276,11 @@ Each risk was stated in a closed pull request and is still present in the code.
 
 ### Security and abuse
 
-- **R1 A stream connection that never sends holds a socket indefinitely.** A just-accepted
-  connection is held until its first record arrives, with no timeout. The admission cap limits
-  accepts per Frame, not how long a held connection lives.
+- **R1 Held stream connections share one limit.** At most `Capacity` connections are held waiting for
+  their first record, each for up to `SendIdleInterval` × `MissedHeartbeats`. Remotes on many addresses
+  that hold `Capacity` silent connections delay every new connection by up to that deadline. One address
+  can hold `MaxPeersPerAddress` of them, and a Resume whose record is slow to arrive from an address at
+  that limit is closed and must be re-dialled.
 - **R2 Path challenge limits.** Where an IP is shared (carrier-grade NAT, office NAT, shared host), a
   Peer can still be redirected to another port on that IP. A captured Resume replayed from the
   Peer's own IP still moves it. A forged `PathChallenge` that guesses a dialler's 32-bit session id

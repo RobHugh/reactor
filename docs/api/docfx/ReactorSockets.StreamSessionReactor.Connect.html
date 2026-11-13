@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_StreamSessionReactor_Connect_" data-uid="ReactorSockets.StreamSessionReactor.Connect*" class="text-break">
-Method Connect  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionReactor.cs/#L251"><i class="bi bi-code-slash"></i></a>
+Method Connect  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionReactor.cs/#L268"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,7 +107,7 @@ Method Connect  <a class="header-action link-secondary" title="View source" href
 
 <h3 id="ReactorSockets_StreamSessionReactor_Connect_System_Net_IPEndPoint_" data-uid="ReactorSockets.StreamSessionReactor.Connect(System.Net.IPEndPoint)">
   Connect(IPEndPoint)
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionReactor.cs/#L251"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionReactor.cs/#L268"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>Begins a Session with <code class="paramref">destination</code>, returning the <a class="xref" href="ReactorSockets.PeerId.html">PeerId</a> that
@@ -115,7 +115,10 @@ will address it. The Peer occupies a capacity Slot from this moment, exactly as 
 does in <a class="xref" href="ReactorSockets.RawReactor.html">RawReactor</a>: the handshake is work this Reactor is holding, and pretending
 otherwise would let a consumer dial past capacity and discover it only on the far side of a
 round trip. <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerConnected">PeerConnected</a> or <a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerClosed">PeerClosed</a>
-resolves it on a later Pump.</p>
+resolves it on a later Pump. A dial that has not established one
+<a class="xref" href="ReactorSockets.StreamSessionOptions.Linger.html#ReactorSockets_StreamSessionOptions_Linger">Linger</a> after this call closes with
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_TransportFailed">TransportFailed</a>, whether its TCP connect is still pending or the far
+end connected and sent no handshake record.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 

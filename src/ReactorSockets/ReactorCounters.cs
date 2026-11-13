@@ -34,8 +34,9 @@ namespace ReactorSockets;
 /// </param>
 /// <param name="AdmissionDeferrals">
 /// Admissions declined that left the work where it was, for a later Pump to take. Moves on the
-/// transports where declined work waits — Raw and the stream Session profile. Counted once per
-/// declining rather than once per piece of work turned away, which makes it coarse where the work
+/// transports where declined work waits — Raw and the stream Session profile. On the stream profile
+/// both the admission cap and the limit of <see cref="ReactorOptions.Capacity"/> connections held
+/// waiting for their first record decline this way. Counted once per declining rather than once per piece of work turned away, which makes it coarse where the work
 /// sits in an OS backlog: one listening Link or bound endpoint declines its whole backlog with one
 /// declining, because that depth is unknowable without accepting. Where the Reactor already holds
 /// the work — a stream Session handshake accepted but not completed — one declining is one piece of
