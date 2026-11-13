@@ -184,7 +184,9 @@ remote can produce this at will, and nothing is wrong with this Reactor.
 A verified handshake, or on the stream profile an accepted connection, was refused because its
 address already holds [`DatagramSessionOptions.MaxPeersPerAddress`](ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress.md#ReactorSockets_DatagramSessionOptions_MaxPeersPerAddress) or
 [`StreamSessionOptions.MaxPeersPerAddress`](ReactorSockets.StreamSessionOptions.MaxPeersPerAddress.md#ReactorSockets_StreamSessionOptions_MaxPeersPerAddress) accepted Peers while other capacity Slots
-were free. Subject is the claimed Source. <code>Value0</code> is the limit; <code>Value1</code> is the prefix
+were free. On the stream profile it is also logged when an accepted connection is closed before its
+first handshake record arrives, because its address already has that many other connections held
+waiting for theirs. Subject is the claimed Source. <code>Value0</code> is the limit; <code>Value1</code> is the prefix
 length the address was counted by: 32 for IPv4, and
 [`DatagramSessionOptions.PeerLimitIPv6PrefixLength`](ReactorSockets.DatagramSessionOptions.PeerLimitIPv6PrefixLength.md#ReactorSockets_DatagramSessionOptions_PeerLimitIPv6PrefixLength) or
 [`StreamSessionOptions.PeerLimitIPv6PrefixLength`](ReactorSockets.StreamSessionOptions.PeerLimitIPv6PrefixLength.md#ReactorSockets_StreamSessionOptions_PeerLimitIPv6PrefixLength) for IPv6, so every address in that
@@ -375,6 +377,31 @@ and redial Diagnostics ([`DiagnosticId.ResumeMatched`](ReactorSockets.Diagnostic
 RedialAttempted and RedialFailed), and a value published in a closed permanent enum cannot be
 moved later to make room.
 </p>
+
+`PendingAdmissionExpired = 309` 
+
+A connection the stream profile accepted sent no whole first handshake record within this end's
+[`StreamSessionOptions.SendIdleInterval`](ReactorSockets.StreamSessionOptions.SendIdleInterval.md#ReactorSockets_StreamSessionOptions_SendIdleInterval) × [`StreamSessionOptions.MissedHeartbeats`](ReactorSockets.StreamSessionOptions.MissedHeartbeats.md#ReactorSockets_StreamSessionOptions_MissedHeartbeats)
+of being accepted, and was closed with nothing sent. Subject is the claimed Source. <code>Value0</code>
+is the bytes of that record it had sent, 0 to 40; <code>Value1</code> is the deadline in milliseconds.
+
+[`DiagnosticLevel.Warn`](ReactorSockets.DiagnosticLevel.md): a remote can produce this at will by connecting and sending
+nothing, and a consumer can act on it by blocking the address or, if conforming diallers are being
+closed, by raising [`StreamSessionOptions.SendIdleInterval`](ReactorSockets.StreamSessionOptions.SendIdleInterval.md#ReactorSockets_StreamSessionOptions_SendIdleInterval). One record per connection,
+because it names the address. The deadline is fixed at accept, so bytes that arrive do not extend it.
+At most [`ReactorOptions.Capacity`](ReactorSockets.ReactorOptions.Capacity.md#ReactorSockets_ReactorOptions_Capacity) connections are held, so no more records than that are logged in one Pump.
+
+`PendingAdmissionLimitReached = 310` 
+
+A stream Reactor already held [`ReactorOptions.Capacity`](ReactorSockets.ReactorOptions.Capacity.md#ReactorSockets_ReactorOptions_Capacity) accepted connections waiting
+for their first handshake record, so it accepted no more that Pump and left the rest in the OS
+backlog. No subject. <code>Value0</code> is the limit, which is the capacity; <code>Value1</code> is the count
+of Admissions declined, counted as [`DiagnosticId.AdmissionCapReached`](ReactorSockets.DiagnosticId.md)'s are: once per listening Link
+left with a pending connection.
+
+[`DiagnosticLevel.Warn`](ReactorSockets.DiagnosticLevel.md): a remote can produce this at will by opening connections and
+sending nothing. One record per Pump. The held connections close at their deadline
+([`DiagnosticId.PendingAdmissionExpired`](ReactorSockets.DiagnosticId.md)), so the backlog is accepted again within that time.
 
 ## Remarks
 

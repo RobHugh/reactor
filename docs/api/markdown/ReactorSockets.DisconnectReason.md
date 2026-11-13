@@ -55,6 +55,10 @@ The datagram profile has no transport to fail, and produces this member for a di
 answer: one still pending its own [`DatagramSessionOptions.Linger`](ReactorSockets.DatagramSessionOptions.Linger.md#ReactorSockets_DatagramSessionOptions_Linger) after
 [`DatagramSessionReactor.Connect(IPEndPoint)`](ReactorSockets.DatagramSessionReactor.Connect.md#ReactorSockets_DatagramSessionReactor_Connect_System_Net_IPEndPoint_), its handshake resent throughout (ADR 0009, amendment
 of 2026-11-10).
+The stream profile produces it for a dial that has not established one
+[`StreamSessionOptions.Linger`](ReactorSockets.StreamSessionOptions.Linger.md#ReactorSockets_StreamSessionOptions_Linger) after [`StreamSessionReactor.Connect(IPEndPoint)`](ReactorSockets.StreamSessionReactor.Connect.md#ReactorSockets_StreamSessionReactor_Connect_System_Net_IPEndPoint_), whether
+its TCP connect is still pending or the far end connected and sent no handshake record (ADR 0011,
+amendment for issue #483).
 
 `ProtocolViolation = 4` 
 

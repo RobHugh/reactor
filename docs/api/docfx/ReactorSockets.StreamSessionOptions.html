@@ -212,8 +212,11 @@ is derived rather than guessed. Provenance: the platform's own CSPRNG.</p>
     <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.Linger.html#ReactorSockets_StreamSessionOptions_Linger">Linger</a></dt>
     <dd><p>How long a closing Session stays alive to retransmit its Goodbye and absorb what is still in
 flight. Required, for the same reason as <a class="xref" href="ReactorSockets.StreamSessionOptions.SendIdleInterval.html#ReactorSockets_StreamSessionOptions_SendIdleInterval">SendIdleInterval</a>: it trades a prompt
-teardown against a clean one. At most 2^32 - 1 milliseconds (about 49.7 days), the most a handshake
-may announce.</p>
+teardown against a clean one. It also bounds a dial: a Peer this end dialled that has not
+established one Linger after <a class="xref" href="ReactorSockets.StreamSessionReactor.Connect.html#ReactorSockets_StreamSessionReactor_Connect_System_Net_IPEndPoint_">Connect(IPEndPoint)</a> closes with
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_TransportFailed">TransportFailed</a>, so a Linger shorter than the round trip plus the
+far end's Pump interval closes a dial before its answer arrives. At most 2^32 - 1 milliseconds
+(about 49.7 days), the most a handshake may announce.</p>
 </dd>
   </dl>
   <dl class="jumplist">

@@ -291,6 +291,10 @@
       href: ReactorSockets.DiagnosticRecord.ForPeerRefusedCapacity.md
     - name: ForPeerRefusedVersion
       href: ReactorSockets.DiagnosticRecord.ForPeerRefusedVersion.md
+    - name: ForPendingAdmissionExpired
+      href: ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired.md
+    - name: ForPendingAdmissionLimitReached
+      href: ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached.md
     - name: ForRedialAttempted
       href: ReactorSockets.DiagnosticRecord.ForRedialAttempted.md
     - name: ForRedialFailed

@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_StreamSessionOptions_Linger_" data-uid="ReactorSockets.StreamSessionOptions.Linger*" class="text-break">
-Property Linger  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionOptions.cs/#L150"><i class="bi bi-code-slash"></i></a>
+Property Linger  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionOptions.cs/#L154"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,13 +107,16 @@ Property Linger  <a class="header-action link-secondary" title="View source" hre
 
 <h3 id="ReactorSockets_StreamSessionOptions_Linger" data-uid="ReactorSockets.StreamSessionOptions.Linger">
   Linger
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionOptions.cs/#L150"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionOptions.cs/#L154"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>How long a closing Session stays alive to retransmit its Goodbye and absorb what is still in
 flight. Required, for the same reason as <a class="xref" href="ReactorSockets.StreamSessionOptions.SendIdleInterval.html#ReactorSockets_StreamSessionOptions_SendIdleInterval">SendIdleInterval</a>: it trades a prompt
-teardown against a clean one. At most 2^32 - 1 milliseconds (about 49.7 days), the most a handshake
-may announce.</p>
+teardown against a clean one. It also bounds a dial: a Peer this end dialled that has not
+established one Linger after <a class="xref" href="ReactorSockets.StreamSessionReactor.Connect.html#ReactorSockets_StreamSessionReactor_Connect_System_Net_IPEndPoint_">Connect(IPEndPoint)</a> closes with
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_TransportFailed">TransportFailed</a>, so a Linger shorter than the round trip plus the
+far end's Pump interval closes a dial before its answer arrives. At most 2^32 - 1 milliseconds
+(about 49.7 days), the most a handshake may announce.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 

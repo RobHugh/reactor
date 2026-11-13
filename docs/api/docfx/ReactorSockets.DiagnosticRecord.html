@@ -187,7 +187,7 @@ lives on the stack and is built only after <a class="xref" href="ReactorSockets.
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForAddressPeerLimitReached.html#ReactorSockets_DiagnosticRecord_ForAddressPeerLimitReached_ReactorSockets_Source_System_Int32_System_Int32_">ForAddressPeerLimitReached(Source, int, int)</a></dt>
     <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_AddressPeerLimitReached">AddressPeerLimitReached</a> record for the claimed Source whose
-handshake was refused, carrying the per-address limit and the prefix length its address was
+handshake was refused, or whose held stream connection was closed, carrying the per-address limit and the prefix length its address was
 counted by: 32 for IPv4, and the IPv6 grouping length for IPv6 (ADR 0014).</p>
 </dd>
   </dl>
@@ -323,6 +323,20 @@ capacity; <code>Value1</code> is unused.</p>
     <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_PeerRefused">PeerRefused</a> record for the claimed Source of a stream
 dialler refused because it announced a version this Reactor does not speak. <code>Value0</code> is
 the version offered; <code>Value1</code> is the version this Reactor requires.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired.html#ReactorSockets_DiagnosticRecord_ForPendingAdmissionExpired_ReactorSockets_Source_System_Int32_System_Int64_">ForPendingAdmissionExpired(Source, int, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_PendingAdmissionExpired">PendingAdmissionExpired</a> record for the claimed Source of an
+accepted stream connection closed for sending no whole first record within its deadline.
+<code>Value0</code> is the bytes of that record it had sent; <code>Value1</code> is the deadline in milliseconds.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached.html#ReactorSockets_DiagnosticRecord_ForPendingAdmissionLimitReached_System_Int32_System_Int32_">ForPendingAdmissionLimitReached(int, int)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_PendingAdmissionLimitReached">PendingAdmissionLimitReached</a> record. No subject. Carries the
+held-connection limit and the Admissions declined this Pump, counted as
+<a class="xref" href="ReactorSockets.DiagnosticRecord.ForAdmissionCapReached.html#ReactorSockets_DiagnosticRecord_ForAdmissionCapReached_System_Int32_System_Int32_">ForAdmissionCapReached(int, int)</a>'s are.</p>
 </dd>
   </dl>
   <dl class="jumplist">

@@ -10,7 +10,10 @@ will address it. The Peer occupies a capacity Slot from this moment, exactly as 
 does in [`RawReactor`](ReactorSockets.RawReactor.md): the handshake is work this Reactor is holding, and pretending
 otherwise would let a consumer dial past capacity and discover it only on the far side of a
 round trip. [`SessionEventKind.PeerConnected`](ReactorSockets.SessionEventKind.md) or [`SessionEventKind.PeerClosed`](ReactorSockets.SessionEventKind.md)
-resolves it on a later Pump.
+resolves it on a later Pump. A dial that has not established one
+[`StreamSessionOptions.Linger`](ReactorSockets.StreamSessionOptions.Linger.md#ReactorSockets_StreamSessionOptions_Linger) after this call closes with
+[`DisconnectReason.TransportFailed`](ReactorSockets.DisconnectReason.md), whether its TCP connect is still pending or the far
+end connected and sent no handshake record.
 
 ```csharp
 public PeerId Connect(IPEndPoint destination)

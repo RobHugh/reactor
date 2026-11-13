@@ -68,7 +68,7 @@ The second numeric slot; meaning documented on the [`DiagnosticId`](ReactorSocke
  [ForAddressPeerLimitReached\(Source, int, int\)](ReactorSockets.DiagnosticRecord.ForAddressPeerLimitReached.md\#ReactorSockets\_DiagnosticRecord\_ForAddressPeerLimitReached\_ReactorSockets\_Source\_System\_Int32\_System\_Int32\_)
 
 Builds a [`DiagnosticId.AddressPeerLimitReached`](ReactorSockets.DiagnosticId.md) record for the claimed Source whose
-handshake was refused, carrying the per-address limit and the prefix length its address was
+handshake was refused, or whose held stream connection was closed, carrying the per-address limit and the prefix length its address was
 counted by: 32 for IPv4, and the IPv6 grouping length for IPv6 (ADR 0014).
 
  [ForAdmissionCapReached\(int, int\)](ReactorSockets.DiagnosticRecord.ForAdmissionCapReached.md\#ReactorSockets\_DiagnosticRecord\_ForAdmissionCapReached\_System\_Int32\_System\_Int32\_)
@@ -184,6 +184,18 @@ capacity; <code>Value1</code> is unused.
 Builds a [`DiagnosticId.PeerRefused`](ReactorSockets.DiagnosticId.md) record for the claimed Source of a stream
 dialler refused because it announced a version this Reactor does not speak. <code>Value0</code> is
 the version offered; <code>Value1</code> is the version this Reactor requires.
+
+ [ForPendingAdmissionExpired\(Source, int, long\)](ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired.md\#ReactorSockets\_DiagnosticRecord\_ForPendingAdmissionExpired\_ReactorSockets\_Source\_System\_Int32\_System\_Int64\_)
+
+Builds a [`DiagnosticId.PendingAdmissionExpired`](ReactorSockets.DiagnosticId.md) record for the claimed Source of an
+accepted stream connection closed for sending no whole first record within its deadline.
+<code>Value0</code> is the bytes of that record it had sent; <code>Value1</code> is the deadline in milliseconds.
+
+ [ForPendingAdmissionLimitReached\(int, int\)](ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached.md\#ReactorSockets\_DiagnosticRecord\_ForPendingAdmissionLimitReached\_System\_Int32\_System\_Int32\_)
+
+Builds a [`DiagnosticId.PendingAdmissionLimitReached`](ReactorSockets.DiagnosticId.md) record. No subject. Carries the
+held-connection limit and the Admissions declined this Pump, counted as
+[`DiagnosticRecord.ForAdmissionCapReached(int, int)`](ReactorSockets.DiagnosticRecord.ForAdmissionCapReached.md#ReactorSockets_DiagnosticRecord_ForAdmissionCapReached_System_Int32_System_Int32_)'s are.
 
  [ForRedialAttempted\(PeerId, long, long\)](ReactorSockets.DiagnosticRecord.ForRedialAttempted.md\#ReactorSockets\_DiagnosticRecord\_ForRedialAttempted\_ReactorSockets\_PeerId\_System\_Int64\_System\_Int64\_)
 
