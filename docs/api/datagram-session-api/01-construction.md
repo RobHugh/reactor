@@ -63,8 +63,9 @@ the destination's address family and appends it to `BoundEndpoints`.
 ## Choosing fragment size
 
 `FragmentSize` is the payload bytes one Datagram carries, and the unit every buffer is measured in.
-It must lie between 576 (RFC 791's guaranteed reassembly minimum) and 65 507 (the largest UDP
-payload).
+It must lie between 576 (RFC 791's guaranteed reassembly minimum) and 65 476: the largest UDP
+payload, 65 507, less the 20-byte Datagram header and the 11-byte Fragment record header, so one full
+Fragment fills one maximum Datagram.
 
 - Leave it at 1200 unless you control every path between the two ends.
 - It caps the unreliable modes: an `Unreliable` or `UnreliableSequenced` Message can be no larger

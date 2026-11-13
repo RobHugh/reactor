@@ -214,6 +214,10 @@ under the 1280-byte IPv6 minimum MTU, and its range `[576, 65507]` is RFC 791's 
 UDP's maximum payload — citable, all of it. `MaxMessageSize` is required, as on the stream profile. The
 receive window keeps its derived floor.
 
+**Amended (issue #486).** Fragment size's range is `[576, 65476]`. Its upper bound is UDP's maximum
+payload less the 20-byte Datagram header and the 11-byte Fragment record header: the largest Fragment
+one Datagram has room for, so it is still derived rather than chosen (ADR 0004).
+
 ## Raw: one buffer, and it is not per Link
 
 **Raw does not reassemble.** L1 keeps a persistent per-connection buffer because a partial Message tail

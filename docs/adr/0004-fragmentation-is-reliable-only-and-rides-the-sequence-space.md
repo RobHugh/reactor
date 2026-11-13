@@ -90,3 +90,10 @@ Message needs more Fragments than the remote window holds gets `RemoteMessageToo
 wider than the receiver's own `FragmentSize` closes the Peer with `ProtocolViolation`. ADR 0024 records the
 decision. The main cost is that a peer with a smaller `FragmentSize` makes each Message need more retention
 slots, so `RetentionExhausted` arrives sooner.
+
+**Amended (issue #486).** The range is `[576, 65476]`, not `[576, 65507]`. 65 507 is the largest UDP
+payload, and a Datagram also carries its 20-byte header and an 11-byte Fragment record header, so a
+larger Fragment fits no Datagram. A reliable Message cut into such Fragments returned `Sent` and was
+never written, and every record queued behind it for that Peer waited forever. The upper bound is now
+derived from the payload and the two header sizes. The main cost is that a configuration above 65 476
+that only sent Messages small enough for one record, and so worked, now throws at construction.

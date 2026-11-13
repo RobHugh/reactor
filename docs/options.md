@@ -51,7 +51,7 @@ appears that is not in the audited list below.
 | `SendIdleInterval` | required | Bandwidth on an idle link against time to notice a dead Peer. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Linger` | required | A prompt teardown against a clean one. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Endpoints` | empty | No declaration. The first dial binds a wildcard, port-zero socket. |
-| `FragmentSize` | 1200 | QUIC's floor under the 1280-byte IPv6 minimum MTU. Range 576 (RFC 791) to 65 507 (UDP). Announced at handshake. A Peer's send size is the smaller of the two ends' sizes, fixed when the Peer reaches Established. A reliable Message is cut at it, and an unreliable Message wider than it returns `MessageTooLarge`. |
+| `FragmentSize` | 1200 | QUIC's floor under the 1280-byte IPv6 minimum MTU. Range 576 (RFC 791) to 65 476 (the 65 507-byte UDP payload less 31 header bytes). Announced at handshake. A Peer's send size is the smaller of the two ends' sizes, fixed when the Peer reaches Established. A reliable Message is cut at it, and an unreliable Message wider than it returns `MessageTooLarge`. |
 | `ReceiveWindowFragments` | fragments in one maximum Message | `MaxMessageSize` and `FragmentSize`. A narrower window deadlocks (ADR 0004). |
 | `MissedHeartbeats` | 3 | RFC 4271's hold time. At least 2. |
 | `Entropy` | the platform CSPRNG | The platform. |

@@ -32,6 +32,11 @@
   Session with `ProtocolViolation`. It returns `RemoteMessageTooLarge` and copies nothing, as the
   datagram profile does (#484). A consumer that switches over `SendOutcome` for a stream Reactor
   handles the new value.
+- `DatagramSessionOptions.FragmentSize` accepts at most 65 476, not 65 507 (#486). A larger Fragment
+  fits no Datagram once the 20-byte Datagram header and the 11-byte Fragment record header are added,
+  so a reliable Message cut into one returned `Sent` and was never written, and every Message queued
+  behind it for that Peer waited forever. A value from 65 477 to 65 507 now throws
+  `ArgumentOutOfRangeException` at construction.
 
 ### Breaking changes
 
