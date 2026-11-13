@@ -95,7 +95,7 @@ Source or none) and two numeric slots whose meaning is documented per id.
 | `ResumeMatched` (304) | Info | Peer | A Session resumed. `Value0` retained bytes rewound. |
 | `ResumeUnmatched` (305) | Warn | Source | A resume claim was refused. `Value0` reservations checked, `Value1` the record type (3 Resume, 1 Hello). |
 | `RedialAttempted` (306) | Info | Peer | A re-dial began. `Value0` attempt number, `Value1` ms actually waited. |
-| `RedialFailed` (307) | Info | Peer | A re-dial could not connect. `Value0` the `SocketError`, `Value1` the attempt number. |
+| `RedialFailed` (307) | Info | Peer | A re-dial failed: it could not connect, or the listening side closed it or stayed silent before answering the Resume. `Value0` the `SocketError`, `Value1` the attempt number. |
 | `DeliveryCounterRefused` (308) | Warn | Peer | A peer claimed more Messages than you ever sent it. `Value0` claimed, `Value1` actually appended. |
 
 Neither re-dial record closes a Peer. Only Linger does.

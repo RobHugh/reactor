@@ -276,3 +276,27 @@ moment they need it.
 - **The diagnostic roster grows again** — the re-dial attempts, the resume match and its failure, the
   accept cap being reached, and the receive-idle expiry all want records. Binding and dual-stack remain
   the other open gap.
+
+## Amendment 2026-11-12: a re-dial resumes only when the listener answers
+
+Issue #481. A dialled Peer left Interrupted as soon as its re-dial connected over TCP. A listener that no
+longer held the Session closed each such connection. Each close was a new interruption with a new Linger
+and a reset schedule, so the dialler re-dialled forever and never closed. "Linger bounds the activity",
+above, was false for that case.
+
+The listener's first delivery-counter record on the new connection confirms the Resume. A matched
+listener always sends it first, because `ResumeHeldPeer` sends it before any retention. Until it arrives
+the dialled Peer stays Interrupted and its Linger and schedule keep running.
+
+Before that confirmation, each of these is a failed attempt: end of stream, a failed read, a failed
+Resume send, and silence past the receive-idle deadline. A failed attempt raises no event and logs
+`RedialFailed`. Its `Value0` is `SocketError.Disconnecting` for an end of stream, the read's error for a
+failed read, `SocketError.SocketError` for a failed Resume send and `SocketError.TimedOut` for silence.
+`Value1` is the attempt number. The next delay comes from the same schedule, and Linger is still counted
+from the original interruption.
+
+A dialler whose listener no longer holds the Session therefore raises one `PeerInterrupted` and closes
+with `LingerExpired` on time. "Linger bounds the activity" holds.
+
+The Resume record, the delivery counter's wire format, the listening side's match and refusal paths, and
+the schedule's derivation do not change.
