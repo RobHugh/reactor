@@ -1045,11 +1045,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         // the rewind above needs preserved (issue #127's own "released stays released" guarantee).
         _retention.ReleaseThroughMessageCount(slot.Handle.Index, deliveryCount);
 
-        if (slot.HasPendingRetentionWrite || bytesRewound > 0)
-        {
-            slot.HasPendingRetentionWrite = true;
-            _peersWithPendingRetentionWrites.Add(slot.Handle);
-        }
+        // Retention appended while Interrupted was never sent, and the marker for it was spent by a flush
+        // the Interrupted guard skipped, so a completed resume always owes one flush.
+        slot.HasPendingRetentionWrite = true;
+        _peersWithPendingRetentionWrites.Add(slot.Handle);
 
         // D3: tells the dialling side where this end's own read position is, since the Resume record
         // it just presented had no field for that. SendDeliveryCounterOrArm's own short-send remainder
@@ -2509,11 +2508,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                         slot.RedialSchedule = null;
                         _peersWithRedialScheduled.Remove(handle);
 
-                        if (bytesRewound > 0)
-                        {
-                            slot.HasPendingRetentionWrite = true;
-                            _peersWithPendingRetentionWrites.Add(handle);
-                        }
+                        // Retention appended while Interrupted was never sent, and the marker for it was spent by a flush
+                        // the Interrupted guard skipped, so a completed resume always owes one flush.
+                        slot.HasPendingRetentionWrite = true;
+                        _peersWithPendingRetentionWrites.Add(handle);
 
                         // Issue #128: this is where the dialling side's resume actually completes and where it
                         // leaves Interrupted — the listener's first delivery counter is its confirmation, and
