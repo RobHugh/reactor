@@ -439,4 +439,22 @@ public class StreamSessionPerAddressLimitTests
         drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerResumed).Which.Peer.Should().Be(held.Peer);
         held.Counterparty.Dispose();
     }
+
+    [Fact]
+    public void Pump_SilentConnectionFromAnAddressHoldingItsLimitInPeers_IsHeld()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = new(capacity: 4, maxPeersPerAddress: 2);
+        StreamSessionReactorHarness.HeldPeer firstPeer = accepter.EstablishOnePeer();
+        StreamSessionReactorHarness.HeldPeer secondPeer = accepter.EstablishOnePeer();
+        using StreamSessionReactorHarness.RawStreamPeer silent = new(accepter.Endpoint);
+
+        // Act
+        accepter.PumpUntil(() => silent.HasPendingReadOrClose, TimeSpan.FromMilliseconds(300));
+
+        // Assert
+        silent.HasPendingReadOrClose.Should().BeFalse();
+        firstPeer.Counterparty.Dispose();
+        secondPeer.Counterparty.Dispose();
+    }
 }

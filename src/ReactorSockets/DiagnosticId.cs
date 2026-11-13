@@ -434,7 +434,8 @@ public enum DiagnosticId
     /// nothing, and a consumer can act on it by blocking the address or, if conforming diallers are being
     /// closed, by raising <see cref="StreamSessionOptions.SendIdleInterval"/>. One record per connection,
     /// because it names the address. The deadline is fixed at accept, so bytes that arrive do not extend it.
-    /// At most <see cref="ReactorOptions.Capacity"/> connections are held, so no more records than that are logged in one Pump.
+    /// At most <see cref="ReactorOptions.Capacity"/> connections are held, so no more records than that
+    /// are logged in one Pump.
     /// </remarks>
     PendingAdmissionExpired = 309,
 

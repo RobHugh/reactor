@@ -75,9 +75,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly ArraySegment<byte>[] _counterAndBothRuns = new ArraySegment<byte>[3];
     private readonly int _admissionCap;
     private readonly long _pendingAdmissionDeadlineMilliseconds;
+    private readonly int _pendingAdmissionLimit;
     private int _admissionsThisFrame;
     private int _capDeferralsThisFrame;
-    private readonly int _pendingAdmissionLimit;
     private int _pendingLimitDeferralsThisFrame;
 
     /// <summary>
@@ -670,7 +670,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// rather than left for the next Pump, so a dialler whose record landed before this accept is still
     /// answered on the Frame that accepted it — the same reason <see cref="RefuseForCapacity"/> drains
     /// before it closes. A connection with nothing waiting is left for the dispatcher, which is what
-    /// <see cref="TcpLink.HasPendingBytes"/> is checked for. A connection still held once this end's <see cref="StreamSessionOptions.SendIdleInterval"/> × <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/> has passed since its accept is closed by <see cref="ExpirePendingAdmissions"/>. A connection still held after that first read, from an address that already has <see cref="StreamSessionOptions.MaxPeersPerAddress"/> other held connections, is closed at once (<see cref="DiscardPendingAdmissionForAddressLimit"/>). The check follows the read so a record that arrived with its connection is decided first.
+    /// <see cref="TcpLink.HasPendingBytes"/> is checked for. A connection still held once this end's
+    /// <see cref="StreamSessionOptions.SendIdleInterval"/> × <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>
+    /// has passed since its accept is closed by <see cref="ExpirePendingAdmissions"/>. A connection still
+    /// held after that first read, from an address that already has
+    /// <see cref="StreamSessionOptions.MaxPeersPerAddress"/> other held connections, is closed at once
+    /// (<see cref="DiscardPendingAdmissionForAddressLimit"/>). The check follows the read so a record that
+    /// arrived with its connection is decided first.
     /// </summary>
     /// <remarks>
     /// Accepting first and deciding after is unchanged from before this held state existed: the
@@ -2033,7 +2039,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
             {
                 _diagnostics.Log(DiagnosticRecord.ForPendingAdmissionExpired(
-                    Source.FromIPEndPoint(pending.Link.RemoteEndPoint), pending.BytesFilled, _pendingAdmissionDeadlineMilliseconds));
+                    pending.AcceptedFrom, pending.BytesFilled, _pendingAdmissionDeadlineMilliseconds));
             }
 
             DiscardPendingAdmission(pending);

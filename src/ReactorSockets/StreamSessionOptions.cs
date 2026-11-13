@@ -115,7 +115,9 @@ public sealed class StreamSessionOptions
     /// never refused by this limit, because the Peer it names already owns its Slot (ADR 0011). A dialled
     /// Peer is not charged: this Reactor chose to make it. A connection over the limit is refused the same way as
     /// one at a full Reactor, and reported with <see cref="DiagnosticId.AddressPeerLimitReached"/>.
-    /// The same limit applies to accepted connections still waiting for their first handshake record: one address may have at most this many of them held, and a further one that has not sent its whole record with its connection is closed at once with nothing sent.
+    /// The same limit applies to accepted connections still waiting for their first handshake record:
+    /// one address may have at most this many of them held, and a further one that has not sent its
+    /// whole record with its connection is closed at once with nothing sent.
     /// </para>
     /// </remarks>
     public int? MaxPeersPerAddress { get; init; }
