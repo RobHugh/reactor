@@ -268,8 +268,10 @@ public readonly record struct DiagnosticRecord
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.RedialFailed"/> record for the Peer whose re-dial attempt
-    /// could not connect. <c>Value0</c> carries the platform <see cref="SocketError"/> as its
-    /// underlying integer value; <c>Value1</c> is the attempt number that failed.
+    /// could not connect, or connected and ended before the listener confirmed the Resume.
+    /// <c>Value0</c> carries the platform <see cref="SocketError"/> as its underlying integer value
+    /// (<see cref="SocketError.Disconnecting"/> for an end of stream before confirmation, or the
+    /// read's error); <c>Value1</c> is the attempt number that failed.
     /// </summary>
     public static DiagnosticRecord ForRedialFailed(PeerId peer, SocketError error, long attemptNumber) =>
         new(DiagnosticId.RedialFailed, DiagnosticLevel.Info, DiagnosticSubjectKind.Peer, default, default, peer, (long)error, attemptNumber);

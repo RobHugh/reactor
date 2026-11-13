@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using FluentAssertions;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace ReactorSockets.Tests;
@@ -584,6 +585,180 @@ public class StreamSessionRedialTests
         dialer.Sink.Received.Where(r => r.Id == DiagnosticId.RedialAttempted)
             .Select(r => r.Value1)
             .Should().Equal(50, 100, 200);
+    }
+
+    // =========================================================================================
+    // A re-dial the listener closes before confirming is a failed attempt, and Linger still closes
+    // the Peer
+    // =========================================================================================
+
+    /// <summary>
+    /// Pumps <paramref name="dialer"/> and drains its Events into <paramref name="collected"/> after
+    /// every Pump, until <paramref name="done"/> answers true or <paramref name="timeoutMs"/> of real
+    /// wall-clock time has passed. Never advances the clock.
+    /// </summary>
+    private static void PumpCollectingUntil(
+        StreamSessionReactorHarness dialer,
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> collected,
+        Func<bool> done,
+        int timeoutMs = 5000)
+    {
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        while (!done() && stopwatch.ElapsedMilliseconds < timeoutMs)
+        {
+            dialer.Reactor.Pump();
+            collected.AddRange(dialer.DrainToList());
+        }
+    }
+
+    [Fact]
+    public void Pump_ReDialsTheListenerClosesBeforeConfirming_ContinueTheScheduleWithoutANewInterruption()
+    {
+        // Arrange
+        using StreamSessionReactorHarness dialer = new(entropy: new ConstantByteJitter(0xFF));
+        using RawStreamListener listener = new();
+        byte[] resumeSecret = StreamSessionTestRecords.PayloadOf(StreamSessionTestRecords.ResumeSecretLength, 41);
+        (PeerId peer, RawStreamListener.Accepted far) = EstablishDialledSession(dialer, listener, resumeSecret);
+        InterruptDialledPeer(dialer, far, peer);
+        far.Dispose();
+        dialer.Sink.Received.Clear();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> collected = [];
+
+        // Act — three attempts connect, send their Resume, and are closed by the listener without a reply.
+        int[] delays = [50, 100, 200];
+        for (int n = 1; n <= delays.Length; n++)
+        {
+            dialer.TimeProvider.Advance(TimeSpan.FromMilliseconds(delays[n - 1]));
+            dialer.Reactor.Pump();
+            collected.AddRange(dialer.DrainToList());
+            listener.TryAccept(out RawStreamListener.Accepted redialed, timeoutMs: 2000).Should().BeTrue();
+            bool resumeArrived = false;
+            PumpCollectingUntil(dialer, collected, () =>
+                resumeArrived = redialed.TryReceiveWithinTimeout(StreamSessionTestRecords.HandshakeRecordSize, out _, timeoutMs: 20));
+            resumeArrived.Should().BeTrue("the re-dial must send its Resume before the listener closes it");
+            redialed.Dispose();
+            int expectedFailures = n;
+            PumpCollectingUntil(dialer, collected, () =>
+                dialer.Sink.Received.Count(r => r.Id == DiagnosticId.RedialFailed) >= expectedFailures);
+        }
+
+        // Assert
+        collected.Should().NotContain(e => e.Kind == SessionEventKind.PeerInterrupted);
+        collected.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+        List<DiagnosticRecord> attempts = [.. dialer.Sink.Received.Where(r => r.Id == DiagnosticId.RedialAttempted)];
+        attempts.Select(r => r.Value0).Should().Equal(1, 2, 3);
+        attempts.Select(r => r.Value1).Should().Equal(50, 100, 200);
+        dialer.Sink.Received.Where(r => r.Id == DiagnosticId.RedialFailed)
+            .Select(r => r.Value1).Should().Equal(1, 2, 3);
+    }
+
+    [Fact]
+    public void Pump_ReDialsTheListenerKeepsClosing_CloseWithLingerExpiredAtTheOriginalDeadline()
+    {
+        // Arrange
+        using StreamSessionReactorHarness dialer = new(entropy: new ConstantByteJitter(0xFF));
+        using RawStreamListener listener = new();
+        byte[] resumeSecret = StreamSessionTestRecords.PayloadOf(StreamSessionTestRecords.ResumeSecretLength, 43);
+        (PeerId peer, RawStreamListener.Accepted far) = EstablishDialledSession(dialer, listener, resumeSecret);
+        InterruptDialledPeer(dialer, far, peer);
+        far.Dispose();
+        DateTimeOffset interruptedAt = dialer.TimeProvider.GetUtcNow();
+        dialer.Sink.Received.Clear();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> collected = [];
+        DateTimeOffset? closedAt = null;
+
+        // Act
+        for (int i = 0; i < 40 && closedAt is null; i++)
+        {
+            dialer.TimeProvider.Advance(TimeSpan.FromMilliseconds(50));
+            dialer.Reactor.Pump();
+            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = dialer.DrainToList();
+            collected.AddRange(drained);
+            if (drained.Any(e => e.Kind == SessionEventKind.PeerClosed))
+            {
+                closedAt = dialer.TimeProvider.GetUtcNow();
+            }
+
+            while (listener.TryAccept(out RawStreamListener.Accepted c, timeoutMs: 0))
+            {
+                c.Dispose();
+            }
+        }
+
+        // Assert
+        collected.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.LingerExpired);
+        closedAt.Should().NotBeNull();
+        TimeSpan elapsed = (closedAt ?? interruptedAt) - interruptedAt;
+        elapsed.Should().BeGreaterThanOrEqualTo(_harnessLinger).And.BeLessThanOrEqualTo(_harnessLinger + TimeSpan.FromMilliseconds(50));
+        collected.Should().NotContain(e => e.Kind == SessionEventKind.PeerInterrupted);
+        long[] attemptNumbers = [.. dialer.Sink.Received.Where(r => r.Id == DiagnosticId.RedialAttempted).Select(r => r.Value0)];
+        attemptNumbers.Should().NotBeEmpty();
+        attemptNumbers.Should().Equal(Enumerable.Range(1, attemptNumbers.Length).Select(x => (long)x));
+    }
+
+    [Fact]
+    public void Pump_ListenerReplacedByAFreshReactorOnTheSameEndpoint_DiallerClosesWithLingerExpiredOnce()
+    {
+        // Arrange
+        FakeTimeProvider clock = new();
+        using StreamSessionReactorHarness dialer = new(entropy: new ConstantByteJitter(0xFF), timeProvider: clock);
+        StreamSessionReactorHarness first = new(timeProvider: clock);
+        PeerId peer = dialer.Reactor.Connect(first.Endpoint);
+        bool dialerConnected = false;
+        bool firstConnected = false;
+        for (int i = 0; i < 50 && !(dialerConnected && firstConnected); i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(10));
+            dialer.Reactor.Pump();
+            dialerConnected |= dialer.DrainToList().Any(e => e.Kind == SessionEventKind.PeerConnected && e.Peer == peer);
+            first.Reactor.Pump();
+            firstConnected |= first.DrainToList().Any(e => e.Kind == SessionEventKind.PeerConnected);
+        }
+
+        dialerConnected.Should().BeTrue();
+        firstConnected.Should().BeTrue();
+        IPEndPoint endpoint = first.Endpoint;
+        first.Dispose();
+        using StreamSessionReactorHarness second = new(timeProvider: clock, endpoints: [endpoint]);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> dialerEvents = [];
+        DateTimeOffset? interruptedAt = null;
+        DateTimeOffset? closedAt = null;
+
+        // Act
+        for (int i = 0; i < 300 && closedAt is null; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(10));
+            dialer.Reactor.Pump();
+            List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained = dialer.DrainToList();
+            dialerEvents.AddRange(drained);
+            if (interruptedAt is null && drained.Any(e => e.Kind == SessionEventKind.PeerInterrupted))
+            {
+                interruptedAt = clock.GetUtcNow();
+            }
+
+            if (drained.Any(e => e.Kind == SessionEventKind.PeerClosed))
+            {
+                closedAt = clock.GetUtcNow();
+            }
+
+            second.Reactor.Pump();
+            second.DrainToList();
+        }
+
+        // Assert
+        dialerEvents.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerInterrupted);
+        dialerEvents.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Reason.Should().Be(DisconnectReason.LingerExpired);
+        dialerEvents.Should().NotContain(e => e.Kind == SessionEventKind.PeerResumed);
+        interruptedAt.Should().NotBeNull();
+        closedAt.Should().NotBeNull();
+        TimeSpan elapsed = (closedAt ?? default) - (interruptedAt ?? default);
+        elapsed.Should().BeGreaterThanOrEqualTo(_harnessLinger).And.BeLessThanOrEqualTo(_harnessLinger + TimeSpan.FromMilliseconds(10));
+        second.Sink.Received.Should().Contain(r => r.Id == DiagnosticId.ResumeUnmatched);
+        long[] attemptNumbers = [.. dialer.Sink.Received.Where(r => r.Id == DiagnosticId.RedialAttempted).Select(r => r.Value0)];
+        attemptNumbers.Should().NotBeEmpty();
+        attemptNumbers.Should().Equal(Enumerable.Range(1, attemptNumbers.Length).Select(x => (long)x));
     }
 }
 
