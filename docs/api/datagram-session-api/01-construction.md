@@ -11,7 +11,7 @@ one would be guessing at your application.
 | Knob | What it is |
 |---|---|
 | `Reactor.Capacity` | How many Peers this Reactor admits. Multiplies every preallocation. |
-| `MaxMessageSize` | The largest Message you will send or accept, in bytes. |
+| `MaxMessageSize` | The largest Message you will send or accept, in bytes. At most 2 147 483 591. |
 | `RetentionBytes` | Bytes each reliable Space retains per Peer until acknowledged. Your backpressure budget. |
 | `SendIdleInterval` | How long a Session may go without sending before it sends a Ping. |
 | `Linger` | How long a closing or interrupted Session stays alive. |

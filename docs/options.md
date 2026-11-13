@@ -171,6 +171,12 @@ profile the buffer is the receive window, which is per Peer and per reliable Spa
 floored by one fragment instead of one Message, because a reliable Space retransmits fragment by
 fragment. On both, `MaxMessageSize` also floors the shared arena.
 
+`MaxMessageSize` has an upper limit, so every buffer it floors fits one .NET array: 2 147 483 587 on
+the stream profile (`Array.MaxLength` less the 4-byte length prefix) and 2 147 483 591 on the datagram
+profile (`Array.MaxLength`). A larger value throws `ArgumentOutOfRangeException` naming
+`MaxMessageSize`. The memory bill rejects much smaller values first, because a Peer's buffers each hold
+one maximum Message.
+
 The limit that caps a `Send` is the receiving end's: a Message above the peer's announced
 `MaxMessageSize` returns `RemoteMessageTooLarge` on both profiles. The stream profile also throws
 `ArgumentException` for a Message above your own limit, because its retention is floored by that limit.

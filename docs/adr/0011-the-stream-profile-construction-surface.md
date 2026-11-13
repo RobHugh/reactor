@@ -252,6 +252,11 @@ plus four" restates the failure; "retention of 64 KB cannot hold one Message of 
 lower `MaxMessageSize`" diagnoses it. These messages are the only documentation a consumer reads at the
 moment they need it.
 
+**Amended (issue #488).** `MaxMessageSize` is at most `Array.MaxLength` less the 4-byte length prefix,
+2 147 483 587, so one framed maximum Message fits one array and no floor is computed past
+`int.MaxValue`. The memory bill's total is summed as `Int128`, because each of its three lines can
+approach 2^62 bytes.
+
 ## Consequences
 
 - **ADR 0001's "default 64" is superseded.** Capacity is required and uncapped; 64 becomes a documented

@@ -42,6 +42,13 @@
   to 65 507 bytes, which the network split or dropped (#485).
 - Datagram profile: unreliable Sends are bounded by `UnreliableQueueBytes` and queued in storage
   allocated at construction. They queued without limit, one heap copy each (#485).
+- Options validation no longer overflows near `int.MaxValue` (#488). A stream `MaxMessageSize` above
+  `int.MaxValue - 4` threw `OutOfMemoryException`, and a datagram `MaxMessageSize` near `int.MaxValue`
+  was reported as a bad `MaxDatagramsPerPump`. Both now throw `ArgumentOutOfRangeException` naming
+  `MaxMessageSize`, which is at most 2 147 483 587 on the stream profile and 2 147 483 591 on the
+  datagram profile. A memory bill whose true total passes `long.MaxValue` is rejected instead of
+  wrapping negative and passing. `DatagramSessionOptions.ReceiveBudgetBytes`, `SendBudgetBytes` and
+  `HeldRecordBudgetBytes` saturate at `long.MaxValue`.
 
 ### Features
 
