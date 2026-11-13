@@ -28,7 +28,7 @@ namespace ReactorSockets;
 /// </para>
 /// <para>
 /// <b>The memory bill.</b> A Reactor built from these options preallocates, and the whole of it is
-/// these two lines:
+/// these three lines:
 /// </para>
 /// <list type="bullet">
 /// <item><description>
@@ -39,6 +39,10 @@ namespace ReactorSockets;
 /// send: <c>Capacity × 2 × RetentionBytes</c> — the same two Spaces retain what they have sent until
 /// it is acknowledged, per Peer.
 /// </description></item>
+/// <item><description>
+/// unreliable queue: <c>Capacity × UnreliableQueueBytes</c> — the bytes of Messages Sent in the two
+/// unreliable modes that wait for the next Pump, per Peer.
+/// </description></item>
 /// </list>
 /// <para>
 /// <c>FragmentSize</c> is in one line and not the other because the window counts packets and retention
@@ -48,7 +52,7 @@ namespace ReactorSockets;
 /// default fragment size.
 /// </para>
 /// <para>
-/// The frame arena (<see cref="ReactorOptions.ArenaSize"/>) is over and above those two lines and is
+/// The frame arena (<see cref="ReactorOptions.ArenaSize"/>) is over and above those three lines and is
 /// shared across the whole Reactor rather than multiplied by capacity.
 /// </para>
 /// <para>
@@ -297,6 +301,40 @@ public sealed class DatagramSessionOptions
     public int? FragmentSize { get; init; }
 
     /// <summary>
+    /// The most bytes one Peer may have queued for <see cref="DeliveryMode.Unreliable"/> and
+    /// <see cref="DeliveryMode.UnreliableSequenced"/> between Pumps, counting each Message's payload plus
+    /// its 7-byte record header. A Send that would go past it returns <see cref="SendOutcome.SendQueueFull"/>.
+    /// <see langword="null"/> means <see cref="RetentionSlots"/> × (<see cref="ResolvedFragmentSize"/> + 7):
+    /// as many full unreliable Messages as one reliable Space retains Fragments. Provenance: derived from
+    /// <see cref="RetentionBytes"/> and <see cref="FragmentSize"/>, so the unreliable queue holds as much as
+    /// a reliable Space does. Must be at least
+    /// <see cref="ResolvedFragmentSize"/> + 7, one full unreliable Message.
+    /// </summary>
+    /// <remarks>
+    /// The queue is preallocated, <see cref="UnreliableQueueBudgetBytes"/> in total, so an unreliable Send
+    /// allocates nothing. A Pump writes up to one maximum UDP payload's worth of Datagrams per Peer, so a
+    /// budget above about 65 507 bytes takes more than one Pump to drain.
+    /// </remarks>
+    public int? UnreliableQueueBytes { get; init; }
+
+    /// <summary>
+    /// <see cref="UnreliableQueueBytes"/> with its default applied, clamped to <see cref="int.MaxValue"/>.
+    /// </summary>
+    public int ResolvedUnreliableQueueBytes
+    {
+        get
+        {
+            if (UnreliableQueueBytes is int configured)
+            {
+                return configured;
+            }
+
+            long derived = (long)RetentionSlots * (ResolvedFragmentSize + Session.DatagramSessionProtocol.UnfragmentedRecordSize);
+            return derived > int.MaxValue ? int.MaxValue : (int)derived;
+        }
+    }
+
+    /// <summary>
     /// The fragments each reliable Space may have outstanding per Peer. Defaults to exactly the
     /// number a maximum Message occupies. Provenance: derived from <see cref="MaxMessageSize"/> and
     /// <see cref="FragmentSize"/> — ADR 0004's deadlock floor rather than a performance choice: a window narrower than one whole Message can never deliver one, so it can
@@ -463,6 +501,12 @@ public sealed class DatagramSessionOptions
             * (ResolvedFragmentSize + Core.RetentionPool.SlotBookkeepingBytes);
 
     /// <summary>
+    /// The unreliable-queue line of the memory bill in bytes: <c>Capacity × </c><see cref="ResolvedUnreliableQueueBytes"/>,
+    /// one region per Peer, allocated at construction.
+    /// </summary>
+    public long UnreliableQueueBudgetBytes => (long)Reactor.Capacity * ResolvedUnreliableQueueBytes;
+
+    /// <summary>
     /// The uniform retention slots one reliable Space holds per Peer: <see cref="RetentionBytes"/>
     /// divided by <see cref="ResolvedFragmentSize"/>, truncating any remainder. Stays derived from the
     /// byte bound rather than a knob of its own (ADR 0012) so it cannot drift from
@@ -517,6 +561,16 @@ public sealed class DatagramSessionOptions
                 $"retention of {RetentionBytes} bytes cannot hold one {fragmentSize}-byte fragment, so a Space would " +
                 "have nothing to retransmit the moment it sent anything — raise RetentionBytes to at least the fragment size.",
                 nameof(RetentionBytes));
+        }
+
+        int unreliableRecordFloor = fragmentSize + Session.DatagramSessionProtocol.UnfragmentedRecordSize;
+        if (ResolvedUnreliableQueueBytes < unreliableRecordFloor)
+        {
+            throw new ArgumentException(
+                $"an unreliable send queue of {ResolvedUnreliableQueueBytes} bytes cannot hold one {fragmentSize}-byte " +
+                $"Message and its {Session.DatagramSessionProtocol.UnfragmentedRecordSize}-byte record header, so an unreliable " +
+                $"Send at the fragment size would always return SendQueueFull — raise UnreliableQueueBytes to at least {unreliableRecordFloor}.",
+                nameof(UnreliableQueueBytes));
         }
 
         int window = ResolvedReceiveWindowFragments;
@@ -620,7 +674,7 @@ public sealed class DatagramSessionOptions
     }
 
     /// <summary>
-    /// Rejects a combination whose preallocation could not be made, naming both lines of the memory
+    /// Rejects a combination whose preallocation could not be made, naming all three lines of the memory
     /// bill and their total. The check is arithmetic rather than an attempted allocation because the
     /// point is to tell the caller which knob to change, and a caught allocation failure knows only
     /// that something was too big.
@@ -629,7 +683,8 @@ public sealed class DatagramSessionOptions
     {
         long receive = ReceiveBudgetBytes;
         long send = SendBudgetBytes;
-        long total = receive + send;
+        long unreliableQueue = UnreliableQueueBudgetBytes;
+        long total = receive + send + unreliableQueue;
 
         if (total > Array.MaxLength)
         {
@@ -642,7 +697,8 @@ public sealed class DatagramSessionOptions
                 $"{PendingGroupsPerSpace} waiting groups × {PendingGroupEntryBytes} bytes = {receive}; send is " +
                 $"Capacity {Reactor.Capacity} × {ReliableSpaceCount} reliable Spaces × {RetentionSlots} slots × " +
                 $"({ResolvedFragmentSize} payload bytes + {Core.RetentionPool.SlotBookkeepingBytes} bookkeeping bytes) = " +
-                $"{send}. Lower Capacity, MaxMessageSize, ReceiveWindowFragments or RetentionBytes.",
+                $"{send}; the unreliable queue is Capacity {Reactor.Capacity} × {ResolvedUnreliableQueueBytes} bytes = {unreliableQueue}. " +
+                "Lower Capacity, MaxMessageSize, ReceiveWindowFragments, RetentionBytes or UnreliableQueueBytes.",
                 nameof(Reactor));
         }
     }

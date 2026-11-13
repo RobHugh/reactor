@@ -34,7 +34,8 @@ public class DatagramSessionOptionsTests
         TimeSpan? linger = null,
         IReadOnlyList<IPEndPoint>? endpoints = null,
         IReactorDiagnostics? sink = null,
-        DiagnosticLevel? minimumLevel = null) => new()
+        DiagnosticLevel? minimumLevel = null,
+        int? unreliableQueueBytes = null) => new()
         {
             Reactor = new ReactorOptions
             {
@@ -46,6 +47,7 @@ public class DatagramSessionOptionsTests
             },
             MaxMessageSize = maxMessageSize,
             RetentionBytes = retentionBytes,
+            UnreliableQueueBytes = unreliableQueueBytes,
             MaxPeersPerAddress = maxPeersPerAddress,
             PeerLimitIPv6PrefixLength = peerLimitIPv6PrefixLength,
             MaxDatagramsPerPump = maxDatagramsPerPump,
@@ -311,6 +313,46 @@ public class DatagramSessionOptionsTests
         // Assert
         act.Should().Throw<ArgumentException>().WithParameterName(nameof(DatagramSessionOptions.RetentionBytes));
     }
+
+    [Fact]
+    public void Constructor_UnreliableQueueBytesBelowOneFullRecord_ThrowsNamingTheOption()
+    {
+        // Arrange: one full record at the default fragment size is 1200 + 7 = 1207 bytes.
+        DatagramSessionOptions options = CreateOptions(unreliableQueueBytes: 1206);
+
+        // Act
+        Action act = () => _ = new DatagramSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentException>().WithParameterName(nameof(DatagramSessionOptions.UnreliableQueueBytes));
+    }
+
+    [Fact]
+    public void Constructor_UnreliableQueueBytesAtOneFullRecord_DoesNotThrow()
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(unreliableQueueBytes: 1207);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options).Dispose();
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void ResolvedUnreliableQueueBytes_WhenUnset_IsRetentionSlotsFullRecords()
+    {
+        // Arrange: 4096 / 1200 = 3 slots.
+        DatagramSessionOptions options = CreateOptions(retentionBytes: 4096);
+
+        // Act
+        int resolved = options.ResolvedUnreliableQueueBytes;
+
+        // Assert
+        resolved.Should().Be(3 * (1200 + 7));
+    }
+
 
     [Fact]
     public void Constructor_ReceiveWindowNarrowerThanOneMaxMessage_ThrowsArgumentExceptionExplainingDeadlock()
@@ -673,7 +715,9 @@ public class DatagramSessionOptionsTests
         long expectedReceive = (100_000L * 2 * 1 * (1200 + 2 + 6)) + (100_000L * 4 * 1) + (100_000L * 2 * 1 * 6);
         // Send is 83 whole 1200-byte slots per reliable Space, each with 15 bytes of bookkeeping.
         long expectedSend = 100_000L * 2 * 83 * (1200 + 15);
-        long expectedTotal = expectedReceive + expectedSend;
+        // The unreliable queue is 83 slots of a full record (1200 + 7 bytes) per Peer.
+        long expectedUnreliableQueue = 100_000L * 83 * (1200 + 7);
+        long expectedTotal = expectedReceive + expectedSend + expectedUnreliableQueue;
 
         // Act
         Action act = () => new DatagramSessionReactor(options);
@@ -684,7 +728,8 @@ public class DatagramSessionOptionsTests
             .Which.Message.Should()
             .Contain(expectedTotal.ToString())
             .And.Contain(expectedReceive.ToString())
-            .And.Contain(expectedSend.ToString());
+            .And.Contain(expectedSend.ToString())
+            .And.Contain(expectedUnreliableQueue.ToString());
     }
 
     [Fact]
