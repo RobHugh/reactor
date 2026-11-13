@@ -273,30 +273,20 @@ internal sealed class OutstandingReliableSequences
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Call order.</b> This method is half of a two-call sweep and does not stand alone. Per Peer,
-    /// per Pump, the order is: <see cref="CollectExpired"/> for <em>every</em> reliable Space first,
-    /// then — only if the Spaces reported something between them — one
-    /// <see cref="RetransmissionTimer.BackOff"/> and one
-    /// <see cref="RetransmissionTimer.EffectiveTimeout"/> read, then <see cref="ReArmExpired"/> for
-    /// every Space that was swept, all at that one RTO. Sweeping and re-arming one Space before
-    /// sweeping the other would put the second Space's findings behind a backoff the first Space
-    /// caused, which is the compounding this split exists to prevent. The split is what makes the
-    /// backoff one decision per Peer per Pump rather than one per Space; the cost is that the order
-    /// is a contract this type documents rather than one the signatures enforce.
+    /// <b>Backoff.</b> This call does <em>not</em> back off <see cref="RetransmissionTimer"/>. The caller
+    /// sweeps every reliable Space first and backs off once per Peer per Pump if either reported
+    /// anything, so a Pump where both Spaces expired something doubles the shared RTO once, not twice.
     /// <see cref="DatagramSessionReactor"/>'s per-Peer sweep is the reference caller.
     /// </para>
     /// <para>
-    /// Each reported sequence is marked retransmitted (<see cref="MarkRetransmitted"/>) before this
-    /// returns, so a later <see cref="ApplyAck"/> release feeds Karn's rule the ambiguous case rather
-    /// than a clean sample. This call does <em>not</em> back off <see cref="RetransmissionTimer"/> and
-    /// does not re-arm what it finds — <see cref="ReArmExpired"/> does both, once the caller has swept
-    /// every reliable Space and decided whether this Peer backs off at all this Pump (with the backoff
-    /// decided inside this call, a Pump where both reliable Spaces expired something backed off the
-    /// shared <see cref="RetransmissionTimer"/> twice, doubling the RTO twice for what is one loss
-    /// event, not two). Call <see cref="ReArmExpired"/> for <paramref name="mode"/> before this Space
-    /// is swept again — a second <see cref="CollectExpired"/> call before re-arming would simply
-    /// re-report the same sequences, since nothing here changes <see cref="TryGetDeadlineTimestamp"/>'s
-    /// answer for them.
+    /// <b>Waiting for the resend.</b> Each reported sequence is marked retransmitted
+    /// (<see cref="MarkRetransmitted"/>), so a later <see cref="ApplyAck"/> release feeds Karn's rule the
+    /// ambiguous case rather than a clean sample. It is also disarmed until <see cref="RecordResent"/>
+    /// records that its resend reached a Datagram (issue #542). A resend can wait in the caller's send
+    /// queue for longer than one RTO, and a deadline running while it waits would report the same
+    /// sequence again before it was resent. A horizon slide does not arm it either. An
+    /// <see cref="ApplyAck"/> that releases it while it waits still records the delivery against the
+    /// backoff.
     /// </para>
     /// <para>
     /// Allocates nothing: the returned span is backed by a buffer sized alongside this Space's ring and
@@ -316,30 +306,16 @@ internal sealed class OutstandingReliableSequences
         SpaceOf(mode).CollectExpired(_time);
 
     /// <summary>
-    /// Re-arms whatever <see cref="CollectExpired"/> most recently found on <paramref name="mode"/>'s
-    /// reliable Space, at <paramref name="effectiveRto"/>, from the same moment that sweep read —
-    /// mirroring how a horizon slide arms every sequence it newly covers from one shared moment and one
-    /// shared RTO (<see cref="ApplyAck"/>'s own <c>ArmNewlyCovered</c>) rather than reading the clock
-    /// or the timer once per sequence. The caller decides <paramref name="effectiveRto"/> itself —
-    /// typically <see cref="RetransmissionTimer.EffectiveTimeout"/> read once after backing off
-    /// <see cref="RetransmissionTimer"/> at most once for however many Spaces reported anything this
-    /// Pump, so two reliable Spaces expiring in the same Pump share one backoff and one resulting RTO
-    /// rather than compounding. A no-op if <see cref="CollectExpired"/> found nothing on this Space, or
-    /// has not been called since the last re-arm.
-    /// <para>
-    /// <b>Call order.</b> This is the second half of <see cref="CollectExpired"/>'s two-call sweep and
-    /// must follow it for the same <paramref name="mode"/> within the same Pump — see
-    /// <see cref="CollectExpired"/> for the full ordering contract. A sequence this Space reported and
-    /// that is never re-armed keeps its already-passed deadline, so it is reported again on the next
-    /// Pump and on every Pump after: skipping this call does not leave a sequence un-armed, it leaves
-    /// it permanently expired.
-    /// </para>
+    /// Records that <paramref name="sequence"/>, reported by <see cref="CollectExpired"/>, has just been
+    /// packed into a Datagram again, and arms its deadline from now at <paramref name="effectiveRto"/>.
+    /// A no-op when <paramref name="sequence"/> is released, untracked, or not waiting for a resend.
     /// </summary>
-    /// <param name="mode">Which reliable Space to re-arm the most recent sweep's findings on.</param>
-    /// <param name="effectiveRto">The single RTO every re-armed sequence on <paramref name="mode"/> arms at.</param>
+    /// <param name="mode">Which reliable Space <paramref name="sequence"/> was resent on.</param>
+    /// <param name="sequence">The <c>u32</c> sequence number that was just resent.</param>
+    /// <param name="effectiveRto">The effective RTO to arm with, read by the caller at the moment of this call.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="mode"/> is not a reliable Space.</exception>
-    public void ReArmExpired(PacketRecordMode mode, TimeSpan effectiveRto) =>
-        SpaceOf(mode).ReArmExpired(_time, effectiveRto);
+    public void RecordResent(PacketRecordMode mode, uint sequence, TimeSpan effectiveRto) =>
+        SpaceOf(mode).RecordResent(sequence, _time, effectiveRto);
 
     /// <summary>
     /// Resolves <paramref name="mode"/> to its reliable Space's tracker. Only the two reliable modes are
@@ -395,6 +371,12 @@ internal sealed class OutstandingReliableSequences
         private bool[] _armed = new bool[InitialCapacity];
         private bool[] _released = new bool[InitialCapacity];
         private bool[] _retransmitted = new bool[InitialCapacity];
+
+        /// <summary>
+        /// Whether a slot's sequence expired and its resend is queued but not yet packed. Such a slot is
+        /// unarmed, so it cannot expire again while it waits, and a horizon slide does not arm it.
+        /// </summary>
+        private bool[] _resendQueued = new bool[InitialCapacity];
         private bool[] _isFragment = new bool[InitialCapacity];
         private long[] _armedAtTimestamp = new long[InitialCapacity];
         private long[] _deadlineTimestamp = new long[InitialCapacity];
@@ -426,21 +408,6 @@ internal sealed class OutstandingReliableSequences
         private int _releasedSequenceCount;
 
         private int _capacity = InitialCapacity;
-
-        /// <summary>
-        /// How many entries in <see cref="_expiredSequences"/> the most recent <see cref="CollectExpired"/>
-        /// call reported and left un-armed, awaiting <see cref="ReArmExpired"/>. Reset to zero once
-        /// <see cref="ReArmExpired"/> arms them, so a re-arm call with nothing pending is a no-op
-        /// rather than re-arming stale entries.
-        /// </summary>
-        private int _pendingRearmCount;
-
-        /// <summary>
-        /// The monotonic moment <see cref="_pendingRearmCount"/>'s entries were found expired, so
-        /// <see cref="ReArmExpired"/> arms them from the same instant they were swept at rather than a
-        /// later one — matching <see cref="ArmNewlyCovered"/>'s one-shared-moment shape.
-        /// </summary>
-        private long _pendingRearmTimestamp;
 
         /// <summary>The ring position the oldest tracked sequence currently occupies.</summary>
         private int _headSlot;
@@ -480,6 +447,7 @@ internal sealed class OutstandingReliableSequences
             bool withinHorizon = unchecked(sequence - _ackBase) <= HorizonWidth;
             _released[slot] = false;
             _retransmitted[slot] = false;
+            _resendQueued[slot] = false;
             _isFragment[slot] = isFragment;
             if (withinHorizon)
             {
@@ -557,11 +525,8 @@ internal sealed class OutstandingReliableSequences
         /// enclosing type's <c>CollectExpired</c> for the full contract): a deferred sequence has no
         /// armed deadline (<see cref="TryGetDeadlineTimestamp"/> fails for it) and so is never reported,
         /// matching the horizon rule. Every reported sequence is marked retransmitted
-        /// (<see cref="MarkRetransmitted"/>) as it is found, and left un-armed:
-        /// <see cref="ReArmExpired"/> arms them once the caller has decided this Peer's single backoff
-        /// for the Pump. What is found and the moment it was found at are stashed in
-        /// <see cref="_pendingRearmCount"/> and <see cref="_pendingRearmTimestamp"/> for that call.
-        /// Allocates nothing: the result is <see cref="_expiredSequences"/>, which never grows here
+        /// (<see cref="MarkRetransmitted"/>) as it is found, disarmed, and marked in
+        /// <see cref="_resendQueued"/> until <see cref="RecordResent"/> arms it again. Allocates nothing: the result is <see cref="_expiredSequences"/>, which never grows here
         /// (see its own doc) and is simply overwritten.
         /// </summary>
         public ReadOnlySpan<uint> CollectExpired(TimeProvider time)
@@ -581,39 +546,26 @@ internal sealed class OutstandingReliableSequences
                     _expiredSequences[expiredCount] = sequence;
                     expiredCount++;
                     MarkRetransmitted(sequence);
+                    int slot = SlotFor((uint)offset);
+                    _armed[slot] = false;
+                    _resendQueued[slot] = true;
                 }
-
-                _pendingRearmCount = expiredCount;
-                _pendingRearmTimestamp = now;
-            }
-            else
-            {
-                _pendingRearmCount = 0;
             }
 
             return _expiredSequences.AsSpan(0, expiredCount);
         }
 
         /// <summary>
-        /// Arms whatever the most recent <see cref="CollectExpired"/> call found and left pending, at
-        /// <paramref name="effectiveRto"/>, from that call's own moment (<see cref="_pendingRearmTimestamp"/>)
-        /// rather than reading <paramref name="time"/> again — matching <see cref="ArmNewlyCovered"/>'s
-        /// one-shared-moment shape. A no-op when nothing is pending, whether because
-        /// <see cref="CollectExpired"/> found nothing or because a previous <see cref="ReArmExpired"/>
-        /// call already cleared it. Clears the pending count either way, so a second call without an
-        /// intervening <see cref="CollectExpired"/> re-arms nothing.
+        /// Arms <paramref name="sequence"/> from now at <paramref name="effectiveRto"/> when it is tracked,
+        /// not released, and waiting for the resend <see cref="CollectExpired"/> queued.
         /// </summary>
-        public void ReArmExpired(TimeProvider time, TimeSpan effectiveRto)
+        public void RecordResent(uint sequence, TimeProvider time, TimeSpan effectiveRto)
         {
-            for (int i = 0; i < _pendingRearmCount; i++)
+            if (TryGetSlot(sequence, out int slot) && !_released[slot] && _resendQueued[slot])
             {
-                if (TryGetSlot(_expiredSequences[i], out int slot))
-                {
-                    Arm(slot, _pendingRearmTimestamp, time, effectiveRto);
-                }
+                _resendQueued[slot] = false;
+                Arm(slot, time.GetTimestamp(), time, effectiveRto);
             }
-
-            _pendingRearmCount = 0;
         }
 
         /// <summary>
@@ -732,7 +684,7 @@ internal sealed class OutstandingReliableSequences
                 return;
             }
 
-            if (_armed[slot])
+            if (_armed[slot] || _resendQueued[slot])
             {
                 TimeSpan elapsed = time.GetElapsedTime(_armedAtTimestamp[slot], now);
                 timer.Estimator.Sample(elapsed, _retransmitted[slot]);
@@ -749,6 +701,7 @@ internal sealed class OutstandingReliableSequences
             }
 
             _armed[slot] = false;
+            _resendQueued[slot] = false;
             _released[slot] = true;
 
             // _releasedSequences is sized to _capacity, which already bounds _count — the number of
@@ -776,7 +729,7 @@ internal sealed class OutstandingReliableSequences
             for (int offset = 0; offset < _count; offset++)
             {
                 int slot = SlotFor((uint)offset);
-                if (_released[slot] || _armed[slot])
+                if (_released[slot] || _armed[slot] || _resendQueued[slot])
                 {
                     continue;
                 }
@@ -871,6 +824,7 @@ internal sealed class OutstandingReliableSequences
             bool[] newArmed = new bool[newCapacity];
             bool[] newReleased = new bool[newCapacity];
             bool[] newRetransmitted = new bool[newCapacity];
+            bool[] newResendQueued = new bool[newCapacity];
             bool[] newIsFragment = new bool[newCapacity];
             long[] newArmedAtTimestamp = new long[newCapacity];
             long[] newDeadlineTimestamp = new long[newCapacity];
@@ -880,6 +834,7 @@ internal sealed class OutstandingReliableSequences
                 newArmed[i] = _armed[oldSlot];
                 newReleased[i] = _released[oldSlot];
                 newRetransmitted[i] = _retransmitted[oldSlot];
+                newResendQueued[i] = _resendQueued[oldSlot];
                 newIsFragment[i] = _isFragment[oldSlot];
                 newArmedAtTimestamp[i] = _armedAtTimestamp[oldSlot];
                 newDeadlineTimestamp[i] = _deadlineTimestamp[oldSlot];
@@ -888,6 +843,7 @@ internal sealed class OutstandingReliableSequences
             _armed = newArmed;
             _released = newReleased;
             _retransmitted = newRetransmitted;
+            _resendQueued = newResendQueued;
             _isFragment = newIsFragment;
             _armedAtTimestamp = newArmedAtTimestamp;
             _deadlineTimestamp = newDeadlineTimestamp;
