@@ -664,7 +664,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// rather than left for the next Pump, so a dialler whose record landed before this accept is still
     /// answered on the Frame that accepted it — the same reason <see cref="RefuseForCapacity"/> drains
     /// before it closes. A connection with nothing waiting is left for the dispatcher, which is what
-    /// <see cref="TcpLink.HasPendingBytes"/> is checked for. A connection still held once this end's <see cref="StreamSessionOptions.SendIdleInterval"/> × <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/> has passed since its accept is closed by <see cref="ExpirePendingAdmissions"/>.
+    /// <see cref="TcpLink.HasPendingBytes"/> is checked for. A connection still held once this end's <see cref="StreamSessionOptions.SendIdleInterval"/> × <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/> has passed since its accept is closed by <see cref="ExpirePendingAdmissions"/>. A connection still held after that first read, from an address that already has <see cref="StreamSessionOptions.MaxPeersPerAddress"/> other held connections, is closed at once (<see cref="DiscardPendingAdmissionForAddressLimit"/>). The check follows the read so a record that arrived with its connection is decided first.
     /// </summary>
     /// <remarks>
     /// Accepting first and deciding after is unchanged from before this held state existed: the
@@ -675,12 +675,22 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private void HoldUntilFirstRecord(Socket acceptedSocket)
     {
         TcpLink link = TcpLink.FromAccepted(acceptedSocket, _options.SendBufferSize);
-        PendingAdmission pending = new() { Link = link, AcceptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp() };
+        PendingAdmission pending = new()
+        {
+            Link = link,
+            AcceptedFrom = Source.FromIPEndPoint(link.RemoteEndPoint),
+            AcceptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp(),
+        };
         _pendingAdmissions.Add(pending);
         _dispatcher.Register(link.Socket, () => OnPendingAdmissionReadable(pending));
         if (link.HasPendingBytes)
         {
             OnPendingAdmissionReadable(pending);
+        }
+
+        if (!pending.IsReleased && OtherPendingAdmissionsAtAddressOf(pending) >= _options.ResolvedMaxPeersPerAddress)
+        {
+            DiscardPendingAdmissionForAddressLimit(pending);
         }
     }
 
@@ -807,6 +817,47 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// How many held connections other than <paramref name="pending"/> were accepted from its address,
+    /// or for IPv6 from its prefix (ADR 0014). Held connections only, never Peers: an Interrupted Peer
+    /// charged to the address is the one a Resume comes back for, and counting it would refuse that
+    /// Resume. It walks at most <see cref="ReactorOptions.Capacity"/> entries.
+    /// </summary>
+    private int OtherPendingAdmissionsAtAddressOf(PendingAdmission pending)
+    {
+        int count = 0;
+        foreach (PendingAdmission other in _pendingAdmissions)
+        {
+            if (!ReferenceEquals(other, pending)
+                && other.AcceptedFrom.SharesPeerLimitWith(pending.AcceptedFrom, _options.ResolvedPeerLimitIPv6PrefixLength))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Closes a held connection whose address already has <see cref="StreamSessionOptions.MaxPeersPerAddress"/>
+    /// other held connections, sending nothing, and logs <see cref="DiagnosticId.AddressPeerLimitReached"/>.
+    /// No Refusal is sent: a re-dialled Resume's connection is read as Session data by its dialler, and a
+    /// plain close is a failed re-dial attempt it retries. Neither admission counter moves, as for
+    /// <see cref="RefuseForAddressPeerLimit"/>.
+    /// </summary>
+    private void DiscardPendingAdmissionForAddressLimit(PendingAdmission pending)
+    {
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForAddressPeerLimitReached(
+                pending.AcceptedFrom,
+                _options.ResolvedMaxPeersPerAddress,
+                pending.AcceptedFrom.PeerLimitPrefixLength(_options.ResolvedPeerLimitIPv6PrefixLength)));
+        }
+
+        DiscardPendingAdmission(pending);
     }
 
     /// <summary>
@@ -1124,6 +1175,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private TcpLink ReleasePendingAdmission(PendingAdmission pending)
     {
+        pending.IsReleased = true;
         _pendingAdmissions.Remove(pending);
         _dispatcher.Unregister(pending.Link.Socket);
         return pending.Link;
@@ -3610,6 +3662,18 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// deadline <see cref="HasPendingAdmissionExpired"/> checks is measured from it and is never reset.
         /// </summary>
         public required long AcceptedTimestamp { get; init; }
+
+        /// <summary>
+        /// The address this connection was accepted from. <see cref="StreamSessionOptions.MaxPeersPerAddress"/>
+        /// counts it against that address while it is held.
+        /// </summary>
+        public required Source AcceptedFrom { get; init; }
+
+        /// <summary>
+        /// Whether <see cref="ReleasePendingAdmission"/> has taken this connection out of
+        /// <see cref="_pendingAdmissions"/>, so it is no longer held.
+        /// </summary>
+        public bool IsReleased { get; set; }
     }
 
     /// <summary>

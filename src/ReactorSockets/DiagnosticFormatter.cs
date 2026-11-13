@@ -94,7 +94,7 @@ public static class DiagnosticFormatter
             DiagnosticId.OversizedMessage => Invariant(
                 $"a Message larger than MaxMessageSize was discarded (bytes {v0}, MaxMessageSize {v1})"),
             DiagnosticId.AddressPeerLimitReached => Invariant(
-                $"a handshake was refused because its address holds as many Peers as it may (MaxPeersPerAddress {v0}, counted by its /{v1})"),
+                $"an admission was refused because its address holds as many Peers or held connections as it may (MaxPeersPerAddress {v0}, counted by its /{v1})"),
             DiagnosticId.DatagramReadLimitReached => Invariant(
                 $"a Pump made as many reads on bound socket {v1} as it may (MaxDatagramsPerPump {v0})"),
 

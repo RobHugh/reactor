@@ -179,7 +179,7 @@ public readonly record struct DiagnosticRecord
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.AddressPeerLimitReached"/> record for the claimed Source whose
-    /// handshake was refused, carrying the per-address limit and the prefix length its address was
+    /// handshake was refused, or whose held stream connection was closed, carrying the per-address limit and the prefix length its address was
     /// counted by: 32 for IPv4, and the IPv6 grouping length for IPv6 (ADR 0014).
     /// </summary>
     public static DiagnosticRecord ForAddressPeerLimitReached(Source source, int limit, int prefixLength) =>

@@ -207,7 +207,9 @@ public enum DiagnosticId
     /// A verified handshake, or on the stream profile an accepted connection, was refused because its
     /// address already holds <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> or
     /// <see cref="StreamSessionOptions.MaxPeersPerAddress"/> accepted Peers while other capacity Slots
-    /// were free. Subject is the claimed Source. <c>Value0</c> is the limit; <c>Value1</c> is the prefix
+    /// were free. On the stream profile it is also logged when an accepted connection is closed before its
+    /// first handshake record arrives, because its address already has that many other connections held
+    /// waiting for theirs. Subject is the claimed Source. <c>Value0</c> is the limit; <c>Value1</c> is the prefix
     /// length the address was counted by: 32 for IPv4, and
     /// <see cref="DatagramSessionOptions.PeerLimitIPv6PrefixLength"/> or
     /// <see cref="StreamSessionOptions.PeerLimitIPv6PrefixLength"/> for IPv6, so every address in that
