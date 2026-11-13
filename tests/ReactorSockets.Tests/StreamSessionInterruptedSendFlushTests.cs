@@ -23,7 +23,7 @@ public class StreamSessionInterruptedSendFlushTests
         using RawStreamListener listener = new();
         byte[] resumeSecret = StreamSessionTestRecords.PayloadOf(StreamSessionTestRecords.ResumeSecretLength, 44);
         PeerId peer = dialer.Reactor.Connect(listener.Endpoint);
-        RawStreamListener.Accepted far = listener.Accept();
+        using RawStreamListener.Accepted far = listener.Accept();
         dialer.Reactor.Pump();
         far.Receive(StreamSessionTestRecords.HandshakeRecordSize);
         far.Send(StreamSessionTestRecords.BuildHello(resumeSecret: resumeSecret));
@@ -63,6 +63,7 @@ public class StreamSessionInterruptedSendFlushTests
         dialer.Reactor.Pump();
         dialer.DrainToList();
         listener.TryAccept(out RawStreamListener.Accepted redialed, timeoutMs: 2000).Should().BeTrue();
+        using IDisposable redialedGuard = redialed;
         dialer.Reactor.Pump();
         dialer.DrainToList();
         redialed.Receive(StreamSessionTestRecords.HandshakeRecordSize);
@@ -81,9 +82,6 @@ public class StreamSessionInterruptedSendFlushTests
         redialed.TryReceiveWithinTimeout(frame.Length, out byte[] got, timeoutMs: 500).Should().BeTrue(
             "the Message sent while Interrupted is flushed once the resume completes");
         got.Should().Equal(frame);
-
-        redialed.Dispose();
-        far.Dispose();
     }
 
     [Fact]
@@ -174,6 +172,15 @@ public class StreamSessionInterruptedSendFlushTests
             {
                 break;
             }
+        }
+
+        for (int i = 0; i < 50; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(10));
+            dialer.Reactor.Pump();
+            dialerEvents.AddRange(dialer.DrainToListWithPayload());
+            listener.Reactor.Pump();
+            listenerEvents.AddRange(listener.DrainToListWithPayload());
         }
 
         // Assert

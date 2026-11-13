@@ -1046,7 +1046,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _retention.ReleaseThroughMessageCount(slot.Handle.Index, deliveryCount);
 
         // Retention appended while Interrupted was never sent, and the marker for it was spent by a flush
-        // the Interrupted guard skipped, so a completed resume always owes one flush.
+        // that FlushRetention's IsInterrupted check skipped, so a completed resume always owes one flush.
         slot.HasPendingRetentionWrite = true;
         _peersWithPendingRetentionWrites.Add(slot.Handle);
 
@@ -2537,7 +2537,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                         _peersWithRedialScheduled.Remove(handle);
 
                         // Retention appended while Interrupted was never sent, and the marker for it was spent by a flush
-                        // the Interrupted guard skipped, so a completed resume always owes one flush.
+                        // that FlushRetention's IsInterrupted check skipped, so a completed resume always owes one flush.
                         slot.HasPendingRetentionWrite = true;
                         _peersWithPendingRetentionWrites.Add(handle);
 
