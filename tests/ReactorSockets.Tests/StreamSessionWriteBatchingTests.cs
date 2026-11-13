@@ -88,9 +88,9 @@ public class StreamSessionWriteBatchingTests
     /// <c>StreamSessionRetentionFlushTests.EstablishSession</c> for the same reason: this file's
     /// backpressure test needs the Reactor as the accepting side, not the dialling side.
     /// </summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, SlowReaderPeer peer, TimeSpan? budget = null)
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, SlowReaderPeer peer, TimeSpan? budget = null, uint announcedMaxMessageSize = 4096)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget, announcedMaxMessageSize);
         peer.Receive(RecordSize);
         return id;
     }
@@ -200,7 +200,7 @@ public class StreamSessionWriteBatchingTests
         using StreamSessionReactorHarness accepter = new(
             maxMessageSize: maxMessageSize, retentionBytes: messageCount * (maxMessageSize + 4));
         using SlowReaderPeer peer = new(accepter.Endpoint, receiveBufferSize: 1024);
-        PeerId id = EstablishSession(accepter, peer);
+        PeerId id = EstablishSession(accepter, peer, announcedMaxMessageSize: maxMessageSize);
 
         byte[] first = PayloadOf(maxMessageSize, 31);
         byte[] second = PayloadOf(maxMessageSize, 32);

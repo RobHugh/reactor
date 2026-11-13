@@ -159,7 +159,7 @@ public class StreamSessionPendingRecordFlushTests
     /// </summary>
     private static PeerId EstablishAcceptedSession(StreamSessionReactorHarness accepter, Counterparty peer)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, announcedMaxMessageSize: MaxMessageSize);
         peer.Receive(RecordSize);
         return id;
     }
@@ -171,7 +171,7 @@ public class StreamSessionPendingRecordFlushTests
     private static void EstablishDialledSession(StreamSessionReactorHarness dialer, Counterparty far, PeerId id)
     {
         PumpAndRead(dialer, far, RecordSize).Should().HaveCount(RecordSize, "the dialler sends its Hello once connected");
-        far.Send(StreamSessionTestRecords.BuildHello());
+        far.Send(StreamSessionTestRecords.BuildHello(maxMessageSize: MaxMessageSize));
 
         PumpDeadline deadline = PumpDeadline.Start();
         while (true)

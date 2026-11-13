@@ -30,9 +30,9 @@ public class StreamSessionRetentionFlushTests
     /// <paramref name="peer"/>'s socket, so the bytes the flush later writes are the only
     /// thing left for <see cref="FlushPeer.Receive"/> to see.
     /// </summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, FlushPeer peer, TimeSpan? budget = null)
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, FlushPeer peer, TimeSpan? budget = null, uint announcedMaxMessageSize = 4096)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget, announcedMaxMessageSize);
         peer.Receive(RecordSize);
         return id;
     }
@@ -228,7 +228,7 @@ public class StreamSessionRetentionFlushTests
         const int retentionBytes = 100 * (maxMessageSize + 4);
         using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: retentionBytes, sendBufferSize: 1024);
         using FlushPeer peer = new(accepter.Endpoint, receiveBufferSize: 1024);
-        PeerId id = EstablishSession(accepter, peer);
+        PeerId id = EstablishSession(accepter, peer, announcedMaxMessageSize: maxMessageSize);
 
         byte[] message = PayloadOf(maxMessageSize, 99);
 
