@@ -707,6 +707,47 @@ public class StreamSessionRedialTests
             .Select(r => (SocketError)r.Value0).Should().OnlyContain(e => e == SocketError.ConnectionReset);
     }
 
+    [WindowsFact("Linux reports a reset that arrives before the connect is polled through SO_ERROR, so the "
+        + "attempt fails as a connect and the Resume is never sent.")]
+    public void Pump_ReDialResetBeforeItsResumeIsSent_FailsTheAttemptRatherThanClosingThePeer()
+    {
+        // Arrange
+        using StreamSessionReactorHarness dialer = new(entropy: new ConstantByteJitter(0xFF));
+        using RawStreamListener listener = new();
+        byte[] resumeSecret = StreamSessionTestRecords.PayloadOf(StreamSessionTestRecords.ResumeSecretLength, 61);
+        (PeerId peer, RawStreamListener.Accepted far) = EstablishDialledSession(dialer, listener, resumeSecret);
+        using IDisposable farGuard = far;
+        InterruptDialledPeer(dialer, far, peer);
+        far.Dispose();
+        dialer.Sink.Received.Clear();
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> collected = [];
+
+        // Act: the attempt is dialled, and the listener accepts and resets it before the Pump that resolves
+        // the connect, so that Pump's Resume send fails.
+        dialer.TimeProvider.Advance(TimeSpan.FromMilliseconds(50));
+        dialer.Reactor.Pump();
+        collected.AddRange(dialer.DrainToList());
+        listener.TryAccept(out RawStreamListener.Accepted reset, timeoutMs: 2000).Should().BeTrue();
+        reset.ResetAbruptly();
+        Thread.Sleep(50);
+        dialer.Reactor.Pump();
+        collected.AddRange(dialer.DrainToList());
+        dialer.TimeProvider.Advance(TimeSpan.FromMilliseconds(100));
+        dialer.Reactor.Pump();
+        collected.AddRange(dialer.DrainToList());
+        bool secondAccepted = listener.TryAccept(out RawStreamListener.Accepted second, timeoutMs: 2000);
+        using IDisposable secondGuard = second;
+
+        // Assert
+        collected.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+        collected.Should().NotContain(e => e.Kind == SessionEventKind.PeerInterrupted);
+        DiagnosticRecord failed = dialer.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.RedialFailed).Subject;
+        ((SocketError)failed.Value0).Should().Be(SocketError.SocketError, "the Resume send failed, not the connect");
+        failed.Value1.Should().Be(1);
+        secondAccepted.Should().BeTrue();
+        dialer.Sink.Received.Last(r => r.Id == DiagnosticId.RedialAttempted).Value0.Should().Be(2);
+    }
+
     [Fact]
     public void Pump_ReDialTheListenerNeverAnswers_FailsAtTheReceiveIdleDeadlineAndDialsAgain()
     {
