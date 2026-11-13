@@ -29,8 +29,8 @@ IPv4, at which an IPv4 datagram cannot be truncated. An IPv6 datagram of 65 508 
 exceeds it and is reported as truncated. This is the profile-specific
 knob a consumer lowers to opt into truncation, kept off [`ReactorOptions`](ReactorSockets.ReactorOptions.md) because it
 has no meaning outside Raw's datagram surface. It must be at least 1 and at most
-[`MaxLength`](https://learn.microsoft.com/dotnet/api/system.array.maxlength) minus 1, because the scratch allocation adds one truncation byte;
-a value outside that range throws [`ArgumentOutOfRangeException`](https://learn.microsoft.com/dotnet/api/system.argumentoutofrangeexception).
+[`MaxLength`](https://learn.microsoft.com/dotnet/api/system.array.maxlength) minus 1, because the scratch allocation adds one truncation byte.
+A value outside that range throws [`ArgumentOutOfRangeException`](https://learn.microsoft.com/dotnet/api/system.argumentoutofrangeexception).
 
 ### Remarks
 
