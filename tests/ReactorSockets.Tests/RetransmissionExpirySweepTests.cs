@@ -6,7 +6,7 @@ namespace ReactorSockets.Tests;
 /// <summary>
 /// The per-Pump expiry sweep that reports the sequences a Peer's
 /// <c>OutstandingReliableSequences.AckTracker</c> considers overdue for retransmission, marks them
-/// retransmitted, re-arms them at the backed-off RTO, and raises <see cref="PeerCounters.PacketsRetransmitted"/>
+/// retransmitted, holds them disarmed until their resend is packed, and raises <see cref="PeerCounters.PacketsRetransmitted"/>
 /// by however many were reported. Backoff happens at most once per Pump, and the
 /// <see cref="DiagnosticId.RetransmissionTimerBackedOff"/> Diagnostic reports it.
 /// </summary>

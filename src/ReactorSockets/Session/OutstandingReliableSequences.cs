@@ -46,7 +46,9 @@ namespace ReactorSockets.Session;
 /// the injected <see cref="RetransmissionTimer"/>'s <see cref="RetransmissionTimer.Estimator"/>: the
 /// elapsed time from when that sequence was armed to this release, and whether it was ever marked
 /// retransmitted (<see cref="MarkRetransmitted"/>), so <see cref="RoundTripEstimator.Sample(TimeSpan,bool)"/>'s
-/// Karn's-rule discard applies. A sequence released while still deferred — never armed, because the
+/// Karn's-rule discard applies. A sequence released while its resend is queued
+/// (<see cref="CollectExpired"/>) is disarmed but samples the same way, from its last arming moment,
+/// and Karn's rule discards that sample. A sequence released while still deferred — never armed, because the
 /// horizon never slid over it before it was acknowledged — feeds no sample at all: there was no arming
 /// moment to measure from. A sequence already released by an earlier bit and later swept out of the ring
 /// by the base advancing past it is not sampled twice.
@@ -226,8 +228,9 @@ internal sealed class OutstandingReliableSequences
     /// <para>
     /// <b>Sampling on release.</b> Every released sequence that was armed feeds one sample — the elapsed
     /// time since it armed, and whether <see cref="MarkRetransmitted"/> was ever called for it — into
-    /// <see cref="RetransmissionTimer.Estimator"/>. A released sequence that was never armed (still
-    /// deferred) feeds nothing. A sequence already released by an earlier call's bit, later swept out of
+    /// <see cref="RetransmissionTimer.Estimator"/>. So does a sequence whose resend is queued, from its
+    /// last arming moment, and Karn's rule discards that sample. A released sequence that was never
+    /// armed (still deferred) feeds nothing. A sequence already released by an earlier call's bit, later swept out of
     /// the ring here as the base advances past it, is not sampled a second time.
     /// </para>
     /// <para>
@@ -651,9 +654,9 @@ internal sealed class OutstandingReliableSequences
         }
 
         /// <summary>
-        /// Releases one slot: if it was armed and not already released, feeds
+        /// Releases one slot: if it was armed or waiting for its resend, and not already released, feeds
         /// <paramref name="timer"/>'s <see cref="RetransmissionTimer.Estimator"/> one sample — the
-        /// elapsed time from when it armed to <paramref name="now"/>, and whether it was ever marked
+        /// elapsed time from when it last armed to <paramref name="now"/>, and whether it was ever marked
         /// retransmitted (Karn's rule) — and records the delivery against <paramref name="timer"/>'s
         /// backoff, then marks it released either way. A slot that was never armed (still deferred) or
         /// already released feeds no sample, matching the contract that a deferred release yields

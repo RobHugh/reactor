@@ -69,8 +69,12 @@ public class DatagramSessionFragmentRepairCostTests
     /// </summary>
     private static readonly TimeSpan _pastTheRetransmitDeadline = TimeSpan.FromSeconds(3);
 
-    /// <summary>How far the dialler's clock advances per relay round in the #542 test.</summary>
-    private static readonly TimeSpan _roundInterval = TimeSpan.FromMilliseconds(10);
+    /// <summary>
+    /// How far the dialler's clock advances per relay round in the #542 test. At 30 ms the first
+    /// Fragment's deadline, armed at the initial RTO before any round-trip sample, passes while Fragments
+    /// are still queued ahead of its resend. At 10 ms it passes only after the queue has drained.
+    /// </summary>
+    private static readonly TimeSpan _roundInterval = TimeSpan.FromMilliseconds(30);
 
     /// <summary>The three positions issue #249 names explicitly: a theory over where in the Message the lost Fragment sits.</summary>
     public static TheoryData<int, string> FragmentDropPositions => new()

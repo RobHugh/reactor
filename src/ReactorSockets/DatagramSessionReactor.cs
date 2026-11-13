@@ -1969,7 +1969,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             // Send: a sequence queued but not yet flushed has not been transmitted, and starting its
             // retransmit deadline before it leaves would spend part of that deadline on this end's own
             // queue (subtask 6.6.8, issue #218). A resend follows the same rule (issue #542): its deadline
-            // stopped when it expired and restarts here, at the backed-off RTO, so a resend waiting behind
+            // stopped when it expired and restarts here, at the RTO current now, so a resend waiting behind
             // a long queue is not reported again before it leaves. The horizon gate lives inside
             // RecordSent, so a sequence too far ahead of the ack horizon still has its timer withheld
             // rather than started, exactly as #185 requires.
