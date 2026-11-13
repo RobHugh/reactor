@@ -757,6 +757,130 @@ public class DatagramSessionOptionsTests
         memberNames.Should().NotContain(name => name.Contains("Space", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Theory]
+    [InlineData(int.MaxValue)]
+    [InlineData(int.MaxValue - 1)]
+    [InlineData(2_147_483_592)]
+    public void Constructor_MaxMessageSizeAboveArrayMaxLength_ThrowsArgumentOutOfRangeExceptionNamingTheLimit(int maxMessageSize)
+    {
+        // Arrange — issue #488: MaxMessageSize + FragmentSize - 1 wrapped negative, and the caller was
+        // told about MaxDatagramsPerPump, which they did not set. 2 147 483 592 is Array.MaxLength + 1.
+        DatagramSessionOptions options = CreateOptions(maxMessageSize: maxMessageSize, retentionBytes: 1200);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName(nameof(DatagramSessionOptions.MaxMessageSize))
+            .Which.Message.Should()
+            .Contain(Array.MaxLength.ToString())
+            .And.NotMatchRegex("(?<![0-9])-[0-9]");
+    }
+
+    [Fact]
+    public void Constructor_MaxMessageSizeAtArrayMaxLength_ThrowsArgumentExceptionFromTheMemoryBill()
+    {
+        // Arrange — at the limit the window floor is ⌈2 147 483 591 / 1200⌉ = 1 789 570 fragments. The
+        // sum MaxMessageSize + 1199 is above int.MaxValue, so the floor must be computed in long.
+        DatagramSessionOptions options = CreateOptions(maxMessageSize: Array.MaxLength, retentionBytes: 1200);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentException>()
+            .WithParameterName(nameof(DatagramSessionOptions.Reactor))
+            .Which.Message.Should()
+            .Contain("1789570 fragments")
+            .And.NotMatchRegex("(?<![0-9])-[0-9]");
+    }
+
+    [Fact]
+    public void ReceiveWindowFloor_MaxMessageSizeAtArrayMaxLength_IsTheCeilingWithoutWrapping()
+    {
+        // Arrange
+        DatagramSessionOptions options = CreateOptions(maxMessageSize: Array.MaxLength, retentionBytes: 1200);
+
+        // Act
+        int floor = options.ReceiveWindowFloor;
+
+        // Assert
+        floor.Should().Be(1_789_570);
+    }
+
+    [Fact]
+    public void BudgetProperties_TrueFigureAboveLongMaxValue_SaturateInsteadOfWrapping()
+    {
+        // Arrange — issue #488: capacity and window at int.MaxValue overflowed long in every product.
+        DatagramSessionOptions options = CreateOptions(capacity: int.MaxValue, maxMessageSize: 1000, retentionBytes: 1200, receiveWindowFragments: int.MaxValue);
+
+        // Act
+        long receive = options.ReceiveBudgetBytes;
+        long held = options.HeldRecordBudgetBytes;
+        int perPump = options.ResolvedMaxDatagramsPerPump;
+
+        // Assert
+        receive.Should().Be(long.MaxValue);
+        held.Should().Be(long.MaxValue);
+        perPump.Should().Be(int.MaxValue);
+    }
+
+    [Fact]
+    public void SendBudgetBytes_TrueFigureAboveLongMaxValue_Saturates()
+    {
+        // Arrange — 2 147 483 647 × 2 × 3 728 270 slots × (576 + 15) bytes is about 9.46 × 10^18,
+        // just above long.MaxValue.
+        DatagramSessionOptions options = CreateOptions(capacity: int.MaxValue, maxMessageSize: 1000, retentionBytes: int.MaxValue, fragmentSize: 576);
+
+        // Act
+        long send = options.SendBudgetBytes;
+
+        // Assert
+        send.Should().Be(long.MaxValue);
+    }
+
+    [Fact]
+    public void Constructor_SendLineAboveLongMaxValue_ThrowsArgumentExceptionNamingTheExactLine()
+    {
+        // Arrange — issue #488: the send line wrapped negative and the memory bill passed.
+        DatagramSessionOptions options = CreateOptions(capacity: int.MaxValue, maxMessageSize: 1000, retentionBytes: int.MaxValue, fragmentSize: 576);
+        Int128 expectedSend = (Int128)int.MaxValue * 2 * (int.MaxValue / 576) * (576 + 15);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options);
+
+        // Assert
+        expectedSend.Should().BeGreaterThan(long.MaxValue);
+        act.Should().Throw<ArgumentException>()
+            .WithParameterName(nameof(DatagramSessionOptions.Reactor))
+            .Which.Message.Should()
+            .Contain(expectedSend.ToString())
+            .And.NotMatchRegex("(?<![0-9])-[0-9]");
+    }
+
+    [Fact]
+    public void Constructor_ReceiveLineAboveLongMaxValue_ThrowsArgumentExceptionNamingTheExactLine()
+    {
+        // Arrange — issue #488: 2 000 000 Peers × a 2 000 000 000-fragment window wrapped the receive
+        // line negative, and the memory bill passed.
+        DatagramSessionOptions options = CreateOptions(capacity: 2_000_000, maxMessageSize: 1000, retentionBytes: 4096, receiveWindowFragments: 2_000_000_000);
+        Int128 expectedReceive =
+            ((Int128)2_000_000 * 2_000_000_000 * ((2 * (1200 + 2 + 6)) + 4))
+            + ((Int128)2_000_000 * 2 * 1_000_000_000 * 6);
+
+        // Act
+        Action act = () => new DatagramSessionReactor(options);
+
+        // Assert
+        expectedReceive.Should().BeGreaterThan(long.MaxValue);
+        act.Should().Throw<ArgumentException>()
+            .WithParameterName(nameof(DatagramSessionOptions.Reactor))
+            .Which.Message.Should()
+            .Contain(expectedReceive.ToString())
+            .And.NotMatchRegex("(?<![0-9])-[0-9]");
+    }
+
     /// <summary>Every public instance property and ordinary method name declared directly on <see cref="DatagramSessionOptions"/>.</summary>
     private static IEnumerable<string> PublicPropertyAndMethodNames()
     {
