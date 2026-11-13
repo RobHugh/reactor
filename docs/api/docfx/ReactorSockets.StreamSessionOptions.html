@@ -273,7 +273,11 @@ silently wraps through.</p>
   </dl>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.ReceiveBufferFloor.html#ReactorSockets_StreamSessionOptions_ReceiveBufferFloor">ReceiveBufferFloor</a></dt>
-    <dd><p>The floor both <a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a> and the receive buffer are held to: one maximum Message plus its length prefix.</p>
+    <dd><p>The floor both <a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a> and the receive buffer are held to: one maximum
+Message plus its length prefix. The sum is computed in <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/integral-numeric-types">long</a> and saturates at
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32.maxvalue">MaxValue</a>, so on options not yet validated a <a class="xref" href="ReactorSockets.StreamSessionOptions.MaxMessageSize.html#ReactorSockets_StreamSessionOptions_MaxMessageSize">MaxMessageSize</a> near
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32.maxvalue">MaxValue</a> reads as <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32.maxvalue">MaxValue</a> rather than wrapping negative.
+Construction rejects any <a class="xref" href="ReactorSockets.StreamSessionOptions.MaxMessageSize.html#ReactorSockets_StreamSessionOptions_MaxMessageSize">MaxMessageSize</a> whose floor would saturate.</p>
 </dd>
   </dl>
   <dl class="jumplist">
