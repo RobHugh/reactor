@@ -45,6 +45,7 @@ public class OptionsSurfaceTests
         "DatagramSessionOptions.Linger",
         "DatagramSessionOptions.Endpoints",
         "DatagramSessionOptions.FragmentSize",
+        "DatagramSessionOptions.UnreliableQueueBytes",
         "DatagramSessionOptions.ReceiveWindowFragments",
         "DatagramSessionOptions.MissedHeartbeats",
         "DatagramSessionOptions.Entropy",

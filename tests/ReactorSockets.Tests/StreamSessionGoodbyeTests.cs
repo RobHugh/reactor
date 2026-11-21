@@ -32,9 +32,9 @@ public class StreamSessionGoodbyeTests
     /// event, returning the established Peer's id, and reads the accepter's own Hello record off
     /// <paramref name="peer"/>'s socket first, so later reads see only what the flush writes.
     /// </summary>
-    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, GoodbyePeer peer, TimeSpan? budget = null)
+    private static PeerId EstablishSession(StreamSessionReactorHarness accepter, GoodbyePeer peer, TimeSpan? budget = null, uint announcedMaxMessageSize = 4096)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, budget, announcedMaxMessageSize);
         peer.Receive(RecordSize);
         return id;
     }
@@ -511,7 +511,7 @@ public class StreamSessionGoodbyeTests
         const int retentionBytes = 100 * (maxMessageSize + 4);
         using StreamSessionReactorHarness accepter = new(maxMessageSize: maxMessageSize, retentionBytes: retentionBytes, sendBufferSize: 1024);
         using GoodbyePeer peer = new(accepter.Endpoint, receiveBufferSize: 1024);
-        PeerId id = EstablishSession(accepter, peer);
+        PeerId id = EstablishSession(accepter, peer, announcedMaxMessageSize: maxMessageSize);
         byte[] stuckMessage = PayloadOf(maxMessageSize, 1);
         byte[] trailingMessage = PayloadOf(16, 9);
 

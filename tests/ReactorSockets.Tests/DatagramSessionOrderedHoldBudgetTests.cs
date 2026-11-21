@@ -18,16 +18,10 @@ public class DatagramSessionOrderedHoldBudgetTests
     private const uint ControlSession = 0;
 
     private const byte HelloType = 1;
-    private const byte HelloWithCookieType = 3;
     private const int ControlBodyOffset = 5;
     private const int CookieLength = 32;
-    private const int ResumeSecretLength = 16;
 
-    private const uint ProtocolVersion = 1;
-    private const uint DialerSessionId = 0xCAFE_BABE;
-    private const uint DialerMaxMessageSize = 4096;
-    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
-    private const ulong DialerLingerMilliseconds = 30_000;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
 
     private const int DatagramHeaderSize = 20;
     private const int UnfragmentedRecordSize = 7;
@@ -82,10 +76,36 @@ public class DatagramSessionOrderedHoldBudgetTests
     }
 
     [Fact]
+    public void Pump_RecordsPastTheBudgetsSlotCount_CountsThemOutOfWindow()
+    {
+        // Arrange — issue #540: the slot count is read back from the stated budget, not restated, so the
+        // Reactor's limit and the budget must come from one hold rule. Each slot is a whole fragment plus
+        // 44 bytes of bookkeeping.
+        using DatagramSessionReactorHarness accepter = NewAccepter();
+        long budgetSlots = accepter.Options.HeldRecordBudgetBytes
+            / ((long)accepter.Options.Reactor.Capacity * (FragmentSize + 44));
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink);
+        PeerId peer = FindAccepterPeer(accepter);
+        StallTheHeadAtSequenceZero(accepter, client, clientLink, sessionId);
+
+        // Act — sequences from 2 up to the budget's slot count are held, and the ten after them are not.
+        const int recordsPastTheLimit = 10;
+        for (uint sequence = 2; sequence < budgetSlots + recordsPastTheLimit; sequence++)
+        {
+            SendAndPump(accepter, client, clientLink, sessionId, Record(ModeReliableOrdered, sequence, [0x01]));
+        }
+
+        // Assert
+        accepter.Reactor.CountersOf(peer).OutOfWindowPackets.Should().Be(recordsPastTheLimit);
+    }
+
+    [Fact]
     public void Pump_ARecordWiderThanAFragmentSlotBehindAHole_CountsItOutOfWindow()
     {
-        // Arrange — nothing on the receive path stops a record being wider than this end's FragmentSize,
-        // because fragment size is unilateral (ADR 0004).
+        // Arrange — the receive path refuses only a Fragment wider than this end's FragmentSize
+        // (ADR 0024), so an unfragmented record that wide is admitted.
         using DatagramSessionReactorHarness accepter = NewAccepter();
         using RawReactor client = new(new ReactorOptions { Capacity = 4 });
         LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
@@ -413,7 +433,7 @@ public class DatagramSessionOrderedHoldBudgetTests
         long epoch = unchecked((long)BinaryPrimitives.ReadUInt64BigEndian(cookieDatagram.AsSpan(ControlBodyOffset + 8, 8)));
         byte[] cookie = cookieDatagram.AsSpan(ControlBodyOffset + 16, CookieLength).ToArray();
 
-        client.SendTo(clientLink, destination, BuildHelloWithCookieDatagram(clientNonce, epoch, cookie));
+        client.SendTo(clientLink, destination, DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie));
         byte[] acceptDatagram = ExchangeUntilReceived(client, accepter);
 
         return BinaryPrimitives.ReadUInt32BigEndian(acceptDatagram.AsSpan(ControlBodyOffset + 8, 4));
@@ -466,28 +486,6 @@ public class DatagramSessionOrderedHoldBudgetTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(0, 4), ProtocolVersion);
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(4, 8), clientNonce);
         return BuildControlDatagram(HelloType, body);
-    }
-
-    private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
-    {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + 8 + ResumeSecretLength];
-        int offset = 0;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), clientNonce);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), unchecked((ulong)epoch));
-        offset += 8;
-        cookie.CopyTo(body.AsSpan(offset, CookieLength));
-        offset += CookieLength;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
-        return BuildControlDatagram(HelloWithCookieType, body);
     }
 
     /// <summary>Builds a 20-byte live-Session datagram header naming <paramref name="session"/> with both ack blocks zeroed.</summary>

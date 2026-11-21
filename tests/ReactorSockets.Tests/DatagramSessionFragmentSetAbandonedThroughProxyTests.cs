@@ -64,8 +64,8 @@ public class DatagramSessionFragmentSetAbandonedThroughProxyTests
     /// </summary>
     private const int OverlapRounds = 60;
 
-    /// <summary>Rounds the completing run is driven for once the withheld Datagram is allowed through — ample for one retransmission to cross and the Message to be reassembled.</summary>
-    private const int CompletionRounds = 40;
+    /// <summary>Rounds beyond one per Fragment that the completing run is driven for once the withheld Datagram is allowed through — ample for one retransmission to cross and the Message to be reassembled. The proxy relays one Datagram per round and each Fragment travels in its own Datagram.</summary>
+    private const int CompletionRoundsPerSet = 40;
 
     [Fact]
     public void Pump_AFragmentSetStillIncompleteWithNothingOverlappingIt_EmitsNoFragmentSetAbandoned()
@@ -106,13 +106,14 @@ public class DatagramSessionFragmentSetAbandonedThroughProxyTests
         fixture.DropFragmentsAtSequences();
 
         // Act
+        int completionRounds = fixture.FragmentsPerSpanningMessage + CompletionRoundsPerSet;
         bool delivered = fixture.PumpRoundsUntil(
             () => fixture.DeliveredPayloads.Any(p => p.Length == FragmentSizeDiagnosisFixture.SpanningMessageLength),
-            CompletionRounds);
+            completionRounds);
 
         // Assert — the set genuinely completed, so this is the slow-reassembly case rather than one that quietly stayed broken.
         delivered.Should().BeTrue(
-            $"the withheld Fragments' next retransmission must cross and complete the Message inside {CompletionRounds} rounds, or this run proves nothing about a set that completes");
+            $"the withheld Fragments' next retransmission must cross and complete the Message inside {completionRounds} rounds, or this run proves nothing about a set that completes");
 
         // Assert — slow reassembly is not abandonment.
         fixture.AccepterDiagnostics.Should().NotContain(r => r.Id == DiagnosticId.FragmentSetAbandoned,

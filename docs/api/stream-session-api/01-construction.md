@@ -11,7 +11,7 @@ one would be guessing at your application.
 | Knob | What it is |
 |---|---|
 | `Reactor.Capacity` | How many Peers this Reactor admits. Multiplies every preallocation. |
-| `MaxMessageSize` | The largest Message you will send or accept, in bytes. |
+| `MaxMessageSize` | The largest Message you will send or accept, in bytes. At most 2 147 483 587. |
 | `RetentionBytes` | Bytes held per Peer for the send path. Your backpressure budget. |
 | `SendIdleInterval` | How long a Session may stay silent before it heartbeats. |
 | `Linger` | How long a closing or interrupted Session stays alive. |
@@ -66,6 +66,13 @@ Linger window, or fresh dials get refused while a departed Peer's Slot is still 
 Peers you expect behind one NAT or proxy, and well below `Capacity` if strangers can reach this Reactor.
 If every Peer shares one address, for example behind one proxy, set it to `Capacity`, or the default
 leaves one Slot unused.
+
+The same limit applies to connections the Reactor has accepted but not yet decided, those waiting for
+their first handshake record. One address may have at most `MaxPeersPerAddress` of them, and at most
+`Capacity` are held in all. A connection over the per-address limit is closed with nothing sent unless
+its whole record arrived with it, and every held connection is closed if its record has not arrived
+within this end's `SendIdleInterval` × `MissedHeartbeats`. A dialler sends its record as soon as TCP
+connects, so a conforming one meets neither unless that product is shorter than its Pump interval.
 
 The limit counts addresses, not ports, because one host can connect from many ports. Peers this
 Reactor dialled do not count, and a Resume is never refused by it, because the Peer it names already

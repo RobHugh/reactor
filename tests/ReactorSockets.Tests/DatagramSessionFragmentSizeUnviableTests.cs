@@ -58,16 +58,11 @@ public class DatagramSessionFragmentSizeUnviableTests
     private const uint ControlSession = 0;
 
     private const byte HelloType = 1;
-    private const byte HelloWithCookieType = 3;
     private const int ControlBodyOffset = 5;
     private const int CookieLength = 32;
-    private const int ResumeSecretLength = 16;
 
-    private const uint ProtocolVersion = 1;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
     private const uint DialerSessionId = 0xCAFE_BABE;
-    private const uint DialerMaxMessageSize = 4096;
-    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
-    private const ulong DialerLingerMilliseconds = 30_000;
 
     private const int DatagramHeaderSize = 20;
     private const int ReliableOrderedAckBlockOffset = 4;
@@ -372,16 +367,20 @@ public class DatagramSessionFragmentSizeUnviableTests
         // Act — after the close, a Message wider than the fragment size, sent to the second Peer.
         byte[] messageToPeerB = Enumerable.Range(0, BigMessageLength).Select(i => (byte)(i % 256)).ToArray();
         node.Reactor.Send(peerB, DeliveryMode.ReliableOrdered, messageToPeerB).Should().Be(SendOutcome.Sent);
+        int expectedFragments = (BigMessageLength + FragmentSize - 1) / FragmentSize;
         List<byte[]> peerBDatagrams = [];
-        PumpAndCollect(node, clientB, peerBDatagrams, events);
-        byte[] datagramToPeerB = peerBDatagrams.Last();
+        PumpDeadline fragmentDeadline = PumpDeadline.Start();
+        while (peerBDatagrams.Sum(CountRecords) < expectedFragments && !fragmentDeadline.Expired)
+        {
+            PumpAndCollect(node, clientB, peerBDatagrams, events);
+        }
 
         // Assert — proven observably rather than against the test's own init-only options object: the
         // Message reaching the second Peer is still cut at the configured fragment size, unaffected by
         // the first Peer's close.
-        CountRecords(datagramToPeerB).Should().Be(
-            (BigMessageLength + FragmentSize - 1) / FragmentSize, "the fragment size configured at construction is unchanged after the first Peer closed");
-        FirstRecordLength(datagramToPeerB).Should().Be(
+        peerBDatagrams.Sum(CountRecords).Should().Be(
+            expectedFragments, "the fragment size configured at construction is unchanged after the first Peer closed");
+        FirstRecordLength(peerBDatagrams[0]).Should().Be(
             (ushort)FragmentSize, "the second Peer's Message is cut to the same fragment size the first Peer's was, proving the setting itself never moved");
 
         // Act — the second Peer sends its own record back, unreliable so no ack machinery is needed to
@@ -701,7 +700,7 @@ public class DatagramSessionFragmentSizeUnviableTests
         byte[] cookie = cookieDatagram.AsSpan(ControlBodyOffset + 16, CookieLength).ToArray();
         echoedNonce.Should().Be(clientNonce);
 
-        byte[] helloWithCookie = BuildHelloWithCookieDatagram(clientNonce, epoch, cookie);
+        byte[] helloWithCookie = DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie);
         client.SendTo(clientLink, destination, helloWithCookie);
         byte[] acceptDatagram = ExchangeUntilReceived(client, node);
 
@@ -754,28 +753,5 @@ public class DatagramSessionFragmentSizeUnviableTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(0, 4), ProtocolVersion);
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(4, 8), clientNonce);
         return BuildControlDatagram(HelloType, body);
-    }
-
-    private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
-    {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + 8 + ResumeSecretLength];
-        int offset = 0;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), clientNonce);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), unchecked((ulong)epoch));
-        offset += 8;
-        cookie.CopyTo(body.AsSpan(offset, CookieLength));
-        offset += CookieLength;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
-        offset += 8;
-        return BuildControlDatagram(HelloWithCookieType, body);
     }
 }

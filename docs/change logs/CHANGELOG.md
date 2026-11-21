@@ -1,5 +1,75 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Two Datagram Session Reactors with different `FragmentSize` values could not exchange large
+  reliable Messages (#479, ADR 0024). A receiver acknowledged and then dropped a Fragment wider than
+  its own `FragmentSize`. A `ReliableOrdered` Space then stopped delivering for the rest of the
+  Session, a `ReliableUnordered` Message was lost, and the sender's `Send` returned `Sent`.
+  Hello-with-cookie and Accept now carry the announcing end's `FragmentSize` and
+  `ReceiveWindowFragments`. A reliable Message is cut at the smaller of the two `FragmentSize`
+  values, fixed when the Peer reaches Established and unchanged across a Resume. `Send` returns
+  `RemoteMessageTooLarge` when the Message needs more Fragments at that size than the peer's
+  `ReceiveWindowFragments`. A reliable Fragment wider than the receiver's own `FragmentSize`, which
+  only a non-conforming peer sends, closes the Peer with `ProtocolViolation` before its datagram is
+  acknowledged, and logs the new `OversizedFragment` (210) Diagnostic. An announced `FragmentSize` outside 576 to 65 507 or a `ReceiveWindowFragments` of 0
+  is refused like an illegal announced interval. The smaller `FragmentSize` is also the
+  single-Datagram cap of the unreliable modes, so an unreliable `Send` to a peer with a smaller
+  `FragmentSize` returns `MessageTooLarge` sooner.
+- An accepted Datagram Session Peer that was interrupted on its own closed with `LingerExpired` while
+  traffic flowed, because only a matched Resume could end its interruption and the dialler sends Resume
+  only when it is itself interrupted. The Peer now resumes when it receives a well-formed data Datagram
+  for its Session from the address and port it sends to (#480, ADR 0009). A Datagram from any other
+  address or port still needs a matched Resume.
+- A stream dialler whose listener no longer held the Session (restarted, or closed the Peer) re-dialled
+  forever and never closed. It now raises one `PeerInterrupted` and closes with `LingerExpired` on time.
+  A re-dial counts as resumed only when the listening side answers (#481, ADR 0011).
+- A Message sent to an Interrupted stream Peer stayed unsent after the Peer resumed until the next
+  `Send`. It is now written once the Peer resumes, on both ends (#481).
+- A stream `Send` above the peer's announced `MaxMessageSize` returned `Sent`, and the peer closed the
+  Session with `ProtocolViolation`. It returns `RemoteMessageTooLarge` and copies nothing, as the
+  datagram profile does (#484). A consumer that switches over `SendOutcome` for a stream Reactor
+  handles the new value.
+- `DatagramSessionOptions.FragmentSize` accepts at most 65 476, not 65 507 (#486). A larger Fragment
+  fits no Datagram once the 20-byte Datagram header and the 11-byte Fragment record header are added,
+  so a reliable Message cut into one returned `Sent` and was never written, and every Message queued
+  behind it for that Peer waited forever. A value from 65 477 to 65 507 now throws
+  `ArgumentOutOfRangeException` at construction.
+- Datagram profile: a data Datagram is at most `FragmentSize + 31` bytes, and one Pump writes up to
+  `65 507 / (FragmentSize + 31)` of them per Peer. A Peer's queue was packed into one Datagram of up
+  to 65 507 bytes, which the network split or dropped (#485).
+- Datagram profile: unreliable Sends are bounded by `UnreliableQueueBytes` and queued in storage
+  allocated at construction. They queued without limit, one heap copy each (#485).
+- Options validation no longer overflows near `int.MaxValue` (#488). A stream `MaxMessageSize` above
+  `int.MaxValue - 4` threw `OutOfMemoryException`, and a datagram `MaxMessageSize` near `int.MaxValue`
+  was reported as a bad `MaxDatagramsPerPump`. Both now throw `ArgumentOutOfRangeException` naming
+  `MaxMessageSize`, which is at most 2 147 483 587 on the stream profile and 2 147 483 591 on the
+  datagram profile. A memory bill whose true total passes `long.MaxValue` is rejected instead of
+  wrapping negative and passing. `DatagramSessionOptions.ReceiveBudgetBytes`, `SendBudgetBytes` and
+  `HeldRecordBudgetBytes` saturate at `long.MaxValue`.
+- `ReactorOptions.ArenaSize` above `Array.MaxLength` (2 147 483 591), and a Raw `scratchBufferSize`
+  above `Array.MaxLength - 1` (2 147 483 590), threw `OutOfMemoryException` at construction (#526).
+  Both now throw `ArgumentOutOfRangeException` naming the option. The scratch buffer's limit is one
+  byte lower because its allocation holds one truncation byte past `scratchBufferSize`.
+
+### Features
+
+- `SendOutcome.SendQueueFull` (6) and `DatagramSessionOptions.UnreliableQueueBytes`, defaulting to
+  `RetentionSlots × (FragmentSize + 7)`, with `ResolvedUnreliableQueueBytes` and
+  `UnreliableQueueBudgetBytes`. The datagram memory bill gains a third line, `Capacity ×
+  UnreliableQueueBytes`. A consumer switching over `SendOutcome` handles the new value (#485).
+
+### Breaking changes
+
+- `DatagramSessionProtocol.Version` goes from 1 to 2, and a version 1 and a version 2 Datagram
+  Session Reactor cannot connect. A version 2 Reactor refuses a version 1 dialler with
+  `VersionMismatch`. A version 1 Reactor discards a version 2 Hello-with-cookie as malformed, so a
+  version 2 dialler's dial goes unanswered.
+- A smaller peer `FragmentSize` means more retention slots per Message, so `RetentionExhausted`
+  arrives sooner. Receive memory is unchanged.
+
 This log covers the closed pull requests up to the 1.0.0 release on `main` (2026-11-10). It describes
 the code as it stands now. Where a later change replaced earlier behaviour, only the current
 behaviour is listed. The risks section lists what the pull requests left open and the current code
@@ -61,6 +131,8 @@ still shows.
   first record and then decides in order: resume match, capacity, per-address limit. A version
   mismatch or a full Reactor gets an in-protocol Refusal. Linger is negotiated to the minimum of the
   two ends.
+- A dial that has not established one Linger after `Connect` closes with `TransportFailed`, whether
+  its TCP connect is still pending or the far end sent no handshake record.
 - Messages: `u32` length-prefixed framing, delivered as `MessageReceived` within the per-Peer read
   share. Malformed framing closes with `ProtocolViolation`.
 - `Send` appends into a preallocated per-Peer retention ring and returns `Sent`,
@@ -101,7 +173,8 @@ still shows.
   Retransmission is per record.
 - Fragmentation for the reliable modes. A wide Message is cut into Fragments on contiguous
   sequences, with no message ID on the wire, and reassembled inside the receive window with no
-  separate buffer. Fragment size is per direction and never announced.
+  separate buffer. Each end announces its Fragment size, and a reliable Message is cut at the
+  smaller of the two (see Unreleased).
 - `Send` returns `MessageTooLarge` above one datagram in an unreliable mode, and
   `RemoteMessageTooLarge` above the peer's announced limit in any mode. A refused Send burns no
   sequence and takes no retention.
@@ -115,7 +188,7 @@ still shows.
 - A Fragment-size stall (unfragmented records acked, no Fragment acked over four rounds) closes the
   Peer with `FragmentSizeUnviable`. Nothing is probed or resized.
 - Diagnostics: `FragmentSetAbandoned` for a set that can never complete, `OversizedFragmentSet`,
-  `UnreliableFragment`, `OversizedMessage`, `RetransmissionTimerBackedOff`.
+  `OversizedFragment`, `UnreliableFragment`, `OversizedMessage`, `RetransmissionTimerBackedOff`.
 - Memory is preallocated at construction and states its bill exactly (`ReceiveBudgetBytes`,
   `SendBudgetBytes`). `HeldRecordBudgetBytes` states the ceiling for records held behind an ordered
   gap.
@@ -215,9 +288,11 @@ still shows.
 - One address could take every capacity Slot, on both profiles and through an IPv6 prefix.
 - A datagram flood could keep one `Pump` from returning.
 - A refused stream connection was drained without limit.
+- A stream connection that sent no whole first record was held without a deadline or a limit.
 - The stream codec accepted a zero `MaxMessageSize`, an unmapped refusal reason and non-zero
   padding.
 - A lost handshake datagram left a datagram dial pending forever.
+- A stream dial whose far end connected and sent no handshake record stayed pending forever.
 
 ### Counters and documentation
 
@@ -233,9 +308,11 @@ Each risk was stated in a closed pull request and is still present in the code.
 
 ### Security and abuse
 
-- **R1 A stream connection that never sends holds a socket indefinitely.** A just-accepted
-  connection is held until its first record arrives, with no timeout. The admission cap limits
-  accepts per Frame, not how long a held connection lives.
+- **R1 Held stream connections share one limit.** At most `Capacity` connections are held waiting for
+  their first record, each for up to `SendIdleInterval` × `MissedHeartbeats`. Remotes on many addresses
+  that hold `Capacity` silent connections delay every new connection by up to that deadline. One address
+  can hold `MaxPeersPerAddress` of them, and a Resume whose record is slow to arrive from an address at
+  that limit is closed and must be re-dialled.
 - **R2 Path challenge limits.** Where an IP is shared (carrier-grade NAT, office NAT, shared host), a
   Peer can still be redirected to another port on that IP. A captured Resume replayed from the
   Peer's own IP still moves it. A forged `PathChallenge` that guesses a dialler's 32-bit session id
@@ -263,10 +340,8 @@ Each risk was stated in a closed pull request and is still present in the code.
 - **R8 Fragment delivery retries can lose the arena race repeatedly.** The delay is unbounded but
   not permanent. A record refused because it would overwrite a held Fragment raises no counter or
   Diagnostic.
-- **R9 Side effects of the ordered hold limit.** A record wider than this end's `FragmentSize`
-  behind a gap waits for its turn, which costs latency against a peer with a larger `FragmentSize`.
-  A Goodbye past the limit behind a stalled head goes unacked, so the sender waits out its Linger.
-  `OutOfWindowPackets` also counts in-window records the Space will not hold.
+- **R9 Side effects of the ordered hold limit.** A Goodbye past the limit behind a stalled head
+  goes unacked, so the sender waits out its Linger. `OutOfWindowPackets` also counts in-window records the Space will not hold.
   `HeldRecordBudgetBytes` excludes the short-lived arrays left when the ring grows.
 - **R10 A discarded oversized `UnreliableSequenced` record still advances the high-water mark**, so
   an older record arriving after it is dropped.

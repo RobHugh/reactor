@@ -131,6 +131,30 @@ dialler's Linger. The default is sized for traffic rather than latency and reach
 hundreds of thousands of reads with a large `MaxMessageSize`, so a consumer that needs a shorter Pump sets
 it lower and accepts a longer wait.
 
+**Amended (issue #482).** The stream profile held every accepted connection until its first handshake
+record arrived, with no limit on how many and no deadline. A remote that connected and sent nothing added
+a socket to every Pump's readiness check for as long as it kept the connection open. The admission cap
+bounds how many connections one Pump accepts, not how many stay held. Two derived bounds close this:
+
+- **A held connection has a deadline of this end's `SendIdleInterval` × `MissedHeartbeats`, fixed at
+  accept.** It is the silence an established Peer is allowed before it is lost, and a dialler sends its
+  Hello as soon as TCP connects, so a conforming dialler needs far less. Bytes that arrive do not move the
+  deadline, or a sender of one byte per deadline would hold its socket for 41 deadlines. A connection
+  still held at the deadline is closed with nothing sent and reported as `PendingAdmissionExpired`. The
+  check runs after the readiness pass, so a record already in the socket buffer is read before its
+  connection can expire.
+- **At most `Capacity` connections are held at once.** Each held connection is a claim on a Slot, a fresh
+  dial asking for one or a Resume reclaiming one, and a Reactor has `Capacity` Slots. At the limit the
+  Reactor stops accepting for that Pump, and the rest wait in the OS backlog, as the excess of the
+  admission cap does. Each declining counts as an `AdmissionDeferral`, and the Pump logs one
+  `PendingAdmissionLimitReached`. The admission cap was rejected as the source of the limit because it
+  can be set to 1, and one silent connection would then stop every accept until its deadline.
+
+The cost is that remotes holding `Capacity` silent connections delay every new connection by up to the
+deadline. ADR 0014's per-address limit keeps one address from doing that alone. A Reactor whose
+`SendIdleInterval` × `MissedHeartbeats` is shorter than a dialler's Pump interval closes that dialler
+before its Hello arrives.
+
 ## Datagram retention: slots, not a ring
 
 **Retention is a byte bound, per Peer, per reliable Space.**
@@ -157,6 +181,10 @@ retransmitted.
 The memory documentation therefore has two lines rather than one — `capacity × 2 × window ×
 fragmentSize` for receive and `capacity × 2 × retention` for send — with `fragmentSize` in one and not
 the other, because the window counts packets and retention counts bytes.
+
+**Amended (issue #485).** The memory documentation has a third line, `capacity × UnreliableQueueBytes`,
+for the unreliable send queue. `UnreliableQueueBytes` defaults to `RetentionSlots × (fragmentSize + 7)`,
+derived from retention, so it passes this ADR's rule. See ADR 0025.
 
 ## Datagram liveness adopts the stream profile's shape
 
@@ -190,6 +218,16 @@ under the 1280-byte IPv6 minimum MTU, and its range `[576, 65507]` is RFC 791's 
 UDP's maximum payload — citable, all of it. `MaxMessageSize` is required, as on the stream profile. The
 receive window keeps its derived floor.
 
+**Amended (issue #486).** Fragment size's range is `[576, 65476]`. Its upper bound is UDP's maximum
+payload less the 20-byte Datagram header and the 11-byte Fragment record header: the largest Fragment
+one Datagram has room for, so it is still derived rather than chosen (ADR 0004).
+
+**Amended (issue #488).** `MaxMessageSize` is at most `Array.MaxLength`, 2 147 483 591, so the frame
+arena can hold one maximum Message. The receive-window floor is computed in `long`, because
+`MaxMessageSize + FragmentSize - 1` can pass `int.MaxValue`. The memory-bill lines are computed as
+`Int128`: a budget property whose true figure passes `long.MaxValue` reads as `long.MaxValue`, and the
+construction check compares the exact figures.
+
 ## Raw: one buffer, and it is not per Link
 
 **Raw does not reassemble.** L1 keeps a persistent per-connection buffer because a partial Message tail
@@ -212,6 +250,13 @@ consumer who deliberately lowered the bound, which is the right way round for so
 about a peer it makes no claims about. Because it is one buffer and not `capacity` of them, 64 KB is a
 rounding error against the arena and the per-Peer allocations — which is what makes a safe default
 affordable here and nowhere else.
+
+**Amended (issue #477).** 65 507 bytes is the largest UDP payload over IPv4 only: 65 535 less the 20-byte
+IPv4 header and the 8-byte UDP header. An IPv6 payload length excludes the 40-byte fixed header, so an
+IPv6 UDP datagram can carry up to 65 527 bytes. At the default, truncation is unreachable over IPv4, but
+an IPv6 datagram of 65 508 to 65 527 bytes is reported as `DatagramTruncated` and never delivered. Both
+profiles share the 65 507 bound, so the same holds for the Datagram Session's scratch buffer. The read
+buffer is one byte longer than the bound, and a read that fills it is the truncation signal.
 
 ## Diagnostics are installed at a level
 

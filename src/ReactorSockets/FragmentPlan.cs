@@ -102,11 +102,20 @@ internal static class FragmentPlan
     /// </param>
     /// <param name="fragmentSize">
     /// The bytes one Fragment carries — a Reactor's resolved fragment size
-    /// (<see cref="DatagramSessionOptions.ResolvedFragmentSize"/>). Must be at least 1; this is a
+    /// (<see cref="DatagramSessionOptions.ResolvedFragmentSize"/>), or for a Peer its send Fragment size, the
+    /// smaller of that and the peer's announced Fragment size (ADR 0024 point 4). It is the cut size of a
+    /// reliable mode and the single-Datagram cap of an unreliable one. Must be at least 1; this is a
     /// caller invariant enforced by <see cref="DatagramSessionOptions.Validate"/> long before a Message
     /// reaches here, so it is asserted rather than reported through the return value.
     /// </param>
     /// <param name="mode">The delivery mode the Message is sent under.</param>
+    /// <param name="remoteReceiveWindowFragments">
+    /// The receive window in Fragments the peer announced. A reliable Message whose Fragment count at
+    /// <paramref name="fragmentSize"/> exceeds it is refused with
+    /// <see cref="FragmentPlanResult.RemoteMessageTooLarge"/>, because the peer closes a Peer that
+    /// declares a Fragment set wider than its window (ADR 0024 point 5). Unreliable modes never
+    /// fragment, so it does not apply to them.
+    /// </param>
     /// <param name="maxMessageLength">
     /// The receive limit a Message is checked against in every mode: the peer's own announced
     /// <c>MaxMessageSize</c>, not this Reactor's own
@@ -117,10 +126,15 @@ internal static class FragmentPlan
     /// A <see cref="FragmentPlanResult"/> carrying the Fragment count, or a refusal:
     /// <see cref="FragmentPlanResult.MessageTooLarge"/> when an unreliable mode cannot carry a Message
     /// this large in one Datagram, <see cref="FragmentPlanResult.RemoteMessageTooLarge"/> when the
-    /// Message is over <paramref name="maxMessageLength"/>.
+    /// Message is over <paramref name="maxMessageLength"/> or, for a reliable mode, needs more Fragments than
+    /// <paramref name="remoteReceiveWindowFragments"/>.
     /// </returns>
     public static FragmentPlanResult Resolve(
-        int messageLength, int fragmentSize, DeliveryMode mode, int maxMessageLength = int.MaxValue)
+        int messageLength,
+        int fragmentSize,
+        DeliveryMode mode,
+        uint remoteReceiveWindowFragments,
+        int maxMessageLength = int.MaxValue)
     {
         Debug.Assert(messageLength >= 0, "a Message length is never negative.");
         Debug.Assert(fragmentSize >= 1, "a fragment size of zero could never carry a byte.");
@@ -133,11 +147,12 @@ internal static class FragmentPlan
             // statement of the reliable too-large rule (issue #48's standards fix — Send used to repeat
             // it as its own message.Length > MaxMessageSize check). Long math avoids overflow for a
             // messageLength near int.MaxValue before the division brings the result back down.
+            // The peer's receive window bounds the Fragment count as well: a set wider than the window is
+            // closed on its first Fragment, so it is refused here before anything is retained.
             DeliveryMode.ReliableOrdered or DeliveryMode.ReliableUnordered =>
                 messageLength > maxMessageLength
                     ? FragmentPlanResult.RemoteMessageTooLarge
-                    : FragmentPlanResult.ForFragmentCount(
-                        messageLength == 0 ? 1 : (int)(((long)messageLength + fragmentSize - 1) / fragmentSize)),
+                    : WithinRemoteWindow(ReliableCount(messageLength, fragmentSize), remoteReceiveWindowFragments),
 
             // Unreliable modes never fragment (ADR 0004): over the cap is refused rather than cut,
             // because a lost Fragment here is never retransmitted. Under it, the peer's limit still
@@ -155,4 +170,14 @@ internal static class FragmentPlan
             _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, $"unrecognised delivery mode {mode}."),
         };
     }
+
+    /// <summary>The Fragments a reliable Message of <paramref name="messageLength"/> bytes is cut into at <paramref name="fragmentSize"/>; an empty Message is one.</summary>
+    private static int ReliableCount(int messageLength, int fragmentSize) =>
+        messageLength == 0 ? 1 : (int)(((long)messageLength + fragmentSize - 1) / fragmentSize);
+
+    /// <summary>A plan of <paramref name="fragmentCount"/> Fragments, or <see cref="FragmentPlanResult.RemoteMessageTooLarge"/> when the count exceeds <paramref name="remoteReceiveWindowFragments"/>.</summary>
+    private static FragmentPlanResult WithinRemoteWindow(int fragmentCount, uint remoteReceiveWindowFragments) =>
+        (uint)fragmentCount > remoteReceiveWindowFragments
+            ? FragmentPlanResult.RemoteMessageTooLarge
+            : FragmentPlanResult.ForFragmentCount(fragmentCount);
 }

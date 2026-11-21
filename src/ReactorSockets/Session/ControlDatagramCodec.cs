@@ -349,7 +349,7 @@ internal static class ControlDatagramCodec
         offset += DatagramSessionProtocol.CookieLength;
         terms = ReadTerms(datagram, ref offset);
 
-        if (!terms.Limits.IsLegal(speaksVersion: version == DatagramSessionProtocol.Version))
+        if (!terms.IsLegal(speaksVersion: version == DatagramSessionProtocol.Version))
         {
             version = default;
             clientNonce = default;
@@ -389,7 +389,7 @@ internal static class ControlDatagramCodec
         offset += sizeof(ulong);
         terms = ReadTerms(datagram, ref offset);
 
-        if (!terms.Limits.IsLegal(speaksVersion: true))
+        if (!terms.IsLegal(speaksVersion: true))
         {
             clientNonce = default;
             terms = default;
@@ -410,13 +410,17 @@ internal static class ControlDatagramCodec
         offset += sizeof(uint);
         terms.Limits.Write(destination[offset..]);
         offset += AnnouncedLimits.WireSize;
+        BinaryPrimitives.WriteUInt16BigEndian(destination[offset..], terms.FragmentSize);
+        offset += sizeof(ushort);
+        BinaryPrimitives.WriteUInt32BigEndian(destination[offset..], terms.ReceiveWindowFragments);
+        offset += sizeof(uint);
         return offset;
     }
 
     /// <summary>
     /// Reads the terms <see cref="WriteTerms"/> writes, starting at <paramref name="offset"/> and
     /// advancing it past them. Judges nothing: each caller applies
-    /// <see cref="AnnouncedLimits.IsLegal"/> to the limits.
+    /// <see cref="AnnouncedSessionTerms.IsLegal"/> to the terms.
     /// <see cref="AnnouncedSessionTerms.SessionIdForMe"/> is never judged: every value is a usable
     /// session id.
     /// </summary>
@@ -426,7 +430,11 @@ internal static class ControlDatagramCodec
         offset += sizeof(uint);
         AnnouncedLimits limits = AnnouncedLimits.Read(datagram[offset..]);
         offset += AnnouncedLimits.WireSize;
-        return new(sessionIdForMe, limits);
+        ushort fragmentSize = BinaryPrimitives.ReadUInt16BigEndian(datagram[offset..]);
+        offset += sizeof(ushort);
+        uint receiveWindowFragments = BinaryPrimitives.ReadUInt32BigEndian(datagram[offset..]);
+        offset += sizeof(uint);
+        return new(sessionIdForMe, limits, fragmentSize, receiveWindowFragments);
     }
 
     /// <summary>

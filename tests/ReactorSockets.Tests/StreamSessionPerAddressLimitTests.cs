@@ -329,4 +329,132 @@ public class StreamSessionPerAddressLimitTests
             peer.Counterparty.Dispose();
         }
     }
+
+    // =========================================================================================
+    // Held connections (issue #482): the limit also counts connections from one address waiting
+    // for their first handshake record, and closes the newest once its first read leaves it held
+    // =========================================================================================
+
+    [Fact]
+    public void Pump_SilentConnectionFromAnAddressHoldingItsLimit_IsClosedAtOnce()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = new(capacity: 4, maxPeersPerAddress: 2);
+        using StreamSessionReactorHarness.RawStreamPeer first = accepter.HoldSilentConnection();
+        using StreamSessionReactorHarness.RawStreamPeer second = accepter.HoldSilentConnection();
+        using StreamSessionReactorHarness.RawStreamPeer third = new(accepter.Endpoint);
+
+        // Act
+        accepter.PumpUntil(() => third.HasPendingReadOrClose);
+
+        // Assert
+        third.HasPendingReadOrClose.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Pump_SilentConnectionFromAnAddressHoldingItsLimit_LogsAddressPeerLimitReached()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = new(capacity: 4, maxPeersPerAddress: 2);
+        using StreamSessionReactorHarness.RawStreamPeer first = accepter.HoldSilentConnection();
+        using StreamSessionReactorHarness.RawStreamPeer second = accepter.HoldSilentConnection();
+        using StreamSessionReactorHarness.RawStreamPeer third = new(accepter.Endpoint);
+
+        // Act
+        accepter.PumpUntil(() => third.HasPendingReadOrClose);
+
+        // Assert
+        DiagnosticRecord record = accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.AddressPeerLimitReached).Which;
+        record.Level.Should().Be(DiagnosticLevel.Warn);
+        record.Source.Should().Be(Source.FromIPEndPoint(third.LocalEndPoint));
+        record.Value0.Should().Be(2);
+        record.Value1.Should().Be(32);
+    }
+
+    [Fact]
+    public void Pump_SilentConnectionFromAnAddressHoldingItsLimit_LeavesTheEarlierConnectionsOpen()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = new(capacity: 4, maxPeersPerAddress: 2);
+        using StreamSessionReactorHarness.RawStreamPeer first = accepter.HoldSilentConnection();
+        using StreamSessionReactorHarness.RawStreamPeer second = accepter.HoldSilentConnection();
+        using StreamSessionReactorHarness.RawStreamPeer third = new(accepter.Endpoint);
+
+        // Act
+        accepter.PumpUntil(() => third.HasPendingReadOrClose);
+
+        // Assert
+        first.HasPendingReadOrClose.Should().BeFalse();
+        second.HasPendingReadOrClose.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Pump_SilentConnectionFromAnotherAddress_IsHeldWhileTheFirstAddressIsAtItsLimit()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = new(capacity: 4, maxPeersPerAddress: 2);
+        using StreamSessionReactorHarness.RawStreamPeer first = accepter.HoldSilentConnection();
+        using StreamSessionReactorHarness.RawStreamPeer second = accepter.HoldSilentConnection();
+        using StreamSessionReactorHarness.RawStreamPeer other = new(accepter.Endpoint, _otherAddress);
+
+        // Act
+        accepter.PumpUntil(() => other.HasPendingReadOrClose, TimeSpan.FromMilliseconds(300));
+
+        // Assert
+        other.HasPendingReadOrClose.Should().BeFalse();
+    }
+
+    [Fact]
+    public void AttemptFreshConnection_HelloSentWithTheConnection_IsAdmittedFromAnAddressHoldingItsLimit()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = new(capacity: 4, maxPeersPerAddress: 2);
+        using StreamSessionReactorHarness.RawStreamPeer first = accepter.HoldSilentConnection();
+        using StreamSessionReactorHarness.RawStreamPeer second = accepter.HoldSilentConnection();
+
+        // Act
+        using StreamSessionReactorHarness.InboundAttemptResult attempt = accepter.AttemptFreshConnection();
+
+        // Assert
+        attempt.Admitted.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Handshake_AResumeSentWithItsConnection_ResumesFromAnAddressHoldingItsLimit()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = new(capacity: 4, maxPeersPerAddress: 2);
+        StreamSessionReactorHarness.HeldPeer held = accepter.EstablishOnePeer();
+        accepter.InterruptHeldPeer(held);
+        using StreamSessionReactorHarness.RawStreamPeer first = accepter.HoldSilentConnection();
+        using StreamSessionReactorHarness.RawStreamPeer second = accepter.HoldSilentConnection();
+
+        // Act
+        using StreamSessionReactorHarness.RawStreamPeer resumed = new(accepter.Endpoint);
+        resumed.Send(StreamSessionTestRecords.BuildResume(held.ResumeSecret));
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            accepter.PumpUntilDrained(events => events.Any(e => e.Kind == SessionEventKind.PeerResumed));
+
+        // Assert
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerResumed).Which.Peer.Should().Be(held.Peer);
+        held.Counterparty.Dispose();
+    }
+
+    [Fact]
+    public void Pump_SilentConnectionFromAnAddressHoldingItsLimitInPeers_IsHeld()
+    {
+        // Arrange
+        using StreamSessionReactorHarness accepter = new(capacity: 4, maxPeersPerAddress: 2);
+        StreamSessionReactorHarness.HeldPeer firstPeer = accepter.EstablishOnePeer();
+        StreamSessionReactorHarness.HeldPeer secondPeer = accepter.EstablishOnePeer();
+        using StreamSessionReactorHarness.RawStreamPeer silent = new(accepter.Endpoint);
+
+        // Act
+        accepter.PumpUntil(() => silent.HasPendingReadOrClose, TimeSpan.FromMilliseconds(300));
+
+        // Assert
+        silent.HasPendingReadOrClose.Should().BeFalse();
+        firstPeer.Counterparty.Dispose();
+        secondPeer.Counterparty.Dispose();
+    }
 }

@@ -78,7 +78,8 @@ public sealed class StreamSessionOptions
     /// statement about the consumer's own protocol that nothing here can derive. It is also
     /// announced to the remote as a receive limit, and floors both the receive buffer and
     /// <see cref="RetentionBytes"/> — an arena that cannot hold one maximum Message could never
-    /// deliver one.
+    /// deliver one. At most 2 147 483 587, <see cref="Array.MaxLength"/> less the 4-byte length prefix,
+    /// so one framed maximum Message fits one array.
     /// </summary>
     public required int MaxMessageSize { get; init; }
 
@@ -115,6 +116,9 @@ public sealed class StreamSessionOptions
     /// never refused by this limit, because the Peer it names already owns its Slot (ADR 0011). A dialled
     /// Peer is not charged: this Reactor chose to make it. A connection over the limit is refused the same way as
     /// one at a full Reactor, and reported with <see cref="DiagnosticId.AddressPeerLimitReached"/>.
+    /// The same limit applies to accepted connections still waiting for their first handshake record:
+    /// one address may have at most this many of them held, and a further one that has not sent its
+    /// whole record with its connection is closed at once with nothing sent.
     /// </para>
     /// </remarks>
     public int? MaxPeersPerAddress { get; init; }
@@ -144,8 +148,11 @@ public sealed class StreamSessionOptions
     /// <summary>
     /// How long a closing Session stays alive to retransmit its Goodbye and absorb what is still in
     /// flight. Required, for the same reason as <see cref="SendIdleInterval"/>: it trades a prompt
-    /// teardown against a clean one. At most 2^32 - 1 milliseconds (about 49.7 days), the most a handshake
-    /// may announce.
+    /// teardown against a clean one. It also bounds a dial: a Peer this end dialled that has not
+    /// established one Linger after <see cref="StreamSessionReactor.Connect"/> closes with
+    /// <see cref="DisconnectReason.TransportFailed"/>, so a Linger shorter than the round trip plus the
+    /// far end's Pump interval closes a dial before its answer arrives. At most 2^32 - 1 milliseconds
+    /// (about 49.7 days), the most a handshake may announce.
     /// </summary>
     public required TimeSpan Linger { get; init; }
 
@@ -211,8 +218,14 @@ public sealed class StreamSessionOptions
     /// </summary>
     public int? MissedHeartbeats { get; init; }
 
-    /// <summary>The floor both <see cref="RetentionBytes"/> and the receive buffer are held to: one maximum Message plus its length prefix.</summary>
-    public int ReceiveBufferFloor => MaxMessageSize + LengthPrefixSize;
+    /// <summary>
+    /// The floor both <see cref="RetentionBytes"/> and the receive buffer are held to: one maximum
+    /// Message plus its length prefix. The sum is computed in <see langword="long"/> and saturates at
+    /// <see cref="int.MaxValue"/>, so on options not yet validated a <see cref="MaxMessageSize"/> near
+    /// <see cref="int.MaxValue"/> reads as <see cref="int.MaxValue"/> rather than wrapping negative.
+    /// Construction rejects any <see cref="MaxMessageSize"/> whose floor would saturate.
+    /// </summary>
+    public int ReceiveBufferFloor => int.CreateSaturating((long)MaxMessageSize + LengthPrefixSize);
 
     /// <summary>The resolved receive buffer: <see cref="ReceiveBufferSize"/> if set, otherwise <see cref="ReceiveBufferFloor"/>.</summary>
     public int ResolvedReceiveBufferSize => ReceiveBufferSize ?? ReceiveBufferFloor;
@@ -284,6 +297,17 @@ public sealed class StreamSessionOptions
                 nameof(MaxMessageSize),
                 MaxMessageSize,
                 $"maximum message size of {MaxMessageSize} bytes carries nothing — it must be at least 1.");
+        }
+
+        int maxMessageSizeLimit = Array.MaxLength - LengthPrefixSize;
+        if (MaxMessageSize > maxMessageSizeLimit)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(MaxMessageSize),
+                MaxMessageSize,
+                $"maximum message size of {MaxMessageSize} bytes is above {maxMessageSizeLimit}, the largest Message that " +
+                $"fits one .NET array of {Array.MaxLength} bytes with its {LengthPrefixSize}-byte length prefix. Retention and the receive " +
+                "buffer each hold one framed maximum Message, so a larger one could never be allocated.");
         }
 
         int receiveBufferFloor = ReceiveBufferFloor;
@@ -398,14 +422,15 @@ public sealed class StreamSessionOptions
     /// Rejects a combination whose preallocation could not be made, naming both lines of the memory
     /// bill and their total. The check is arithmetic rather than an attempted allocation because the
     /// point is to tell the caller which knob to change, and a caught allocation failure knows only
-    /// that something was too big.
+    /// that something was too big. The total is an <see cref="Int128"/>, because each line can approach
+    /// 2^62 bytes and their sum can pass <see cref="long.MaxValue"/>.
     /// </summary>
     private void ValidateMemoryBill()
     {
         long receive = ReceiveBudgetBytes;
         long send = SendBudgetBytes;
         long boundaryRing = BoundaryRingBudgetBytes;
-        long total = receive + send + boundaryRing;
+        Int128 total = (Int128)receive + send + boundaryRing;
 
         if (total > Array.MaxLength)
         {

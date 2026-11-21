@@ -47,7 +47,7 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
 
     private const byte AcceptType = 4;
     private const int AcceptSessionIdOffset = 13;
-    private const int AcceptSecretOffset = 37;
+    private const int AcceptSecretOffset = DatagramSessionWire.AcceptSecretOffset;
 
     private DatagramSessionResumeScenario(
         DatagramSessionReactorHarness dialler,
@@ -297,10 +297,11 @@ internal sealed class DatagramSessionResumeScenario : IDisposable
     public byte[] DiallerResumeSecret => CapturedHelloWithCookie().AsSpan(HelloWithCookieSecretOffset, ResumeSecretLength).ToArray();
 
     // HelloWithCookie body: version(4), nonce(8), epoch(8), cookie(32), sessionIdForMe(4),
-    // maxMessageSize(4), sendIdleInterval(8), linger(8), resumeSecret(16).
+    // maxMessageSize(4), sendIdleInterval(8), linger(8), fragmentSize(2), receiveWindowFragments(4),
+    // resumeSecret(16).
     private const byte HelloWithCookieType = 3;
     private const int HelloWithCookieSessionIdOffset = ControlBodyOffset + 4 + 8 + 8 + 32;
-    private const int HelloWithCookieSecretOffset = HelloWithCookieSessionIdOffset + 4 + 4 + 8 + 8;
+    private const int HelloWithCookieSecretOffset = DatagramSessionWire.HelloWithCookieSecretOffset;
 
     private byte[] CapturedHelloWithCookie() => Proxy.Captures
         .Single(c => c.Direction == RelayDirection.ClientToUpstream && c.Payload[4] == HelloWithCookieType)

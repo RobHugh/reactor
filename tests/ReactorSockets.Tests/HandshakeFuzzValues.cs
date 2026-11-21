@@ -85,12 +85,21 @@ internal static class HandshakeFuzzValues
         _ => _maxMessageSizeBoundaries[random.Next(_maxMessageSizeBoundaries.Length)],
     };
 
-    /// <summary>A protocol version: mostly version 1, so the intervals are judged, otherwise any.</summary>
-    public static uint NextVersion(Random random) => random.Next(5) switch
+    /// <summary>A protocol version: mostly <paramref name="currentVersion"/>, so the announced terms are judged, otherwise any.</summary>
+    public static uint NextVersion(Random random, uint currentVersion = 1) => random.Next(5) switch
     {
         0 => NextUInt32(random),
-        _ => 1,
+        _ => currentVersion,
     };
+
+    /// <summary>An announced Fragment size: the legal range's edges and the values just outside them, or any 16-bit value.</summary>
+    public static ushort NextFragmentSize(Random random) => random.Next(3) switch
+    {
+        0 => (ushort)random.Next(ushort.MaxValue + 1),
+        _ => _fragmentSizeBoundaries[random.Next(_fragmentSizeBoundaries.Length)],
+    };
+
+    private static readonly ushort[] _fragmentSizeBoundaries = [0, 1, 575, 576, 577, 1200, 65_506, 65_507, 65_508, ushort.MaxValue];
 
     /// <summary>A Refusal reason byte, legal or not.</summary>
     public static byte NextRefusalReason(Random random) => random.Next(2) switch

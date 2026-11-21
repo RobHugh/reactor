@@ -243,9 +243,10 @@ now reflect what the four per-Space receive windows have refused;
 has slid past. <a class="xref" href="ReactorSockets.PeerCounters.MessagesReceived.html#ReactorSockets_PeerCounters_MessagesReceived">MessagesReceived</a> counts whole Messages handed to the
 frame arena for delivery, and not a Message the arena refused.
 <a class="xref" href="ReactorSockets.PeerCounters.Resumes.html#ReactorSockets_PeerCounters_Resumes">Resumes</a> counts the Peer's resumes: once per
-<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerResumed">PeerResumed</a> raised for it, on the accepting end when a matching
-Resume moves it out of Interrupted and on the dialling end when it hears its session again after
-sending a Resume, and never reset by one (ADR 0013).
+<a class="xref" href="ReactorSockets.SessionEventKind.html#ReactorSockets_SessionEventKind_PeerResumed">PeerResumed</a> raised for it, and never reset by one (ADR 0013). The
+accepting end raises it when a matching Resume or a well-formed data Datagram from the exact address
+and port it sends to moves the Peer out of Interrupted. The dialling end raises it when it hears its
+session again after sending a Resume.
 <a class="xref" href="ReactorSockets.PeerCounters.RetentionHighWaterBytes.html#ReactorSockets_PeerCounters_RetentionHighWaterBytes">RetentionHighWaterBytes</a> reads the true per-Peer figure — summed
 across both reliable Spaces — from <span class="xref">ReactorSockets.DatagramSessionReactor._retention</span>.</p>
 </dd>
@@ -281,7 +282,7 @@ progress.</p>
 0009). A Message too wide for its mode to carry is refused before any work is done on it: no
 sequence is allocated and no retention is taken, so a rejected Send leaves no trace on the
 Session. How wide is too wide depends on the mode and is decided by
-<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32">Resolve(int, int, DeliveryMode, int)</a>, the one place the rule is stated: an unreliable mode is capped
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32">Resolve(int, int, DeliveryMode, uint, int)</a>, the one place the rule is stated: an unreliable mode is capped
 at a single Datagram and refused above it as <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_MessageTooLarge">MessageTooLarge</a>, a reliable
 mode fragments, and every mode is refused above a second cap as
 <a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_RemoteMessageTooLarge">RemoteMessageTooLarge</a> (ADR 0004). That second cap is
@@ -302,12 +303,13 @@ that is never sent; <a class="xref" href="ReactorSockets.DeliveryMode.html#React
 the same as every other (<span class="xref">ReactorSockets.Session.OutboundSequenceSpaces</span>) — but retain nothing, because
 nothing unreliable is ever retransmitted. A Message this call accepts is queued on
 <code class="paramref">peer</code>'s Slot (<span class="xref">ReactorSockets.DatagramSessionReactor.PeerSlot.PendingSends</span>) and leaves as one packet
-record inside the next <a class="xref" href="ReactorSockets.DatagramSessionReactor.Pump.html#ReactorSockets_DatagramSessionReactor_Pump">Pump()</a>'s single coalesced Datagram to that Peer, in Send
-order (<span class="xref">ReactorSockets.DatagramSessionReactor.FlushOutboundDatagrams()</span>) — nothing reaches the wire before that Pump runs,
-and a <code>Send</code> with no following Pump puts nothing on the wire at all. That next Pump is only
-the first one this record is <em>eligible</em> to leave in: if this Peer already has more queued
-than one Datagram holds, a record queued behind the boundary waits for however many further
-Pumps it takes to reach the front, still in the order it was Sent.</p>
+record in a data Datagram written by a later <a class="xref" href="ReactorSockets.DatagramSessionReactor.Pump.html#ReactorSockets_DatagramSessionReactor_Pump">Pump()</a>, in Send
+order (<span class="xref">ReactorSockets.DatagramSessionReactor.FlushOutboundDatagrams()</span>). Nothing reaches the wire before that Pump runs. One
+Pump writes a bounded number of Datagrams per Peer (<span class="xref">ReactorSockets.DatagramSessionReactor.FlushPeer(ReactorSockets.DatagramSessionReactor.PeerSlot)</span>), so a record queued
+behind a backlog waits for however many Pumps it takes to reach the front. An unreliable Message
+is charged its length plus a 7-byte record header against
+<a class="xref" href="ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.html#ReactorSockets_DatagramSessionOptions_UnreliableQueueBytes">UnreliableQueueBytes</a> and refused with
+<a class="xref" href="ReactorSockets.SendOutcome.html#ReactorSockets_SendOutcome_SendQueueFull">SendQueueFull</a> past it, with nothing copied and no sequence spent.</p>
 </dd>
   </dl>
 

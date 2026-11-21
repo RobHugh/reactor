@@ -212,8 +212,11 @@ is derived rather than guessed. Provenance: the platform's own CSPRNG.</p>
     <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.Linger.html#ReactorSockets_StreamSessionOptions_Linger">Linger</a></dt>
     <dd><p>How long a closing Session stays alive to retransmit its Goodbye and absorb what is still in
 flight. Required, for the same reason as <a class="xref" href="ReactorSockets.StreamSessionOptions.SendIdleInterval.html#ReactorSockets_StreamSessionOptions_SendIdleInterval">SendIdleInterval</a>: it trades a prompt
-teardown against a clean one. At most 2^32 - 1 milliseconds (about 49.7 days), the most a handshake
-may announce.</p>
+teardown against a clean one. It also bounds a dial: a Peer this end dialled that has not
+established one Linger after <a class="xref" href="ReactorSockets.StreamSessionReactor.Connect.html#ReactorSockets_StreamSessionReactor_Connect_System_Net_IPEndPoint_">Connect(IPEndPoint)</a> closes with
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_TransportFailed">TransportFailed</a>, so a Linger shorter than the round trip plus the
+far end's Pump interval closes a dial before its answer arrives. At most 2^32 - 1 milliseconds
+(about 49.7 days), the most a handshake may announce.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -222,7 +225,8 @@ may announce.</p>
 statement about the consumer's own protocol that nothing here can derive. It is also
 announced to the remote as a receive limit, and floors both the receive buffer and
 <a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a> — an arena that cannot hold one maximum Message could never
-deliver one.</p>
+deliver one. At most 2 147 483 587, <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.array.maxlength">MaxLength</a> less the 4-byte length prefix,
+so one framed maximum Message fits one array.</p>
 </dd>
   </dl>
   <dl class="jumplist">
@@ -269,7 +273,11 @@ silently wraps through.</p>
   </dl>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.StreamSessionOptions.ReceiveBufferFloor.html#ReactorSockets_StreamSessionOptions_ReceiveBufferFloor">ReceiveBufferFloor</a></dt>
-    <dd><p>The floor both <a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a> and the receive buffer are held to: one maximum Message plus its length prefix.</p>
+    <dd><p>The floor both <a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a> and the receive buffer are held to: one maximum
+Message plus its length prefix. The sum is computed in <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/integral-numeric-types">long</a> and saturates at
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32.maxvalue">MaxValue</a>, so on options not yet validated a <a class="xref" href="ReactorSockets.StreamSessionOptions.MaxMessageSize.html#ReactorSockets_StreamSessionOptions_MaxMessageSize">MaxMessageSize</a> near
+<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32.maxvalue">MaxValue</a> reads as <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.int32.maxvalue">MaxValue</a> rather than wrapping negative.
+Construction rejects any <a class="xref" href="ReactorSockets.StreamSessionOptions.MaxMessageSize.html#ReactorSockets_StreamSessionOptions_MaxMessageSize">MaxMessageSize</a> whose floor would saturate.</p>
 </dd>
   </dl>
   <dl class="jumplist">

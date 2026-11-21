@@ -147,8 +147,8 @@ public class DatagramSessionSendFragmentationTests
 
     /// <summary>
     /// Sends a <see cref="MaxMessageSize"/>-byte Message under <paramref name="mode"/> through a
-    /// freshly connected Session pair, pumps it across a <see cref="WireTap"/>, and decodes the one
-    /// captured data Datagram's records by hand.
+    /// freshly connected Session pair, pumps it across a <see cref="WireTap"/>, and decodes the
+    /// relayed data Datagrams' records by hand, one Fragment to a Datagram.
     /// </summary>
     [Theory]
     [InlineData(DeliveryMode.ReliableOrdered, 0, 1, false)]
@@ -169,10 +169,14 @@ public class DatagramSessionSendFragmentationTests
         DatagramSessionReactorHarness.PumpThroughTapUntilConnected(dialler, tap, accepter);
         byte[] message = Enumerable.Range(0, length).Select(i => (byte)i).ToArray();
 
+        int capturesBefore = tap.Captures.Count;
+
         // Act
         dialler.Reactor.Send(diallerPeer, mode, message).Should().Be(SendOutcome.Sent);
-        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
-        List<DecodedRecord> records = DecodeRecords(FirstDataDatagram(tap));
+        List<DecodedRecord> records = DatagramSessionReactorHarness
+            .PumpOnceAndRelayDataDatagrams(dialler, tap, capturesBefore, expectedRecords)
+            .SelectMany(DecodeRecords)
+            .ToList();
 
         // Assert
         records.Should().HaveCount(expectedRecords);
@@ -190,11 +194,16 @@ public class DatagramSessionSendFragmentationTests
 
         byte[] message = Enumerable.Range(0, MaxMessageSize).Select(i => (byte)(i % 256)).ToArray();
 
+        int capturesBefore = tap.Captures.Count;
+
         SendOutcome outcome = dialler.Reactor.Send(diallerPeer, mode, message);
         outcome.Should().Be(SendOutcome.Sent, "retention was sized generously enough to hold every Fragment of one MaxMessageSize Message");
-        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
+        int expectedFragments = (MaxMessageSize + FragmentSize - 1) / FragmentSize;
 
-        List<DecodedRecord> records = DecodeRecords(FirstDataDatagram(tap));
+        List<DecodedRecord> records = DatagramSessionReactorHarness
+            .PumpOnceAndRelayDataDatagrams(dialler, tap, capturesBefore, expectedFragments)
+            .SelectMany(DecodeRecords)
+            .ToList();
         return (records, message);
     }
 

@@ -68,7 +68,7 @@ The second numeric slot; meaning documented on the [`DiagnosticId`](ReactorSocke
  [ForAddressPeerLimitReached\(Source, int, int\)](ReactorSockets.DiagnosticRecord.ForAddressPeerLimitReached.md\#ReactorSockets\_DiagnosticRecord\_ForAddressPeerLimitReached\_ReactorSockets\_Source\_System\_Int32\_System\_Int32\_)
 
 Builds a [`DiagnosticId.AddressPeerLimitReached`](ReactorSockets.DiagnosticId.md) record for the claimed Source whose
-handshake was refused, carrying the per-address limit and the prefix length its address was
+handshake was refused, or whose held stream connection was closed, carrying the per-address limit and the prefix length its address was
 counted by: 32 for IPv4, and the IPv6 grouping length for IPv6 (ADR 0014).
 
  [ForAdmissionCapReached\(int, int\)](ReactorSockets.DiagnosticRecord.ForAdmissionCapReached.md\#ReactorSockets\_DiagnosticRecord\_ForAdmissionCapReached\_System\_Int32\_System\_Int32\_)
@@ -155,6 +155,12 @@ Builds a [`DiagnosticId.MalformedFraming`](ReactorSockets.DiagnosticId.md) recor
 this profile's rules. <code>Value0</code> is the offending length prefix — 0 for a truncation, where
 no full prefix was ever read; <code>Value1</code> is this Reactor's own <code>MaxMessageSize</code>.
 
+ [ForOversizedFragment\(PeerId, long, long\)](ReactorSockets.DiagnosticRecord.ForOversizedFragment.md\#ReactorSockets\_DiagnosticRecord\_ForOversizedFragment\_ReactorSockets\_PeerId\_System\_Int64\_System\_Int64\_)
+
+Builds a [`DiagnosticId.OversizedFragment`](ReactorSockets.DiagnosticId.md) record for the Peer whose reliable Fragment
+was wider than this Reactor's own Fragment size, carrying the Fragment's payload length and that
+size.
+
  [ForOversizedFragmentSet\(PeerId, long, long\)](ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet.md\#ReactorSockets\_DiagnosticRecord\_ForOversizedFragmentSet\_ReactorSockets\_PeerId\_System\_Int64\_System\_Int64\_)
 
 Builds a [`DiagnosticId.OversizedFragmentSet`](ReactorSockets.DiagnosticId.md) record for the Peer whose Fragment
@@ -179,6 +185,18 @@ Builds a [`DiagnosticId.PeerRefused`](ReactorSockets.DiagnosticId.md) record for
 dialler refused because it announced a version this Reactor does not speak. <code>Value0</code> is
 the version offered; <code>Value1</code> is the version this Reactor requires.
 
+ [ForPendingAdmissionExpired\(Source, int, long\)](ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired.md\#ReactorSockets\_DiagnosticRecord\_ForPendingAdmissionExpired\_ReactorSockets\_Source\_System\_Int32\_System\_Int64\_)
+
+Builds a [`DiagnosticId.PendingAdmissionExpired`](ReactorSockets.DiagnosticId.md) record for the claimed Source of an
+accepted stream connection closed for sending no whole first record within its deadline.
+<code>Value0</code> is the bytes of that record it had sent; <code>Value1</code> is the deadline in milliseconds.
+
+ [ForPendingAdmissionLimitReached\(int, int\)](ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached.md\#ReactorSockets\_DiagnosticRecord\_ForPendingAdmissionLimitReached\_System\_Int32\_System\_Int32\_)
+
+Builds a [`DiagnosticId.PendingAdmissionLimitReached`](ReactorSockets.DiagnosticId.md) record. No subject. Carries the
+held-connection limit and the Admissions declined this Pump, counted as
+[`DiagnosticRecord.ForAdmissionCapReached(int, int)`](ReactorSockets.DiagnosticRecord.ForAdmissionCapReached.md#ReactorSockets_DiagnosticRecord_ForAdmissionCapReached_System_Int32_System_Int32_)'s are.
+
  [ForRedialAttempted\(PeerId, long, long\)](ReactorSockets.DiagnosticRecord.ForRedialAttempted.md\#ReactorSockets\_DiagnosticRecord\_ForRedialAttempted\_ReactorSockets\_PeerId\_System\_Int64\_System\_Int64\_)
 
 Builds a [`DiagnosticId.RedialAttempted`](ReactorSockets.DiagnosticId.md) record for the Peer beginning a fresh
@@ -189,8 +207,12 @@ computed delay before jitter.
  [ForRedialFailed\(PeerId, SocketError, long\)](ReactorSockets.DiagnosticRecord.ForRedialFailed.md\#ReactorSockets\_DiagnosticRecord\_ForRedialFailed\_ReactorSockets\_PeerId\_System\_Net\_Sockets\_SocketError\_System\_Int64\_)
 
 Builds a [`DiagnosticId.RedialFailed`](ReactorSockets.DiagnosticId.md) record for the Peer whose re-dial attempt
-could not connect. <code>Value0</code> carries the platform [`SocketError`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror) as its
-underlying integer value; <code>Value1</code> is the attempt number that failed.
+could not connect, or connected and ended before the listener confirmed the Resume.
+<code>Value0</code> carries the platform [`SocketError`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror) as its underlying integer value
+([`Disconnecting`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror.disconnecting) for an end of stream before confirmation, or the
+read's error, [`TimedOut`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror.timedout) when the listener did not answer within the
+receive-idle deadline, [`SocketError`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror.socketerror) when the Resume record could not
+be sent); <code>Value1</code> is the attempt number that failed.
 
  [ForResumeMatched\(PeerId, long\)](ReactorSockets.DiagnosticRecord.ForResumeMatched.md\#ReactorSockets\_DiagnosticRecord\_ForResumeMatched\_ReactorSockets\_PeerId\_System\_Int64\_)
 

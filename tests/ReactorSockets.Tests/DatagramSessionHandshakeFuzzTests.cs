@@ -20,7 +20,7 @@ public class DatagramSessionHandshakeFuzzTests
     private const int ControlBodyOffset = 5;
     private const int CookieLength = 32;
     private const int ResumeSecretLength = 16;
-    private const uint ProtocolVersion = 1;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
 
     private const byte HelloType = 1;
     private const byte CookieType = 2;
@@ -253,24 +253,32 @@ public class DatagramSessionHandshakeFuzzTests
     /// </summary>
     private static byte[] BuildFuzzedHelloWithCookie(Random random, ulong clientNonce, long epoch, ReadOnlySpan<byte> cookie)
     {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + 8 + ResumeSecretLength];
-        int offset = 0;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), HandshakeFuzzValues.NextVersion(random));
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), clientNonce);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), unchecked((ulong)epoch));
-        offset += 8;
-        cookie.CopyTo(body.AsSpan(offset, CookieLength));
-        offset += CookieLength;
-        WriteFuzzedTerms(random, body.AsSpan(offset));
+        uint version = HandshakeFuzzValues.NextVersion(random, DatagramSessionWire.ProtocolVersion);
+        uint sessionIdForMe = HandshakeFuzzValues.NextUInt32(random);
+        uint maxMessageSize = HandshakeFuzzValues.NextMaxMessageSize(random);
+        ulong sendIdleIntervalMilliseconds = HandshakeFuzzValues.NextInterval(random);
+        ulong lingerMilliseconds = HandshakeFuzzValues.NextInterval(random);
+        byte[] resumeSecret = new byte[ResumeSecretLength];
+        random.NextBytes(resumeSecret);
+        byte[] body = new byte[DatagramSessionWire.HelloWithCookieBodyLength];
+        DatagramSessionWire.WriteHelloWithCookieBody(
+            body,
+            version,
+            clientNonce,
+            epoch,
+            cookie,
+            sessionIdForMe,
+            maxMessageSize,
+            sendIdleIntervalMilliseconds,
+            lingerMilliseconds,
+            resumeSecret);
         return BuildControlDatagram(HelloWithCookieType, body);
     }
 
     /// <summary>An Accept carrying the dial's own nonce and a fuzzed session id, limits and resume secret.</summary>
     private static byte[] BuildFuzzedAccept(Random random, ulong clientNonce)
     {
-        byte[] body = new byte[8 + 4 + 4 + 8 + 8 + ResumeSecretLength];
+        byte[] body = new byte[DatagramSessionWire.AcceptBodyLength];
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(0, 8), clientNonce);
         WriteFuzzedTerms(random, body.AsSpan(8));
         return BuildControlDatagram(AcceptType, body);
@@ -307,22 +315,27 @@ public class DatagramSessionHandshakeFuzzTests
         byte[] body = new byte[8 + 1 + 4 + 4];
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(0, 8), clientNonce);
         body[8] = HandshakeFuzzValues.NextRefusalReason(random);
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(9, 4), HandshakeFuzzValues.NextVersion(random));
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(13, 4), HandshakeFuzzValues.NextVersion(random));
+        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(9, 4), HandshakeFuzzValues.NextVersion(random, DatagramSessionWire.ProtocolVersion));
+        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(13, 4), HandshakeFuzzValues.NextVersion(random, DatagramSessionWire.ProtocolVersion));
         return BuildControlDatagram(RefusalType, body);
     }
 
     /// <summary>
     /// Writes the terms a Hello-with-cookie and an Accept share: session id, MaxMessageSize, send-idle
-    /// interval and Linger, then the resume secret.
+    /// interval, Linger, FragmentSize and ReceiveWindowFragments, then the resume secret.
     /// </summary>
     private static void WriteFuzzedTerms(Random random, Span<byte> destination)
     {
-        BinaryPrimitives.WriteUInt32BigEndian(destination[0..4], HandshakeFuzzValues.NextUInt32(random));
-        BinaryPrimitives.WriteUInt32BigEndian(destination[4..8], HandshakeFuzzValues.NextMaxMessageSize(random));
-        BinaryPrimitives.WriteUInt64BigEndian(destination[8..16], HandshakeFuzzValues.NextInterval(random));
-        BinaryPrimitives.WriteUInt64BigEndian(destination[16..24], HandshakeFuzzValues.NextInterval(random));
-        random.NextBytes(destination.Slice(24, ResumeSecretLength));
+        int offset = DatagramSessionWire.WriteTerms(
+            destination,
+            0,
+            HandshakeFuzzValues.NextUInt32(random),
+            HandshakeFuzzValues.NextMaxMessageSize(random),
+            HandshakeFuzzValues.NextInterval(random),
+            HandshakeFuzzValues.NextInterval(random),
+            HandshakeFuzzValues.NextFragmentSize(random),
+            HandshakeFuzzValues.NextUInt32(random));
+        random.NextBytes(destination.Slice(offset, ResumeSecretLength));
     }
 
     /// <summary>

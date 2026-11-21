@@ -30,12 +30,13 @@ that is never sent; [`DeliveryMode.Unreliable`](ReactorSockets.DeliveryMode.md) 
 the same as every other (`OutboundSequenceSpaces`) — but retain nothing, because
 nothing unreliable is ever retransmitted. A Message this call accepts is queued on
 <code class="paramref">peer</code>'s Slot (`PendingSends`) and leaves as one packet
-record inside the next [`DatagramSessionReactor.Pump()`](ReactorSockets.DatagramSessionReactor.Pump.md#ReactorSockets_DatagramSessionReactor_Pump)'s single coalesced Datagram to that Peer, in Send
-order (`FlushOutboundDatagrams`) — nothing reaches the wire before that Pump runs,
-and a <code>Send</code> with no following Pump puts nothing on the wire at all. That next Pump is only
-the first one this record is <em>eligible</em> to leave in: if this Peer already has more queued
-than one Datagram holds, a record queued behind the boundary waits for however many further
-Pumps it takes to reach the front, still in the order it was Sent.
+record in a data Datagram written by a later [`DatagramSessionReactor.Pump()`](ReactorSockets.DatagramSessionReactor.Pump.md#ReactorSockets_DatagramSessionReactor_Pump), in Send
+order (`FlushOutboundDatagrams`). Nothing reaches the wire before that Pump runs. One
+Pump writes a bounded number of Datagrams per Peer (`FlushPeer`), so a record queued
+behind a backlog waits for however many Pumps it takes to reach the front. An unreliable Message
+is charged its length plus a 7-byte record header against
+[`DatagramSessionOptions.UnreliableQueueBytes`](ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.md#ReactorSockets_DatagramSessionOptions_UnreliableQueueBytes) and refused with
+[`SendOutcome.SendQueueFull`](ReactorSockets.SendOutcome.md) past it, with nothing copied and no sequence spent.
 
 ```csharp
 public SendOutcome Send(PeerId peer, DeliveryMode mode, ReadOnlySpan<byte> message)
@@ -56,8 +57,10 @@ Which of the four delivery modes carries this Message; see <code>docs/delivery-m
 The Message payload, unframed. The bytes are copied before this call returns — into
 `_retention` for a reliable mode, into the queued record for an unreliable one — so
 the caller owns its buffer again the instant <code>Send</code> returns and may overwrite or reuse it
-without changing what is eventually put on the wire. A Message wider than
-[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) cannot fit in one Datagram, and for
+without changing what is eventually put on the wire. A Message wider than this Peer's send
+Fragment size (<code>fragmentSize</code> below: the smaller of this Reactor's
+[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) and the peer's announced Fragment size)
+cannot fit in one Datagram, and for
 [`DeliveryMode.Unreliable`](ReactorSockets.DeliveryMode.md) and [`DeliveryMode.UnreliableSequenced`](ReactorSockets.DeliveryMode.md) that cap
 is reported back as [`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md) rather than thrown, and it is
 permanent — no option lifts it: you may only fragment what you can retransmit (ADR 0004), because
@@ -70,16 +73,16 @@ on arrival; a Message over both caps reports [`SendOutcome.MessageTooLarge`](Rea
 [`DeliveryMode.ReliableOrdered`](ReactorSockets.DeliveryMode.md) and [`DeliveryMode.ReliableUnordered`](ReactorSockets.DeliveryMode.md) the
 single-Datagram cap does not apply: a Message up to <code class="paramref">peer</code>'s own announced
 <code>MaxMessageSize</code> (see the summary above) is cut into <code>ceil(length / fragmentSize)</code>
-Fragments, each retained and sequenced as its own ordinary reliable packet, and only a Message
+Fragments, each retained and sequenced as its own ordinary reliable packet, and a Message
 wider than that remote limit is refused with [`SendOutcome.RemoteMessageTooLarge`](ReactorSockets.SendOutcome.md).
-That <code>fragmentSize</code> is this Peer's own `FragmentSize`, captured from
-[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) once when the Peer was admitted — not
-re-read from options on this or any later call. Fragment size is unilateral, per-direction, and
-decided once, at <code>Send</code> (ADR 0004): a retransmit re-sends bytes already cut rather than
-re-deciding anything, so two Messages sent to the same Peer at different times, and every
-retransmit of either, are always cut with the same size. It is never announced in the handshake,
-because a receiver reassembles a Fragment set by <code>fragmentIndex</code> and <code>fragmentCount</code>
-alone and never needs to know the sender's choice.
+That <code>fragmentSize</code> is this Peer's `FragmentSize`: the smaller of this
+Reactor's [`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) and the Fragment size the
+peer announced, fixed once when the Peer reached Established (ADR 0024) — not re-read on this or
+any later call, and unchanged by a Resume. A retransmit re-sends bytes already cut, so two
+Messages sent to the same Peer at different times, and every retransmit of either, are cut with
+the same size. A reliable Message that needs more Fragments at that size than the peer's announced
+receive window holds is refused with [`SendOutcome.RemoteMessageTooLarge`](ReactorSockets.SendOutcome.md), with
+nothing retained or sequenced.
 
 ### Returns
 

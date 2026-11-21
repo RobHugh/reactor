@@ -26,16 +26,10 @@ public class DatagramSessionInboundMessageLimitTests
     private const uint ControlSession = 0;
 
     private const byte HelloType = 1;
-    private const byte HelloWithCookieType = 3;
     private const int ControlBodyOffset = 5;
     private const int CookieLength = 32;
-    private const int ResumeSecretLength = 16;
 
-    private const uint ProtocolVersion = 1;
-    private const uint DialerSessionId = 0xCAFE_BABE;
-    private const uint DialerMaxMessageSize = 4096;
-    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
-    private const ulong DialerLingerMilliseconds = 30_000;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
 
     private const int DatagramHeaderSize = 20;
     private const int UnfragmentedRecordSize = 7;
@@ -392,30 +386,6 @@ public class DatagramSessionInboundMessageLimitTests
         return BuildControlDatagram(HelloType, body);
     }
 
-    private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
-    {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + 8 + ResumeSecretLength];
-        int offset = 0;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), clientNonce);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), unchecked((ulong)epoch));
-        offset += 8;
-        cookie.CopyTo(body.AsSpan(offset, CookieLength));
-        offset += CookieLength;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
-
-        // The remaining bytes are the dialler's resume secret, which nothing here reads.
-        return BuildControlDatagram(HelloWithCookieType, body);
-    }
-
     /// <summary>A live Session between an accepter at the limit under test and a hand-driven client.</summary>
     private sealed class Fixture : IDisposable
     {
@@ -496,7 +466,7 @@ public class DatagramSessionInboundMessageLimitTests
             long epoch = unchecked((long)BinaryPrimitives.ReadUInt64BigEndian(cookieDatagram.AsSpan(ControlBodyOffset + 8, 8)));
             byte[] cookie = cookieDatagram.AsSpan(ControlBodyOffset + 16, CookieLength).ToArray();
 
-            _client.SendTo(_clientLink, destination, BuildHelloWithCookieDatagram(clientNonce, epoch, cookie));
+            _client.SendTo(_clientLink, destination, DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie));
             byte[] acceptDatagram = ExchangeUntilReceived();
 
             return BinaryPrimitives.ReadUInt32BigEndian(acceptDatagram.AsSpan(ControlBodyOffset + 8, 4));

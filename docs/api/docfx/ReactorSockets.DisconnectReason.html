@@ -138,7 +138,11 @@ finished becoming one.</p>
 <p>The datagram profile has no transport to fail, and produces this member for a dial that got no
 answer: one still pending its own <a class="xref" href="ReactorSockets.DatagramSessionOptions.Linger.html#ReactorSockets_DatagramSessionOptions_Linger">Linger</a> after
 <a class="xref" href="ReactorSockets.DatagramSessionReactor.Connect.html#ReactorSockets_DatagramSessionReactor_Connect_System_Net_IPEndPoint_">Connect(IPEndPoint)</a>, its handshake resent throughout (ADR 0009, amendment
-of 2026-11-10).</p>
+of 2026-11-10).
+The stream profile produces it for a dial that has not established one
+<a class="xref" href="ReactorSockets.StreamSessionOptions.Linger.html#ReactorSockets_StreamSessionOptions_Linger">Linger</a> after <a class="xref" href="ReactorSockets.StreamSessionReactor.Connect.html#ReactorSockets_StreamSessionReactor_Connect_System_Net_IPEndPoint_">Connect(IPEndPoint)</a>, whether
+its TCP connect is still pending or the far end connected and sent no handshake record (ADR 0011,
+amendment for issue #483).</p>
 </dd>
   
     <dt id="ReactorSockets_DisconnectReason_ProtocolViolation"><code>ProtocolViolation = 4</code></dt>

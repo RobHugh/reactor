@@ -59,7 +59,9 @@ Raising `ArenaSize` above the floor lets more Links deliver in the same Frame. S
 Construction throws. Every check is deterministic and entirely yours.
 
 - `ArgumentOutOfRangeException` for a single bad value: `Capacity`, `AdmissionCap` or
-  `scratchBufferSize` below 1.
+  `scratchBufferSize` below 1, `ArenaSize` above `Array.MaxLength` (2 147 483 591), or
+  `scratchBufferSize` above `Array.MaxLength - 1` (2 147 483 590). The arena is one array, and the
+  scratch buffer is one array one byte longer than `scratchBufferSize`.
 - `ArgumentException` for a combination that cannot work: `ArenaSize` below `scratchBufferSize`, or
   `Sink` without `MinimumLevel`.
 

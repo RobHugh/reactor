@@ -25,7 +25,7 @@ public class DatagramSessionInterruptedDiallerResumeTests
     private const int ControlBodyOffset = 5;
     private const byte AcceptType = 4;
     private const int AcceptSessionIdOffset = ControlBodyOffset + sizeof(ulong);
-    private const int AcceptSecretOffset = ControlBodyOffset + sizeof(ulong) + sizeof(uint) + sizeof(uint) + sizeof(ulong) + sizeof(ulong);
+    private const int AcceptSecretOffset = DatagramSessionWire.AcceptSecretOffset;
     private const int ResumeSessionIdOffset = ControlBodyOffset;
     private const int ResumeSecretOffset = ControlBodyOffset + sizeof(uint);
     private const int SecretLength = 16;

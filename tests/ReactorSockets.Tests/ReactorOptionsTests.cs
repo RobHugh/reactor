@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using FluentAssertions;
@@ -7,10 +8,102 @@ namespace ReactorSockets.Tests;
 
 /// <summary>
 /// The shared options value is validated at construction and nowhere else, so every test here builds a
-/// <see cref="RawReactor"/> — the profile constructor is the only caller a consumer can reach.
+/// profile Reactor — the profile constructor is the only caller a consumer can reach. The
+/// <see cref="ReactorOptions.ArenaSize"/> upper-bound tests build each profile, and live in this one
+/// class so their arena allocations of <see cref="Array.MaxLength"/> bytes run one at a time.
 /// </summary>
 public class ReactorOptionsTests
 {
+    /// <summary>The three profiles, by name, for the tests that hold across every profile.</summary>
+    public static TheoryData<string> Profiles => ["Raw", "Stream", "Datagram"];
+
+    /// <summary>Builds the named profile from <paramref name="reactor"/> with a small message limit.</summary>
+    private static IDisposable CreateProfile(string profile, ReactorOptions reactor) => profile switch
+    {
+        "Raw" => new RawReactor(reactor),
+        "Stream" => new StreamSessionReactor(new StreamSessionOptions
+        {
+            Reactor = reactor,
+            MaxMessageSize = 4096,
+            RetentionBytes = 4100, // One Message plus its 4-byte length prefix.
+            SendIdleInterval = TimeSpan.FromSeconds(1),
+            Linger = TimeSpan.FromSeconds(1),
+        }),
+        "Datagram" => new DatagramSessionReactor(new DatagramSessionOptions
+        {
+            Reactor = reactor,
+            MaxMessageSize = 4096,
+            RetentionBytes = 4096,
+            SendIdleInterval = TimeSpan.FromSeconds(1),
+            Linger = TimeSpan.FromSeconds(1),
+        }),
+        _ => throw new ArgumentOutOfRangeException(nameof(profile), profile, "unknown profile"),
+    };
+
+    [Theory]
+    [MemberData(nameof(Profiles))]
+    public void Constructor_ArenaSizeAtIntMaxValue_ThrowsArgumentOutOfRangeExceptionNamingArenaSize(string profile)
+    {
+        // Arrange
+        ReactorOptions options = new() { Capacity = 1, ArenaSize = int.MaxValue };
+
+        // Act
+        Action act = () => CreateProfile(profile, options).Dispose();
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName(nameof(ReactorOptions.ArenaSize))
+            .Which.Message.Should().Contain(Array.MaxLength.ToString(CultureInfo.InvariantCulture));
+    }
+
+    [Theory]
+    [MemberData(nameof(Profiles))]
+    public void Constructor_ArenaSizeOneAboveArrayMaxLength_ThrowsArgumentOutOfRangeExceptionNamingArenaSize(string profile)
+    {
+        // Arrange
+        ReactorOptions options = new() { Capacity = 1, ArenaSize = Array.MaxLength + 1 };
+
+        // Act
+        Action act = () => CreateProfile(profile, options).Dispose();
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName(nameof(ReactorOptions.ArenaSize))
+            .Which.Message.Should().Contain(Array.MaxLength.ToString(CultureInfo.InvariantCulture));
+    }
+
+    [Theory]
+    [MemberData(nameof(Profiles))]
+    public void Constructor_ArenaSizeAtArrayMaxLength_DoesNotThrow(string profile)
+    {
+        // Arrange
+        ReactorOptions options = new() { Capacity = 1, ArenaSize = Array.MaxLength };
+
+        // Act
+        Action act = () => CreateProfile(profile, options).Dispose();
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
+    [Theory]
+    [InlineData(int.MaxValue)]
+    [InlineData(0x7FFFFFC7)] // Array.MaxLength: one byte short of room for the truncation byte.
+    public void Constructor_ScratchBufferSizeAboveArrayMaxLengthLessOne_ThrowsArgumentOutOfRangeExceptionNamingScratchBufferSize(
+        int scratchBufferSize)
+    {
+        // Arrange — ArenaSize is unset, so a check on the resolved arena would wrongly blame it.
+        ReactorOptions options = new() { Capacity = 1 };
+
+        // Act
+        Action act = () => new RawReactor(options, scratchBufferSize).Dispose();
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("scratchBufferSize")
+            .Which.Message.Should().Contain((Array.MaxLength - 1).ToString(CultureInfo.InvariantCulture));
+    }
+
     [Fact]
     public void Capacity_Declaration_IsARequiredMemberTheCompilerEnforces()
     {

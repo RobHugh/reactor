@@ -103,6 +103,7 @@ Source or none) and two numeric slots whose meaning is documented per id.
 | `OversizedMessage` (207) | Warn | Peer | A completed Message was larger than your `MaxMessageSize` and was discarded. `Value0` its length, `Value1` your limit. |
 | `AddressPeerLimitReached` (208) | Warn | Source | A verified handshake was refused because its address holds `MaxPeersPerAddress` accepted Peers. `Value0` the limit, `Value1` the prefix length the address was counted by: 32 for IPv4, `PeerLimitIPv6PrefixLength` for IPv6. |
 | `DatagramReadLimitReached` (209) | Warn | — | A Pump made `MaxDatagramsPerPump` reads on one bound socket and stopped, whether or not more were queued. At most one per bound socket per Pump. `Value0` the limit, `Value1` the socket's index in `BoundEndpoints`. |
+| `OversizedFragment` (210) | Warn | Peer | A reliable Fragment was wider than your `FragmentSize`, closing the Session. `Value0` its payload length, `Value1` your `ResolvedFragmentSize`. |
 | `LingerNegotiated` (301) | Info | Peer | A handshake completed. `Value0` your Linger in ms, `Value1` the effective one. |
 | `ResumeMatched` (304) | Info | Peer | A Resume matched, or the dialling end heard its Session again. `Value0` always 0 here. |
 | `ResumeUnmatched` (305) | Warn | Source | A Resume was refused. `Value0` 0 no such Peer, 1 wrong secret or closing. `Value1` 6, the Resume type. |
@@ -113,9 +114,10 @@ will miss them.
 
 `FragmentSetAbandoned` never closes anything, and ordinary loss never raises it. A Fragment set that
 loses a Fragment holds its receive-window slots until a retransmission completes it. Only a set the
-sender can never complete is dropped. Either it sent other records at the sequences the set's
-missing Fragments needed, or it sent a Fragment larger than your `FragmentSize`, which is admitted
-but cannot be held.
+sender can never complete is dropped. That is a set whose sender sent other records at the sequences
+the set's missing Fragments needed. A reliable Fragment wider than your `FragmentSize` is not a set
+that is abandoned. Only a non-conforming peer sends one, and it closes the Peer with
+`ProtocolViolation` before anything in its datagram is acknowledged.
 
 ## What to watch in production
 

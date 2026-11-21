@@ -75,6 +75,7 @@ Linger is the only thing that ends an interruption:
 
 - The interrupted Peer closes with `LingerExpired` once the effective Linger has elapsed.
 - Re-dial attempts stop then too. There is no attempt-count limit anywhere.
+- Linger counts from the `PeerInterrupted`. A re-dial that connects but is not answered does not restart it.
 - Both ends give up at the same negotiated minimum, so neither is left waiting on the other.
 
 Longer Linger means longer outages survived and Slots held longer. Shorter means faster Slot reuse
@@ -97,6 +98,10 @@ The schedule is derived, never configured:
 Watch it through `RedialAttempted` (306) — `Value0` is the attempt number, `Value1` the milliseconds
 actually waited — and `RedialFailed` (307), which carries the `SocketError` and never closes the
 Peer.
+
+A re-dial that connects is not yet a resume. The Peer stays Interrupted until the listening side
+answers the Resume. If the connection ends, fails or stays silent past the receive-idle deadline
+first, that is a failed attempt, reported as `RedialFailed`, and the schedule continues.
 
 The accepting end does not dial. It reserves the interrupted Peer's Slot and waits.
 
@@ -121,7 +126,8 @@ its retention to that count, and continues.
 between, and `PeerCounters.Resumes` increments on both ends.
 
 Nothing is asked of you. Messages sent before the interruption arrive without you re-sending them,
-because the rewind happens before the event is raised.
+because the rewind happens before the event is raised. Messages you sent while the Peer was
+Interrupted are written to the new connection once it resumes.
 
 Watch it through `ResumeMatched` (304), where `Value0` is the number of retained bytes rewound.
 
@@ -129,7 +135,7 @@ Watch it through `ResumeMatched` (304), where `Value0` is the number of retained
 
 | What happened | Result |
 |---|---|
-| The secret matched no held Peer | The connection is closed with no explanation to it. `ResumeUnmatched` (305), `Value1` = 3. |
+| The secret matched no held Peer | The connection is closed with no explanation to it. `ResumeUnmatched` (305), `Value1` = 3. On the dialling side this is a failed re-dial attempt, and the Peer closes with `LingerExpired` if no attempt is answered within Linger. |
 | A Hello presented a secret that did match | Refused as a protocol violation — a Resume has no business re-announcing parameters. `ResumeUnmatched` (305), `Value1` = 1. |
 | The reported count names a point your retention has already released | `PeerClosed` with `RetentionGap`. Resuming would deliver a stream with a hole in it. |
 | The reported count is above what you ever sent | `PeerClosed` with `ProtocolViolation`. `DeliveryCounterRefused` (308). |

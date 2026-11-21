@@ -6,6 +6,10 @@ defines, so the protocol borrows it rather than inventing a timer. Every record 
 with its own sequence number, so ADR 0004's promise holds unchanged: the ack and retransmit machinery
 operates purely on sequence numbers and does not know Fragments exist.
 
+**Amended (issue #485).** A Peer's records are flushed as up to `65 507 / (FragmentSize + 31)` data
+Datagrams per Pump, each at most `FragmentSize + 31` bytes, not as one Datagram of up to 65 507 bytes.
+See ADR 0025.
+
 ```
 datagram header
   u32  session
@@ -254,3 +258,36 @@ than once is not seeded, because the Accept may answer any copy.
 
 **Wire compatibility.** No datagram changes shape. An accepter on the current version already answers
 repeated Hellos and repeated Hellos-with-cookie, so a resending dialler needs nothing new from it.
+
+**Amended (issue #479).** Fragment size is now announced, which supersedes "fragment size is not announced, because that
+ADR made it unilateral and per-direction". Hello-with-cookie and Accept each carry the announcing end's
+`FragmentSize` and `ReceiveWindowFragments` after `AnnouncedLimits`, and `DatagramSessionProtocol.Version` goes
+from 1 to 2. A version 2 Reactor refuses a version 1 Hello-with-cookie with `VersionMismatch`. A version 1 Reactor
+discards a version 2 Hello-with-cookie as malformed, because its padding check runs before the version is read, so
+that dial goes unanswered.
+The fields, their legal ranges and the send rule are in ADR 0024. The main cost is that a mixed-version pair
+can no longer connect.
+
+## Amendment 2026-11-11: an accepted Peer resumes on data from the address it sends to
+
+Issue #480. Only the dialling end sends a Resume, and only while it is itself Interrupted. An accepting end
+that was interrupted alone, because the dialler's loop stalled or packets were lost in one direction only,
+never received one. It kept delivering the dialler's Messages and closed with `LingerExpired` although the
+path worked.
+
+An Interrupted accepted Peer now also resumes when it receives a well-formed data Datagram for its Session
+whose `Source` equals its current `Remote`, address and port both. It raises `PeerResumed`, counts one
+`Resumes` and logs `ResumeMatched` with `Value0` 0.
+
+A data Datagram from the same IP on another port does not resume the Peer. The data path never moves the send
+address, so resuming on a new port would report a resume while sends still go to the old port. That port, and
+any other address, still needs a matched Resume, plus the path challenge for a new IP (ADR 0021).
+
+This is safe because the session id is a demultiplexing token, not an authenticator (see Identity). A forger
+able to send from the held address with the session id can already keep the receive-idle deadline fresh, so
+resuming on the same evidence grants nothing new.
+
+Resume authorisation by secret, ADR 0021's path challenge and "the accepting end moves its send address only
+on a matched Resume" do not change. The sentence "the dialler's ordinary Resume brings it back" in the
+2026-11-10 amendment is no longer the only way back: an accepted Peer interrupted by lost Accepts also resumes
+on the dialler's first data Datagram from its held address.

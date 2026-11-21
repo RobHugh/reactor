@@ -139,8 +139,8 @@ public enum DiagnosticId
     /// This Peer's <see cref="RetransmissionTimer"/> backed off: a Pump's expiry sweep
     /// (<see cref="Session.OutstandingReliableSequences.CollectExpired"/>) found at least one overdue
     /// sequence on either reliable Space, so <see cref="RetransmissionTimer.BackOff"/> was called once
-    /// for the Peer and every sequence the sweep reported re-armed at the single resulting RTO. Subject
-    /// is the Peer. <c>Value0</c> is the new RTO in milliseconds —
+    /// for the Peer. Each sequence the sweep reported arms again at the RTO current when its resend is
+    /// packed. Subject is the Peer. <c>Value0</c> is the new RTO in milliseconds —
     /// <see cref="RetransmissionTimer.EffectiveTimeout"/> at the moment of the backoff; <c>Value1</c> is
     /// <see cref="RetransmissionTimer.ConsecutiveBackoffs"/> after this backoff.
     /// </summary>
@@ -207,7 +207,9 @@ public enum DiagnosticId
     /// A verified handshake, or on the stream profile an accepted connection, was refused because its
     /// address already holds <see cref="DatagramSessionOptions.MaxPeersPerAddress"/> or
     /// <see cref="StreamSessionOptions.MaxPeersPerAddress"/> accepted Peers while other capacity Slots
-    /// were free. Subject is the claimed Source. <c>Value0</c> is the limit; <c>Value1</c> is the prefix
+    /// were free. On the stream profile it is also logged when an accepted connection is closed before its
+    /// first handshake record arrives, because its address already has that many other connections held
+    /// waiting for theirs. Subject is the claimed Source. <c>Value0</c> is the limit; <c>Value1</c> is the prefix
     /// length the address was counted by: 32 for IPv4, and
     /// <see cref="DatagramSessionOptions.PeerLimitIPv6PrefixLength"/> or
     /// <see cref="StreamSessionOptions.PeerLimitIPv6PrefixLength"/> for IPv6, so every address in that
@@ -236,6 +238,20 @@ public enum DiagnosticId
     /// queued datagram also reports this.
     /// </remarks>
     DatagramReadLimitReached = 209,
+
+    /// <summary>
+    /// An established Peer's reliable Fragment carried more payload bytes than this Reactor's own
+    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>, and the Session was closed with
+    /// <see cref="DisconnectReason.ProtocolViolation"/> before anything in that Datagram was
+    /// acknowledged (ADR 0024). Subject is the Peer. <c>Value0</c> is the Fragment's payload length in
+    /// bytes; <c>Value1</c> is this Reactor's <c>ResolvedFragmentSize</c>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>, for the same reason as <see cref="DatagramMalformed"/>: a
+    /// remote can produce this at will. The handshake announces the size, so a conforming peer never
+    /// sends a wider Fragment, and the width and the size say which end is misbuilt.
+    /// </remarks>
+    OversizedFragment = 210,
 
     /// <summary>
     /// A dialler was refused in-protocol during the stream handshake, either because it announced a
@@ -294,8 +310,9 @@ public enum DiagnosticId
     /// nothing about a Peer's identity is renewed by a Resume. <c>Value0</c> is the number of retained
     /// outbound bytes the match rewound to the counter the Resume reported; <c>Value1</c> is unused. On
     /// the datagram profile it is logged when a Resume control datagram matches the Peer on the
-    /// accepting end (session id and secret), and when an Interrupted dialling end that has sent a
-    /// Resume hears its session again. Nothing is rewound, because retransmission already re-sends
+    /// accepting end (session id and secret), when an Interrupted accepting end receives a well-formed
+    /// data Datagram for the Session from the exact address and port it sends to, and when an
+    /// Interrupted dialling end that has sent a Resume hears its session again. Nothing is rewound, because retransmission already re-sends
     /// anything unacknowledged, so <c>Value0</c> is 0 and <c>Value1</c> is unused.
     /// </summary>
     /// <remarks>
@@ -365,11 +382,15 @@ public enum DiagnosticId
     RedialAttempted = 306,
 
     /// <summary>
-    /// A re-dial attempt could not connect (ADR 0011). Subject is the Peer, which this never closes —
-    /// it stays Interrupted and waits out the schedule's next delay, leaving Linger, not an attempt
-    /// count, the only thing that ever closes it. <c>Value0</c> carries the platform
-    /// <see cref="System.Net.Sockets.SocketError"/> as its underlying integer value; <c>Value1</c> is
-    /// the attempt number that failed.
+    /// A re-dial attempt could not connect, or connected and ended before the listener confirmed the
+    /// Resume (ADR 0011). Subject is the Peer, which this never closes — it stays Interrupted and
+    /// waits out the schedule's next delay, leaving Linger, not an attempt count, the only thing that
+    /// ever closes it. <c>Value0</c> carries the platform <see cref="System.Net.Sockets.SocketError"/>
+    /// as its underlying integer value: for a connection that ended before confirmation it is
+    /// <see cref="System.Net.Sockets.SocketError.Disconnecting"/> for an end of stream, or the read's
+    /// error. It is <see cref="System.Net.Sockets.SocketError.TimedOut"/> when the listener did not
+    /// answer within the receive-idle deadline, and <see cref="System.Net.Sockets.SocketError.SocketError"/>
+    /// when the Resume record could not be sent. <c>Value1</c> is the attempt number that failed.
     /// </summary>
     /// <remarks>
     /// <see cref="DiagnosticLevel.Info"/> rather than <see cref="DiagnosticLevel.Warn"/>: under this
@@ -401,4 +422,34 @@ public enum DiagnosticId
     /// </para>
     /// </remarks>
     DeliveryCounterRefused = 308,
+
+    /// <summary>
+    /// A connection the stream profile accepted sent no whole first handshake record within this end's
+    /// <see cref="StreamSessionOptions.SendIdleInterval"/> × <see cref="StreamSessionOptions.MissedHeartbeats"/>
+    /// of being accepted, and was closed with nothing sent. Subject is the claimed Source. <c>Value0</c>
+    /// is the bytes of that record it had sent, 0 to 40; <c>Value1</c> is the deadline in milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>: a remote can produce this at will by connecting and sending
+    /// nothing, and a consumer can act on it by blocking the address or, if conforming diallers are being
+    /// closed, by raising <see cref="StreamSessionOptions.SendIdleInterval"/>. One record per connection,
+    /// because it names the address. The deadline is fixed at accept, so bytes that arrive do not extend it.
+    /// At most <see cref="ReactorOptions.Capacity"/> connections are held, so no more records than that
+    /// are logged in one Pump.
+    /// </remarks>
+    PendingAdmissionExpired = 309,
+
+    /// <summary>
+    /// A stream Reactor already held <see cref="ReactorOptions.Capacity"/> accepted connections waiting
+    /// for their first handshake record, so it accepted no more that Pump and left the rest in the OS
+    /// backlog. No subject. <c>Value0</c> is the limit, which is the capacity; <c>Value1</c> is the count
+    /// of Admissions declined, counted as <see cref="AdmissionCapReached"/>'s are: once per listening Link
+    /// left with a pending connection.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DiagnosticLevel.Warn"/>: a remote can produce this at will by opening connections and
+    /// sending nothing. One record per Pump. The held connections close at their deadline
+    /// (<see cref="PendingAdmissionExpired"/>), so the backlog is accepted again within that time.
+    /// </remarks>
+    PendingAdmissionLimitReached = 310,
 }

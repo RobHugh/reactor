@@ -268,6 +268,26 @@ in one subnet, and declined for four reasons:
 The cost is that a host on the Reactor's subnet that can claim N unused addresses can hold
 N × `MaxPeersPerAddress` Slots, bounded by `Capacity`.
 
+**Amended (issue #482): the stream limit also counts held connections.** A connection held until its
+first record arrives (ADR 0012, #482 amendment) has no Slot yet, so the #452 limit did not see it, and
+one address could take every held place. `MaxPeersPerAddress` now also limits how many held connections
+one address, or one IPv6 prefix, may have. The count covers held connections only, not Peers. An
+Interrupted Peer charged to the address is the one a Resume comes back for, and counting it would refuse
+that Resume.
+
+- **The check runs after the accept's first read.** A connection whose whole record was already in the
+  socket buffer is decided at once and is never held, so a conforming dialler from a busy address is not
+  closed by it.
+- **A connection over the limit is closed without a Refusal.** A re-dialled Resume's connection is read as
+  Session data by the dialler, so a Refusal record would arrive as data. A plain close is a failed re-dial
+  attempt to that dialler, which tries again within its Linger.
+- **The record is `AddressPeerLimitReached` (208)** with the same value slots, because it is the same
+  condition on the same knob. Neither admission counter moves, as for every stream refusal.
+
+The cost is that a Resume whose record is slow to arrive, from an address that already has
+`MaxPeersPerAddress` held connections, is closed, and the dialler's next attempt has to land when that
+address has room.
+
 ## Reading back what was bound
 
 Exclusive binding makes port zero the normal way to bind in a test, so the assigned address must be

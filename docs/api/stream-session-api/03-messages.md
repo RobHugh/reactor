@@ -12,8 +12,14 @@ capacity Slot from this moment — the handshake is work the Reactor is holding.
 The dial resolves on a later Pump, as one of:
 
 - `PeerConnected` — the Session is established.
-- `PeerClosed` with `TransportFailed` — the connection never happened.
+- `PeerClosed` with `TransportFailed` — the connection never happened, or the far end sent no
+  handshake record within this Reactor's `Linger` of `Connect`.
 - `PeerClosed` with `VersionMismatch` or `RemoteAtCapacity` — the far end refused in protocol.
+
+The `Linger` deadline covers the TCP connect as well as the wait for the far end's Hello, so a dial
+resolves within `Linger` of `Connect` even where the operating system would keep retrying the connect
+for longer. It is measured on the Reactor's `TimeProvider` and checked inside `Pump`. A `Linger`
+shorter than the round trip plus the far end's Pump interval closes a dial before its answer arrives.
 
 `Connect` throws `InvalidOperationException` if the Reactor is already at capacity. Check your own
 Peer count before dialling if that is reachable in your application.
@@ -36,14 +42,17 @@ in one write.
 | `RetentionExhausted` | No room. Nothing was copied. | Retry after a later Pump. |
 | `Closed` | A Goodbye already passed in one direction or the other. | Stop sending to this Peer. |
 | `NotEstablished` | The handshake has not finished. Nothing was copied. | Wait for `PeerConnected`. |
+| `RemoteMessageTooLarge` | The Message is longer than the `MaxMessageSize` the peer announced. Nothing was copied. | Send something smaller. |
 
 A dialled Peer is addressable from `Connect`, but it accepts no Message until `PeerConnected`.
 `Closed` is checked first, so a Peer you closed before its handshake finished returns `Closed`.
+`RemoteMessageTooLarge` is checked after `NotEstablished`, because the peer's limit arrives in its Hello.
 
 `Send` throws:
 
 - `ArgumentException` if `message` is empty. A zero-length prefix is illegal on the wire.
-- `ArgumentException` if `message.Length > MaxMessageSize`.
+- `ArgumentException` if `message.Length` is above your own `MaxMessageSize`. This is checked before
+  any outcome above.
 - `ArgumentException` if the `PeerId` names no open Peer.
 
 A stale `PeerId` throwing is deliberate: sending to a Peer you were told was gone is a bug in your
@@ -51,7 +60,7 @@ code, not a race.
 
 ## Backpressure
 
-`RetentionExhausted` is the only backpressure this library has. Retention never blocks, never grows
+`RetentionExhausted` is the only backpressure the stream profile has. Retention never blocks, never grows
 and never drops — a full ring fails the `Send` and nothing else.
 
 Retention is per Peer and never shared, so a stalled Peer can only ever exhaust its own. A healthy
@@ -83,7 +92,8 @@ delivery and no coalescing of two Messages into one event.
 
 `MaxMessageSize` is announced to the peer during the handshake as your receive limit, so the far end
 cannot legally frame something you would have to reject. If it does anyway, the Session ends with
-`ProtocolViolation`.
+`ProtocolViolation`. Your own `Send` applies the peer's announced limit the same way and returns
+`RemoteMessageTooLarge`, so this library never frames a Message the peer would reject.
 
 ## Message size and framing failures
 

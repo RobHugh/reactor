@@ -21,6 +21,7 @@ public class SendOutcomeTests
             SendOutcome.MessageTooLarge,
             SendOutcome.RemoteMessageTooLarge,
             SendOutcome.NotEstablished,
+            SendOutcome.SendQueueFull,
         ];
 
         // Act

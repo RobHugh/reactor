@@ -187,7 +187,7 @@ lives on the stack and is built only after <a class="xref" href="ReactorSockets.
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForAddressPeerLimitReached.html#ReactorSockets_DiagnosticRecord_ForAddressPeerLimitReached_ReactorSockets_Source_System_Int32_System_Int32_">ForAddressPeerLimitReached(Source, int, int)</a></dt>
     <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_AddressPeerLimitReached">AddressPeerLimitReached</a> record for the claimed Source whose
-handshake was refused, carrying the per-address limit and the prefix length its address was
+handshake was refused, or whose held stream connection was closed, carrying the per-address limit and the prefix length its address was
 counted by: 32 for IPv4, and the IPv6 grouping length for IPv6 (ADR 0014).</p>
 </dd>
   </dl>
@@ -291,6 +291,13 @@ no full prefix was ever read; <code>Value1</code> is this Reactor's own <code>Ma
 </dd>
   </dl>
   <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForOversizedFragment.html#ReactorSockets_DiagnosticRecord_ForOversizedFragment_ReactorSockets_PeerId_System_Int64_System_Int64_">ForOversizedFragment(PeerId, long, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_OversizedFragment">OversizedFragment</a> record for the Peer whose reliable Fragment
+was wider than this Reactor's own Fragment size, carrying the Fragment's payload length and that
+size.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet.html#ReactorSockets_DiagnosticRecord_ForOversizedFragmentSet_ReactorSockets_PeerId_System_Int64_System_Int64_">ForOversizedFragmentSet(PeerId, long, long)</a></dt>
     <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_OversizedFragmentSet">OversizedFragmentSet</a> record for the Peer whose Fragment
 declared a <code>fragmentCount</code> larger than this Reactor's own receive window could ever hold,
@@ -319,6 +326,20 @@ the version offered; <code>Value1</code> is the version this Reactor requires.</
 </dd>
   </dl>
   <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired.html#ReactorSockets_DiagnosticRecord_ForPendingAdmissionExpired_ReactorSockets_Source_System_Int32_System_Int64_">ForPendingAdmissionExpired(Source, int, long)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_PendingAdmissionExpired">PendingAdmissionExpired</a> record for the claimed Source of an
+accepted stream connection closed for sending no whole first record within its deadline.
+<code>Value0</code> is the bytes of that record it had sent; <code>Value1</code> is the deadline in milliseconds.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
+    <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached.html#ReactorSockets_DiagnosticRecord_ForPendingAdmissionLimitReached_System_Int32_System_Int32_">ForPendingAdmissionLimitReached(int, int)</a></dt>
+    <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_PendingAdmissionLimitReached">PendingAdmissionLimitReached</a> record. No subject. Carries the
+held-connection limit and the Admissions declined this Pump, counted as
+<a class="xref" href="ReactorSockets.DiagnosticRecord.ForAdmissionCapReached.html#ReactorSockets_DiagnosticRecord_ForAdmissionCapReached_System_Int32_System_Int32_">ForAdmissionCapReached(int, int)</a>'s are.</p>
+</dd>
+  </dl>
+  <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForRedialAttempted.html#ReactorSockets_DiagnosticRecord_ForRedialAttempted_ReactorSockets_PeerId_System_Int64_System_Int64_">ForRedialAttempted(PeerId, long, long)</a></dt>
     <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_RedialAttempted">RedialAttempted</a> record for the Peer beginning a fresh
 re-dial attempt. <code>Value0</code> is the attempt number; <code>Value1</code> is the delay in
@@ -329,8 +350,12 @@ computed delay before jitter.</p>
   <dl class="jumplist">
     <dt><a class="xref" href="ReactorSockets.DiagnosticRecord.ForRedialFailed.html#ReactorSockets_DiagnosticRecord_ForRedialFailed_ReactorSockets_PeerId_System_Net_Sockets_SocketError_System_Int64_">ForRedialFailed(PeerId, SocketError, long)</a></dt>
     <dd><p>Builds a <a class="xref" href="ReactorSockets.DiagnosticId.html#ReactorSockets_DiagnosticId_RedialFailed">RedialFailed</a> record for the Peer whose re-dial attempt
-could not connect. <code>Value0</code> carries the platform <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> as its
-underlying integer value; <code>Value1</code> is the attempt number that failed.</p>
+could not connect, or connected and ended before the listener confirmed the Resume.
+<code>Value0</code> carries the platform <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror">SocketError</a> as its underlying integer value
+(<a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror#system-net-sockets-socketerror-disconnecting">Disconnecting</a> for an end of stream before confirmation, or the
+read's error, <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror#system-net-sockets-socketerror-timedout">TimedOut</a> when the listener did not answer within the
+receive-idle deadline, <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror#system-net-sockets-socketerror-socketerror">SocketError</a> when the Resume record could not
+be sent); <code>Value1</code> is the attempt number that failed.</p>
 </dd>
   </dl>
   <dl class="jumplist">

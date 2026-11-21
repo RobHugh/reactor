@@ -251,6 +251,54 @@ public class StreamSessionOptionsTests
         act.Should().NotThrow();
     }
 
+    [Theory]
+    [InlineData(int.MaxValue)]
+    [InlineData(int.MaxValue - 1)]
+    [InlineData(int.MaxValue - 3)]
+    public void ReceiveBufferFloor_UnvalidatedMaxMessageSizeNearIntMaxValue_SaturatesAtIntMaxValue(int maxMessageSize)
+    {
+        // Arrange — never constructed, so Validate never rejects the out-of-limit MaxMessageSize.
+        StreamSessionOptions options = CreateOptions(maxMessageSize: maxMessageSize);
+
+        // Act
+        int floor = options.ReceiveBufferFloor;
+
+        // Assert
+        floor.Should().Be(int.MaxValue);
+    }
+
+    [Theory]
+    [InlineData(int.MaxValue)]
+    [InlineData(int.MaxValue - 1)]
+    [InlineData(int.MaxValue - 3)]
+    public void ResolvedReceiveBufferSize_UnvalidatedMaxMessageSizeNearIntMaxValueAndUnset_SaturatesAtIntMaxValue(
+        int maxMessageSize)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(maxMessageSize: maxMessageSize);
+
+        // Act
+        int resolved = options.ResolvedReceiveBufferSize;
+
+        // Assert
+        resolved.Should().Be(int.MaxValue);
+    }
+
+    [Theory]
+    [InlineData(2_147_483_587)] // The MaxMessageSize limit: Array.MaxLength minus the 4-byte prefix.
+    [InlineData(4096)]
+    public void ReceiveBufferFloor_MaxMessageSizeAtOrBelowTheLimit_IsMaxMessageSizePlusFour(int maxMessageSize)
+    {
+        // Arrange
+        StreamSessionOptions options = CreateOptions(maxMessageSize: maxMessageSize);
+
+        // Act
+        int floor = options.ReceiveBufferFloor;
+
+        // Assert
+        floor.Should().Be(maxMessageSize + 4);
+    }
+
     [Fact]
     public void ResolvedReceiveBufferSize_ReceiveBufferSizeUnset_DefaultsToMaxMessageSizePlusFour()
     {
@@ -554,5 +602,76 @@ public class StreamSessionOptionsTests
             .Which.Message.Should()
             .Contain(expectedTotal.ToString())
             .And.Contain(expectedBoundaryRing.ToString());
+    }
+
+    /// <summary>
+    /// The largest <see cref="StreamSessionOptions.MaxMessageSize"/> whose framed form, the Message plus
+    /// its 4-byte length prefix, still fits one .NET array: <see cref="Array.MaxLength"/> less 4.
+    /// </summary>
+    private const int MaxMessageSizeLimit = 2_147_483_587;
+
+    [Theory]
+    [InlineData(int.MaxValue)]
+    [InlineData(int.MaxValue - 1)]
+    [InlineData(MaxMessageSizeLimit + 1)]
+    public void Constructor_MaxMessageSizeAboveTheLimit_ThrowsArgumentOutOfRangeExceptionNamingTheLimit(int maxMessageSize)
+    {
+        // Arrange — issue #488: MaxMessageSize + 4 wrapped negative above int.MaxValue - 4, the
+        // retention check passed, and the arena allocation threw OutOfMemoryException.
+        StreamSessionOptions options = CreateOptions(maxMessageSize: maxMessageSize, retentionBytes: 1024);
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName(nameof(StreamSessionOptions.MaxMessageSize))
+            .Which.Message.Should()
+            .Contain(MaxMessageSizeLimit.ToString())
+            .And.NotMatchRegex("(?<![0-9])-[0-9]");
+    }
+
+    [Fact]
+    public void Constructor_MaxMessageSizeAtTheLimitWithSmallRetention_ThrowsArgumentExceptionNamingRetention()
+    {
+        // Arrange — at the limit the framed floor is exactly Array.MaxLength, which an int holds.
+        StreamSessionOptions options = CreateOptions(maxMessageSize: MaxMessageSizeLimit, retentionBytes: 1024);
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert
+        act.Should().Throw<ArgumentException>()
+            .WithParameterName(nameof(StreamSessionOptions.RetentionBytes))
+            .Which.Message.Should()
+            .Contain(Array.MaxLength.ToString())
+            .And.NotMatchRegex("(?<![0-9])-[0-9]");
+    }
+
+    [Fact]
+    public void Constructor_MemoryBillLinesSumPastLongMaxValue_ThrowsArgumentExceptionNamingTheExactTotal()
+    {
+        // Arrange — issue #488: each line is about 2^62 bytes, and their sum overflowed long, so the
+        // bill read negative and passed.
+        StreamSessionOptions options = CreateOptions(
+            capacity: int.MaxValue,
+            maxMessageSize: 1000,
+            retentionBytes: int.MaxValue,
+            receiveBufferSize: int.MaxValue);
+        Int128 expectedReceive = (Int128)int.MaxValue * int.MaxValue;
+        Int128 expectedSend = (Int128)int.MaxValue * int.MaxValue;
+        Int128 expectedBoundaryRing = (Int128)int.MaxValue * ((int.MaxValue / 4) + 1) * 4;
+        Int128 expectedTotal = expectedReceive + expectedSend + expectedBoundaryRing;
+
+        // Act
+        Action act = () => new StreamSessionReactor(options);
+
+        // Assert
+        expectedTotal.Should().BeGreaterThan(long.MaxValue);
+        act.Should().Throw<ArgumentException>()
+            .WithParameterName(nameof(StreamSessionOptions.Reactor))
+            .Which.Message.Should()
+            .Contain(expectedTotal.ToString())
+            .And.NotMatchRegex("(?<![0-9])-[0-9]");
     }
 }

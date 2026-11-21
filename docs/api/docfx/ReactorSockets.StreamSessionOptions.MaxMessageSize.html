@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_StreamSessionOptions_MaxMessageSize_" data-uid="ReactorSockets.StreamSessionOptions.MaxMessageSize*" class="text-break">
-Property MaxMessageSize  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionOptions.cs/#L83"><i class="bi bi-code-slash"></i></a>
+Property MaxMessageSize  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionOptions.cs/#L84"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,14 +107,15 @@ Property MaxMessageSize  <a class="header-action link-secondary" title="View sou
 
 <h3 id="ReactorSockets_StreamSessionOptions_MaxMessageSize" data-uid="ReactorSockets.StreamSessionOptions.MaxMessageSize">
   MaxMessageSize
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionOptions.cs/#L83"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionOptions.cs/#L84"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>The largest Message, in bytes, this Reactor will accept or deliver. Required: it is a
 statement about the consumer's own protocol that nothing here can derive. It is also
 announced to the remote as a receive limit, and floors both the receive buffer and
 <a class="xref" href="ReactorSockets.StreamSessionOptions.RetentionBytes.html#ReactorSockets_StreamSessionOptions_RetentionBytes">RetentionBytes</a> — an arena that cannot hold one maximum Message could never
-deliver one.</p>
+deliver one. At most 2 147 483 587, <a class="xref" href="https://learn.microsoft.com/dotnet/api/system.array.maxlength">MaxLength</a> less the 4-byte length prefix,
+so one framed maximum Message fits one array.</p>
 </div>
 <div class="markdown level1 conceptual"></div>
 

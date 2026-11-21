@@ -7,7 +7,8 @@ Assembly: ReactorSockets.dll
 
 The most heap, in bytes, a Reactor's <code>ReliableOrdered</code> Spaces can hold in ordinary records
 waiting behind a gap, across all its Peers: <code>Capacity × 2 × ReceiveWindowFragments ×
-FragmentSize</code>, with each slot's bookkeeping.
+FragmentSize</code>, with each slot's bookkeeping. A figure above [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue) reads as
+[`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue).
 
 ```csharp
 public long HeldRecordBudgetBytes { get; }

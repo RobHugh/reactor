@@ -8,7 +8,10 @@ Assembly: ReactorSockets.dll
 The bytes a fragment carries, and therefore the unit every buffer here is measured in.
 Defaults to 1200. Provenance: QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000),
 the one value with citable provenance for surviving an arbitrary path. Must lie between 576
-(RFC 791's guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).
+(RFC 791's guaranteed reassembly minimum) and 65 476 (the 65 507-byte maximum UDP payload less the
+20-byte Datagram header and the 11-byte Fragment record header). A data Datagram carries at most
+this many payload bytes plus a 31-byte header, so at the default a Datagram is at most 1231 bytes,
+which with IPv6 and UDP headers fits the 1280-byte minimum MTU.
 
 ```csharp
 public int? FragmentSize { get; init; }
@@ -20,11 +23,12 @@ public int? FragmentSize { get; init; }
 
 ### Remarks
 
-Unilateral and per-direction (ADR 0004): each side of a Session cuts its own outbound Messages
-by its own configured value, and the two directions need not agree. It is never announced in
-the handshake, because a receiver reassembles a Fragment set from <code>fragmentIndex</code> and
-<code>fragmentCount</code> alone and never needs to know the sender's choice — so two Sessions
-configured with different values still interoperate, each cutting by its own. This value is
-resolved once per Peer, at admission, onto that Peer's own slot; a later change to this options
-instance never reaches a Peer already open. See [`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize).
+Announced in the handshake (ADR 0024). Each Peer cuts its reliable Messages at the smaller of
+this value and the peer's announced value, fixed once when the Peer reaches Established and
+unchanged across a Resume, so two Reactors configured with different values interoperate. A
+reliable Fragment wider than this value closes the Peer with
+[`DisconnectReason.ProtocolViolation`](ReactorSockets.DisconnectReason.md), which only a non-conforming peer causes. The
+same smaller value is the single-Datagram cap of an unreliable Message, refused above it with
+[`SendOutcome.MessageTooLarge`](ReactorSockets.SendOutcome.md). A later change to this options instance never reaches a Peer already open. See
+[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize).
 

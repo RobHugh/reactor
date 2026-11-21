@@ -40,7 +40,9 @@ public enum SendOutcome
 
     /// <summary>
     /// The Message is wider than one Datagram can carry, and the Space it was sent on cannot
-    /// fragment it. Nothing was copied. Deliberately its own value rather than folded into
+    /// fragment it. On the datagram profile that cap is the Peer's send Fragment size: the smaller of
+    /// this end's <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> and the Fragment size the
+    /// peer announced (ADR 0024). Nothing was copied. Deliberately its own value rather than folded into
     /// <see cref="RetentionExhausted"/>: retention exhaustion is backpressure the caller can retry
     /// once bytes are released, while an oversized Message will never fit however long the caller
     /// waits — a consumer that cannot tell the two apart cannot tell "retry later" from "split it or
@@ -49,13 +51,16 @@ public enum SendOutcome
     MessageTooLarge = 3,
 
     /// <summary>
-    /// A Message, in any delivery mode, exceeds the <c>MaxMessageSize</c> the remote end announced during
-    /// the handshake. Nothing was copied, and the caller may retry immediately with a smaller payload.
-    /// An unreliable Message over both limits reports <see cref="MessageTooLarge"/> instead. Distinct
-    /// from <see cref="MessageTooLarge"/> purely by whose limit was exceeded: that value means a local
-    /// configuration fact the caller's own settings could have predicted (the single-Datagram cap an
-    /// unreliable mode cannot exceed); this one means the far end's announced receive limit, which the
-    /// caller has no way to know in advance.
+    /// A Message exceeds the <c>MaxMessageSize</c> the remote end announced during the handshake, on either
+    /// Session profile and in any datagram delivery mode, or a reliable datagram Message needs more Fragments
+    /// than the receive window the remote end announced (ADR 0024). Nothing was copied, and the caller may
+    /// retry immediately with a smaller payload. On the datagram profile an unreliable Message over both
+    /// limits reports <see cref="MessageTooLarge"/> instead. On the stream profile a Message over this end's
+    /// own <c>MaxMessageSize</c> throws <see cref="System.ArgumentException"/> before this is checked. Distinct
+    /// from <see cref="MessageTooLarge"/> by which limit was exceeded: that value means the
+    /// single-Datagram cap an unreliable mode cannot exceed, which a smaller peer Fragment size lowers;
+    /// this one means the far end's announced receive limit, its <c>MaxMessageSize</c> or its receive
+    /// window.
     /// </summary>
     RemoteMessageTooLarge = 4,
 
@@ -67,4 +72,15 @@ public enum SendOutcome
     /// out before this end knows the far end's version and announced <c>MaxMessageSize</c>.
     /// </summary>
     NotEstablished = 5,
+
+    /// <summary>
+    /// An <c>Unreliable</c> or <c>UnreliableSequenced</c> Message would take the bytes this Peer has queued
+    /// for those two modes past <see cref="DatagramSessionOptions.UnreliableQueueBytes"/>. Nothing was
+    /// copied and no sequence was spent. The queue frees as this end's Pumps write it, not on an
+    /// acknowledgement, so the caller may retry after a later Pump, or drop the Message. Its own value
+    /// rather than <see cref="RetentionExhausted"/>: that value means reliable retention is full and frees
+    /// only when the far end acknowledges.
+    /// Datagram profile only.
+    /// </summary>
+    SendQueueFull = 6,
 }

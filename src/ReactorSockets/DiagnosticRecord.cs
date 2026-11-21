@@ -154,6 +154,14 @@ public readonly record struct DiagnosticRecord
         new(DiagnosticId.OversizedFragmentSet, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, declaredFragmentCount, maxLegalFragmentCount);
 
     /// <summary>
+    /// Builds a <see cref="DiagnosticId.OversizedFragment"/> record for the Peer whose reliable Fragment
+    /// was wider than this Reactor's own Fragment size, carrying the Fragment's payload length and that
+    /// size.
+    /// </summary>
+    public static DiagnosticRecord ForOversizedFragment(PeerId peer, long fragmentLength, long fragmentSize) =>
+        new(DiagnosticId.OversizedFragment, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, fragmentLength, fragmentSize);
+
+    /// <summary>
     /// Builds a <see cref="DiagnosticId.UnreliableFragment"/> record for the claimed Source that put a
     /// Fragment on the wire in an unreliable mode, carrying the mode it claimed as the two mode bits'
     /// wire value. <c>Value1</c> is unused: the rule has no threshold to report against.
@@ -171,7 +179,7 @@ public readonly record struct DiagnosticRecord
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.AddressPeerLimitReached"/> record for the claimed Source whose
-    /// handshake was refused, carrying the per-address limit and the prefix length its address was
+    /// handshake was refused, or whose held stream connection was closed, carrying the per-address limit and the prefix length its address was
     /// counted by: 32 for IPv4, and the IPv6 grouping length for IPv6 (ADR 0014).
     /// </summary>
     public static DiagnosticRecord ForAddressPeerLimitReached(Source source, int limit, int prefixLength) =>
@@ -260,8 +268,12 @@ public readonly record struct DiagnosticRecord
 
     /// <summary>
     /// Builds a <see cref="DiagnosticId.RedialFailed"/> record for the Peer whose re-dial attempt
-    /// could not connect. <c>Value0</c> carries the platform <see cref="SocketError"/> as its
-    /// underlying integer value; <c>Value1</c> is the attempt number that failed.
+    /// could not connect, or connected and ended before the listener confirmed the Resume.
+    /// <c>Value0</c> carries the platform <see cref="SocketError"/> as its underlying integer value
+    /// (<see cref="SocketError.Disconnecting"/> for an end of stream before confirmation, or the
+    /// read's error, <see cref="SocketError.TimedOut"/> when the listener did not answer within the
+    /// receive-idle deadline, <see cref="SocketError.SocketError"/> when the Resume record could not
+    /// be sent); <c>Value1</c> is the attempt number that failed.
     /// </summary>
     public static DiagnosticRecord ForRedialFailed(PeerId peer, SocketError error, long attemptNumber) =>
         new(DiagnosticId.RedialFailed, DiagnosticLevel.Info, DiagnosticSubjectKind.Peer, default, default, peer, (long)error, attemptNumber);
@@ -274,4 +286,20 @@ public readonly record struct DiagnosticRecord
     /// </summary>
     public static DiagnosticRecord ForDeliveryCounterRefused(PeerId peer, long claimedCount, long appendedMessageCount) =>
         new(DiagnosticId.DeliveryCounterRefused, DiagnosticLevel.Warn, DiagnosticSubjectKind.Peer, default, default, peer, claimedCount, appendedMessageCount);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.PendingAdmissionExpired"/> record for the claimed Source of an
+    /// accepted stream connection closed for sending no whole first record within its deadline.
+    /// <c>Value0</c> is the bytes of that record it had sent; <c>Value1</c> is the deadline in milliseconds.
+    /// </summary>
+    public static DiagnosticRecord ForPendingAdmissionExpired(Source source, int bytesReceived, long deadlineMilliseconds) =>
+        new(DiagnosticId.PendingAdmissionExpired, DiagnosticLevel.Warn, DiagnosticSubjectKind.Source, default, source, default, bytesReceived, deadlineMilliseconds);
+
+    /// <summary>
+    /// Builds a <see cref="DiagnosticId.PendingAdmissionLimitReached"/> record. No subject. Carries the
+    /// held-connection limit and the Admissions declined this Pump, counted as
+    /// <see cref="ForAdmissionCapReached"/>'s are.
+    /// </summary>
+    public static DiagnosticRecord ForPendingAdmissionLimitReached(int limit, int declined) =>
+        new(DiagnosticId.PendingAdmissionLimitReached, DiagnosticLevel.Warn, DiagnosticSubjectKind.None, default, default, default, limit, declined);
 }

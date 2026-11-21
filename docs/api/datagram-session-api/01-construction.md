@@ -11,7 +11,7 @@ one would be guessing at your application.
 | Knob | What it is |
 |---|---|
 | `Reactor.Capacity` | How many Peers this Reactor admits. Multiplies every preallocation. |
-| `MaxMessageSize` | The largest Message you will send or accept, in bytes. |
+| `MaxMessageSize` | The largest Message you will send or accept, in bytes. At most 2 147 483 591. |
 | `RetentionBytes` | Bytes each reliable Space retains per Peer until acknowledged. Your backpressure budget. |
 | `SendIdleInterval` | How long a Session may go without sending before it sends a Ping. |
 | `Linger` | How long a closing or interrupted Session stays alive. |
@@ -63,15 +63,19 @@ the destination's address family and appends it to `BoundEndpoints`.
 ## Choosing fragment size
 
 `FragmentSize` is the payload bytes one Datagram carries, and the unit every buffer is measured in.
-It must lie between 576 (RFC 791's guaranteed reassembly minimum) and 65 507 (the largest UDP
-payload).
+It must lie between 576 (RFC 791's guaranteed reassembly minimum) and 65 476: the largest UDP
+payload, 65 507, less the 20-byte Datagram header and the 11-byte Fragment record header, so one full
+Fragment fills one maximum Datagram.
 
 - Leave it at 1200 unless you control every path between the two ends.
 - It caps the unreliable modes: an `Unreliable` or `UnreliableSequenced` Message can be no larger
   than one fragment.
-- It is per direction and never negotiated. Two ends with different values interoperate, each
-  cutting its own Messages by its own size.
-- Each Peer captures the value when it is admitted. Nothing changes it mid-Session.
+- It caps every Datagram: a data Datagram is at most `FragmentSize + 31` bytes, 1231 at the default,
+  which with IPv6 and UDP headers fits the 1280-byte minimum MTU.
+- Each end announces its value in the handshake, and a Peer sends at the smaller of the two. Two
+  ends with different values interoperate.
+- Each Peer fixes its send size when it reaches Established. Nothing changes it mid-Session, not
+  even a Resume.
 
 A size larger than the path will carry ends the Session with `FragmentSizeUnviable`. See
 [Closing](04-closing.md).

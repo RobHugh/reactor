@@ -77,7 +77,7 @@
 
 
 <h1 id="ReactorSockets_StreamSessionReactor_Pump_" data-uid="ReactorSockets.StreamSessionReactor.Pump*" class="text-break">
-Method Pump  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionReactor.cs/#L203"><i class="bi bi-code-slash"></i></a>
+Method Pump  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionReactor.cs/#L215"><i class="bi bi-code-slash"></i></a>
 </h1>
 
 <div class="facts text-secondary">
@@ -107,7 +107,7 @@ Method Pump  <a class="header-action link-secondary" title="View source" href="h
 
 <h3 id="ReactorSockets_StreamSessionReactor_Pump" data-uid="ReactorSockets.StreamSessionReactor.Pump">
   Pump()
-  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionReactor.cs/#L203"><i class="bi bi-code-slash"></i></a>
+  <a class="header-action link-secondary" title="View source" href="https://github.com/RobHugh/reactor/blob/main/src/ReactorSockets/StreamSessionReactor.cs/#L215"><i class="bi bi-code-slash"></i></a>
 </h3>
 
 <div class="markdown level1 summary"><p>One synchronous advance: records this call's arrival against the last one
@@ -130,7 +130,11 @@ scan (<span class="xref">ReactorSockets.StreamSessionReactor.EnforceIdleTimers()
 interruption, and every surviving Peer that has written nothing to the wire — including whatever
 this Frame's own flush just carried — for at least
 <a class="xref" href="ReactorSockets.StreamSessionOptions.SendIdleInterval.html#ReactorSockets_StreamSessionOptions_SendIdleInterval">SendIdleInterval</a> sends the same delivery-counter record as a
-heartbeat, unconditionally and regardless of whether anything was ever received from it. Once
+heartbeat, unconditionally and regardless of whether anything was ever received from it. Every
+accepted connection still waiting for its first handshake record once its deadline has passed is
+then closed (<span class="xref">ReactorSockets.StreamSessionReactor.ExpirePendingAdmissions()</span>). The same scan closes with
+<a class="xref" href="ReactorSockets.DisconnectReason.html#ReactorSockets_DisconnectReason_TransportFailed">TransportFailed</a> every Peer this Reactor dialled that has not
+established one <a class="xref" href="ReactorSockets.StreamSessionOptions.Linger.html#ReactorSockets_StreamSessionOptions_Linger">Linger</a> after <a class="xref" href="ReactorSockets.StreamSessionReactor.Connect.html#ReactorSockets_StreamSessionReactor_Connect_System_Net_IPEndPoint_">Connect(IPEndPoint)</a>. Once
 idle timers may have closed an Interrupted Peer on Linger expiry, every Interrupted Peer this
 Reactor itself dialled is given its re-dial attempt for this Frame
 (<span class="xref">ReactorSockets.StreamSessionReactor.ProcessRedials()</span>) — a schedule derived from the observed Pump interval just

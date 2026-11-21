@@ -28,7 +28,7 @@ appears that is not in the audited list below.
 |---|---|---|
 | `Capacity` | required | None exists. It counts share-holders and multiplies every allocation. |
 | `AdmissionCap` | `Capacity` | Another knob. One Pump never admits more than a full Reactor's worth. |
-| `ArenaSize` | the profile's floor | The profile. One maximum deliverable unit, below which nothing can be delivered. |
+| `ArenaSize` | the profile's floor | The profile. One maximum deliverable unit, below which nothing can be delivered. A set value is at most `Array.MaxLength` (2 147 483 591), the largest array the runtime allocates. |
 | `TimeProvider` | `TimeProvider.System` | The framework. The only requirement is monotonic reads. |
 | `Sink` | absent (diagnostics off) | With no Sink there is nowhere for a record to go. |
 | `MinimumLevel` | absent, only with `Sink` | Supplied with `Sink` or not at all. A default level would be a guess. |
@@ -37,7 +37,7 @@ appears that is not in the audited list below.
 
 | Knob | Default | Provenance |
 |---|---|---|
-| `scratchBufferSize` | 65 507 | The largest UDP payload, at which truncation cannot happen. |
+| `scratchBufferSize` | 65 507 | The largest UDP payload over IPv4, at which an IPv4 datagram cannot be truncated. An IPv6 datagram can carry up to 65 527 bytes, so one of 65 508 to 65 527 bytes is reported as truncated. At least 1 and at most `Array.MaxLength - 1` (2 147 483 590), because the scratch buffer is one byte longer than this value. |
 
 ### Datagram Session (`DatagramSessionOptions`)
 
@@ -51,7 +51,8 @@ appears that is not in the audited list below.
 | `SendIdleInterval` | required | Bandwidth on an idle link against time to notice a dead Peer. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Linger` | required | A prompt teardown against a clean one. At most 2^32 - 1 ms (about 49.7 days), the most a handshake may announce. |
 | `Endpoints` | empty | No declaration. The first dial binds a wildcard, port-zero socket. |
-| `FragmentSize` | 1200 | QUIC's floor under the 1280-byte IPv6 minimum MTU. Range 576 (RFC 791) to 65 507 (UDP). |
+| `FragmentSize` | 1200 | QUIC's floor under the 1280-byte IPv6 minimum MTU. Range 576 (RFC 791) to 65 476 (the 65 507-byte UDP payload less 31 header bytes). Announced at handshake. A Peer's send size is the smaller of the two ends' sizes, fixed when the Peer reaches Established. A reliable Message is cut at it, and an unreliable Message wider than it returns `MessageTooLarge`. |
+| `UnreliableQueueBytes` | `RetentionSlots × (FragmentSize + 7)` | `RetentionBytes` and `FragmentSize`. As many full unreliable Messages per Peer as one reliable Space retains Fragments. Each queued Message costs its length plus 7. At least `FragmentSize + 7`. |
 | `ReceiveWindowFragments` | fragments in one maximum Message | `MaxMessageSize` and `FragmentSize`. A narrower window deadlocks (ADR 0004). |
 | `MissedHeartbeats` | 3 | RFC 4271's hold time. At least 2. |
 | `Entropy` | the platform CSPRNG | The platform. |
@@ -64,7 +65,7 @@ appears that is not in the audited list below.
 | `Reactor` | required | |
 | `MaxMessageSize` | required | A statement about your protocol. |
 | `RetentionBytes` | required | Your memory against your tolerance for a stalled Peer. |
-| `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | As for the datagram profile. A Resume is never refused by it. |
+| `MaxPeersPerAddress` | `Capacity - 1`, at least 1 | As for the datagram profile. It also limits how many connections from one address are held waiting for their first record. A Resume whose record has arrived is never refused by it. |
 | `PeerLimitIPv6PrefixLength` | 64 | As for the datagram profile. |
 | `SendIdleInterval` | required | As for the datagram profile. |
 | `Linger` | required | As for the datagram profile. |
@@ -89,6 +90,9 @@ keep consistent with them.
 | Re-dial schedule (stream) | Starts at the observed Pump interval, doubles, stops at the effective Linger, with full jitter |
 | Handshake resend schedule (datagram) | The re-dial schedule's rule, with this end's `Linger` as the ceiling. A pending dial resends its Hello or Hello-with-cookie on it |
 | Pending dial timeout (datagram) | This end's `Linger` after `Connect`. The dial closes with `TransportFailed` |
+| Pending dial timeout (stream) | This end's `Linger` after `Connect`, covering the TCP connect and the wait for the far end's Hello. The dial closes with `TransportFailed`, so a `Linger` below the round trip plus the far end's Pump interval closes it early |
+| Held connection deadline (stream) | This end's `SendIdleInterval` × `MissedHeartbeats` from accept. A connection that has not sent its whole first record by then is closed |
+| Held connection limit (stream) | `Capacity`. Past it the Reactor stops accepting until one resolves, and the rest wait in the OS backlog |
 | Per-share-holder read cap | `ArenaSize ÷ Capacity` bytes per Pump, with one whole unit always allowed |
 | RTO floor and ceiling | The observed Pump interval and the effective Linger |
 | Dial-only socket's family and port | The destination's family and an OS-assigned port |
@@ -115,14 +119,21 @@ a size, and the OS may double it or hold it to its own floor.
 ### Datagram
 
 ```
-receive:  Capacity × 2 × ReceiveWindowFragments × FragmentSize
-send:     Capacity × 2 × RetentionBytes
+receive:     Capacity × 2 × ReceiveWindowFragments × FragmentSize
+send:        Capacity × 2 × RetentionBytes
+unreliable:  Capacity × UnreliableQueueBytes
 ```
 
 `FragmentSize` appears in one line and not the other, because the window counts packets and retention
 counts bytes. The 2 is the two reliable Spaces, the only ones that reassemble and retransmit. Each line
 also carries a few bytes of bookkeeping per fragment slot, under 2% at the default fragment size.
-`ReceiveBudgetBytes` and `SendBudgetBytes` report both lines exactly, bookkeeping included.
+`ReceiveBudgetBytes` and `SendBudgetBytes` report both lines exactly, bookkeeping included. A line
+whose true figure passes `long.MaxValue` reads as `long.MaxValue`, and construction still rejects it
+with the exact figure. `HeldRecordBudgetBytes` below saturates the same way.
+
+The unreliable line is the queue for `Unreliable` and `UnreliableSequenced` Messages waiting for the
+next Pump. Its default is one reliable Space's retention plus 7 bytes per slot, so by default it adds
+about half the send line. `UnreliableQueueBudgetBytes` reports it.
 
 One further cost is a ceiling rather than a preallocation, so nothing allocates it at construction:
 
@@ -131,18 +142,21 @@ held:     Capacity × 2 × ReceiveWindowFragments × FragmentSize
 ```
 
 These are ordinary `ReliableOrdered` records waiting behind a gap, on the heap and only under traffic.
-The 2 is two windows of sequences in the one Space, not two Spaces. A record past that reach, or wider
-than `FragmentSize`, is refused unacknowledged and counted on `OutOfWindowPackets`, and retransmission
-brings it back. `HeldRecordBudgetBytes` reports this line, bookkeeping included, and
+The 2 is two windows of sequences in the one Space, not two Spaces. A record past that reach is
+refused unacknowledged and counted on `OutOfWindowPackets`, and retransmission brings it back. A
+reliable Fragment wider than `FragmentSize` never reaches this line. Only a non-conforming peer sends
+one, because every conforming peer cuts at the smaller of the two sizes, and it closes the Peer with
+`ProtocolViolation` before anything in its datagram is acknowledged. `HeldRecordBudgetBytes` reports this line, bookkeeping included, and
 `DatagramSessionOrderedHoldBudgetTests` checks it against the bytes a flood allocates.
 
 ### Raw
 
 ```
-scratchBufferSize + ArenaSize
+scratchBufferSize + 1 + ArenaSize
 ```
 
-One scratch buffer and one arena, neither multiplied by capacity. Raw holds nothing for a Link across a
+One scratch buffer and one arena, neither multiplied by capacity. The scratch buffer is one byte longer
+than `scratchBufferSize`, so a read that fills it is known to be a truncated datagram. Raw holds nothing for a Link across a
 Pump. That is what inventing nothing on the wire looks like from the constructor.
 
 The frame arena (`ArenaSize`) is also allocated by both Session profiles, once per Reactor, on top of
@@ -158,6 +172,16 @@ On the stream profile the buffer is the receive buffer and both floors apply dir
 profile the buffer is the receive window, which is per Peer and per reliable Space, and retention is
 floored by one fragment instead of one Message, because a reliable Space retransmits fragment by
 fragment. On both, `MaxMessageSize` also floors the shared arena.
+
+`MaxMessageSize` has an upper limit, so every buffer it floors fits one .NET array: 2 147 483 587 on
+the stream profile (`Array.MaxLength` less the 4-byte length prefix) and 2 147 483 591 on the datagram
+profile (`Array.MaxLength`). A larger value throws `ArgumentOutOfRangeException` naming
+`MaxMessageSize`. The memory bill rejects much smaller values first, because a Peer's buffers each hold
+one maximum Message.
+
+The limit that caps a `Send` is the receiving end's: a Message above the peer's announced
+`MaxMessageSize` returns `RemoteMessageTooLarge` on both profiles. The stream profile also throws
+`ArgumentException` for a Message above your own limit, because its retention is floored by that limit.
 
 ## Every per-Pump cost a remote party can inflate is bounded at construction
 

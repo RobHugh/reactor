@@ -350,8 +350,15 @@ public class DatagramSessionAckReleasesRetentionTests
             SendOutcome.RetentionExhausted, "all three Fragment slots are held by the unacknowledged Message");
 
         // Act — the Message crosses the wire in full and is reassembled and delivered.
-        DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
-        accepter.DrainPayloads().Should().ContainSingle(p => p.SequenceEqual(message));
+        List<byte[]> delivered = [];
+        PumpDeadline deliveryDeadline = PumpDeadline.Start();
+        while (delivered.Count < 1 && !deliveryDeadline.Expired)
+        {
+            DatagramSessionReactorHarness.PumpRoundThroughTap(dialler, tap, accepter);
+            delivered.AddRange(accepter.DrainPayloads());
+        }
+
+        delivered.Should().ContainSingle(p => p.SequenceEqual(message));
 
         // Act — the accepter's reply carries the ack for every one of the three Fragments.
         accepter.Reactor.Send(accepterPeer, DeliveryMode.Unreliable, [9]).Should().Be(SendOutcome.Sent);

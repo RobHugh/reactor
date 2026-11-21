@@ -30,20 +30,15 @@ public class DatagramSessionOversizedFragmentSetTests
     private const uint ControlSession = 0;
 
     private const byte HelloType = 1;
-    private const byte HelloWithCookieType = 3;
     private const int ControlBodyOffset = 5;
     private const int CookieLength = 32;
-    private const int ResumeSecretLength = 16;
 
-    private const uint ProtocolVersion = 1;
-    private const uint DialerSessionId = 0xCAFE_BABE;
-    private const uint DialerMaxMessageSize = 4096;
-    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
-    private const ulong DialerLingerMilliseconds = 30_000;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
 
     private const int DatagramHeaderSize = 20;
     private const int UnfragmentedRecordSize = 7;
     private const int FragmentRecordSize = 11;
+    private const int DefaultFragmentSize = 1200;
 
     private const byte ModeUnreliable = 0b0000_0000;
     private const byte ModeReliableOrdered = 0b0000_0011;
@@ -332,6 +327,141 @@ public class DatagramSessionOversizedFragmentSetTests
         accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.OversizedFragmentSet);
     }
 
+    [Fact]
+    public void Pump_FragmentOneByteWiderThanTheAccepterFragmentSize_ClosesThePeerWithProtocolViolation()
+    {
+        // Arrange — default FragmentSize is 1200; a 1201-byte Fragment of a two-piece set is
+        // individually legal and fits the window, so only the width check can refuse it.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x6000_0000_0000_0001UL);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: new byte[DefaultFragmentSize + 1]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            accepter.PumpUntilDrained(all => all.Any(e => e.Kind == SessionEventKind.PeerClosed));
+
+        // Assert
+        drained.Should().ContainSingle(e => e.Kind == SessionEventKind.PeerClosed)
+            .Which.Should().BeEquivalentTo((SessionEventKind.PeerClosed, accepterPeer, DisconnectReason.ProtocolViolation));
+    }
+
+    [Fact]
+    public void Pump_FragmentOneByteWiderThanTheAccepterFragmentSize_LogsOversizedFragmentCarryingTheWidthAndTheFragmentSize()
+    {
+        // Arrange
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x6000_0000_0000_0005UL);
+        PeerId accepterPeer = FindAccepterPeer(accepter);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: new byte[DefaultFragmentSize + 1]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            accepter.PumpUntilDrained(all => all.Any(e => e.Kind == SessionEventKind.PeerClosed));
+
+        // Assert
+        drained.Should().Contain(e => e.Kind == SessionEventKind.PeerClosed);
+        DiagnosticRecord record = accepter.Sink.Received.Should().ContainSingle(r => r.Id == DiagnosticId.OversizedFragment).Subject;
+        record.Level.Should().Be(DiagnosticLevel.Warn);
+        record.Peer.Should().Be(accepterPeer);
+        record.Value0.Should().Be(DefaultFragmentSize + 1);
+        record.Value1.Should().Be(DefaultFragmentSize);
+        accepter.Sink.Received.Should().NotContain(r => r.Id == DiagnosticId.OversizedFragmentSet);
+    }
+
+    [Fact]
+    public void Pump_FragmentExactlyTheAccepterFragmentSize_IsHeldAndTheSetDeliveredIntact()
+    {
+        // Arrange
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x6000_0000_0000_0002UL);
+
+        byte[] first = new byte[DefaultFragmentSize];
+        Array.Fill(first, (byte)0x5A);
+        byte[] second = [0x01, 0x02, 0x03];
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 0, fragmentIndex: 0, fragmentCount: 2, payload: first),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 1, fragmentCount: 2, payload: second),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<byte[]> delivered = accepter.DrainPayloads();
+
+        // Assert
+        delivered.Should().ContainSingle().Which.Should().Equal([.. first, .. second]);
+    }
+
+    [Fact]
+    public void Pump_WellFormedRecordAheadOfAFragmentWiderThanTheFragmentSize_DeliversNeitherRecord()
+    {
+        // Arrange
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x6000_0000_0000_0003UL);
+
+        byte[] datagram =
+        [
+            .. BuildHeader(sessionId),
+            .. BuildRecord(ModeReliableOrdered, sequence: 0, payload: [0xBB]),
+            .. BuildFragmentRecord(ModeReliableOrdered, sequence: 1, fragmentIndex: 0, fragmentCount: 2, payload: new byte[DefaultFragmentSize + 1]),
+        ];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> drained =
+            accepter.PumpUntilDrained(all => all.Any(e => e.Kind == SessionEventKind.PeerClosed));
+
+        // Assert
+        drained.Should().Contain(e => e.Kind == SessionEventKind.PeerClosed && e.Reason == DisconnectReason.ProtocolViolation);
+        drained.Should().NotContain(e => e.Kind == SessionEventKind.MessageReceived);
+    }
+
+    [Fact]
+    public void Pump_UnreliableRecordWiderThanTheFragmentSizeWithNoFragmentBit_DoesNotCloseThePeer()
+    {
+        // Arrange — an unreliable record is bounded by the datagram, not by FragmentSize, so a
+        // 1201-byte one is legal and delivered.
+        using DatagramSessionReactorHarness accepter = new();
+        using RawReactor client = new(new ReactorOptions { Capacity = 4 });
+        LinkId clientLink = client.Bind(new IPEndPoint(IPAddress.Any, 0));
+        uint sessionId = EstablishLiveSessionId(accepter, client, clientLink, clientNonce: 0x6000_0000_0000_0004UL);
+
+        byte[] payload = new byte[DefaultFragmentSize + 1];
+        Array.Fill(payload, (byte)0x7E);
+        byte[] datagram = [.. BuildHeader(sessionId), .. BuildRecord(ModeUnreliable, sequence: 0, payload: payload)];
+
+        // Act
+        client.SendTo(clientLink, Source.FromIPEndPoint(accepter.Endpoint), datagram);
+        accepter.PumpUntil(() => accepter.Reactor.Counters.DatagramsReceived > 0);
+        List<(SessionEventKind Kind, PeerId Peer, DisconnectReason Reason)> events = accepter.DrainToList();
+
+        // Assert
+        events.Should().NotContain(e => e.Kind == SessionEventKind.PeerClosed);
+    }
+
     /// <summary>
     /// Builds a complete, whole Fragment set of <paramref name="fragmentCount"/> pieces starting at
     /// <paramref name="startSequence"/>, each carrying one payload byte distinct to its index (see
@@ -388,7 +518,7 @@ public class DatagramSessionOversizedFragmentSetTests
         byte[] cookie = cookieDatagram.AsSpan(ControlBodyOffset + 16, CookieLength).ToArray();
         echoedNonce.Should().Be(clientNonce);
 
-        byte[] helloWithCookie = BuildHelloWithCookieDatagram(clientNonce, epoch, cookie);
+        byte[] helloWithCookie = DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie);
         client.SendTo(clientLink, destination, helloWithCookie);
         byte[] acceptDatagram = ExchangeUntilReceived(client, accepter);
 
@@ -445,31 +575,6 @@ public class DatagramSessionOversizedFragmentSetTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(0, 4), ProtocolVersion);
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(4, 8), clientNonce);
         return BuildControlDatagram(HelloType, body);
-    }
-
-    private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
-    {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + 8 + ResumeSecretLength];
-        int offset = 0;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), clientNonce);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), unchecked((ulong)epoch));
-        offset += 8;
-        cookie.CopyTo(body.AsSpan(offset, CookieLength));
-        offset += CookieLength;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
-        offset += 8;
-        // The remaining ResumeSecretLength bytes are the dialler's resume secret; an all-zero one is
-        // fine, since only a Resume reads it and these tests send none.
-        return BuildControlDatagram(HelloWithCookieType, body);
     }
 
     /// <summary>Builds a 20-byte live-Session datagram header naming <paramref name="session"/> with both ack blocks zeroed.</summary>

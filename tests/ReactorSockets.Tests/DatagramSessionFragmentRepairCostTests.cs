@@ -47,7 +47,7 @@ public class DatagramSessionFragmentRepairCostTests
     /// <summary>
     /// Bytes a Fragment carries in this test: just over half the 65 507-byte UDP payload ceiling, so
     /// two Fragment records (11-byte header apiece) plus the 20-byte Datagram header never both fit in
-    /// one Datagram — only one ever does. Comfortably inside the [576, 65 507] range
+    /// one Datagram — only one ever does. Comfortably inside the [576, 65 476] range
     /// <see cref="DatagramSessionOptions.FragmentSize"/> accepts.
     /// </summary>
     private const int FragmentSize = 32_750;
@@ -68,6 +68,13 @@ public class DatagramSessionFragmentRepairCostTests
     /// certainly passed however the estimator has moved (matches <see cref="DatagramSessionRetransmitResendTests"/>).
     /// </summary>
     private static readonly TimeSpan _pastTheRetransmitDeadline = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// How far the dialler's clock advances per relay round in the #542 test. At 30 ms the first
+    /// Fragment's deadline, armed at the initial RTO before any round-trip sample, passes while Fragments
+    /// are still queued ahead of its resend. At 10 ms it passes only after the queue has drained.
+    /// </summary>
+    private static readonly TimeSpan _roundInterval = TimeSpan.FromMilliseconds(30);
 
     /// <summary>The three positions issue #249 names explicitly: a theory over where in the Message the lost Fragment sits.</summary>
     public static TheoryData<int, string> FragmentDropPositions => new()
@@ -105,6 +112,10 @@ public class DatagramSessionFragmentRepairCostTests
         SendOutcome outcome = dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, message);
         outcome.Should().Be(SendOutcome.Sent, "retention was sized to hold every one of the 57 Fragments this Message cuts into");
 
+        // The accepter acknowledges on its own one Pump after each Fragment arrives (ADR 0026). Those
+        // acks are held back until the transfer is done, so the clock that never moves between rounds
+        // cannot feed the estimator zero round-trip samples and collapse the RTO under the transfer.
+        proxy.SetPayloadDropRule(RelayDirection.UpstreamToClient, _ => true);
         for (int round = 0; round < FragmentCount; round++)
         {
             if (round == dropIndex)
@@ -119,6 +130,7 @@ public class DatagramSessionFragmentRepairCostTests
         // admitted while the dropped Fragment was still missing — travel back before the deadline
         // passes. Without this reply nothing the accepter received would ever be acknowledged, and every
         // Fragment the sender is still tracking would eventually expire alongside the one truly lost.
+        proxy.SetPayloadDropRule(RelayDirection.UpstreamToClient, null);
         accepter.Reactor.Send(accepterPeer, DeliveryMode.Unreliable, [0]).Should().Be(SendOutcome.Sent);
         accepter.Reactor.Pump();
         tap.Pump();
@@ -151,6 +163,52 @@ public class DatagramSessionFragmentRepairCostTests
         // acknowledgement — which is what let the sender narrow retransmission down to the one Fragment
         // still missing instead of every Fragment it had sent.
         tap.CountInDirection(TapDirection.AccepterToDialler).Should().BeGreaterThan(0, "the accepter's ack-carrying reply reached the dialler");
+    }
+
+    /// <summary>
+    /// Issue #542: the clock advances every round and the accepter's acks flow back during the transfer,
+    /// so the dropped Fragment's deadline passes while its retransmission still waits behind the
+    /// Fragments queued ahead of it at one per Pump. The retransmission is counted once and reaches the
+    /// wire once, however many RTOs it waits in the queue.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(FragmentDropPositions))]
+    public void Send_A57FragmentMessageWithOneFragmentDroppedWhileTheClockAdvances_CountsAndSendsOneRetransmission(int dropIndex, string position)
+    {
+        // Arrange
+        using DatagramSessionReactorHarness dialler = new(
+            capacity: 2, bindLoopback: false, maxMessageSize: MessageSize, retentionBytes: RetentionBytes, fragmentSize: FragmentSize);
+        using DatagramSessionReactorHarness accepter = new(
+            capacity: 2, maxMessageSize: MessageSize, retentionBytes: RetentionBytes, fragmentSize: FragmentSize);
+        using WireTap tap = new(accepter.Endpoint, dialler.TimeProvider);
+        using LossyProxy proxy = new(tap.PublicEndPoint, dialler.TimeProvider);
+
+        PeerId diallerPeer = dialler.Reactor.Connect(proxy.PublicEndPoint);
+        ConnectThroughProxyAndTap(dialler, proxy, tap, accepter);
+
+        byte[] message = new byte[MessageSize];
+        ulong retransmittedBefore = dialler.Reactor.CountersOf(diallerPeer).PacketsRetransmitted;
+
+        // Act — one Fragment leaves per round, the clock advances each round, and acks flow back.
+        dialler.Reactor.Send(diallerPeer, DeliveryMode.ReliableOrdered, message).Should().Be(SendOutcome.Sent);
+        for (int round = 0; round < FragmentCount * 3; round++)
+        {
+            if (round == dropIndex)
+            {
+                proxy.DropNext(RelayDirection.ClientToUpstream);
+            }
+
+            PumpRelayRound(dialler, proxy, tap, accepter);
+            dialler.TimeProvider.Advance(_roundInterval);
+        }
+
+        // Assert
+        (dialler.Reactor.CountersOf(diallerPeer).PacketsRetransmitted - retransmittedBefore).Should().Be(
+            1UL, $"only the {position} Fragment (index {dropIndex}) was lost, and it waited in the send queue rather than being lost again");
+
+        List<uint> arrivedSequences = DecodeRecordSequences(tap, TapDirection.DiallerToAccepter, fragmentsOnly: true);
+        arrivedSequences.Should().HaveCount(FragmentCount, "the dropped Fragment reached the wire exactly once more and every other Fragment once")
+            .And.OnlyHaveUniqueItems();
     }
 
     /// <summary>
@@ -230,8 +288,11 @@ public class DatagramSessionFragmentRepairCostTests
     /// <see cref="ControlDatagramCodec"/>'s shape, not <see cref="DatagramAssembler"/>'s, and are skipped
     /// entirely rather than walked as packet records — <see cref="DatagramSessionSendFragmentationTests.FirstDataDatagram"/>
     /// applies the same filter for the same reason.
+    /// <para>
+    /// With <paramref name="fragmentsOnly"/> set, unfragmented records such as Pings are left out.
+    /// </para>
     /// </remarks>
-    private static List<uint> DecodeRecordSequences(WireTap tap, TapDirection direction)
+    private static List<uint> DecodeRecordSequences(WireTap tap, TapDirection direction, bool fragmentsOnly = false)
     {
         List<uint> sequences = [];
         foreach (byte[] datagram in tap.PayloadsInDirection(direction))
@@ -250,7 +311,11 @@ public class DatagramSessionFragmentRepairCostTests
                 bool isFragment = (flags & FragmentBit) != 0;
                 int headerSize = isFragment ? FragmentRecordSize : UnfragmentedRecordSize;
 
-                sequences.Add(sequence);
+                if (isFragment || !fragmentsOnly)
+                {
+                    sequences.Add(sequence);
+                }
+
                 offset += headerSize + length;
             }
         }

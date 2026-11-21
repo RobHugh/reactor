@@ -184,7 +184,9 @@ remote can produce this at will, and nothing is wrong with this Reactor.
 A verified handshake, or on the stream profile an accepted connection, was refused because its
 address already holds [`DatagramSessionOptions.MaxPeersPerAddress`](ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress.md#ReactorSockets_DatagramSessionOptions_MaxPeersPerAddress) or
 [`StreamSessionOptions.MaxPeersPerAddress`](ReactorSockets.StreamSessionOptions.MaxPeersPerAddress.md#ReactorSockets_StreamSessionOptions_MaxPeersPerAddress) accepted Peers while other capacity Slots
-were free. Subject is the claimed Source. <code>Value0</code> is the limit; <code>Value1</code> is the prefix
+were free. On the stream profile it is also logged when an accepted connection is closed before its
+first handshake record arrives, because its address already has that many other connections held
+waiting for theirs. Subject is the claimed Source. <code>Value0</code> is the limit; <code>Value1</code> is the prefix
 length the address was counted by: 32 for IPv4, and
 [`DatagramSessionOptions.PeerLimitIPv6PrefixLength`](ReactorSockets.DatagramSessionOptions.PeerLimitIPv6PrefixLength.md#ReactorSockets_DatagramSessionOptions_PeerLimitIPv6PrefixLength) or
 [`StreamSessionOptions.PeerLimitIPv6PrefixLength`](ReactorSockets.StreamSessionOptions.PeerLimitIPv6PrefixLength.md#ReactorSockets_StreamSessionOptions_PeerLimitIPv6PrefixLength) for IPv6, so every address in that
@@ -208,6 +210,18 @@ limit; <code>Value1</code> is the socket's index in
 bound a consumer can act on. A queued socket error spends a read, so not every read was a datagram.
 The socket's queue depth cannot be read past queued errors, so a Pump that read exactly the last
 queued datagram also reports this.
+
+`OversizedFragment = 210` 
+
+An established Peer's reliable Fragment carried more payload bytes than this Reactor's own
+[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize), and the Session was closed with
+[`DisconnectReason.ProtocolViolation`](ReactorSockets.DisconnectReason.md) before anything in that Datagram was
+acknowledged (ADR 0024). Subject is the Peer. <code>Value0</code> is the Fragment's payload length in
+bytes; <code>Value1</code> is this Reactor's <code>ResolvedFragmentSize</code>.
+
+[`DiagnosticLevel.Warn`](ReactorSockets.DiagnosticLevel.md), for the same reason as [`DiagnosticId.DatagramMalformed`](ReactorSockets.DiagnosticId.md): a
+remote can produce this at will. The handshake announces the size, so a conforming peer never
+sends a wider Fragment, and the width and the size say which end is misbuilt.
 
 `PeerRefused = 300` 
 
@@ -262,8 +276,9 @@ rather than a new one being established (ADR 0011). Subject is the resumed Peer 
 nothing about a Peer's identity is renewed by a Resume. <code>Value0</code> is the number of retained
 outbound bytes the match rewound to the counter the Resume reported; <code>Value1</code> is unused. On
 the datagram profile it is logged when a Resume control datagram matches the Peer on the
-accepting end (session id and secret), and when an Interrupted dialling end that has sent a
-Resume hears its session again. Nothing is rewound, because retransmission already re-sends
+accepting end (session id and secret), when an Interrupted accepting end receives a well-formed
+data Datagram for the Session from the exact address and port it sends to, and when an
+Interrupted dialling end that has sent a Resume hears its session again. Nothing is rewound, because retransmission already re-sends
 anything unacknowledged, so <code>Value0</code> is 0 and <code>Value1</code> is unused.
 
 <p>
@@ -327,11 +342,15 @@ lost its transport, not a condition a consumer needs to act on.
 
 `RedialFailed = 307` 
 
-A re-dial attempt could not connect (ADR 0011). Subject is the Peer, which this never closes —
-it stays Interrupted and waits out the schedule's next delay, leaving Linger, not an attempt
-count, the only thing that ever closes it. <code>Value0</code> carries the platform
-[`SocketError`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror) as its underlying integer value; <code>Value1</code> is
-the attempt number that failed.
+A re-dial attempt could not connect, or connected and ended before the listener confirmed the
+Resume (ADR 0011). Subject is the Peer, which this never closes — it stays Interrupted and
+waits out the schedule's next delay, leaving Linger, not an attempt count, the only thing that
+ever closes it. <code>Value0</code> carries the platform [`SocketError`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror)
+as its underlying integer value: for a connection that ended before confirmation it is
+[`Disconnecting`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror.disconnecting) for an end of stream, or the read's
+error. It is [`TimedOut`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror.timedout) when the listener did not
+answer within the receive-idle deadline, and [`SocketError`](https://learn.microsoft.com/dotnet/api/system.net.sockets.socketerror.socketerror)
+when the Resume record could not be sent. <code>Value1</code> is the attempt number that failed.
 
 [`DiagnosticLevel.Info`](ReactorSockets.DiagnosticLevel.md) rather than [`DiagnosticLevel.Warn`](ReactorSockets.DiagnosticLevel.md): under this
 profile's premise a failed reconnection attempt is an ordinary, expected outcome, and raising it
@@ -358,6 +377,32 @@ and redial Diagnostics ([`DiagnosticId.ResumeMatched`](ReactorSockets.Diagnostic
 RedialAttempted and RedialFailed), and a value published in a closed permanent enum cannot be
 moved later to make room.
 </p>
+
+`PendingAdmissionExpired = 309` 
+
+A connection the stream profile accepted sent no whole first handshake record within this end's
+[`StreamSessionOptions.SendIdleInterval`](ReactorSockets.StreamSessionOptions.SendIdleInterval.md#ReactorSockets_StreamSessionOptions_SendIdleInterval) × [`StreamSessionOptions.MissedHeartbeats`](ReactorSockets.StreamSessionOptions.MissedHeartbeats.md#ReactorSockets_StreamSessionOptions_MissedHeartbeats)
+of being accepted, and was closed with nothing sent. Subject is the claimed Source. <code>Value0</code>
+is the bytes of that record it had sent, 0 to 40; <code>Value1</code> is the deadline in milliseconds.
+
+[`DiagnosticLevel.Warn`](ReactorSockets.DiagnosticLevel.md): a remote can produce this at will by connecting and sending
+nothing, and a consumer can act on it by blocking the address or, if conforming diallers are being
+closed, by raising [`StreamSessionOptions.SendIdleInterval`](ReactorSockets.StreamSessionOptions.SendIdleInterval.md#ReactorSockets_StreamSessionOptions_SendIdleInterval). One record per connection,
+because it names the address. The deadline is fixed at accept, so bytes that arrive do not extend it.
+At most [`ReactorOptions.Capacity`](ReactorSockets.ReactorOptions.Capacity.md#ReactorSockets_ReactorOptions_Capacity) connections are held, so no more records than that
+are logged in one Pump.
+
+`PendingAdmissionLimitReached = 310` 
+
+A stream Reactor already held [`ReactorOptions.Capacity`](ReactorSockets.ReactorOptions.Capacity.md#ReactorSockets_ReactorOptions_Capacity) accepted connections waiting
+for their first handshake record, so it accepted no more that Pump and left the rest in the OS
+backlog. No subject. <code>Value0</code> is the limit, which is the capacity; <code>Value1</code> is the count
+of Admissions declined, counted as [`DiagnosticId.AdmissionCapReached`](ReactorSockets.DiagnosticId.md)'s are: once per listening Link
+left with a pending connection.
+
+[`DiagnosticLevel.Warn`](ReactorSockets.DiagnosticLevel.md): a remote can produce this at will by opening connections and
+sending nothing. One record per Pump. The held connections close at their deadline
+([`DiagnosticId.PendingAdmissionExpired`](ReactorSockets.DiagnosticId.md)), so the backlog is accepted again within that time.
 
 ## Remarks
 

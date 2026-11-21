@@ -55,8 +55,10 @@ namespace ReactorSockets;
 public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 {
     /// <summary>
-    /// The largest a UDP datagram can be, and this Reactor's scratch buffer size — at which
-    /// truncation is unreachable, so a datagram is never silently shortened into a different one.
+    /// The largest payload a UDP datagram can carry over IPv4, and the largest datagram this Reactor
+    /// reads. An IPv4 datagram is never truncated. An IPv6 datagram can carry up to 65 527 bytes, so
+    /// one of 65 508 to 65 527 bytes is reported as truncated and discarded. In both cases a datagram is
+    /// never silently shortened into a different one.
     /// </summary>
     private const int MaxUdpDatagramSize = 65_507;
 
@@ -87,6 +89,24 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private readonly RetentionPool _retention;
 
+    /// <summary>
+    /// Queued unreliable payload bytes for every Peer: one region of <see cref="_unreliableQueueBytesPerPeer"/>
+    /// bytes per Slot index, allocated at construction. <see cref="Send"/> appends at
+    /// <see cref="PeerSlot.UnreliableQueuedPayloadEnd"/>, and <see cref="CompactUnreliableQueue"/> moves what
+    /// is still queued to the region's front after each flush.
+    /// </summary>
+    private readonly byte[] _unreliableQueue;
+
+    /// <summary>One Peer's region of <see cref="_unreliableQueue"/>: <see cref="DatagramSessionOptions.ResolvedUnreliableQueueBytes"/>.</summary>
+    private readonly int _unreliableQueueBytesPerPeer;
+
+    /// <summary>
+    /// <paramref name="slot"/>'s region of <see cref="_unreliableQueue"/>: <see cref="_unreliableQueueBytesPerPeer"/>
+    /// bytes starting at its Slot index, so no two Peers share a byte.
+    /// </summary>
+    private Span<byte> UnreliableRegion(PeerSlot slot) =>
+        _unreliableQueue.AsSpan(slot.Handle.Index * _unreliableQueueBytesPerPeer, _unreliableQueueBytesPerPeer);
+
     private readonly CookieMinter _cookies;
     private readonly RandomNumberGenerator _entropy;
     private readonly PumpIntervalObserver _pumpIntervalObserver;
@@ -114,16 +134,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private readonly ClosedSessionMemory _closedSessions;
 
-    private readonly byte[] _scratchBuffer = new byte[MaxUdpDatagramSize];
+    /// <summary>
+    /// The read-side buffer. One byte longer than <see cref="MaxUdpDatagramSize"/> so a read that
+    /// fills it is known to have been truncated (see <c>UdpLink.Receive</c>).
+    /// </summary>
+    private readonly byte[] _scratchBuffer = new byte[MaxUdpDatagramSize + 1];
     private readonly byte[] _sendBuffer = new byte[DatagramSessionProtocol.ControlDatagramSize];
 
     /// <summary>
-    /// The scratch buffer <see cref="FlushPeer"/> packs one Peer's data Datagram into, separate from
+    /// The scratch buffer <see cref="FlushOneDatagram"/> packs each data Datagram into, separate from
     /// <see cref="_scratchBuffer"/> — which is read-side and reused within one
     /// <see cref="OnLinkReadable"/> call — and from <see cref="_sendBuffer"/>, which is sized for a
     /// control datagram only and far too small for a coalesced data one. Sized at
-    /// <see cref="MaxUdpDatagramSize"/> like <see cref="_scratchBuffer"/> so it can hold whatever a
-    /// Pump packs into it; reused across every Peer flushed by one Pump rather than allocated per Peer.
+    /// <see cref="MaxUdpDatagramSize"/>, the largest datagram one send can carry, so it can hold the largest
+    /// data Datagram any Peer's fragment size allows; reused across every Peer flushed by one Pump rather than allocated per Peer.
     /// </summary>
     private readonly byte[] _outboundDatagramBuffer = new byte[MaxUdpDatagramSize];
 
@@ -136,6 +160,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     private readonly int _maxDatagramsPerPump;
     private readonly int _admissionCap;
     private int _admissionsThisFrame;
+
+    /// <summary>
+    /// How many Pumps have started on this Reactor. A Peer's ack is due once it has been owed since an
+    /// earlier Pump than the current one (<see cref="IsAckDue"/>).
+    /// </summary>
+    private long _pumpNumber;
     private int _capDiscardsThisFrame;
     private int _capacityDiscardsThisFrame;
 
@@ -143,11 +173,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// The largest declared <c>fragmentCount</c> a Fragment's set may legally claim: this Reactor's own
     /// receive window, <see cref="DatagramSessionOptions.ResolvedReceiveWindowFragments"/>, not
     /// <see cref="DatagramSessionOptions.ReceiveWindowFloor"/>. The floor is computed from <em>this
-    /// end's own</em> <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>, but fragment size is
-    /// unilateral and per-direction (ADR 0004) — a conforming peer with a smaller fragment size legally
-    /// cuts the same, within-<see cref="DatagramSessionOptions.MaxMessageSize"/> Message into more
-    /// Fragments than that floor, and bounding by the floor would close that peer as a protocol
-    /// violator for a set it was always entitled to send. The window is the right bound instead of a
+    /// end's own</em> <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>, but a conforming peer
+    /// with a smaller fragment size legally cuts the same,
+    /// within-<see cref="DatagramSessionOptions.MaxMessageSize"/> Message into more Fragments than that
+    /// floor, up to the window this end announced (ADR 0024). Bounding by the floor would close that
+    /// peer as a protocol violator for a set it was always entitled to send. The window is the right bound instead of a
     /// looser one: it is what a Fragment set actually occupies while it is held, so a declared count
     /// larger than the window can never be reassembled — there is no slot for every piece to sit in at
     /// once — and refusing it refuses exactly the sets that were never legal, whoever's fragment size
@@ -164,6 +194,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// no more arithmetic than a single comparison.
     /// </summary>
     private readonly int _maxLegalFragmentCount;
+
+    /// <summary>
+    /// The widest Fragment payload this Reactor holds: its own resolved
+    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>, the width of every receive-arena
+    /// Fragment slot (ADR 0024). A reliable Fragment wider than this closes the Peer with
+    /// <see cref="DisconnectReason.ProtocolViolation"/> in <see cref="ProcessDataDatagram"/>'s
+    /// pre-classification pass. Captured at construction, as <see cref="_maxLegalFragmentCount"/> is.
+    /// </summary>
+    private readonly int _maxLegalFragmentWidth;
 
     /// <summary>
     /// Constructs a Reactor bound to the calling thread (ADR 0002) — every future mutating call must
@@ -198,6 +237,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
         _maxDatagramsPerPump = options.ResolvedMaxDatagramsPerPump;
         _maxLegalFragmentCount = options.ResolvedReceiveWindowFragments;
+        _maxLegalFragmentWidth = options.ResolvedFragmentSize;
         _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
 
         _closedSessions = new ClosedSessionMemory(options.Reactor.Capacity, options.Reactor.TimeProvider);
@@ -213,6 +253,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             DatagramSessionOptions.ReliableSpaceCount,
             options.RetentionSlots,
             options.ResolvedFragmentSize);
+
+        _unreliableQueueBytesPerPeer = options.ResolvedUnreliableQueueBytes;
+        _unreliableQueue = new byte[checked((int)options.UnreliableQueueBudgetBytes)];
 
         try
         {
@@ -309,6 +352,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         try
         {
             _pumpIntervalObserver.Observe();
+            _pumpNumber++;
             _pendingEvents.Clear();
             _arena.Reset();
             _admissionsThisFrame = 0;
@@ -387,7 +431,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
             FragmentSize = _options.ResolvedFragmentSize,
-            OrderedDelivery = new(_options.OrderedHoldSlots, _options.ResolvedFragmentSize),
+            OrderedDelivery = new(checked((int)_options.OrderedHoldSlots), _options.ResolvedFragmentSize),
         };
 
         SlotHandle handle = _peers.TryAdd(slot) ?? throw new InvalidOperationException(
@@ -458,9 +502,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// has slid past. <see cref="PeerCounters.MessagesReceived"/> counts whole Messages handed to the
     /// frame arena for delivery, and not a Message the arena refused.
     /// <see cref="PeerCounters.Resumes"/> counts the Peer's resumes: once per
-    /// <see cref="SessionEventKind.PeerResumed"/> raised for it, on the accepting end when a matching
-    /// Resume moves it out of Interrupted and on the dialling end when it hears its session again after
-    /// sending a Resume, and never reset by one (ADR 0013).
+    /// <see cref="SessionEventKind.PeerResumed"/> raised for it, and never reset by one (ADR 0013). The
+    /// accepting end raises it when a matching Resume or a well-formed data Datagram from the exact address
+    /// and port it sends to moves the Peer out of Interrupted. The dialling end raises it when it hears its
+    /// session again after sending a Resume.
     /// <see cref="PeerCounters.RetentionHighWaterBytes"/> reads the true per-Peer figure — summed
     /// across both reliable Spaces — from <see cref="_retention"/>.
     /// </summary>
@@ -501,12 +546,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// the same as every other (<see cref="OutboundSequenceSpaces"/>) — but retain nothing, because
     /// nothing unreliable is ever retransmitted. A Message this call accepts is queued on
     /// <paramref name="peer"/>'s Slot (<see cref="PeerSlot.PendingSends"/>) and leaves as one packet
-    /// record inside the next <see cref="Pump"/>'s single coalesced Datagram to that Peer, in Send
-    /// order (<see cref="FlushOutboundDatagrams"/>) — nothing reaches the wire before that Pump runs,
-    /// and a <c>Send</c> with no following Pump puts nothing on the wire at all. That next Pump is only
-    /// the first one this record is <em>eligible</em> to leave in: if this Peer already has more queued
-    /// than one Datagram holds, a record queued behind the boundary waits for however many further
-    /// Pumps it takes to reach the front, still in the order it was Sent.
+    /// record in a data Datagram written by a later <see cref="Pump"/>, in Send
+    /// order (<see cref="FlushOutboundDatagrams"/>). Nothing reaches the wire before that Pump runs. One
+    /// Pump writes a bounded number of Datagrams per Peer (<see cref="FlushPeer"/>), so a record queued
+    /// behind a backlog waits for however many Pumps it takes to reach the front. An unreliable Message
+    /// is charged its length plus a 7-byte record header against
+    /// <see cref="DatagramSessionOptions.UnreliableQueueBytes"/> and refused with
+    /// <see cref="SendOutcome.SendQueueFull"/> past it, with nothing copied and no sequence spent.
     /// </summary>
     /// <remarks>
     /// <b><see cref="SendOutcome.RetentionExhausted"/> is reachable from one <c>Send</c> call</b> (ADR
@@ -540,8 +586,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// The Message payload, unframed. The bytes are copied before this call returns — into
     /// <see cref="_retention"/> for a reliable mode, into the queued record for an unreliable one — so
     /// the caller owns its buffer again the instant <c>Send</c> returns and may overwrite or reuse it
-    /// without changing what is eventually put on the wire. A Message wider than
-    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> cannot fit in one Datagram, and for
+    /// without changing what is eventually put on the wire. A Message wider than this Peer's send
+    /// Fragment size (<c>fragmentSize</c> below: the smaller of this Reactor's
+    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> and the peer's announced Fragment size)
+    /// cannot fit in one Datagram, and for
     /// <see cref="DeliveryMode.Unreliable"/> and <see cref="DeliveryMode.UnreliableSequenced"/> that cap
     /// is reported back as <see cref="SendOutcome.MessageTooLarge"/> rather than thrown, and it is
     /// permanent — no option lifts it: you may only fragment what you can retransmit (ADR 0004), because
@@ -554,16 +602,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="DeliveryMode.ReliableOrdered"/> and <see cref="DeliveryMode.ReliableUnordered"/> the
     /// single-Datagram cap does not apply: a Message up to <paramref name="peer"/>'s own announced
     /// <c>MaxMessageSize</c> (see the summary above) is cut into <c>ceil(length / fragmentSize)</c>
-    /// Fragments, each retained and sequenced as its own ordinary reliable packet, and only a Message
+    /// Fragments, each retained and sequenced as its own ordinary reliable packet, and a Message
     /// wider than that remote limit is refused with <see cref="SendOutcome.RemoteMessageTooLarge"/>.
-    /// That <c>fragmentSize</c> is this Peer's own <see cref="PeerSlot.FragmentSize"/>, captured from
-    /// <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> once when the Peer was admitted — not
-    /// re-read from options on this or any later call. Fragment size is unilateral, per-direction, and
-    /// decided once, at <c>Send</c> (ADR 0004): a retransmit re-sends bytes already cut rather than
-    /// re-deciding anything, so two Messages sent to the same Peer at different times, and every
-    /// retransmit of either, are always cut with the same size. It is never announced in the handshake,
-    /// because a receiver reassembles a Fragment set by <c>fragmentIndex</c> and <c>fragmentCount</c>
-    /// alone and never needs to know the sender's choice.
+    /// That <c>fragmentSize</c> is this Peer's <see cref="PeerSlot.FragmentSize"/>: the smaller of this
+    /// Reactor's <see cref="DatagramSessionOptions.ResolvedFragmentSize"/> and the Fragment size the
+    /// peer announced, fixed once when the Peer reached Established (ADR 0024) — not re-read on this or
+    /// any later call, and unchanged by a Resume. A retransmit re-sends bytes already cut, so two
+    /// Messages sent to the same Peer at different times, and every retransmit of either, are cut with
+    /// the same size. A reliable Message that needs more Fragments at that size than the peer's announced
+    /// receive window holds is refused with <see cref="SendOutcome.RemoteMessageTooLarge"/>, with
+    /// nothing retained or sequenced.
     /// </param>
     public SendOutcome Send(PeerId peer, DeliveryMode mode, ReadOnlySpan<byte> message)
     {
@@ -584,10 +632,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             return refusal;
         }
 
-        // The fragment size used to cut this Message is this Peer's own, captured on the Slot at
-        // admission (issue #248, ADR 0004) rather than read from _options here — fragment size is
-        // decided once, per Peer, and Send only ever consults what was already decided. The cap handed
-        // to FragmentPlan.Resolve is likewise this Peer's own remote-announced MaxMessageSize (issues
+        // Every mode uses this Peer's send Fragment size, fixed on the Slot when the Peer reached
+        // Established (issue #248, ADR 0024) rather than read from _options here, so Send only ever
+        // consults what was already decided. A reliable Message is cut at it, and an unreliable Message
+        // wider than it is refused with MessageTooLarge. The cap handed to FragmentPlan.Resolve is this
+        // Peer's own remote-announced MaxMessageSize (issues
         // #284, #449; see this method's XML doc for why a Send is capped by the far end's limit rather
         // than this Reactor's own). RemoteMaxMessageSize is a uint off the wire while
         // FragmentPlan.Resolve takes an int message length, so a value above int.MaxValue is clamped
@@ -596,7 +645,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // FragmentPlan.Resolve states the too-large rule exactly once: unreliable modes refuse above one
         // Fragment's worth, and every mode refuses above that remote cap.
         int remoteMaxMessageSize = slot.RemoteMaxMessageSize > int.MaxValue ? int.MaxValue : (int)slot.RemoteMaxMessageSize;
-        FragmentPlanResult plan = FragmentPlan.Resolve(message.Length, slot.FragmentSize, mode, remoteMaxMessageSize);
+        int fragmentSize = slot.FragmentSize;
+        FragmentPlanResult plan = FragmentPlan.Resolve(
+            message.Length, fragmentSize, mode, slot.RemoteReceiveWindowFragments, remoteMaxMessageSize);
         if (plan.IsMessageTooLarge)
         {
             // Which limit refused it is the plan's to say (issue #449): an unreliable mode can be refused
@@ -606,17 +657,27 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         if (!isReliable)
         {
+            int charge = message.Length + DatagramSessionProtocol.UnfragmentedRecordSize;
+            if (charge > _unreliableQueueBytesPerPeer - slot.UnreliableQueuedBytes)
+            {
+                return SendOutcome.SendQueueFull;
+            }
+
+            int offset = slot.UnreliableQueuedPayloadEnd;
+            message.CopyTo(UnreliableRegion(slot).Slice(offset, message.Length));
+            slot.UnreliableQueuedPayloadEnd = offset + message.Length;
+            slot.UnreliableQueuedBytes += charge;
             slot.PendingSends.Add(new PendingOutboundRecord
             {
                 Mode = recordMode,
                 Sequence = slot.OutboundSequences.Allocate(recordMode),
-                UnreliablePayload = message.ToArray(),
+                UnreliableOffset = offset,
+                UnreliableLength = message.Length,
             });
             return SendOutcome.Sent;
         }
 
         int spaceIndex = ReliableSpaceIndex(recordMode);
-        int fragmentSize = slot.FragmentSize;
         int fragmentCount = plan.FragmentCount;
 
         // A Message's Fragments are committed as one unit (issue #247): the retention budget is sized
@@ -820,7 +881,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 case UdpLinkReceiveOutcome.Truncated:
                     _counters.RecordDatagramReceived();
                     _counters.RecordUnknownSourceDatagram();
-                    _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(result.Source, _scratchBuffer.Length));
+                    _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(result.Source, MaxUdpDatagramSize));
                     break;
 
                 // An ICMP error queued against this socket by an earlier send, and on Linux the reason
@@ -920,7 +981,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// established from: a Peer behind a NAT that rebinds, or a device that changes network, keeps its
     /// Session, which is the whole reason the identity is a token rather than an address. A session id
     /// naming a recently closed Session goes to <see cref="TryReAckClosedSession"/> first (ADR 0017,
-    /// second amendment) and is discarded only if that declines.
+    /// second amendment) and is discarded only if that declines. A data Datagram from another address or
+    /// port is delivered but neither moves the Peer's send address nor resumes an Interrupted accepted Peer.
     /// </summary>
     private void ProcessDataDatagram(UdpLink link, Source source, uint session, ReadOnlySpan<byte> datagram)
     {
@@ -1027,7 +1089,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // matter either way — slot is closed by that refusal, so nothing reads this timestamp again.
         slot.LastReceiveTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
 
-        // A declared fragmentCount larger than this Reactor's own receive window is refused with a
+        // Two refusals share this pass, and both close the Peer rather than discard. A Fragment wider
+        // than this Reactor's own FragmentSize (ADR 0024) could never fit a receive-arena slot, and only
+        // a non-conforming peer sends one, since the handshake announces the size. A declared
+        // fragmentCount larger than this Reactor's own receive window is refused with a
         // close, not a discard (issue #282, reworked under #264) — the record is individually legal and
         // its set internally consistent (both already proved above), but the set it claims could never
         // be held: the window is what a Fragment set actually occupies while it waits, and there is no
@@ -1044,24 +1109,38 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         while (oversizedScan.TryReadNext(out PacketRecord record))
         {
             if (record.IsFragment
-                && record.Mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered
-                && record.FragmentCount > _maxLegalFragmentCount)
+                && record.Mode is PacketRecordMode.ReliableOrdered or PacketRecordMode.ReliableUnordered)
             {
-                if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                if (record.FragmentCount > _maxLegalFragmentCount)
                 {
-                    _diagnostics.Log(DiagnosticRecord.ForOversizedFragmentSet(
-                        ToPeerId(slot.Handle), record.FragmentCount, _maxLegalFragmentCount));
+                    if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                    {
+                        _diagnostics.Log(DiagnosticRecord.ForOversizedFragmentSet(
+                            ToPeerId(slot.Handle), record.FragmentCount, _maxLegalFragmentCount));
+                    }
+
+                    ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
+                    return;
                 }
 
-                ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
-                return;
+                if (record.Payload.Length > _maxLegalFragmentWidth)
+                {
+                    if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+                    {
+                        _diagnostics.Log(DiagnosticRecord.ForOversizedFragment(
+                            ToPeerId(slot.Handle), record.Payload.Length, _maxLegalFragmentWidth));
+                    }
+
+                    ClosePeer(slot.Handle, DisconnectReason.ProtocolViolation);
+                    return;
+                }
             }
         }
 
         // Fully parsed and not refused above: this is what "well-formed" means for leaving Interrupted
         // (issue #383). It sits after the oversized-set close so a datagram that closes the Peer never
         // resumes it first.
-        ResumeInterruptedDialledPeerOnData(slot);
+        ResumeInterruptedPeerOnData(source, slot);
 
         // The proof above is what attributes this Datagram to slot's Peer: it names an established
         // session id (ProcessDataDatagram's own lookup) and every record in it parses. Only from this
@@ -1131,18 +1210,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// back off the shared timer twice on a Pump where both Spaces expired something, doubling the RTO
     /// twice and raising <see cref="RetransmissionTimer.ConsecutiveBackoffs"/> by two for one loss
     /// event. This method instead sweeps both Spaces first, decides the backoff once here at the Peer
-    /// level from their combined count, and only then re-arms each Space's findings —
-    /// <see cref="OutstandingReliableSequences.ReArmExpired"/> — at the single resulting
-    /// <see cref="RetransmissionTimer.EffectiveTimeout"/>, matching how a horizon slide arms everything
-    /// it newly covers from one shared moment and RTO.
+    /// level from their combined count. Each expired sequence stays disarmed until
+    /// <see cref="FlushOneDatagram"/> packs its resend and arms it at the
+    /// <see cref="RetransmissionTimer.EffectiveTimeout"/> current then (issue #542).
     /// </para>
     /// <para>
     /// A single scan over <see cref="_peers"/> (<see cref="ShareHolderTable{T}.OccupantAt"/>), the same
     /// shape <see cref="StreamSessionReactor.EnforceIdleTimers"/> uses for its own per-Pump-per-Peer
     /// sweep: it costs at most <see cref="ShareHolderTable{T}.Capacity"/> array reads against
     /// already-allocated state, so it allocates nothing itself, and
-    /// <see cref="OutstandingReliableSequences.CollectExpired"/> and
-    /// <see cref="OutstandingReliableSequences.ReArmExpired"/> allocate nothing either — including on
+    /// <see cref="OutstandingReliableSequences.CollectExpired"/> allocates nothing either — including on
     /// the steady path where nothing has expired. A Peer still mid-handshake has recorded nothing on
     /// either reliable Space yet (<see cref="OutstandingReliableSequences.RecordSent"/> is only ever
     /// called for a sent record), so restricting the scan to <see cref="PeerLifecycle.IsEstablished"/>
@@ -1190,7 +1267,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             // Acting on the stall signature (issue #302): the round just recorded above is the only
             // place RoundsSinceFirstUnackedFragment can advance, so it is the earliest and only point a
             // false IsFragmentSizeStall can newly turn true — no separate per-Pump sweep is needed.
-            // Closing here, before the re-arm below, means the expired sequences QueueForRetransmission
+            // Closing here means the expired sequences QueueForRetransmission
             // just queued onto slot.PendingSends never reach FlushOutboundDatagrams: ClosePeer removes
             // the slot from every table that keeps it reachable, so nothing about this Peer survives to
             // be flushed, backed off, or traced. Removing the occupant at this index leaves the Slot
@@ -1202,12 +1279,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
-            TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger);
-            slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableOrdered, effectiveRto);
-            slot.AckTracker.ReArmExpired(PacketRecordMode.ReliableUnordered, effectiveRto);
-
             if (_diagnostics.IsEnabled(DiagnosticLevel.Trace))
             {
+                TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger);
                 _diagnostics.Log(DiagnosticRecord.ForRetransmissionTimerBackedOff(
                     ToPeerId(slot.Handle),
                     newRtoMilliseconds: (long)effectiveRto.TotalMilliseconds,
@@ -1319,8 +1393,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Puts every Established Peer's Sent-since-last-flush records on the wire, once per
-    /// <see cref="Pump"/>: a Peer with nothing queued in <see cref="PeerSlot.PendingSends"/> is skipped
+    /// Puts every Established Peer's queued records on the wire, through one <see cref="FlushPeer"/>
+    /// call per Peer per <see cref="Pump"/>: a Peer with nothing queued in <see cref="PeerSlot.PendingSends"/> is skipped
     /// entirely, so a Pump following no <see cref="Send"/> puts nothing on the wire for that Peer. A
     /// Peer still mid-handshake has nothing to flush to either — <see cref="Send"/> can queue against
     /// it, but nothing here reaches it until it reaches <see cref="PeerPhase.Open"/>, the
@@ -1333,8 +1407,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// array reads, and a Peer with an empty queue costs nothing more than that one read.
     /// <see cref="FlushPeer"/> itself trims <see cref="PeerSlot.PendingSends"/> down to whatever it
     /// could not pack this Pump, so there is nothing left for this method to clear — a Peer whose queue
-    /// drained completely is left with an empty list by that trim, which is exactly what makes the next
-    /// Pump's <c>Count == 0</c> check above skip it and send no header-only Datagram.
+    /// drained completely is left with an empty list, which is exactly what makes the next
+    /// Pump's <c>Count == 0</c> check above skip it and send no header-only Datagram, unless its final
+    /// ack or its delayed ack (<see cref="IsAckDue"/>) is due.
     /// </remarks>
     private void FlushOutboundDatagrams()
     {
@@ -1348,8 +1423,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             // A Peer whose Goodbye close is due is flushed even with nothing queued: its Slot is freed
             // right after, so this datagram is the last that could carry the ack of the Goodbye.
             // The same holds for a Closing Peer that just acknowledged the remote's Goodbye (AckDue): that
-            // datagram is what tells the remote its Goodbye arrived.
-            if (slot.PendingSends.Count == 0 && !slot.Lifecycle.IsFinalAckDue)
+            // datagram is what tells the remote its Goodbye arrived. A Peer whose ack has been owed since
+            // an earlier Pump is flushed too, as one header-only Datagram (ADR 0026).
+            if (slot.PendingSends.Count == 0 && !IsHeaderOnlyDatagramDue(slot))
             {
                 continue;
             }
@@ -1358,6 +1434,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             slot.Lifecycle.FinalAckFlushed();
         }
     }
+
+    /// <summary>
+    /// Whether <paramref name="slot"/> owes an acknowledgement that no Datagram has carried since an
+    /// earlier Pump than this one (ADR 0026). The Pump that classified the record does not send the ack
+    /// on its own, so a reply queued before the next Pump carries it instead.
+    /// </summary>
+    private bool IsAckDue(PeerSlot slot) => slot.AckOwedSincePump < _pumpNumber;
+
+    /// <summary>
+    /// Whether a flush of <paramref name="slot"/> sends the header and ack blocks even with no record:
+    /// its final ack (<see cref="PeerLifecycle.IsFinalAckDue"/>) or its delayed ack (<see cref="IsAckDue"/>) is due.
+    /// </summary>
+    private bool IsHeaderOnlyDatagramDue(PeerSlot slot) => slot.Lifecycle.IsFinalAckDue || IsAckDue(slot);
 
     /// <summary>
     /// Whether <paramref name="slot"/> has gone silent past this end's receive-idle deadline: elapsed
@@ -1572,28 +1661,40 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Takes an Interrupted dialled Peer back to <see cref="PeerPhase.Open"/> on hearing its
-    /// session again: queues <see cref="SessionEventKind.PeerResumed"/> with the same
-    /// <see cref="PeerId"/> (generation included), calls <see cref="Core.PeerCounterSet.RecordResume"/>
-    /// once and logs <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c> 0 (a datagram Session
-    /// rewinds nothing). Does nothing for an accepting-end Peer or a Peer that is not Interrupted.
+    /// Takes an Interrupted Peer back to <see cref="PeerPhase.Open"/> on hearing its session again:
+    /// queues <see cref="SessionEventKind.PeerResumed"/> with the same <see cref="PeerId"/> (generation
+    /// included), calls <see cref="Core.PeerCounterSet.RecordResume"/> once and logs
+    /// <see cref="DiagnosticId.ResumeMatched"/> with <c>Value0</c> 0 (a datagram Session rewinds nothing).
+    /// An Interrupted dialled Peer resumes on any well-formed data Datagram for its Session, an
+    /// Interrupted accepted Peer only on one from exactly its current <see cref="PeerSlot.Remote"/>
+    /// (address and port). Does nothing for a Peer that is not Interrupted.
     /// </summary>
     /// <remarks>
     /// Called once <see cref="ParseDataDatagram"/> has fully parsed a data datagram, the same well-formedness
-    /// proof that stamps <see cref="PeerSlot.LastReceiveTimestamp"/>. An observer who can see the session id
-    /// can forge such a datagram, so it can fake this exit on the dialling end. That is accepted: the exit
-    /// grants no takeover (the accepting end still demands the resume secret, ADR 0009) and on-path
-    /// attackers are out of scope. Counters are never reset by a Resume (ADR 0013).
+    /// proof that stamps <see cref="PeerSlot.LastReceiveTimestamp"/>. On the dialling end, an observer who can
+    /// see the session id can forge such a datagram, so it can fake this exit. That is accepted: the exit
+    /// grants no takeover (moving the accepting end's send address still demands the resume secret,
+    /// ADR 0009) and on-path attackers are out of scope. Counters are never reset by a Resume (ADR 0013).
     /// <para>
-    /// No "has sent a Resume yet" check is needed (ADR 0015): the Pump that marks a dialled Peer
-    /// Interrupted also sends its first Resume (<c>SendResumeIfDue</c> runs after the receive-idle
+    /// On the accepting end the datagram is not authenticated either, because the session id is only a
+    /// demultiplexing token (ADR 0009). A party able to forge a data Datagram from the held address with the
+    /// right session id can already keep <see cref="PeerSlot.LastReceiveTimestamp"/> fresh and stop the Peer
+    /// being interrupted at all, so resuming on the same evidence grants it nothing new. This path never moves
+    /// the send address, so the comparison is on the whole <see cref="Source"/>: a datagram from the same IP
+    /// on another port would otherwise report a resume while sends still go to the old port. A new port or IP
+    /// needs a matched Resume (and a path challenge for a new IP, ADR 0021).
+    /// </para>
+    /// <para>
+    /// No "has sent a Resume yet" check is needed on the dialled end (ADR 0015): the Pump that marks a dialled
+    /// Peer Interrupted also sends its first Resume (<c>SendResumeIfDue</c> runs after the receive-idle
     /// check), and datagrams are read before either, so every datagram that reaches an Interrupted
     /// dialled Peer arrives after at least one Resume went out.
     /// </para>
     /// </remarks>
-    private void ResumeInterruptedDialledPeerOnData(PeerSlot slot)
+    private void ResumeInterruptedPeerOnData(Source source, PeerSlot slot)
     {
-        if (!slot.IsDialled || !slot.Lifecycle.TryLeaveInterrupted())
+        bool resumesOnThisSource = slot.IsDialled || source == slot.Remote;
+        if (!resumesOnThisSource || !slot.Lifecycle.TryLeaveInterrupted())
         {
             return;
         }
@@ -1685,13 +1786,108 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
-    /// Packs as much as fits of <paramref name="slot"/>'s queue into one data Datagram, in Send order,
-    /// and sends it: the 20-byte header — this Peer's own <see cref="PeerSlot.RemoteSessionId"/>
+    /// Writes <paramref name="slot"/>'s queue as data Datagrams of at most
+    /// <see cref="DatagramSessionProtocol.DatagramHeaderSize"/> + <see cref="DatagramSessionProtocol.FragmentRecordSize"/>
+    /// + <see cref="PeerSlot.FragmentSize"/> bytes each, in Send order, until the queue is empty or this Pump
+    /// has written <see cref="MaxUdpDatagramSize"/> divided by that limit of them for this Peer (issue #485).
+    /// </summary>
+    /// <remarks>
+    /// The limit is the one Datagram size that always holds a full Fragment, so a Datagram never exceeds
+    /// <see cref="DatagramSessionOptions.FragmentSize"/> plus this profile's headers and is not split by IP.
+    /// The Datagram count keeps one Pump's bytes for one Peer at or below one maximum UDP payload, so a
+    /// backlog leaves over several Pumps instead of in one burst a receiver's socket buffer would drop.
+    /// What is left waits, in order, for the next Pump. The first Datagram is written even with nothing
+    /// queued when the Peer's final ack is due (<see cref="PeerLifecycle.IsFinalAckDue"/>) or its
+    /// delayed ack is due (<see cref="IsAckDue"/>).
+    /// </remarks>
+    private void FlushPeer(PeerSlot slot)
+    {
+        int datagramLimit = DatagramSessionProtocol.DatagramHeaderSize + DatagramSessionProtocol.FragmentRecordSize + slot.FragmentSize;
+        int datagramBudget = MaxUdpDatagramSize / datagramLimit;
+        int datagramsWritten = 0;
+        do
+        {
+            int queuedBefore = slot.PendingSends.Count;
+            if (FlushOneDatagram(slot, datagramLimit))
+            {
+                datagramsWritten++;
+            }
+
+            Debug.Assert(
+                queuedBefore == 0 || slot.PendingSends.Count < queuedBefore,
+                "every queued record fits an empty Datagram of datagramLimit bytes, so each pass consumes at least one.");
+            if (slot.PendingSends.Count == queuedBefore)
+            {
+                break;
+            }
+        }
+        while (slot.PendingSends.Count > 0 && datagramsWritten < datagramBudget);
+
+        CompactUnreliableQueue(slot);
+    }
+
+    /// <summary>
+    /// Moves the unreliable bytes still queued for <paramref name="slot"/> to the front of its region of
+    /// <see cref="_unreliableQueue"/>, rewrites their records' offsets, and recomputes
+    /// <see cref="PeerSlot.UnreliableQueuedBytes"/> from the records left, so what a flush wrote is free
+    /// for the next <see cref="Send"/>.
+    /// </summary>
+    /// <remarks>
+    /// Unreliable records enter the queue only at its end and leave only from its front, so their bytes
+    /// are in queue order and the ones a flush consumed are a prefix of the region. The first unreliable
+    /// record still queued starts where that prefix ends, which is how far everything moves. The charge
+    /// is recomputed rather than decremented, so empty Messages, which move no bytes, release their
+    /// record headers too.
+    /// </remarks>
+    private void CompactUnreliableQueue(PeerSlot slot)
+    {
+        List<PendingOutboundRecord> queue = slot.PendingSends;
+        int shift = slot.UnreliableQueuedPayloadEnd;
+        bool foundLive = false;
+        int charged = 0;
+        for (int i = 0; i < queue.Count; i++)
+        {
+            PendingOutboundRecord pending = queue[i];
+            if (IsReliable(pending.Mode))
+            {
+                continue;
+            }
+
+            if (!foundLive)
+            {
+                shift = pending.UnreliableOffset;
+                foundLive = true;
+            }
+
+            charged += pending.UnreliableLength + DatagramSessionProtocol.UnfragmentedRecordSize;
+        }
+
+        if (shift > 0)
+        {
+            Span<byte> region = UnreliableRegion(slot);
+            region[shift..slot.UnreliableQueuedPayloadEnd].CopyTo(region);
+            for (int i = 0; i < queue.Count; i++)
+            {
+                PendingOutboundRecord pending = queue[i];
+                if (!IsReliable(pending.Mode))
+                {
+                    queue[i] = pending with { UnreliableOffset = pending.UnreliableOffset - shift };
+                }
+            }
+        }
+
+        slot.UnreliableQueuedPayloadEnd -= shift;
+        slot.UnreliableQueuedBytes = charged;
+    }
+
+    /// <summary>
+    /// Packs as much as fits of <paramref name="slot"/>'s queue into one data Datagram of at most
+    /// <paramref name="datagramLimit"/> bytes, in Send order, and sends it: the 20-byte header — this Peer's own <see cref="PeerSlot.RemoteSessionId"/>
     /// stamped as the session, since that is the id the far end asked to be stamped on datagrams sent to
     /// it — followed by both reliable Spaces' ack blocks read fresh from
     /// <see cref="_receiveWindows"/>, so an admission this same Pump's read pass just made is reflected
     /// in the Datagram this same Pump's flush sends. A reliable record's payload is read back from
-    /// <see cref="_retention"/> and an unreliable one's from <see cref="PendingOutboundRecord.UnreliablePayload"/>
+    /// <see cref="_retention"/> and an unreliable one's from <see cref="_unreliableQueue"/>
     /// (<see cref="TryResolvePendingPayload"/>).
     /// </summary>
     /// <remarks>
@@ -1704,16 +1900,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// acknowledged.
     /// </para>
     /// <para>
-    /// <b>A record that does not fit waits for the next Pump</b>. Packing stops at the first record
-    /// <see cref="DatagramRecordPacker.TryPackRecord"/> refuses — this Datagram is full — and
-    /// everything from there to the end of <see cref="PeerSlot.PendingSends"/>, in the order it was
-    /// queued, is left on the Slot rather than discarded: <see cref="List{T}.RemoveRange"/> trims only
-    /// the prefix this call actually consumed, so those records are exactly what the next
-    /// <see cref="FlushOutboundDatagrams"/> sees at the front of the same queue. A Datagram is flushed
-    /// once per Peer per Pump (the loop above never calls this twice in one Pump), so the remainder does
-    /// not go out as a second Datagram this Pump — it rides the next one. A record whose payload failed
-    /// to resolve — a reliable sequence already released from retention — is consumed rather than left
-    /// queued: retrying it later cannot succeed either, since nothing repopulates a released slot.
+    /// <b>A record that does not fit waits for the next Datagram.</b> Packing stops at the first record
+    /// <see cref="DatagramRecordPacker.TryPackRecord"/> refuses, and everything from there to the end of
+    /// <see cref="PeerSlot.PendingSends"/> stays queued in order: <see cref="List{T}.RemoveRange"/> trims
+    /// only the prefix this call consumed. <see cref="FlushPeer"/> starts the next Datagram there, or the
+    /// next Pump does once this Pump's Datagram count for the Peer is spent. A record whose payload failed
+    /// to resolve, a reliable sequence already released from retention, is consumed rather than left
+    /// queued, since nothing repopulates a released slot.
     /// </para>
     /// <para>
     /// <b>Arming still happens only where the record actually reached a Datagram.</b> A record that did
@@ -1722,15 +1915,19 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="DatagramRecordPacker.TryPackRecord"/> just accepted, never for the one that broke the
     /// loop, so a queued-but-unsent record is armed on whichever later Pump actually packs it. Nothing
     /// is sent at all if nothing ended up packed, so a queue whose one record failed to resolve costs a
-    /// wasted flush rather than a header-only Datagram with no records in it.
+    /// wasted flush rather than a header-only Datagram with no records in it, unless an ack is due and
+    /// the header-only Datagram is what carries it.
     /// </para>
     /// </remarks>
-    private void FlushPeer(PeerSlot slot)
+    /// <param name="slot">The Peer whose queue is packed.</param>
+    /// <param name="datagramLimit">The most bytes this Datagram may hold, header included.</param>
+    /// <returns><see langword="true"/> if a Datagram was written.</returns>
+    private bool FlushOneDatagram(PeerSlot slot, int datagramLimit)
     {
         (AckBlock reliableOrdered, AckBlock reliableUnordered) = _receiveWindows[slot.Handle.Index].GenerateAckBlocks();
 
         DatagramRecordPacker packer = new(
-            _outboundDatagramBuffer,
+            _outboundDatagramBuffer.AsSpan(0, datagramLimit),
             slot.RemoteSessionId,
             reliableOrdered.Base,
             reliableOrdered.Bits,
@@ -1771,17 +1968,22 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             // Arming happens here, at the moment the record actually reaches a Datagram, rather than in
             // Send: a sequence queued but not yet flushed has not been transmitted, and starting its
             // retransmit deadline before it leaves would spend part of that deadline on this end's own
-            // queue (subtask 6.6.8, issue #218). A resend is skipped — ReArmExpired has already given it
-            // this Pump's single backed-off deadline. The horizon gate lives inside RecordSent, so a
-            // sequence too far ahead of the ack horizon still has its timer withheld rather than
-            // started, exactly as #185 requires.
-            if (!pending.IsRetransmission && IsReliable(pending.Mode))
+            // queue (subtask 6.6.8, issue #218). A resend follows the same rule (issue #542): its deadline
+            // stopped when it expired and restarts here, at the RTO current now, so a resend waiting behind
+            // a long queue is not reported again before it leaves. The horizon gate lives inside
+            // RecordSent, so a sequence too far ahead of the ack horizon still has its timer withheld
+            // rather than started, exactly as #185 requires.
+            if (IsReliable(pending.Mode))
             {
-                slot.AckTracker.RecordSent(
-                    pending.Mode,
-                    pending.Sequence,
-                    slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger),
-                    isFragment);
+                TimeSpan effectiveRto = slot.RetransmitTimer.EffectiveTimeout(ObservedPumpInterval, slot.EffectiveLinger);
+                if (pending.IsRetransmission)
+                {
+                    slot.AckTracker.RecordResent(pending.Mode, pending.Sequence, effectiveRto);
+                }
+                else
+                {
+                    slot.AckTracker.RecordSent(pending.Mode, pending.Sequence, effectiveRto, isFragment);
+                }
             }
 
             // StallSignature.RecordFragmentSent opens the unacked-Fragment window on the first Fragment
@@ -1795,11 +1997,12 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         slot.PendingSends.RemoveRange(0, consumed);
 
-        // Nothing packed sends nothing, except for a Peer whose Goodbye close is due: it sends the header
-        // and ack blocks alone, the one datagram that can still tell the remote its Goodbye arrived.
-        if (packer.RecordsPacked == 0 && !slot.Lifecycle.IsFinalAckDue)
+        // Nothing packed sends nothing, except for a Peer whose Goodbye close is due, which sends the
+        // header and ack blocks alone as the one datagram that can still tell the remote its Goodbye
+        // arrived, and a Peer whose ack is due, which sends them alone as its delayed ack (ADR 0026).
+        if (packer.RecordsPacked == 0 && !IsHeaderOnlyDatagramDue(slot))
         {
-            return;
+            return false;
         }
 
         UdpLinkSendResult result = slot.Link.SendTo(slot.Remote, _outboundDatagramBuffer.AsSpan(0, packer.BytesWritten));
@@ -1810,12 +2013,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             _counters.RecordDatagramSent();
         }
 
-        // A data datagram just left for this Peer — this flush packed at least one record, or the
-        // RecordsPacked == 0 return above would already have exited — so the send-idle interval
-        // restarts from now (issue #340): the Ping this same flush may just have packed counts as a
-        // sent datagram exactly like any other, which is what keeps a Session that has nothing but
-        // Pings to send from ever emitting a second one before the next interval elapses.
+        // A data datagram just left for this Peer, so the send-idle interval restarts from now (issue
+        // #340): a Ping or a header-only ack counts as a sent datagram like any other, which keeps an idle
+        // Session at one Datagram per end per interval. Its ack blocks acknowledge everything classified
+        // so far, so nothing is owed any more.
         slot.LastSendTimestamp = _options.Reactor.TimeProvider.GetTimestamp();
+        slot.AckOwedSincePump = null;
+        return true;
     }
 
     /// <summary>
@@ -1849,9 +2053,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         out ushort fragmentCount,
         out bool isControl)
     {
-        if (pending.UnreliablePayload is byte[] bytes)
+        if (!IsReliable(pending.Mode))
         {
-            payload = bytes;
+            payload = UnreliableRegion(slot).Slice(pending.UnreliableOffset, pending.UnreliableLength);
             isFragment = false;
             fragmentIndex = 0;
             fragmentCount = 0;
@@ -1971,6 +2175,13 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         ReceiveClassification classification = windows.Window(record.Mode).Classify(record.Sequence);
         ReceiveWindowOutcome outcome = classification.Outcome;
         int ringSlot = classification.RingSlot;
+
+        // Any reliable record classified here is owed an ack, a duplicate included: a repeat means the
+        // ack that covered it was lost (ADR 0026).
+        if (IsReliable(record.Mode))
+        {
+            slot.AckOwedSincePump ??= _pumpNumber;
+        }
 
         // The moment a Fragment set's slot is discarded is the last moment anyone can say how much of
         // it had arrived (issue #297): Classify just clobbered such a slot if this is set. This
@@ -2199,9 +2410,10 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <param name="fragmentCount">The group's declared Fragment count.</param>
     /// <param name="payload">The Fragment's payload bytes.</param>
     /// <returns>
-    /// Whether the Fragment's group is complete after this piece was held — <see langword="false"/>
-    /// whenever the payload did not fit its slot, since that leaves the slot's length at zero and the
-    /// piece effectively lost. The caller delivers the group once this is <see langword="true"/>.
+    /// Whether the Fragment's group is complete after this piece was held. The payload always fits its
+    /// slot: <see cref="ProcessDataDatagram"/> closes the Peer before classification on a Fragment
+    /// wider than <see cref="_maxLegalFragmentWidth"/>. The caller delivers the group once this is
+    /// <see langword="true"/>.
     /// </returns>
     private bool HoldFragment(
         PeerSlot slot, PacketRecordMode mode, uint sequence, int ringSlot,
@@ -2210,16 +2422,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         int spaceIndex = ReliableSpaceIndex(mode);
         Span<byte> fragmentSlot = _receiveArena.GetFragmentSlot(slot.Handle.Index, spaceIndex, ringSlot);
 
-        if (payload.Length > fragmentSlot.Length)
-        {
-            // Cannot happen from a peer whose own FragmentSize matches this Reactor's (ADR 0004's
-            // ordinary case), but fragment size is unilateral and per-direction, so nothing on the
-            // wire proves the two sides agree. Refusing to write past the slot's fixed width — rather
-            // than throwing — leaves the sequence admitted (the window already advanced past it) but
-            // this slot's length at zero, indistinguishable from an empty one: the Fragment set this
-            // piece belonged to simply never completes, exactly as if the piece had been lost.
-            return false;
-        }
+        Debug.Assert(
+            payload.Length <= fragmentSlot.Length,
+            "ProcessDataDatagram closes the Peer on a Fragment wider than the FragmentSize before any record is classified.");
 
         payload.CopyTo(fragmentSlot);
         ReceiveWindow window = _receiveWindows[slot.Handle.Index].ReliableWindow(mode);
@@ -3073,8 +3278,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// Establishes the dialling end's Session. Each end announces the id it wants stamped on datagrams
     /// sent <em>to it</em>, so the two ids differ and neither end has to agree with the other about
-    /// which is which. The fragment size is not announced: it is each sender's own path property, and
-    /// a receiver that reassembles by offset and length never needs to know it.
+    /// which is which. Each end also announces its Fragment size and receive window (ADR 0024): this
+    /// end stores the remote values and fixes its send Fragment size at the smaller of the two sizes,
+    /// before the Peer is Established.
     /// </summary>
     /// <remarks>
     /// Also seeds the Peer's round-trip estimate with the time since its Hello-with-cookie was sent
@@ -3105,7 +3311,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // already trusted by the time this Peer reaches Established — an internal invariant to assert rather than input to re-validate,
         // mirroring NewAcceptedPeer's assert on the accepting path.
         Debug.Assert(
-            remoteTerms.Limits.IsLegal(speaksVersion: true),
+            remoteTerms.IsLegal(speaksVersion: true),
             "ControlDatagramCodec.TryReadAccept rejects illegal announced limits before this is called.");
 
         AnnouncedLimits remoteLimits = remoteTerms.Limits;
@@ -3116,6 +3322,9 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         slot.RemoteMaxMessageSize = remoteLimits.MaxMessageSize;
         slot.RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteLimits.SendIdleIntervalMilliseconds);
         slot.RemoteLinger = remoteLinger;
+        slot.RemoteFragmentSize = remoteTerms.FragmentSize;
+        slot.RemoteReceiveWindowFragments = remoteTerms.ReceiveWindowFragments;
+        slot.FragmentSize = Math.Min(slot.FragmentSize, remoteTerms.FragmentSize);
         slot.EffectiveLinger = announcedLinger < remoteLinger ? announcedLinger : remoteLinger;
         slot.RemoteResumeSecret = remoteResumeSecret.ToArray();
         slot.Lifecycle.Establish();
@@ -3447,7 +3656,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         // Established, the limits are already trusted — an internal invariant to assert rather than
         // input to re-validate.
         Debug.Assert(
-            remoteTerms.Limits.IsLegal(speaksVersion: true),
+            remoteTerms.IsLegal(speaksVersion: true),
             "ControlDatagramCodec.TryReadHelloWithCookie rejects illegal announced limits before this is called.");
 
         AnnouncedLimits remoteLimits = remoteTerms.Limits;
@@ -3468,14 +3677,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
             RemoteMaxMessageSize = remoteLimits.MaxMessageSize,
             RemoteSendIdleInterval = TimeSpan.FromMilliseconds(remoteLimits.SendIdleIntervalMilliseconds),
             RemoteLinger = remoteLinger,
+            RemoteFragmentSize = remoteTerms.FragmentSize,
+            RemoteReceiveWindowFragments = remoteTerms.ReceiveWindowFragments,
             EffectiveLinger = effectiveLinger,
             RemoteResumeSecret = remoteResumeSecret.ToArray(),
             Lifecycle = PeerLifecycle.Accepted(),
             AckTracker = NewAckTracker(retransmitTimer),
             RetransmitTimer = retransmitTimer,
             StallSignature = new(_options.Reactor.TimeProvider),
-            FragmentSize = _options.ResolvedFragmentSize,
-            OrderedDelivery = new(_options.OrderedHoldSlots, _options.ResolvedFragmentSize),
+            FragmentSize = Math.Min(_options.ResolvedFragmentSize, remoteTerms.FragmentSize),
+            OrderedDelivery = new(checked((int)_options.OrderedHoldSlots), _options.ResolvedFragmentSize),
             LastSendTimestamp = now,
             LastReceiveTimestamp = now,
         };
@@ -3508,11 +3719,14 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
     /// <summary>
     /// The terms this end announces for <paramref name="slot"/> in its Hello-with-cookie or Accept:
-    /// the slot's own local session id and this Reactor's announced limits and intervals.
+    /// the slot's own local session id, this Reactor's announced limits and intervals, and its own
+    /// Fragment size and receive window.
     /// </summary>
     private AnnouncedSessionTerms AnnouncedTermsFor(PeerSlot slot) => new(
         slot.LocalSessionId,
-        new AnnouncedLimits((uint)_options.MaxMessageSize, AnnouncedSendIdleIntervalMilliseconds, AnnouncedLingerMilliseconds));
+        new AnnouncedLimits((uint)_options.MaxMessageSize, AnnouncedSendIdleIntervalMilliseconds, AnnouncedLingerMilliseconds),
+        (ushort)_options.ResolvedFragmentSize,
+        (uint)_options.ResolvedReceiveWindowFragments);
 
     /// <summary>
     /// Spends one unit of the per-Pump admission budget, or Discards. The cap bounds work rather than
@@ -3756,7 +3970,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// <summary>
     /// One record <see cref="Send"/> queued on a Peer's Slot, awaiting that Peer's next flush
     /// (<see cref="FlushOutboundDatagrams"/>): the wire mode and sequence <see cref="Send"/> already
-    /// allocated, plus — only for the two unreliable modes — a copy of the Message's bytes. A reliable
+    /// allocated, plus, for the two unreliable modes only, where the Message's bytes sit in the Peer's region of <see cref="_unreliableQueue"/>. A reliable
     /// record carries no copy of its own and no record shape of its own either: its bytes, and whether
     /// it is a whole Message or one Fragment of a cut one (with which index and count), already live in
     /// <see cref="_retention"/> from the moment <see cref="Send"/> committed them, and
@@ -3765,8 +3979,8 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
     /// retains an unreliable Send's bytes anywhere else — plain <see cref="DeliveryMode.Unreliable"/>
     /// and <see cref="DeliveryMode.UnreliableSequenced"/> take no retention slot at all and are never a
     /// Fragment (ADR 0004) — so this is the simplest place that can hold them until the Pump that
-    /// finally needs them: one small copy per unreliable Send, released the moment that Pump's flush
-    /// clears <see cref="PeerSlot.PendingSends"/>.
+    /// finally needs them: copied once into preallocated storage and released when
+    /// <see cref="FlushPeer"/> has written them.
     /// </summary>
     private readonly struct PendingOutboundRecord
     {
@@ -3779,18 +3993,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// <summary>
         /// Whether this queue entry is a resend rather than a first transmission. What it decides at
         /// flush time is one thing: a first transmission arms its retransmit deadline through
-        /// <see cref="OutstandingReliableSequences.RecordSent"/>, while a resend has already been
-        /// re-armed by <see cref="OutstandingReliableSequences.ReArmExpired"/> at the single RTO its
-        /// Peer's one backoff for that Pump produced. Recording a resend as newly sent would overwrite
-        /// that deadline with a second one and count the sequence as outstanding twice.
+        /// <see cref="OutstandingReliableSequences.RecordSent"/>, while a resend arms its deadline again
+        /// through <see cref="OutstandingReliableSequences.RecordResent"/>, which keeps the sequence's
+        /// retransmitted mark for Karn's rule.
         /// </summary>
         public bool IsRetransmission { get; init; }
 
         /// <summary>
-        /// A copy of the Message's bytes for an unreliable record; <see langword="null"/> for a
-        /// reliable one, whose bytes live in <see cref="_retention"/> instead.
+        /// Where an unreliable record's bytes start in its Peer's region of <see cref="_unreliableQueue"/>.
+        /// Unused for a reliable record, whose bytes live in <see cref="_retention"/>.
         /// </summary>
-        public byte[]? UnreliablePayload { get; init; }
+        public int UnreliableOffset { get; init; }
+
+        /// <summary>An unreliable record's length in bytes. Unused for a reliable record.</summary>
+        public int UnreliableLength { get; init; }
     }
 
     /// <summary>
@@ -3814,7 +4030,7 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>
         /// The receive-idle deadline (<see cref="HasExceededReceiveIdleDeadline"/>) fired. The Peer stays open
-        /// until a Resume brings it back to <see cref="Open"/> or its effective Linger runs out.
+        /// until it is resumed back to <see cref="Open"/> or its effective Linger runs out.
         /// </summary>
         /// <remarks>
         /// <see cref="_peers"/> still holds the Slot, <see cref="CountersOf"/> keeps answering, and nothing
@@ -3826,10 +4042,11 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// sends a Resume each send-idle interval (<see cref="SendResumeIfDue"/>). The Peer's
         /// <see cref="PeerSlot.EffectiveLinger"/>, elapsed since <see cref="PeerLifecycle.LingerStartTimestamp"/>,
         /// ends it with <see cref="DisconnectReason.LingerExpired"/>, mirroring
-        /// <see cref="StreamSessionReactor.HasExceededLinger"/>. A Resume is the other way out: on the
-        /// accepting end one matched by session id and secret (<see cref="ResumeInterruptedPeer"/>), on the
-        /// dialling end hearing its session again after it has sent a Resume
-        /// (<see cref="ResumeInterruptedDialledPeerOnData"/>). Either raises
+        /// <see cref="StreamSessionReactor.HasExceededLinger"/>. Resuming is the other way out. The accepting
+        /// end resumes on a Resume matched by session id and secret (<see cref="ResumeInterruptedPeer"/>) or on
+        /// a well-formed data Datagram from the exact address and port it sends to. The dialling end resumes
+        /// on hearing its session again after it has sent a Resume. Both data exits are
+        /// <see cref="ResumeInterruptedPeerOnData"/>. Each exit raises
         /// <see cref="SessionEventKind.PeerResumed"/>.
         /// </remarks>
         Interrupted,
@@ -4244,6 +4461,20 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         public uint RemoteMaxMessageSize { get; set; }
 
         /// <summary>
+        /// The Fragment size in bytes the peer announced during the handshake, never this end's own
+        /// <see cref="FragmentSize"/>. Set on both Established paths and always within the legal
+        /// announced range, because <see cref="ControlDatagramCodec"/> rejects any other value at parse.
+        /// </summary>
+        public ushort RemoteFragmentSize { get; set; }
+
+        /// <summary>
+        /// The receive window in Fragments the peer announced during the handshake, never this end's own.
+        /// Set on both Established paths and never zero, because <see cref="ControlDatagramCodec"/>
+        /// rejects zero at parse.
+        /// </summary>
+        public uint RemoteReceiveWindowFragments { get; set; }
+
+        /// <summary>
         /// The send-idle interval the peer itself announced during the handshake — never this end's own
         /// <see cref="DatagramSessionOptions.SendIdleInterval"/>. Set on both Established paths,
         /// <see cref="DatagramSessionReactor.NewAcceptedPeer"/> (from the Hello-with-cookie field) and
@@ -4286,15 +4517,15 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         public TimeSpan EffectiveLinger { get; set; }
 
         /// <summary>
-        /// This Peer's own fragment size, resolved from <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
-        /// once at admission and stored here rather than read afresh from options on every
-        /// <see cref="DatagramSessionReactor.Send"/>. Fragment size is unilateral and per-direction
-        /// (ADR 0004): it is decided once, when this Peer opens, and nothing consulted later — a config
-        /// change, a handshake reply, a Resume — can move it for a Session already in flight. Every
-        /// Fragment a Message is cut into and every retransmit of one uses this same value for that
-        /// Peer's whole lifetime.
+        /// This Peer's send Fragment size: the smaller of <see cref="DatagramSessionOptions.ResolvedFragmentSize"/>
+        /// and <see cref="RemoteFragmentSize"/> (ADR 0024). The accepting end sets it at admission. The
+        /// dialling end starts at its own size and lowers it once, in <see cref="DatagramSessionReactor.OnAccept"/>,
+        /// before the Peer is Established; <see cref="DatagramSessionReactor.Send"/> refuses until then.
+        /// Nothing writes it after Established, a Resume included, so every Fragment a Message is cut into
+        /// and every retransmit of one uses this same value for the Peer's whole lifetime. Never larger
+        /// than this end's own Fragment size, so a retention slot always holds a Fragment cut at it.
         /// </summary>
-        public required int FragmentSize { get; init; }
+        public required int FragmentSize { get; set; }
 
         /// <summary>The secret the remote issued for resuming this Session. The dialling end sends it in each Resume (<see cref="DatagramSessionReactor.SendResumeIfDue"/>). The accepting end stores it but never reads it: it authorises a Resume against <see cref="PeerSlot.LocalResumeSecret"/>, the secret it issued.</summary>
         public byte[] RemoteResumeSecret { get; set; } = [];
@@ -4319,6 +4550,16 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
         /// start its idle clock earlier than the moment it actually became a Session.
         /// </summary>
         public long LastSendTimestamp { get; set; }
+
+        /// <summary>
+        /// The <see cref="DatagramSessionReactor._pumpNumber"/> of the Pump that first classified a
+        /// reliable record from this Peer since this end last sent it a data Datagram, or
+        /// <see langword="null"/> when every such record has been acknowledged on the wire. Set by
+        /// <see cref="DatagramSessionReactor.ClassifyRecord"/> and cleared by
+        /// <see cref="DatagramSessionReactor.FlushOneDatagram"/> whenever a Datagram leaves, since every
+        /// data Datagram carries both ack blocks (ADR 0026).
+        /// </summary>
+        public long? AckOwedSincePump { get; set; }
 
         /// <summary>
         /// The <see cref="TimeProvider.GetTimestamp"/> reading of the most recent moment this Peer's
@@ -4371,14 +4612,27 @@ public sealed class DatagramSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>
         /// Records this Peer has Sent since its last flush, in Send order: appended to by
-        /// <see cref="DatagramSessionReactor.Send"/> once a record is accepted, packed into one data
-        /// Datagram by <see cref="FlushPeer"/> on the next <see cref="Pump"/> that finds this
-        /// non-empty, and cleared immediately after by <see cref="FlushOutboundDatagrams"/>. A fresh
+        /// <see cref="DatagramSessionReactor.Send"/> once a record is accepted, packed into data
+        /// Datagrams by <see cref="FlushPeer"/> on the next <see cref="Pump"/>, which trims what it sent
+        /// and leaves the rest, in order, for the Pump after. A fresh
         /// Slot always starts with an empty queue — <see cref="Connect"/> and the accepted-Peer path in
         /// <see cref="OnHelloWithCookie"/> both construct a brand new <see cref="PeerSlot"/> rather than
         /// reusing one, so a Slot a later Peer occupies never inherits a previous occupant's queue.
+        /// An unreliable record's bytes sit in the Reactor's preallocated unreliable queue, not in the list.
         /// </summary>
         public List<PendingOutboundRecord> PendingSends { get; } = [];
+
+        /// <summary>
+        /// The bytes this Peer's queued unreliable records are charged against
+        /// <see cref="DatagramSessionOptions.UnreliableQueueBytes"/>: each one's length plus the 7-byte record header.
+        /// </summary>
+        public int UnreliableQueuedBytes { get; set; }
+
+        /// <summary>
+        /// The end of the payload bytes queued in this Peer's region of the Reactor's unreliable queue, where the
+        /// next unreliable Send's bytes go.
+        /// </summary>
+        public int UnreliableQueuedPayloadEnd { get; set; }
 
         /// <summary>
         /// This Peer's own tracker of outstanding reliable sequences and their ack horizon: built fresh

@@ -57,9 +57,12 @@ Every ready Link is served before any Link is served twice, and the scan order r
 listening Link is the exception: it accepts several connections in one Pump, bounded by
 `AdmissionCap` and free Slots.
 
-The arena adds a second, looser bound. If a Frame's reads fill `ArenaSize`, the next read is not
-delivered and `ArenaExhausted` is logged. With the default `ArenaSize` of one scratch buffer this can
-happen whenever two Links receive large reads in the same Pump. Raise `ArenaSize` if you see it.
+The arena adds a second, looser bound. A stream Link is read only as far as the arena has room. When
+a Frame's reads fill `ArenaSize`, the remaining stream Links are not read that Pump. Their bytes stay
+in the kernel's receive buffer and are read on a later Pump, so nothing is lost. A datagram that does
+not fit is not delivered, and `ArenaExhausted` is logged. With the default `ArenaSize` of one scratch
+buffer, two Links receiving large reads in the same Pump take turns across Pumps. Raise `ArenaSize`
+to serve more of them per Pump.
 
 ## Thread affinity
 

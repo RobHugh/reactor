@@ -34,6 +34,10 @@ demands per-Peer path state and dynamically sized buffers, which contradicts pre
 everything at construction, and ICMP-based discovery produces confident wrong answers on exactly the
 filtered paths where being wrong hurts.
 
+**Amended (issue #485).** A data Datagram carries at most one Fragment of `FragmentSize` bytes and 31
+bytes of header, so a backlog of small records never forms a Datagram larger than a Fragment's. See
+ADR 0025.
+
 `MaxMessageSize` is announced in the handshake and is honestly a *receive* limit. A sender validates
 against the peer's announced value, so an oversized payload fails synchronously at `Send` rather
 than as an unexplained remote disconnect part-way through a transfer.
@@ -81,3 +85,19 @@ spends nothing, the outcome a reliable Message already gets for the same limit. 
 checked first, so a Message over both caps still returns `MessageTooLarge`. The main cost is that the
 refusal no longer follows from the mode alone: a consumer that read `RemoteMessageTooLarge` as
 reliable-only has to handle it for unreliable Sends too.
+
+**Amended (issue #479).** Fragment size is no longer unilateral and per-direction, which supersedes "a receiver
+reassembles by index and count and never needs to know the sender's choice" and the consequence "A misconfigured
+fragment size cannot fail silently". Each end announces its `FragmentSize` and `ReceiveWindowFragments` in the
+handshake, and a Peer sends at the smaller of the two sizes, fixed when it reaches Established. A sender whose
+Message needs more Fragments than the remote window holds gets `RemoteMessageTooLarge` from `Send`. A Fragment
+wider than the receiver's own `FragmentSize` closes the Peer with `ProtocolViolation`. ADR 0024 records the
+decision. The main cost is that a peer with a smaller `FragmentSize` makes each Message need more retention
+slots, so `RetentionExhausted` arrives sooner.
+
+**Amended (issue #486).** The range is `[576, 65476]`, not `[576, 65507]`. 65 507 is the largest UDP
+payload, and a Datagram also carries its 20-byte header and an 11-byte Fragment record header, so a
+larger Fragment fits no Datagram. A reliable Message cut into such Fragments returned `Sent` and was
+never written, and every record queued behind it for that Peer waited forever. The upper bound is now
+derived from the payload and the two header sizes. The main cost is that a configuration above 65 476
+that only sent Messages small enough for one record, and so worked, now throws at construction.

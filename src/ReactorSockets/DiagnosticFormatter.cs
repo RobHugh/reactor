@@ -87,12 +87,14 @@ public static class DiagnosticFormatter
                 $"the retransmission timer backed off (RTO {v0} ms, consecutive backoffs {v1})"),
             DiagnosticId.OversizedFragmentSet => Invariant(
                 $"a fragment set declared more fragments than the receive window can hold and the Session was closed (fragments declared {v0}, largest legal {v1})"),
+            DiagnosticId.OversizedFragment => Invariant(
+                $"a fragment wider than FragmentSize arrived and the Session was closed (fragment bytes {v0}, FragmentSize {v1})"),
             DiagnosticId.UnreliableFragment => Invariant(
                 $"a datagram fragmenting in an unreliable mode was discarded (mode {ModeName(v0)}, mode bits {v0})"),
             DiagnosticId.OversizedMessage => Invariant(
                 $"a Message larger than MaxMessageSize was discarded (bytes {v0}, MaxMessageSize {v1})"),
             DiagnosticId.AddressPeerLimitReached => Invariant(
-                $"a handshake was refused because its address holds as many Peers as it may (MaxPeersPerAddress {v0}, counted by its /{v1})"),
+                $"an admission was refused because its address holds as many Peers or held connections as it may (MaxPeersPerAddress {v0}, counted by its /{v1})"),
             DiagnosticId.DatagramReadLimitReached => Invariant(
                 $"a Pump made as many reads on bound socket {v1} as it may (MaxDatagramsPerPump {v0})"),
 
@@ -119,9 +121,13 @@ public static class DiagnosticFormatter
             DiagnosticId.RedialAttempted => Invariant(
                 $"a re-dial attempt began (attempt {v0}, waited {v1} ms)"),
             DiagnosticId.RedialFailed => Invariant(
-                $"a re-dial attempt could not connect (socket error {SocketErrorText(v0)}, attempt {v1})"),
+                $"a re-dial attempt failed (socket error {SocketErrorText(v0)}, attempt {v1})"),
             DiagnosticId.DeliveryCounterRefused => Invariant(
                 $"the Peer claimed delivery of more Messages than were sent and the Session was closed (count claimed {v0}, count appended {v1})"),
+            DiagnosticId.PendingAdmissionExpired => Invariant(
+                $"an accepted connection sent no whole handshake record within its deadline and was closed (bytes received {v0}, deadline {v1} ms)"),
+            DiagnosticId.PendingAdmissionLimitReached => Invariant(
+                $"the Reactor held as many accepted connections waiting for a handshake record as it may and left the rest in the backlog (limit {v0}, admissions declined {v1})"),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(record), record.Id, $"{record.Id} is not a recognised DiagnosticId."),
         };

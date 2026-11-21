@@ -196,12 +196,20 @@ internal static class StreamSessionTestRecords
     /// own Hello reply off the wire do so themselves right after this returns — what that reply's
     /// bytes are read into varies by file, so it is not this method's job.
     /// </summary>
+    /// <param name="accepter">The Reactor the counterparty connected to.</param>
+    /// <param name="sendHello">Writes the Hello record to the counterparty's socket.</param>
+    /// <param name="budget">How long to pump before giving up, or the <see cref="PumpDeadline"/> default.</param>
+    /// <param name="announcedMaxMessageSize">
+    /// The <c>MaxMessageSize</c> the Hello announces. <paramref name="accepter"/> refuses a Send above it
+    /// with <see cref="SendOutcome.RemoteMessageTooLarge"/>, so a test that sends larger Messages raises it.
+    /// </param>
     public static PeerId EstablishSession(
         StreamSessionReactorHarness accepter,
         Action<byte[]> sendHello,
-        TimeSpan? budget = null)
+        TimeSpan? budget = null,
+        uint announcedMaxMessageSize = 4096)
     {
-        sendHello(BuildHello());
+        sendHello(BuildHello(maxMessageSize: announcedMaxMessageSize));
         PumpDeadline deadline = PumpDeadline.Start(budget);
         while (true)
         {

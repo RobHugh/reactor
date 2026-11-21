@@ -252,6 +252,11 @@ plus four" restates the failure; "retention of 64 KB cannot hold one Message of 
 lower `MaxMessageSize`" diagnoses it. These messages are the only documentation a consumer reads at the
 moment they need it.
 
+**Amended (issue #488).** `MaxMessageSize` is at most `Array.MaxLength` less the 4-byte length prefix,
+2 147 483 587, so one framed maximum Message fits one array and no floor is computed past
+`int.MaxValue`. The memory bill's total is summed as `Int128`, because each of its three lines can
+approach 2^62 bytes.
+
 ## Consequences
 
 - **ADR 0001's "default 64" is superseded.** Capacity is required and uncapped; 64 becomes a documented
@@ -276,3 +281,57 @@ moment they need it.
 - **The diagnostic roster grows again** — the re-dial attempts, the resume match and its failure, the
   accept cap being reached, and the receive-idle expiry all want records. Binding and dual-stack remain
   the other open gap.
+
+## Amendment 2026-11-12: a re-dial resumes only when the listener answers
+
+Issue #481. A dialled Peer left Interrupted as soon as its re-dial connected over TCP. A listener that no
+longer held the Session closed each such connection. Each close was a new interruption with a new Linger
+and a reset schedule, so the dialler re-dialled forever and never closed. "Linger bounds the activity",
+above, was false for that case.
+
+The listener's first delivery-counter record on the new connection confirms the Resume. A matched
+listener always sends it first, because `ResumeHeldPeer` sends it before any retention. Until it arrives
+the dialled Peer stays Interrupted and its Linger and schedule keep running.
+
+Before that confirmation, each of these is a failed attempt: end of stream, a failed read, a failed
+Resume send, and silence past the receive-idle deadline. A failed attempt raises no event and logs
+`RedialFailed`. Its `Value0` is `SocketError.Disconnecting` for an end of stream, the read's error for a
+failed read, `SocketError.SocketError` for a failed Resume send and `SocketError.TimedOut` for silence.
+`Value1` is the attempt number. The next delay comes from the same schedule, and Linger is still counted
+from the original interruption.
+
+A dialler whose listener no longer holds the Session therefore raises one `PeerInterrupted` and closes
+with `LingerExpired` on time. "Linger bounds the activity" holds.
+
+The Resume record, the delivery counter's wire format, the listening side's match and refusal paths, and
+the schedule's derivation do not change.
+
+## Amendment 2026-11-12: a pending dial times out
+
+Issue #483. A dial had no deadline once TCP connected. The idle timers cover established Peers only, so a
+far end that accepted the connection and sent no handshake record left the dial waiting for a Hello,
+holding its Slot, with `Send` returning `NotEstablished`, until the consumer closed it. The TCP connect
+phase was bounded only by the operating system's connect retries, which differ by platform.
+
+**Timeout.** A dial that has not established one `Linger` after `Connect` closes, whether its TCP connect is
+still pending or the far end connected and sent nothing. No knob is added. `Linger` is this end's declared
+bound on how long it waits for a silent remote, it is the only `Linger` a dial knows before the far end's
+Hello announces one, and it is the bound ADR 0009's amendment of 2026-11-10 puts on a pending datagram
+dial, so both profiles behave alike. The check runs in the Pump's idle-timer scan, after the readiness
+pass, so a Hello already in the socket buffer establishes the Peer first.
+
+**Close reason.** `TransportFailed`, for the reason ADR 0009's amendment gives: it already names a dial that
+could not connect, and a new public member would be permanent for a condition an existing one covers.
+
+**No diagnostic.** The `PeerClosed` event names the Peer the consumer dialled, and the consumer knows the
+endpoint it gave `Connect`. The datagram profile logs nothing for the same condition, and a member added to
+one profile alone would make the two disagree. Telling a timed-out dial from a refused connect would be one
+member for both profiles, decided in its own issue.
+
+**Accepting end.** No change. An accepted connection gets a Slot only once its whole Hello has arrived, and
+it establishes in the same call, so no accepted Peer waits in the handshake. A connection held before that
+is covered by issue #482, with its own deadline of `SendIdleInterval` × `MissedHeartbeats`: a held
+connection has no Slot, and a dial has one.
+
+The cost is that a `Linger` shorter than the round trip plus the far end's Pump interval closes a dial
+before its answer arrives, as it already does on the datagram profile.

@@ -36,6 +36,7 @@ public class DiagnosticIdTests
         [DiagnosticId.OversizedMessage] = new(207, DiagnosticLevel.Warn),
         [DiagnosticId.AddressPeerLimitReached] = new(208, DiagnosticLevel.Warn),
         [DiagnosticId.DatagramReadLimitReached] = new(209, DiagnosticLevel.Warn),
+        [DiagnosticId.OversizedFragment] = new(210, DiagnosticLevel.Warn),
         [DiagnosticId.PeerRefused] = new(300, DiagnosticLevel.Info),
         [DiagnosticId.LingerNegotiated] = new(301, DiagnosticLevel.Info),
         [DiagnosticId.MalformedFraming] = new(302, DiagnosticLevel.Warn),
@@ -45,6 +46,8 @@ public class DiagnosticIdTests
         [DiagnosticId.RedialAttempted] = new(306, DiagnosticLevel.Info),
         [DiagnosticId.RedialFailed] = new(307, DiagnosticLevel.Info),
         [DiagnosticId.DeliveryCounterRefused] = new(308, DiagnosticLevel.Warn),
+        [DiagnosticId.PendingAdmissionExpired] = new(309, DiagnosticLevel.Warn),
+        [DiagnosticId.PendingAdmissionLimitReached] = new(310, DiagnosticLevel.Warn),
     };
 
     /// <summary>
@@ -75,6 +78,7 @@ public class DiagnosticIdTests
         new(DiagnosticId.AddressPeerLimitReached, typeof(DatagramSessionRefusalTests), nameof(DatagramSessionRefusalTests.OnHelloWithCookie_AddressAtItsPeerLimit_CountsADiscardAndLogsAddressPeerLimitReached)),
         new(DiagnosticId.AddressPeerLimitReached, typeof(StreamSessionPerAddressLimitTests), nameof(StreamSessionPerAddressLimitTests.AttemptFreshConnection_AddressAtItsPeerLimit_LogsAddressPeerLimitReachedRatherThanPeerRefused)),
         new(DiagnosticId.DatagramReadLimitReached, typeof(DatagramSessionReadLimitTests), nameof(DatagramSessionReadLimitTests.Pump_SpendingTheWholeLimit_LogsDatagramReadLimitReachedCarryingTheLimit)),
+        new(DiagnosticId.OversizedFragment, typeof(DatagramSessionOversizedFragmentSetTests), nameof(DatagramSessionOversizedFragmentSetTests.Pump_FragmentOneByteWiderThanTheAccepterFragmentSize_LogsOversizedFragmentCarryingTheWidthAndTheFragmentSize)),
         new(DiagnosticId.PeerRefused, typeof(StreamSessionHandshakeGuardTests), nameof(StreamSessionHandshakeGuardTests.Connect_OfferingAVersionTheReactorDoesNotSpeak_LogsPeerRefusedAtInfoWithTheSourceSubject)),
         new(DiagnosticId.LingerNegotiated, typeof(StreamSessionNegotiatedLingerTests), nameof(StreamSessionNegotiatedLingerTests.Pump_BothRolesInterrupted_WithFractionalMillisecondOwnLinger_RoundUpOnceAndCloseAtTheRoundedInstant)),
         new(DiagnosticId.LingerNegotiated, typeof(DatagramSessionLingerNegotiatedDiagnosticTests), nameof(DatagramSessionLingerNegotiatedDiagnosticTests.Connect_TwoReactorsWithDifferentLingers_BothEndsRecordTheirOwnLingerAndTheMinimumAsEffective)),
@@ -87,6 +91,8 @@ public class DiagnosticIdTests
         new(DiagnosticId.RedialAttempted, typeof(StreamSessionRedialTests), nameof(StreamSessionRedialTests.Pump_AReDialAttempt_LogsRedialAttemptedAtInfoNamingThePeerItBelongsTo)),
         new(DiagnosticId.RedialFailed, typeof(StreamSessionRedialTests), nameof(StreamSessionRedialTests.Pump_ReDialAttemptThatFails_LeavesThePeerInterruptedRatherThanClosingIt)),
         new(DiagnosticId.DeliveryCounterRefused, typeof(StreamSessionDeliveryCounterFramingTests), nameof(StreamSessionDeliveryCounterFramingTests.DeliverCompleteMessages_ACountAboveWhatThisEndEverSent_LogsDeliveryCounterRefusedRatherThanMalformedFraming)),
+        new(DiagnosticId.PendingAdmissionExpired, typeof(StreamSessionPendingAdmissionDeadlineTests), nameof(StreamSessionPendingAdmissionDeadlineTests.Pump_SilentConnectionPastItsDeadline_LogsPendingAdmissionExpiredNamingTheSource)),
+        new(DiagnosticId.PendingAdmissionLimitReached, typeof(StreamSessionPendingAdmissionLimitTests), nameof(StreamSessionPendingAdmissionLimitTests.Pump_AFrameThatDefersPastTheLimit_EmitsExactlyOneRecordCarryingTheLimit)),
     ];
 
     /// <summary>Every member the enum declares, read from the enum rather than from <see cref="_roster"/>.</summary>

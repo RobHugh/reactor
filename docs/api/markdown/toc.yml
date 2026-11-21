@@ -62,6 +62,8 @@
       href: ReactorSockets.DatagramSessionOptions.ResolvedPeerLimitIPv6PrefixLength.md
     - name: ResolvedReceiveWindowFragments
       href: ReactorSockets.DatagramSessionOptions.ResolvedReceiveWindowFragments.md
+    - name: ResolvedUnreliableQueueBytes
+      href: ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes.md
     - name: RetentionBytes
       href: ReactorSockets.DatagramSessionOptions.RetentionBytes.md
     - name: RetentionSlots
@@ -70,6 +72,10 @@
       href: ReactorSockets.DatagramSessionOptions.SendBudgetBytes.md
     - name: SendIdleInterval
       href: ReactorSockets.DatagramSessionOptions.SendIdleInterval.md
+    - name: UnreliableQueueBudgetBytes
+      href: ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes.md
+    - name: UnreliableQueueBytes
+      href: ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.md
   - name: DatagramSessionReactor
     href: ReactorSockets.DatagramSessionReactor.md
     items:
@@ -281,6 +287,8 @@
       href: ReactorSockets.DiagnosticRecord.ForLinkFailed.md
     - name: ForMalformedFraming
       href: ReactorSockets.DiagnosticRecord.ForMalformedFraming.md
+    - name: ForOversizedFragment
+      href: ReactorSockets.DiagnosticRecord.ForOversizedFragment.md
     - name: ForOversizedFragmentSet
       href: ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet.md
     - name: ForOversizedMessage
@@ -289,6 +297,10 @@
       href: ReactorSockets.DiagnosticRecord.ForPeerRefusedCapacity.md
     - name: ForPeerRefusedVersion
       href: ReactorSockets.DiagnosticRecord.ForPeerRefusedVersion.md
+    - name: ForPendingAdmissionExpired
+      href: ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired.md
+    - name: ForPendingAdmissionLimitReached
+      href: ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached.md
     - name: ForRedialAttempted
       href: ReactorSockets.DiagnosticRecord.ForRedialAttempted.md
     - name: ForRedialFailed

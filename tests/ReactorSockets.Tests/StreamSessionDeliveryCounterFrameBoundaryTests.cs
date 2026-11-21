@@ -145,7 +145,7 @@ public class StreamSessionDeliveryCounterFrameBoundaryTests
     /// </summary>
     private static PeerId EstablishAcceptedSession(StreamSessionReactorHarness accepter, Counterparty peer)
     {
-        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send);
+        PeerId id = StreamSessionTestRecords.EstablishSession(accepter, peer.Send, announcedMaxMessageSize: MaxMessageSize);
         peer.Receive(RecordSize);
         return id;
     }

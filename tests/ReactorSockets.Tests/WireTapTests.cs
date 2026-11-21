@@ -149,6 +149,16 @@ public class WireTapTests
             PumpDeadline.Yield();
         }
 
+        // Two more rounds, as the tapped dialogue below also runs past delivery: the accepter acknowledges
+        // on the Pump after the last arrival (ADR 0026), and the dialler reads that ack.
+        for (int round = 0; round < 2; round++)
+        {
+            directAccepter.Reactor.Pump();
+            directAccepterAll.AddRange(directAccepter.DrainToList());
+            directDialler.Reactor.Pump();
+            directDiallerAll.AddRange(directDialler.DrainToList());
+        }
+
         // Act — the same dialogue, but relayed through a WireTap.
         using DatagramSessionReactorHarness tappedDialler = new(bindLoopback: false);
         using DatagramSessionReactorHarness tappedAccepter = new();

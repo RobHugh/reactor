@@ -191,6 +191,7 @@ apart reads the diagnostics, which is what diagnostics are for.
 | 207 | `OversizedMessage` | `Warn` | Peer | Message length / `MaxMessageSize` |
 | 208 | `AddressPeerLimitReached` | `Warn` | Source | `MaxPeersPerAddress` / — |
 | 209 | `DatagramReadLimitReached` | `Warn` | none | `MaxDatagramsPerPump` / index in `BoundEndpoints` |
+| 210 | `OversizedFragment` | `Warn` | Peer | Fragment payload length / `ResolvedFragmentSize` |
 
 ### Stream session
 
@@ -205,6 +206,8 @@ apart reads the diagnostics, which is what diagnostics are for.
 | 306 | `RedialAttempted` | `Info` | Peer | attempt number / delay in ms |
 | 307 | `RedialFailed` | `Info` | Peer | `SocketError` / attempt number |
 | 308 | `DeliveryCounterRefused` | `Warn` | Peer | claimed count / appended count |
+| 309 | `PendingAdmissionExpired` | `Warn` | Source | bytes of the first record received / deadline in ms |
+| 310 | `PendingAdmissionLimitReached` | `Warn` | none | the limit, `Capacity` / Admissions declined |
 
 **Amended (slice 3, slice 4.1).** `MalformedFraming` and `DataAfterGoodbye` came out of the framing work
 and took 302–303 — the values this table had drafted for `ResumeMatched` and `ResumeUnmatched`. The
@@ -236,6 +239,12 @@ socket per Pump. It means the limit was spent, not that datagrams remain, becaus
 cannot be read past queued errors. The Discard rule above still holds for a Hello the Reactor has read. A
 Hello this limit leaves unread waits in the socket buffer, and no counter sees it until it is read or the
 operating system drops it.
+
+**Amended (issue #479).** `OversizedFragment` takes 210. A reliable Fragment wider than the receiver's
+own `FragmentSize` closes the Peer with `ProtocolViolation` (ADR 0024). It passes the admission rule the
+way 205 does: loss and reordering never produce it, because the handshake announces the size and only a
+non-conforming peer sends a wider Fragment, and no counter carries the Peer or the width against the size.
+It closes the Session, so it fires once per Peer.
 
 **Amended (slice 4.4.4).** `ResumeUnmatched` shipped with both value slots used, where this table had
 drafted neither. It carries the number of reserved Slots the claim was checked against and the wire
@@ -297,6 +306,15 @@ Discards together, as the paragraphs under the Common table already say. `PeerRe
 refusal as well as a capacity refusal, each with its own slots. `MalformedFraming` carries this Reactor's
 `MaxMessageSize` in `Value1`. `DiagnosticFormatter` renders every member from the member docs, which stay
 the authority.
+
+**Amended (issue #482).** Two stream members join. `PendingAdmissionExpired` takes 309. It names the
+Source of a connection closed for sending no whole first record within its deadline, which no counter
+carries, and its first value tells a silent connection from a partial one. It emits one record per
+connection, at most `Capacity` per Pump, because no more connections than that are held.
+`PendingAdmissionLimitReached` takes 310. `AdmissionDeferrals` counts its declinings together with the
+admission cap's, so, like `AdmissionCapReached`, the record exists to say which bound declined them. It
+emits one record per Pump. `AddressPeerLimitReached` also covers a held stream connection closed under
+the per-address limit (ADR 0014), with the same value slots.
 
 Sixteen members as first drafted. What the rules **removed** is the more useful half of the exercise:
 

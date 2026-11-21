@@ -50,16 +50,10 @@ public class DatagramSessionCounterExchangeTests
     private const uint ControlSession = 0;
 
     private const byte HelloType = 1;
-    private const byte HelloWithCookieType = 3;
     private const int ControlBodyOffset = 5;
     private const int CookieLength = 32;
-    private const int ResumeSecretLength = 16;
 
-    private const uint ProtocolVersion = 1;
-    private const uint DialerSessionId = 0xCAFE_BABE;
-    private const uint DialerMaxMessageSize = 4096;
-    private const ulong DialerSendIdleIntervalMilliseconds = 60_000;
-    private const ulong DialerLingerMilliseconds = 30_000;
+    private const uint ProtocolVersion = DatagramSessionWire.ProtocolVersion;
 
     private const int DatagramHeaderSize = 20;
 
@@ -265,13 +259,15 @@ public class DatagramSessionCounterExchangeTests
             bytesReceivedBeforeMalformed, "a datagram that did not parse charges no Peer's bytes received");
 
         // ------------------------------------------------------------------------------------------
-        // Reactor-scope DatagramsSent and DatagramsReceived, literals 6 and 12 — the exact count of
-        // flushes Node performed (Phases 1, 3, 4 and 5: 2 + 2 + 1 + 1) and datagrams the client sent
+        // Reactor-scope DatagramsSent and DatagramsReceived, literals 10 and 12 — the exact count of
+        // flushes Node performed (Phases 1, 3, 4 and 5: 2 + 2 + 1 + 1, and one header-only ack on the
+        // Pump after each of Phase 7's four reliable arrivals, ADR 0026; Phase 6's records are refused
+        // before they are classified, so they owe no ack) and datagrams the client sent
         // Node (Phases 2, 5's reconcile ping, 6, 7, 8 and 9: 1 + 1 + 4 + 4 + 1 + 1), each stated up
         // front by this test's own script rather than read from any other counter.
         // ------------------------------------------------------------------------------------------
         (node.Reactor.Counters.DatagramsSent - reactorDatagramsSentBaseline).Should().Be(
-            6UL, "six flushes left Node: two in Phase 1, two in Phase 3, one in Phase 4, one in Phase 5");
+            10UL, "ten flushes left Node: two in Phase 1, two in Phase 3, one in Phase 4, one in Phase 5, and four acks of Phase 7");
         (node.Reactor.Counters.DatagramsReceived - reactorDatagramsReceivedBaseline).Should().Be(
             12UL, "twelve datagrams reached Node: Phase 2 (1), Phase 5's reconcile ping (1), Phase 6 (4), Phase 7 (4), Phase 8 (1), Phase 9 (1)");
 
@@ -288,7 +284,7 @@ public class DatagramSessionCounterExchangeTests
         final.HorizonDeferrals.Should().BeGreaterThanOrEqualTo(horizonDeferralsBefore + 5);
         final.OutOfWindowPackets.Should().BeGreaterThanOrEqualTo(outOfWindowBefore + 4);
         final.DuplicatePackets.Should().BeGreaterThanOrEqualTo(duplicateBefore + 3);
-        node.Reactor.Counters.DatagramsSent.Should().BeGreaterThanOrEqualTo(reactorDatagramsSentBaseline + 6);
+        node.Reactor.Counters.DatagramsSent.Should().BeGreaterThanOrEqualTo(reactorDatagramsSentBaseline + 10);
         node.Reactor.Counters.DatagramsReceived.Should().BeGreaterThanOrEqualTo(reactorDatagramsReceivedBaseline + 12);
         node.Reactor.Counters.UnknownSourceDatagrams.Should().BeGreaterThanOrEqualTo(unknownSourceDatagramsBefore + 1);
         node.Reactor.Counters.MalformedSessionDatagrams.Should().BeGreaterThanOrEqualTo(malformedSessionDatagramsBefore + 1);
@@ -313,7 +309,7 @@ public class DatagramSessionCounterExchangeTests
         byte[] cookie = cookieDatagram.AsSpan(ControlBodyOffset + 16, CookieLength).ToArray();
         echoedNonce.Should().Be(clientNonce);
 
-        byte[] helloWithCookie = BuildHelloWithCookieDatagram(clientNonce, epoch, cookie);
+        byte[] helloWithCookie = DatagramSessionWire.BuildHelloWithCookie(clientNonce, epoch, cookie);
         client.SendTo(clientLink, destination, helloWithCookie);
         byte[] acceptDatagram = ExchangeUntilReceived(client, node);
 
@@ -366,29 +362,6 @@ public class DatagramSessionCounterExchangeTests
         BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(0, 4), ProtocolVersion);
         BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(4, 8), clientNonce);
         return BuildControlDatagram(HelloType, body);
-    }
-
-    private static byte[] BuildHelloWithCookieDatagram(ulong clientNonce, long epoch, byte[] cookie)
-    {
-        byte[] body = new byte[4 + 8 + 8 + CookieLength + 4 + 4 + 8 + 8 + ResumeSecretLength];
-        int offset = 0;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), ProtocolVersion);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), clientNonce);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), unchecked((ulong)epoch));
-        offset += 8;
-        cookie.CopyTo(body.AsSpan(offset, CookieLength));
-        offset += CookieLength;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerSessionId);
-        offset += 4;
-        BinaryPrimitives.WriteUInt32BigEndian(body.AsSpan(offset, 4), DialerMaxMessageSize);
-        offset += 4;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerSendIdleIntervalMilliseconds);
-        offset += 8;
-        BinaryPrimitives.WriteUInt64BigEndian(body.AsSpan(offset, 8), DialerLingerMilliseconds);
-        offset += 8;
-        return BuildControlDatagram(HelloWithCookieType, body);
     }
 
     /// <summary>Builds a 20-byte live-Session datagram header naming <paramref name="session"/> with both ack blocks zeroed.</summary>

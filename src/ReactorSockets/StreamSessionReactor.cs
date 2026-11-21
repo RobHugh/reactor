@@ -56,7 +56,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly List<SlotHandle> _connectingPeers = [];
     private readonly List<PendingEvent> _pendingEvents = [];
     private readonly List<RefusalSlot> _refusals = [];
-    private readonly List<PendingAdmission> _pendingAdmissions = [];
+    private readonly List<PendingAdmission> _pendingAdmissions;
     private readonly HashSet<SlotHandle> _peersWithBufferedMessages = [];
     private readonly HashSet<SlotHandle> _peersWithPendingRetentionWrites = [];
     private readonly HashSet<SlotHandle> _peersWithGoodbyeOwed = [];
@@ -74,8 +74,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private readonly ArraySegment<byte>[] _counterAndOneRun = new ArraySegment<byte>[2];
     private readonly ArraySegment<byte>[] _counterAndBothRuns = new ArraySegment<byte>[3];
     private readonly int _admissionCap;
+    private readonly long _pendingAdmissionDeadlineMilliseconds;
+    private readonly int _pendingAdmissionLimit;
     private int _admissionsThisFrame;
     private int _capDeferralsThisFrame;
+    private int _pendingLimitDeferralsThisFrame;
 
     /// <summary>
     /// Validates <paramref name="options"/> — every knob and cross-check, then the frame arena's
@@ -109,6 +112,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _peers = new ShareHolderTable<PeerSlot>(options.Reactor.Capacity, ReactorOrigin.Next());
         _entropy = options.Entropy;
         _admissionCap = options.Reactor.ResolvedAdmissionCap;
+        // Each held connection is a claim on a Slot, a fresh dial asking for one or a Resume reclaiming
+        // one, so a Reactor never needs to hold more of them than it has Slots (ADR 0012, #482 amendment).
+        _pendingAdmissionLimit = options.Reactor.Capacity;
+        _pendingAdmissions = new List<PendingAdmission>(_pendingAdmissionLimit);
+        _pendingAdmissionDeadlineMilliseconds = (long)options.SendIdleInterval.TotalMilliseconds * options.ResolvedMissedHeartbeats;
         _pumpIntervalObserver = new PumpIntervalObserver(options.Reactor.TimeProvider);
 
         try
@@ -191,7 +199,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// interruption, and every surviving Peer that has written nothing to the wire — including whatever
     /// this Frame's own flush just carried — for at least
     /// <see cref="StreamSessionOptions.SendIdleInterval"/> sends the same delivery-counter record as a
-    /// heartbeat, unconditionally and regardless of whether anything was ever received from it. Once
+    /// heartbeat, unconditionally and regardless of whether anything was ever received from it. Every
+    /// accepted connection still waiting for its first handshake record once its deadline has passed is
+    /// then closed (<see cref="ExpirePendingAdmissions"/>). The same scan closes with
+    /// <see cref="DisconnectReason.TransportFailed"/> every Peer this Reactor dialled that has not
+    /// established one <see cref="StreamSessionOptions.Linger"/> after <see cref="Connect"/>. Once
     /// idle timers may have closed an Interrupted Peer on Linger expiry, every Interrupted Peer this
     /// Reactor itself dialled is given its re-dial attempt for this Frame
     /// (<see cref="ProcessRedials"/>) — a schedule derived from the observed Pump interval just
@@ -213,6 +225,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             _arena.Reset();
             _admissionsThisFrame = 0;
             _capDeferralsThisFrame = 0;
+            _pendingLimitDeferralsThisFrame = 0;
             RetryPeersPendingClose();
             RetryPeersWithBufferedMessages();
             RetryGoodbyeAppends();
@@ -220,6 +233,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             EmitDeliveryCounters();
             FlushPendingRetentionWrites();
             EnforceIdleTimers();
+            ExpirePendingAdmissions();
             ProcessConnectingPeers();
             ProcessRedials();
             ReportDeclinedAdmissions();
@@ -246,7 +260,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// does in <see cref="RawReactor"/>: the handshake is work this Reactor is holding, and pretending
     /// otherwise would let a consumer dial past capacity and discover it only on the far side of a
     /// round trip. <see cref="SessionEventKind.PeerConnected"/> or <see cref="SessionEventKind.PeerClosed"/>
-    /// resolves it on a later Pump.
+    /// resolves it on a later Pump. A dial that has not established one
+    /// <see cref="StreamSessionOptions.Linger"/> after this call closes with
+    /// <see cref="DisconnectReason.TransportFailed"/>, whether its TCP connect is still pending or the far
+    /// end connected and sent no handshake record.
     /// </summary>
     public PeerId Connect(IPEndPoint destination)
     {
@@ -269,6 +286,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             ReceiveBuffer = new byte[_options.ResolvedReceiveBufferSize],
             DeliveryCounterRecord = new byte[MessageFramingCodec.DeliveryCounterRecordSize],
             DialedEndpoint = destination,
+            DialStartTimestamp = _options.Reactor.TimeProvider.GetTimestamp(),
         };
 
         // `HasFreeSlot` was just checked and this Reactor is single-threaded (ADR 0002), so `TryAdd`
@@ -432,7 +450,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// refuses a Peer whose handshake has not reached <see cref="HandshakeState.Established"/> with
     /// <see cref="SendOutcome.NotEstablished"/>: flushing that Message would write to a socket whose
     /// connect has not resolved, closing the Peer with <see cref="DisconnectReason.TransportFailed"/>,
-    /// or send it before the far end's handshake record has been read.
+    /// or send it before the far end's handshake record has been read. Once the Peer is established,
+    /// refuses a Message longer than the <c>MaxMessageSize</c> it announced in its Hello
+    /// (<see cref="PeerSlot.RemoteMaxMessageSize"/>) with <see cref="SendOutcome.RemoteMessageTooLarge"/>,
+    /// copying nothing: the far end would close the Session with
+    /// <see cref="DisconnectReason.ProtocolViolation"/> on its length prefix.
     /// </summary>
     /// <remarks>
     /// <see cref="PeerSlot.IsInterrupted"/> is deliberately not one of the refusal conditions above
@@ -449,9 +471,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// </remarks>
     /// <param name="peer">The Peer to send to. Throws if not open, matching <see cref="CountersOf"/>.</param>
     /// <param name="message">
-    /// The Message payload, unframed. Throws if empty or longer than
-    /// <see cref="StreamSessionOptions.MaxMessageSize"/> — the same bounds the receive side enforces, so
-    /// this can never frame a Message the far end would reject.
+    /// The Message payload, unframed. Throws if empty or longer than this Reactor's own
+    /// <see cref="StreamSessionOptions.MaxMessageSize"/>. A Message within that limit but longer than the
+    /// Peer's announced limit returns <see cref="SendOutcome.RemoteMessageTooLarge"/>, so this never frames
+    /// a Message the far end would reject.
     /// </param>
     public SendOutcome Send(PeerId peer, ReadOnlySpan<byte> message)
     {
@@ -486,6 +509,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         if (slot.State != HandshakeState.Established)
         {
             return SendOutcome.NotEstablished;
+        }
+
+        // The Peer's limit arrives in its Hello, so it is known only once the Peer is Established.
+        if ((uint)message.Length > slot.RemoteMaxMessageSize)
+        {
+            return SendOutcome.RemoteMessageTooLarge;
         }
 
         Span<byte> framed = new byte[MessageFramingCodec.LengthPrefixSize + message.Length];
@@ -597,7 +626,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// connection is admitted as a Peer or, if this Reactor has no capacity Slot free, refused
     /// in-protocol and closed: a burst of connections beyond capacity is an accept-refuse-close cycle
     /// inside the admission budget, never a silent drop and never left waiting in the backlog the way a
-    /// cap-exhausted Frame's remainder is.
+    /// cap-exhausted Frame's remainder is. It also stops once <see cref="_pendingAdmissionLimit"/> connections
+    /// are held waiting for their first record, leaving the rest in the backlog, because a held connection
+    /// costs a readiness check every Pump until it resolves or expires.
     /// </summary>
     private void OnListeningLinkReadable(TcpListenLink link)
     {
@@ -608,6 +639,16 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 if (link.HasPendingConnection)
                 {
                     _capDeferralsThisFrame++;
+                }
+
+                return;
+            }
+
+            if (_pendingAdmissions.Count >= _pendingAdmissionLimit)
+            {
+                if (link.HasPendingConnection)
+                {
+                    _pendingLimitDeferralsThisFrame++;
                 }
 
                 return;
@@ -640,7 +681,13 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// rather than left for the next Pump, so a dialler whose record landed before this accept is still
     /// answered on the Frame that accepted it — the same reason <see cref="RefuseForCapacity"/> drains
     /// before it closes. A connection with nothing waiting is left for the dispatcher, which is what
-    /// <see cref="TcpLink.HasPendingBytes"/> is checked for.
+    /// <see cref="TcpLink.HasPendingBytes"/> is checked for. A connection still held once this end's
+    /// <see cref="StreamSessionOptions.SendIdleInterval"/> × <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>
+    /// has passed since its accept is closed by <see cref="ExpirePendingAdmissions"/>. A connection still
+    /// held after that first read, from an address that already has
+    /// <see cref="StreamSessionOptions.MaxPeersPerAddress"/> other held connections, is closed at once
+    /// (<see cref="DiscardPendingAdmissionForAddressLimit"/>). The check follows the read so a record that
+    /// arrived with its connection is decided first.
     /// </summary>
     /// <remarks>
     /// Accepting first and deciding after is unchanged from before this held state existed: the
@@ -651,12 +698,22 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     private void HoldUntilFirstRecord(Socket acceptedSocket)
     {
         TcpLink link = TcpLink.FromAccepted(acceptedSocket, _options.SendBufferSize);
-        PendingAdmission pending = new() { Link = link };
+        PendingAdmission pending = new()
+        {
+            Link = link,
+            AcceptedFrom = Source.FromIPEndPoint(link.RemoteEndPoint),
+            AcceptedTimestamp = _options.Reactor.TimeProvider.GetTimestamp(),
+        };
         _pendingAdmissions.Add(pending);
         _dispatcher.Register(link.Socket, () => OnPendingAdmissionReadable(pending));
         if (link.HasPendingBytes)
         {
             OnPendingAdmissionReadable(pending);
+        }
+
+        if (!pending.IsReleased && OtherPendingAdmissionsAtAddressOf(pending) >= _options.ResolvedMaxPeersPerAddress)
+        {
+            DiscardPendingAdmissionForAddressLimit(pending);
         }
     }
 
@@ -783,6 +840,47 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// How many held connections other than <paramref name="pending"/> were accepted from its address,
+    /// or for IPv6 from its prefix (ADR 0014). Held connections only, never Peers: an Interrupted Peer
+    /// charged to the address is the one a Resume comes back for, and counting it would refuse that
+    /// Resume. It walks at most <see cref="ReactorOptions.Capacity"/> entries.
+    /// </summary>
+    private int OtherPendingAdmissionsAtAddressOf(PendingAdmission pending)
+    {
+        int count = 0;
+        foreach (PendingAdmission other in _pendingAdmissions)
+        {
+            if (!ReferenceEquals(other, pending)
+                && other.AcceptedFrom.SharesPeerLimitWith(pending.AcceptedFrom, _options.ResolvedPeerLimitIPv6PrefixLength))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Closes a held connection whose address already has <see cref="StreamSessionOptions.MaxPeersPerAddress"/>
+    /// other held connections, sending nothing, and logs <see cref="DiagnosticId.AddressPeerLimitReached"/>.
+    /// No Refusal is sent: a re-dialled Resume's connection is read as Session data by its dialler, and a
+    /// plain close is a failed re-dial attempt it retries. Neither admission counter moves, as for
+    /// <see cref="RefuseForAddressPeerLimit"/>.
+    /// </summary>
+    private void DiscardPendingAdmissionForAddressLimit(PendingAdmission pending)
+    {
+        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+        {
+            _diagnostics.Log(DiagnosticRecord.ForAddressPeerLimitReached(
+                pending.AcceptedFrom,
+                _options.ResolvedMaxPeersPerAddress,
+                pending.AcceptedFrom.PeerLimitPrefixLength(_options.ResolvedPeerLimitIPv6PrefixLength)));
+        }
+
+        DiscardPendingAdmission(pending);
     }
 
     /// <summary>
@@ -1045,11 +1143,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         // the rewind above needs preserved (issue #127's own "released stays released" guarantee).
         _retention.ReleaseThroughMessageCount(slot.Handle.Index, deliveryCount);
 
-        if (slot.HasPendingRetentionWrite || bytesRewound > 0)
-        {
-            slot.HasPendingRetentionWrite = true;
-            _peersWithPendingRetentionWrites.Add(slot.Handle);
-        }
+        // Retention appended while Interrupted was never sent, and the marker for it was spent by a flush
+        // that FlushRetention's IsInterrupted check skipped, so a completed resume always owes one flush.
+        slot.HasPendingRetentionWrite = true;
+        _peersWithPendingRetentionWrites.Add(slot.Handle);
 
         // D3: tells the dialling side where this end's own read position is, since the Resume record
         // it just presented had no field for that. SendDeliveryCounterOrArm's own short-send remainder
@@ -1101,6 +1198,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// </summary>
     private TcpLink ReleasePendingAdmission(PendingAdmission pending)
     {
+        pending.IsReleased = true;
         _pendingAdmissions.Remove(pending);
         _dispatcher.Unregister(pending.Link.Socket);
         return pending.Link;
@@ -1387,6 +1485,11 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// would interleave it into the still-unfinished one. This queues it in
     /// <see cref="PeerSlot.QueuedHandshakeSend"/> instead; <see cref="OnPeerWritable"/> sends it, in
     /// order, once the pending remainder is fully flushed.
+    /// <para>
+    /// A record that fails to send while <see cref="PeerSlot.AwaitingResumeCounter"/> is set is the
+    /// Resume of an unconfirmed re-dial. That is a failed re-dial attempt
+    /// (<see cref="FailUnconfirmedResume"/>), not a close.
+    /// </para>
     /// </remarks>
     private void SendRecordOrArm(SlotHandle handle, PeerSlot slot, byte[] record, DisconnectReason? closeReasonAfterSend)
     {
@@ -1399,6 +1502,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         switch (SendPendingRecord(slot.Link, slot.Counters, record, out ReadOnlyMemory<byte> remainder))
         {
             case PendingRecordSendOutcome.Failed:
+                if (slot.AwaitingResumeCounter)
+                {
+                    FailUnconfirmedResume(handle, slot, SocketError.SocketError);
+                    break;
+                }
+
                 ClosePeer(handle, closeReasonAfterSend ?? DisconnectReason.TransportFailed);
                 break;
 
@@ -1439,6 +1548,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             switch (SendPendingRecord(slot.Link, slot.Counters, pending, out ReadOnlyMemory<byte> remainder))
             {
                 case PendingRecordSendOutcome.Failed:
+                    if (slot.AwaitingResumeCounter)
+                    {
+                        FailUnconfirmedResume(handle, slot, SocketError.SocketError);
+                        return;
+                    }
+
                     ClosePeer(handle, slot.PendingCloseReason ?? DisconnectReason.TransportFailed);
                     return;
 
@@ -1785,6 +1900,17 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         _options.Reactor.TimeProvider.GetElapsedTime(slot.InterruptedTimestamp) >= slot.EffectiveLinger;
 
     /// <summary>
+    /// Whether <paramref name="slot"/> is a Peer this Reactor dialled and one
+    /// <see cref="StreamSessionOptions.Linger"/> has passed since <see cref="Connect"/>. Called only for a
+    /// Peer that has not established. The deadline is this end's own Linger because no other is known
+    /// before the far end's Hello announces one, and it is the bound the datagram profile puts on a
+    /// pending dial (ADR 0011, amendment for issue #483).
+    /// </summary>
+    private bool HasDialExpired(PeerSlot slot) =>
+        slot.DialedEndpoint is not null
+        && _options.Reactor.TimeProvider.GetElapsedTime(slot.DialStartTimestamp) >= _options.Linger;
+
+    /// <summary>
     /// Reactor's two independent idle timers: runs once per <see cref="Pump"/>, after
     /// <see cref="FlushPendingRetentionWrites"/>, over a single scan of every occupied Slot
     /// (<see cref="ShareHolderTable{T}.OccupantAt"/>) rather than two, since neither timer's trigger
@@ -1813,13 +1939,38 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// <see cref="InterruptOrCloseOnTransportFailure"/>, since that helper answers "a live Peer's
     /// transport just failed" and this is "an already-Interrupted Peer's Linger ran out", a different
     /// question with an already-known answer.
+    /// <para>
+    /// An Interrupted Peer whose re-dial is connected and unconfirmed
+    /// (<see cref="PeerSlot.AwaitingResumeCounter"/>) is also held to the receive-idle deadline,
+    /// measured from the moment the attempt connected. A listener that stays silent past it fails the
+    /// attempt as a re-dial attempt (<see cref="FailUnconfirmedResume"/>), and Linger is checked first,
+    /// so a Peer whose Linger has run out closes instead.
+    /// </para>
+    /// <para>
+    /// A Peer this Reactor dialled that has not established has neither timer. It is checked only against
+    /// its dial deadline (<see cref="HasDialExpired"/>) and closes with
+    /// <see cref="DisconnectReason.TransportFailed"/> once that passes. This scan runs after the readiness
+    /// pass, so a Hello already in the socket buffer establishes the Peer first, and before
+    /// <see cref="ProcessConnectingPeers"/>, so a dial closed here is never polled again.
+    /// </para>
     /// </remarks>
     private void EnforceIdleTimers()
     {
         for (int index = 0; index < _peers.Capacity; index++)
         {
-            if (_peers.OccupantAt(index) is not PeerSlot slot || slot.State != HandshakeState.Established)
+            if (_peers.OccupantAt(index) is not PeerSlot slot)
             {
+                continue;
+            }
+
+            if (slot.State != HandshakeState.Established)
+            {
+                // A Peer still in its handshake has no idle timer, only its dial deadline.
+                if (HasDialExpired(slot))
+                {
+                    ClosePeer(slot.Handle, DisconnectReason.TransportFailed);
+                }
+
                 continue;
             }
 
@@ -1828,6 +1979,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 if (HasExceededLinger(slot))
                 {
                     ClosePeer(slot.Handle, DisconnectReason.LingerExpired);
+                }
+                else if (slot.AwaitingResumeCounter && HasExceededReceiveIdleDeadline(slot))
+                {
+                    FailUnconfirmedResume(slot.Handle, slot, SocketError.TimedOut);
                 }
 
                 continue;
@@ -1861,6 +2016,44 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
             }
 
             SendDeliveryCounterOrArm(slot.Handle, slot);
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="pending"/> has been held for at least this end's
+    /// <see cref="StreamSessionOptions.SendIdleInterval"/> × <see cref="StreamSessionOptions.ResolvedMissedHeartbeats"/>
+    /// since it was accepted. Divides instead of multiplying, for the reason
+    /// <see cref="HasExceededReceiveIdleDeadline"/> gives (issue #422).
+    /// </summary>
+    private bool HasPendingAdmissionExpired(PendingAdmission pending) =>
+        _options.Reactor.TimeProvider.GetElapsedTime(pending.AcceptedTimestamp).Ticks / _options.ResolvedMissedHeartbeats
+            >= _options.SendIdleInterval.Ticks;
+
+    /// <summary>
+    /// Closes every held connection whose deadline (<see cref="HasPendingAdmissionExpired"/>) has passed,
+    /// sending nothing, and logs <see cref="DiagnosticId.PendingAdmissionExpired"/> for each. Runs after
+    /// the readiness pass, so a record already in a socket's buffer is read before its connection can
+    /// expire. The deadline is the silence an established Peer is allowed, and a conforming dialler sends
+    /// its Hello as soon as TCP connects, so only a connection that is silent or sends part of a record
+    /// reaches it. No event is raised and no counter moves: the connection never had a Slot.
+    /// </summary>
+    private void ExpirePendingAdmissions()
+    {
+        for (int index = _pendingAdmissions.Count - 1; index >= 0; index--)
+        {
+            PendingAdmission pending = _pendingAdmissions[index];
+            if (!HasPendingAdmissionExpired(pending))
+            {
+                continue;
+            }
+
+            if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForPendingAdmissionExpired(
+                    pending.AcceptedFrom, pending.BytesFilled, _pendingAdmissionDeadlineMilliseconds));
+            }
+
+            DiscardPendingAdmission(pending);
         }
     }
 
@@ -1937,7 +2130,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// </para>
     /// <para>
     /// Also a no-op while <see cref="PeerSlot.AwaitingResumeCounter"/>: the dialling side of a Resume
-    /// considers itself resumed the moment its own Resume record is queued, but a Resume carries no
+    /// stays Interrupted after its own Resume record is queued, and a Resume carries no
     /// field for what the far end's read position is, so this end does not yet know where a rewind
     /// would even start from. Resending before that arrives risks resending bytes the far end already
     /// has. <see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm clears the flag
@@ -2308,6 +2501,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 DeliverCompleteMessages(handle, slot);
                 break;
             case TcpLinkReceiveOutcome.EndOfStream:
+                if (slot.AwaitingResumeCounter)
+                {
+                    FailUnconfirmedResume(handle, slot, SocketError.Disconnecting);
+                    break;
+                }
+
                 if (ClassifyEndOfStream(slot) is DisconnectReason reason)
                 {
                     ClosePeer(handle, reason);
@@ -2319,6 +2518,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
                 break;
             case TcpLinkReceiveOutcome.Failed:
+                if (slot.AwaitingResumeCounter)
+                {
+                    FailUnconfirmedResume(handle, slot, result.Error);
+                    break;
+                }
+
                 InterruptOrCloseOnTransportFailure(handle, slot);
                 break;
         }
@@ -2483,7 +2688,7 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                     if (slot.AwaitingResumeCounter)
                     {
                         RetentionRewindOutcome rewindOutcome = _retention.RewindSentToMessageCount(
-                            handle.Index, confirmedThroughMessage, out ulong bytesRewound);
+                            handle.Index, confirmedThroughMessage, out _);
                         slot.AwaitingResumeCounter = false;
 
                         if (rewindOutcome != RetentionRewindOutcome.Rewound)
@@ -2492,19 +2697,24 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                             return;
                         }
 
-                        if (bytesRewound > 0)
-                        {
-                            slot.HasPendingRetentionWrite = true;
-                            _peersWithPendingRetentionWrites.Add(handle);
-                        }
+                        slot.IsInterrupted = false;
+                        slot.InterruptedTimestamp = 0;
+                        slot.RedialSchedule = null;
+                        _peersWithRedialScheduled.Remove(handle);
 
-                        // Issue #128: this is where the dialling side's resume actually completes — the
-                        // Rewound outcome above is the first point this end knows its reciprocal rewind
+                        // Retention appended while Interrupted was never sent, and the marker for it was spent by a flush
+                        // that FlushRetention's IsInterrupted check skipped, so a completed resume always owes one flush.
+                        slot.HasPendingRetentionWrite = true;
+                        _peersWithPendingRetentionWrites.Add(handle);
+
+                        // Issue #128: this is where the dialling side's resume actually completes and where it
+                        // leaves Interrupted — the listener's first delivery counter is its confirmation, and
+                        // the Rewound outcome above is the first point this end knows its reciprocal rewind
                         // succeeded, so it is also the first point PeerResumed can be raised without a
-                        // risk of a still-pending refusal (D5) retracting it. ResumeDialledPeer itself
-                        // cleared IsInterrupted and re-established the transport earlier, but Resumed —
-                        // and the Resumes counter — waits for this confirmation, the same way ResumeHeldPeer
-                        // gates its own PeerResumed on RewindSentToMessageCount returning Rewound.
+                        // risk of a still-pending refusal (D5) retracting it. ResumeDialledPeer only
+                        // re-established the transport; Resumed — and the Resumes counter — waits for this
+                        // confirmation, the same way ResumeHeldPeer gates its own PeerResumed on
+                        // RewindSentToMessageCount returning Rewound.
                         slot.Counters.RecordResume();
                         _pendingEvents.Add(new PendingEvent { Kind = SessionEventKind.PeerResumed, Peer = ToPeerId(handle) });
                     }
@@ -2766,23 +2976,36 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// never a Deferral left for a later Pump, and the two counters this method feeds must stay
     /// untouched by it (see <see cref="RefuseForCapacity"/>). That holds whether the Slot the dial was
     /// refused for holds an established Peer or is reserved by an Interrupted one — a reservation
-    /// changes which dials are refused, never how a refusal is counted.
+    /// changes which dials are refused, never how a refusal is counted. A Frame that stopped accepting
+    /// because the held-connection limit was reached is reported the same way, as Deferrals and one
+    /// <see cref="DiagnosticId.PendingAdmissionLimitReached"/> record.
     /// </summary>
     private void ReportDeclinedAdmissions()
     {
-        if (_capDeferralsThisFrame == 0)
+        if (_capDeferralsThisFrame > 0)
         {
-            return;
+            for (int i = 0; i < _capDeferralsThisFrame; i++)
+            {
+                _counters.RecordAdmissionDeferral();
+            }
+
+            if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForAdmissionCapReached(_admissionCap, _capDeferralsThisFrame));
+            }
         }
 
-        for (int i = 0; i < _capDeferralsThisFrame; i++)
+        if (_pendingLimitDeferralsThisFrame > 0)
         {
-            _counters.RecordAdmissionDeferral();
-        }
+            for (int i = 0; i < _pendingLimitDeferralsThisFrame; i++)
+            {
+                _counters.RecordAdmissionDeferral();
+            }
 
-        if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
-        {
-            _diagnostics.Log(DiagnosticRecord.ForAdmissionCapReached(_admissionCap, _capDeferralsThisFrame));
+            if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
+            {
+                _diagnostics.Log(DiagnosticRecord.ForPendingAdmissionLimitReached(_pendingAdmissionLimit, _pendingLimitDeferralsThisFrame));
+            }
         }
     }
 
@@ -2892,6 +3115,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// here at all — closed by <see cref="EnforceIdleTimers"/>'s Linger check earlier this same Pump, or
     /// already resumed — is dropped from the set rather than acted on, which is what makes Linger the
     /// only ceiling on this activity: there is no separate attempt-count limit anywhere in this method.
+    /// A Peer whose attempt has connected and awaits the listener's confirmation
+    /// (<see cref="PeerSlot.AwaitingResumeCounter"/>) is not dialled again.
     /// </summary>
     private void ProcessRedials()
     {
@@ -2918,6 +3143,12 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
                 continue;
             }
 
+            // A connected attempt is awaiting the listener's delivery counter on slot.Link.
+            if (slot.AwaitingResumeCounter)
+            {
+                continue;
+            }
+
             if (_options.Reactor.TimeProvider.GetElapsedTime(slot.RedialWaitStartTimestamp) < slot.RedialDelay)
             {
                 continue;
@@ -2938,7 +3169,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// Polls one Peer's in-flight re-dial attempt (<see cref="TcpLink.PollConnect"/>). A resolved
     /// connect hands the transport off to the resume match on the listening side
     /// (<see cref="ResumeDialledPeer"/>) — this end's Resume record is what actually makes that claim,
-    /// sent the instant the transport exists. A resolved failure — the platform <see cref="SocketError"/>
+    /// sent the instant the transport exists, after which this Peer is not dialled again until that
+    /// connection ends unconfirmed (<see cref="FailUnconfirmedResume"/>). A resolved failure — the platform <see cref="SocketError"/>
     /// this attempt's <see cref="TcpConnectPollResult.Error"/> carries — never closes this Peer
     /// (<see cref="FailRedialAttempt"/>): it stays Interrupted and simply waits out the schedule's next
     /// delay, which is what leaves Linger, not an attempt count, as the only thing that ever closes it.
@@ -2982,14 +3214,41 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     }
 
     /// <summary>
+    /// Retires a connected re-dial whose connection ended before the listener's first delivery-counter
+    /// record confirmed the Resume: unregisters and disposes <see cref="PeerSlot.Link"/>, discards every
+    /// byte buffered or queued for that connection, clears <see cref="PeerSlot.AwaitingResumeCounter"/>
+    /// and hands the attempt to <see cref="FailRedialAttempt"/>. The Peer stays Interrupted with its
+    /// original <see cref="PeerSlot.InterruptedTimestamp"/> and schedule, so Linger keeps running from
+    /// the first loss. Raises no event.
+    /// </summary>
+    private void FailUnconfirmedResume(SlotHandle handle, PeerSlot slot, SocketError error)
+    {
+        _dispatcher.Unregister(slot.Link.Socket);
+        slot.Link.Dispose();
+        slot.AwaitingResumeCounter = false;
+        slot.ReceiveBytesFilled = 0;
+        _peersWithBufferedMessages.Remove(handle);
+        _peersWithPendingRetentionWrites.Remove(handle);
+        slot.PendingHandshakeBytesToSend = null;
+        slot.QueuedHandshakeSend = null;
+        slot.PendingDeliveryCounterBytesToSend = null;
+        slot.DeliveryCounterRidesRetentionWrite = false;
+
+        if (slot.RedialSchedule is RedialSchedule schedule)
+        {
+            FailRedialAttempt(handle, slot, schedule, error);
+        }
+    }
+
+    /// <summary>
     /// Puts a re-dial's freshly connected transport under the Peer it belongs to and immediately claims
     /// the Session with a Resume record — this end's own resume secret is not what the far end needs;
     /// <see cref="PeerSlot.RemoteResumeSecret"/> is, since that is the secret the far end issued and will
-    /// require back (<see cref="StreamHandshakeCodec.WriteResume"/>). No reply record is expected: a
-    /// Resume has no acknowledgement in this protocol, exactly as <see cref="ResumeHeldPeer"/> sends
-    /// nothing back to a matched Resume on the listening side, so this Peer is considered resumed —
-    /// <see cref="PeerSlot.IsInterrupted"/> cleared, both idle timers restarted from now — the moment
-    /// the record is queued rather than waiting on anything further from the wire.
+    /// require back (<see cref="StreamHandshakeCodec.WriteResume"/>). The Peer stays
+    /// <see cref="PeerSlot.IsInterrupted"/>: its Linger and re-dial schedule keep running, and the
+    /// listener's first delivery-counter record on this connection is the confirmation that ends the
+    /// interruption. A listener that does not hold the Session closes the connection instead, which
+    /// is a failed attempt (<see cref="FailUnconfirmedResume"/>). Both idle timers restart from now.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -3010,10 +3269,6 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     {
         slot.Link = link;
         slot.RedialLink = null;
-        slot.RedialSchedule = null;
-        _peersWithRedialScheduled.Remove(handle);
-        slot.IsInterrupted = false;
-        slot.InterruptedTimestamp = 0;
         slot.AwaitingResumeCounter = true;
 
         long now = _options.Reactor.TimeProvider.GetTimestamp();
@@ -3187,7 +3442,10 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// <summary>The protocol version the remote's handshake record offered.</summary>
         public uint RemoteVersion { get; set; }
 
-        /// <summary>The largest Message the remote said it will accept.</summary>
+        /// <summary>
+        /// The largest Message the remote said it will accept. <see cref="Send"/> refuses a longer one with
+        /// <see cref="SendOutcome.RemoteMessageTooLarge"/>.
+        /// </summary>
         public uint RemoteMaxMessageSize { get; set; }
 
         /// <summary>The send-idle interval the remote announced.</summary>
@@ -3341,31 +3599,39 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// already been unregistered and disposed, but the Slot itself, this end's counters, retention
         /// ring and any undelivered inbound Messages all stay exactly as they were, so
         /// <see cref="EnforceIdleTimers"/> and <see cref="FlushPendingRetentionWrites"/> must never
-        /// touch <see cref="Link"/> again for a Peer with this set. Cleared only by a Resume matching
-        /// onto this Slot (<see cref="ResumeHeldPeer"/>) or by <see cref="ClosePeer"/> removing the
-        /// Slot outright — Linger expiry is what eventually calls that when no Resume arrives first.
+        /// touch <see cref="Link"/> again for a Peer with this set. On a listening-side Peer it is
+        /// cleared by a Resume matching onto this Slot (<see cref="ResumeHeldPeer"/>). On a dialled
+        /// Peer it stays set through every re-dial, including one that has connected and sent its
+        /// Resume, and is cleared only when the listener's first delivery-counter record arrives
+        /// (<see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm). Otherwise it
+        /// ends with <see cref="ClosePeer"/> removing the Slot outright — Linger expiry is what
+        /// eventually calls that when no Resume is confirmed first.
         /// </summary>
         public bool IsInterrupted { get; set; }
 
         /// <summary>
-        /// Set by <see cref="ResumeDialledPeer"/> the moment the dialling side's own Resume record is
-        /// queued: that record carries only this end's own claim, never the far end's read position, so
-        /// this end does not yet know where its own rewind would even start from. While set,
+        /// Set by <see cref="ResumeDialledPeer"/>: this dialled Peer's re-dial has connected, its Resume
+        /// record is sent, and the listener's first delivery-counter record has not arrived.
+        /// <see cref="IsInterrupted"/> stays set for the whole time. That record carries the far end's
+        /// read position, which this end needs before it knows where its own rewind starts, so
         /// <see cref="FlushRetention"/>'s own guard on this flag refuses to resend anything for this
-        /// Peer — resending blind could hand the far end bytes it already has. Cleared by
-        /// <see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm the moment the far
-        /// end's first post-resume delivery-counter record answers that question, which is also what
-        /// drives this end's own reciprocal rewind.
+        /// Peer — resending blind could hand the far end bytes it already has. Also stops
+        /// <see cref="ProcessRedials"/> dialling again. Cleared by
+        /// <see cref="DeliverCompleteMessages"/>'s <c>DeliveryCounterReceived</c> arm when that record
+        /// arrives, which drives this end's reciprocal rewind and leaves Interrupted, or by
+        /// <see cref="FailUnconfirmedResume"/> when the connection ends first.
         /// </summary>
         public bool AwaitingResumeCounter { get; set; }
 
         /// <summary>
         /// The <see cref="TimeProvider.GetTimestamp"/> value at the instant <see cref="InterruptPeer"/>
         /// set <see cref="IsInterrupted"/> — the moment this Peer's effective Linger began counting
-        /// down. Meaningless while <see cref="IsInterrupted"/> is <see langword="false"/>: a Resume
-        /// replacing <see cref="Link"/> clears this alongside <see cref="IsInterrupted"/>
-        /// (<see cref="ResumeHeldPeer"/>) rather than leaving a stale value behind for a Linger
-        /// deadline that no longer applies.
+        /// down. Meaningless while <see cref="IsInterrupted"/> is <see langword="false"/>: a confirmed
+        /// Resume clears this alongside <see cref="IsInterrupted"/> (<see cref="ResumeHeldPeer"/> on the
+        /// listening side, the <c>DeliveryCounterReceived</c> arm of
+        /// <see cref="DeliverCompleteMessages"/> on the dialling side) rather than leaving a stale value
+        /// behind for a Linger deadline that no longer applies. A failed re-dial attempt leaves it
+        /// untouched, so Linger is measured from the original interruption.
         /// </summary>
         public long InterruptedTimestamp { get; set; }
 
@@ -3380,10 +3646,19 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         public IPEndPoint? DialedEndpoint { get; init; }
 
         /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> value at <see cref="Connect"/>. A dial still short of
+        /// <see cref="HandshakeState.Established"/> one <see cref="StreamSessionOptions.Linger"/> later is
+        /// closed with <see cref="DisconnectReason.TransportFailed"/> (<see cref="HasDialExpired"/>). Unused
+        /// on an accepted Peer.
+        /// </summary>
+        public long DialStartTimestamp { get; init; }
+
+        /// <summary>
         /// This Peer's re-dial schedule (<see cref="Session.RedialSchedule"/>), or
         /// <see langword="null"/> while this Peer is not currently being re-dialled — either it has
         /// never been Interrupted, its transport loss was ineligible (<see cref="DialedEndpoint"/>
-        /// unset or a Goodbye had passed), or a Resume already matched and cleared it. Constructed once
+        /// unset or a Goodbye had passed), or the listener confirmed a Resume and cleared it. It
+        /// survives a re-dial that has connected and is awaiting that confirmation. Constructed once
         /// per interruption by <see cref="BeginRedialSchedule"/>, from the Pump interval observed at
         /// that moment and this Peer's own effective Linger, and read only by
         /// <see cref="ProcessRedials"/>, which hands it to <see cref="FailRedialAttempt"/>.
@@ -3394,9 +3669,9 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
         /// The transport of a re-dial attempt currently in flight — connecting, not yet resolved — or
         /// <see langword="null"/> while this Peer is between attempts, waiting out
         /// <see cref="RedialDelay"/>. Distinct from <see cref="Link"/>, which stays the disposed socket
-        /// from the transport loss until a re-dial actually resolves (<see cref="ResumeDialledPeer"/>):
-        /// an attempt that fails must never disturb <see cref="Link"/>, since nothing about a failed
-        /// attempt changes what this Peer is holding.
+        /// from the transport loss until a re-dial connects (<see cref="ResumeDialledPeer"/>): an
+        /// attempt that fails to connect must never disturb <see cref="Link"/>, since nothing about a
+        /// failed attempt changes what this Peer is holding.
         /// </summary>
         public TcpLink? RedialLink { get; set; }
 
@@ -3431,7 +3706,8 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
     /// A just-accepted connection held outside <see cref="_peers"/> until its first handshake record
     /// has arrived in full. It has no Slot and no <see cref="PeerId"/> because it is not yet known to
     /// need one: a Resume is claiming the Slot its own Interrupted Peer is already reserving, and only
-    /// the record says which of the two this is.
+    /// the record says which of the two this is. It is closed with nothing sent if no whole record
+    /// arrives within its deadline (<see cref="ExpirePendingAdmissions"/>).
     /// </summary>
     private sealed class PendingAdmission
     {
@@ -3443,6 +3719,24 @@ public sealed class StreamSessionReactor : IDisposable, ISessionEventSource
 
         /// <summary>How many bytes of <see cref="Record"/> are filled so far.</summary>
         public int BytesFilled { get; set; }
+
+        /// <summary>
+        /// The <see cref="TimeProvider.GetTimestamp"/> value when this connection was accepted. The
+        /// deadline <see cref="HasPendingAdmissionExpired"/> checks is measured from it and is never reset.
+        /// </summary>
+        public required long AcceptedTimestamp { get; init; }
+
+        /// <summary>
+        /// The address this connection was accepted from. <see cref="StreamSessionOptions.MaxPeersPerAddress"/>
+        /// counts it against that address while it is held.
+        /// </summary>
+        public required Source AcceptedFrom { get; init; }
+
+        /// <summary>
+        /// Whether <see cref="ReleasePendingAdmission"/> has taken this connection out of
+        /// <see cref="_pendingAdmissions"/>, so it is no longer held.
+        /// </summary>
+        public bool IsReleased { get; set; }
     }
 
     /// <summary>

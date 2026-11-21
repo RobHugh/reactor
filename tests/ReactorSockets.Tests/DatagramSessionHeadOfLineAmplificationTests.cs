@@ -83,6 +83,10 @@ public class DatagramSessionHeadOfLineAmplificationTests
         PeerId diallerPeer = dialler.Reactor.Connect(proxy.PublicEndPoint);
         PeerId accepterPeer = DatagramSessionReactorHarness.PumpThroughProxyUntilConnected(dialler, proxy, accepter);
 
+        // The accepter acknowledges on its own one Pump after each record arrives (ADR 0026). Those acks
+        // are held back for the stall, so the clock that never moves between rounds cannot feed the
+        // estimator zero round-trip samples and resend Fragments that were never lost.
+        proxy.SetPayloadDropRule(RelayDirection.UpstreamToClient, _ => true);
         byte[] large = BuildLargeMessage();
         proxy.DropNext(RelayDirection.ClientToUpstream);
         Send(dialler, diallerPeer, DeliveryMode.ReliableOrdered, large);
@@ -97,6 +101,7 @@ public class DatagramSessionHeadOfLineAmplificationTests
         List<byte[]> duringTheStall = PumpRoundsCollectingPayloads(dialler, proxy, accepter, rounds: 6);
         PeerCounters atTheEndOfTheStall = accepter.Reactor.CountersOf(accepterPeer);
 
+        proxy.SetPayloadDropRule(RelayDirection.UpstreamToClient, null);
         dialler.TimeProvider.Advance(_pastTheRetransmitDeadline);
         List<byte[]> afterTheLargeMessageCompletes = PumpRoundsCollectingPayloads(dialler, proxy, accepter, rounds: 16);
 

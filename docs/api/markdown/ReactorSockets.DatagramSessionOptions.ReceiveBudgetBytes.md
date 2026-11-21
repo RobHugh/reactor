@@ -7,7 +7,7 @@ Assembly: ReactorSockets.dll
 
 The receive line of the memory bill in bytes, as a <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/integral-numeric-types">long</a> so that a
 combination too large to allocate is a value this can report rather than an overflow it
-silently wraps through.
+silently wraps through. A figure above [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue) reads as [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue).
 
 ```csharp
 public long ReceiveBudgetBytes { get; }

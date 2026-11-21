@@ -45,7 +45,7 @@ constants. Changing one changes what a datagram means, which is a version, not a
 </p>
 <p>
 <b>The memory bill.</b> A Reactor built from these options preallocates, and the whole of it is
-these two lines:
+these three lines:
 </p>
 <ul><li>
 receive: <code>Capacity × 2 × ReceiveWindowFragments × FragmentSize</code> — two of the four Spaces are
@@ -53,6 +53,9 @@ reliable and reassemble, and each holds a window of whole fragment slots per Pee
 </li><li>
 send: <code>Capacity × 2 × RetentionBytes</code> — the same two Spaces retain what they have sent until
 it is acknowledged, per Peer.
+</li><li>
+unreliable queue: <code>Capacity × UnreliableQueueBytes</code> — the bytes of Messages Sent in the two
+unreliable modes that wait for the next Pump, per Peer.
 </li></ul>
 <p>
 <code>FragmentSize</code> is in one line and not the other because the window counts packets and retention
@@ -62,7 +65,7 @@ Each line also carries a few bytes of bookkeeping per fragment slot, which
 default fragment size.
 </p>
 <p>
-The frame arena ([`ReactorOptions.ArenaSize`](ReactorSockets.ReactorOptions.ArenaSize.md#ReactorSockets_ReactorOptions_ArenaSize)) is over and above those two lines and is
+The frame arena ([`ReactorOptions.ArenaSize`](ReactorSockets.ReactorOptions.ArenaSize.md#ReactorSockets_ReactorOptions_ArenaSize)) is over and above those three lines and is
 shared across the whole Reactor rather than multiplied by capacity.
 </p>
 <p>
@@ -121,13 +124,17 @@ only because that default is derived rather than guessed. Provenance: the platfo
 The bytes a fragment carries, and therefore the unit every buffer here is measured in.
 Defaults to 1200. Provenance: QUIC's floor beneath the 1280-byte IPv6 minimum MTU (RFC 9000),
 the one value with citable provenance for surviving an arbitrary path. Must lie between 576
-(RFC 791's guaranteed reassembly minimum) and 65 507 (the maximum UDP payload).
+(RFC 791's guaranteed reassembly minimum) and 65 476 (the 65 507-byte maximum UDP payload less the
+20-byte Datagram header and the 11-byte Fragment record header). A data Datagram carries at most
+this many payload bytes plus a 31-byte header, so at the default a Datagram is at most 1231 bytes,
+which with IPv6 and UDP headers fits the 1280-byte minimum MTU.
 
  [HeldRecordBudgetBytes](ReactorSockets.DatagramSessionOptions.HeldRecordBudgetBytes.md\#ReactorSockets\_DatagramSessionOptions\_HeldRecordBudgetBytes)
 
 The most heap, in bytes, a Reactor's <code>ReliableOrdered</code> Spaces can hold in ordinary records
 waiting behind a gap, across all its Peers: <code>Capacity × 2 × ReceiveWindowFragments ×
-FragmentSize</code>, with each slot's bookkeeping.
+FragmentSize</code>, with each slot's bookkeeping. A figure above [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue) reads as
+[`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue).
 
  [Linger](ReactorSockets.DatagramSessionOptions.Linger.md\#ReactorSockets\_DatagramSessionOptions\_Linger)
 
@@ -148,7 +155,8 @@ least 1.
 The largest Message, in bytes, this Reactor will accept or deliver. Required: it is a
 statement about the consumer's own protocol that nothing here can derive. It is also the knob
 that multiplies this profile's memory bill in more than one direction — the class remarks on
-[`DatagramSessionOptions`](ReactorSockets.DatagramSessionOptions.md) say what it floors and what raising it costs.
+[`DatagramSessionOptions`](ReactorSockets.DatagramSessionOptions.md) say what it floors and what raising it costs. At most
+[`MaxLength`](https://learn.microsoft.com/dotnet/api/system.array.maxlength), 2 147 483 591, so the frame arena can hold one maximum Message.
 
  [MaxPeersPerAddress](ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress.md\#ReactorSockets\_DatagramSessionOptions\_MaxPeersPerAddress)
 
@@ -183,7 +191,7 @@ has no default of its own.
 
 The receive line of the memory bill in bytes, as a <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/integral-numeric-types">long</a> so that a
 combination too large to allocate is a value this can report rather than an overflow it
-silently wraps through.
+silently wraps through. A figure above [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue) reads as [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue).
 
  [ReceiveWindowFloor](ReactorSockets.DatagramSessionOptions.ReceiveWindowFloor.md\#ReactorSockets\_DatagramSessionOptions\_ReceiveWindowFloor)
 
@@ -207,7 +215,8 @@ The resolved fragment size: [`DatagramSessionOptions.FragmentSize`](ReactorSocke
  [ResolvedMaxDatagramsPerPump](ReactorSockets.DatagramSessionOptions.ResolvedMaxDatagramsPerPump.md\#ReactorSockets\_DatagramSessionOptions\_ResolvedMaxDatagramsPerPump)
 
 The resolved per-socket read limit: [`DatagramSessionOptions.MaxDatagramsPerPump`](ReactorSockets.DatagramSessionOptions.MaxDatagramsPerPump.md#ReactorSockets_DatagramSessionOptions_MaxDatagramsPerPump) if set, otherwise one receive
-window for every Space of every Peer, plus every handshake the admission cap allows in one Pump.
+window for every Space of every Peer, plus every handshake the admission cap allows in one Pump,
+clamped to [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int32.maxvalue).
 
  [ResolvedMaxPeersPerAddress](ReactorSockets.DatagramSessionOptions.ResolvedMaxPeersPerAddress.md\#ReactorSockets\_DatagramSessionOptions\_ResolvedMaxPeersPerAddress)
 
@@ -225,6 +234,10 @@ The resolved IPv6 grouping length: [`DatagramSessionOptions.PeerLimitIPv6PrefixL
  [ResolvedReceiveWindowFragments](ReactorSockets.DatagramSessionOptions.ResolvedReceiveWindowFragments.md\#ReactorSockets\_DatagramSessionOptions\_ResolvedReceiveWindowFragments)
 
 The resolved receive window: [`DatagramSessionOptions.ReceiveWindowFragments`](ReactorSockets.DatagramSessionOptions.ReceiveWindowFragments.md#ReactorSockets_DatagramSessionOptions_ReceiveWindowFragments) if set, otherwise [`DatagramSessionOptions.ReceiveWindowFloor`](ReactorSockets.DatagramSessionOptions.ReceiveWindowFloor.md#ReactorSockets_DatagramSessionOptions_ReceiveWindowFloor).
+
+ [ResolvedUnreliableQueueBytes](ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes.md\#ReactorSockets\_DatagramSessionOptions\_ResolvedUnreliableQueueBytes)
+
+[`DatagramSessionOptions.UnreliableQueueBytes`](ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.md#ReactorSockets_DatagramSessionOptions_UnreliableQueueBytes) with its default applied, clamped to [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int32.maxvalue).
 
  [RetentionBytes](ReactorSockets.DatagramSessionOptions.RetentionBytes.md\#ReactorSockets\_DatagramSessionOptions\_RetentionBytes)
 
@@ -245,7 +258,8 @@ requires retention to hold at least one fragment, so this is always at least 1.
 The send line of the memory bill in bytes, reported the same way: [`DatagramSessionOptions.RetentionSlots`](ReactorSockets.DatagramSessionOptions.RetentionSlots.md#ReactorSockets_DatagramSessionOptions_RetentionSlots)
 whole fragment slots per reliable Space per Peer, each priced at its payload plus the 15 bytes
 of bookkeeping that records what it holds. Exact, like the receive line, so it can be below
-<code>Capacity × 2 × RetentionBytes</code> when retention is not a whole number of fragments.
+<code>Capacity × 2 × RetentionBytes</code> when retention is not a whole number of fragments. A figure
+above [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue) reads as [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int64.maxvalue).
 
  [SendIdleInterval](ReactorSockets.DatagramSessionOptions.SendIdleInterval.md\#ReactorSockets\_DatagramSessionOptions\_SendIdleInterval)
 
@@ -255,4 +269,20 @@ knows which they would rather spend. There is no option to disable this: every E
 that has sent no data datagram for this long is always sent one seven-byte control record,
 whatever else it did or did not receive. At most 2^32 - 1 milliseconds (about 49.7 days), the
 most a handshake may announce.
+
+ [UnreliableQueueBudgetBytes](ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes.md\#ReactorSockets\_DatagramSessionOptions\_UnreliableQueueBudgetBytes)
+
+The unreliable-queue line of the memory bill in bytes: <code>Capacity × </code>[`DatagramSessionOptions.ResolvedUnreliableQueueBytes`](ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes.md#ReactorSockets_DatagramSessionOptions_ResolvedUnreliableQueueBytes),
+one region per Peer, allocated at construction.
+
+ [UnreliableQueueBytes](ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.md\#ReactorSockets\_DatagramSessionOptions\_UnreliableQueueBytes)
+
+The most bytes one Peer may have queued for [`DeliveryMode.Unreliable`](ReactorSockets.DeliveryMode.md) and
+[`DeliveryMode.UnreliableSequenced`](ReactorSockets.DeliveryMode.md) until a Pump writes them, counting each Message's payload plus
+its 7-byte record header. A Send that would go past it returns [`SendOutcome.SendQueueFull`](ReactorSockets.SendOutcome.md).
+<a href="https://learn.microsoft.com/dotnet/csharp/language-reference/keywords/null">null</a> means [`DatagramSessionOptions.RetentionSlots`](ReactorSockets.DatagramSessionOptions.RetentionSlots.md#ReactorSockets_DatagramSessionOptions_RetentionSlots) × ([`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) + 7):
+as many full unreliable Messages as one reliable Space retains Fragments. Provenance: derived from
+[`DatagramSessionOptions.RetentionBytes`](ReactorSockets.DatagramSessionOptions.RetentionBytes.md#ReactorSockets_DatagramSessionOptions_RetentionBytes) and [`DatagramSessionOptions.FragmentSize`](ReactorSockets.DatagramSessionOptions.FragmentSize.md#ReactorSockets_DatagramSessionOptions_FragmentSize), so the unreliable queue holds as much as
+a reliable Space does. Must be at least
+[`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) + 7, one full unreliable Message.
 

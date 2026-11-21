@@ -51,8 +51,9 @@ namespace ReactorSockets;
 public sealed class RawReactor : IDisposable
 {
     /// <summary>
-    /// The largest a UDP datagram can be, and this Reactor's default scratch buffer size and arena
-    /// floor: a Segment is as large as one read, so the arena must hold at least one (ADR 0012).
+    /// The largest payload a UDP datagram can carry over IPv4, and this Reactor's default scratch
+    /// buffer size and arena floor: a Segment is as large as one read, so the arena must hold at least
+    /// one (ADR 0012). An IPv6 datagram can carry up to 65 527 bytes, more than this bound.
     /// </summary>
     public const int MaxUdpDatagramSize = 65_507;
 
@@ -62,6 +63,13 @@ public sealed class RawReactor : IDisposable
     private readonly ReactorCounterSet _counters;
     private readonly ShareHolderTable<LinkSlot> _links;
     private readonly byte[] _scratchBuffer;
+
+    /// <summary>
+    /// The largest datagram or stream read this Reactor accepts. <see cref="_scratchBuffer"/> is one
+    /// byte longer, so a UDP read that fills it is known to have been truncated; a TCP read is given
+    /// only the first <see cref="_acceptedSize"/> bytes, so it never exceeds what the arena was sized for.
+    /// </summary>
+    private readonly int _acceptedSize;
     private readonly List<PendingEvent> _pendingEvents = [];
     private readonly List<LinkId> _connectingLinks = [];
     private readonly int _constructingThreadId;
@@ -77,9 +85,10 @@ public sealed class RawReactor : IDisposable
     /// come from this same thread or it throws.
     /// </summary>
     /// <remarks>
-    /// <b>The memory bill</b> is one scratch buffer plus one arena — <c>scratchBufferSize + ArenaSize</c>
-    /// — neither multiplied by capacity, because Raw holds nothing for a Link across a Pump. That is
-    /// what "invents nothing on the wire" looks like from the constructor (ADR 0012).
+    /// <b>The memory bill</b> is one scratch buffer plus one arena — <c>scratchBufferSize + 1 + ArenaSize</c>
+    /// (the extra byte is how a truncated datagram is recognised) — neither multiplied by capacity,
+    /// because Raw holds nothing for a Link across a Pump. That is what "invents nothing on the wire"
+    /// looks like from the constructor (ADR 0012).
     /// </remarks>
     /// <param name="options">
     /// The shared options value. Every knob on it is validated here, and
@@ -89,10 +98,13 @@ public sealed class RawReactor : IDisposable
     /// <param name="scratchBufferSize">
     /// The single scratch buffer every Link's receive lands in, reused across Links since only one is
     /// read at any instant inside a single-threaded Pump (ADR 0012). Defaults to
-    /// <see cref="MaxUdpDatagramSize"/>. Provenance: the largest payload a UDP datagram can carry, at
-    /// which truncation is unreachable. This is the profile-specific
+    /// <see cref="MaxUdpDatagramSize"/>. Provenance: the largest payload a UDP datagram can carry over
+    /// IPv4, at which an IPv4 datagram cannot be truncated. An IPv6 datagram of 65 508 to 65 527 bytes
+    /// exceeds it and is reported as truncated. This is the profile-specific
     /// knob a consumer lowers to opt into truncation, kept off <see cref="ReactorOptions"/> because it
-    /// has no meaning outside Raw's datagram surface.
+    /// has no meaning outside Raw's datagram surface. It must be at least 1 and at most
+    /// <see cref="Array.MaxLength"/> minus 1, because the scratch allocation adds one truncation byte.
+    /// A value outside that range throws <see cref="ArgumentOutOfRangeException"/>.
     /// </param>
     public RawReactor(ReactorOptions options, int? scratchBufferSize = null)
     {
@@ -108,6 +120,14 @@ public sealed class RawReactor : IDisposable
                 $"scratch buffer of {resolvedScratchBufferSize} bytes cannot hold anything — scratch buffer size must be at least 1.");
         }
 
+        if (resolvedScratchBufferSize > Array.MaxLength - 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(scratchBufferSize),
+                resolvedScratchBufferSize,
+                $"scratch buffer of {resolvedScratchBufferSize} bytes leaves no room for the truncation byte within the largest array the runtime can allocate — scratch buffer size must be at most {Array.MaxLength - 1}.");
+        }
+
         int arenaSize = options.ResolveArenaSize(
             resolvedScratchBufferSize,
             $"one maximum-sized read of {resolvedScratchBufferSize} bytes");
@@ -118,7 +138,8 @@ public sealed class RawReactor : IDisposable
         _counters = new ReactorCounterSet();
         _diagnostics = new DiagnosticGateway(options.Sink, options.MinimumLevel, _counters);
         _links = new ShareHolderTable<LinkSlot>(options.Capacity, ReactorOrigin.Next());
-        _scratchBuffer = new byte[resolvedScratchBufferSize];
+        _acceptedSize = resolvedScratchBufferSize;
+        _scratchBuffer = new byte[resolvedScratchBufferSize + 1];
         _admissionCap = options.ResolvedAdmissionCap;
     }
 
@@ -500,7 +521,8 @@ public sealed class RawReactor : IDisposable
     /// per Pump, which a consumer already controls by choosing how often to Pump. A stream Link
     /// delivering a run longer than one read is simply read again on a later Pump, once the dispatcher
     /// finds it ready a second time — the same bound, applied to a transport with no message
-    /// boundaries of its own.
+    /// boundaries of its own. A stream Link is read only as far as the arena has room, so a full arena
+    /// defers its read to a later Pump and loses nothing.
     /// </summary>
     /// <remarks>
     /// The consequence is that a Link cannot reach a second <c>Reserve</c> in one Frame, so
@@ -575,9 +597,23 @@ public sealed class RawReactor : IDisposable
     /// is to stop reading and never learn of a subsequent reset — but a second <c>EndOfStream</c> is
     /// never queued, since the remote already said everything it is going to say.
     /// </summary>
+    /// <remarks>
+    /// The read length is the smaller of the accepted read size and the arena's free space, so the
+    /// arena always has room for what was read and a stream read is never lost. When the arena has no
+    /// free space the Link is not read this Pump: <c>Receive</c> is not called, because an empty read
+    /// would be reported as <c>EndOfStream</c>. The bytes stay in the kernel's receive buffer and the
+    /// socket stays readable, so each later Pump dispatches the Link again. The scan order rotates each
+    /// Pump, so the Link is read once it is scanned before the arena fills.
+    /// </remarks>
     private void OnStreamLinkReadable(SlotHandle handle, StreamLinkSlot slot)
     {
-        TcpLinkReceiveResult result = slot.Link.Receive(_scratchBuffer);
+        int readLength = Math.Min(_acceptedSize, _arena.BytesFree);
+        if (readLength == 0)
+        {
+            return;
+        }
+
+        TcpLinkReceiveResult result = slot.Link.Receive(_scratchBuffer.AsSpan(0, readLength));
         switch (result.Outcome)
         {
             case TcpLinkReceiveOutcome.Delivered:
@@ -612,10 +648,11 @@ public sealed class RawReactor : IDisposable
     /// nothing and is counted nowhere, because it cannot happen here: a ready Link is read once per
     /// Pump, so it never reaches a second reservation in one Frame, and <see cref="LinkCounters"/> has
     /// no read-share figure for that reason. <see cref="ArenaReservationOutcome.ArenaExhausted"/> is a
-    /// <c>Warn</c> Diagnostic carrying the arithmetic that explains it. Neither says anything on the
-    /// wire — the Raw profile owns no protocol, so a Payload it cannot hold is simply not delivered. A
-    /// Session profile must answer differently, which is why this policy is Raw's and not
-    /// <see cref="Core.FrameArena"/>'s (ADR 0007).
+    /// <c>Warn</c> Diagnostic carrying the arithmetic that explains it, and only a Datagram can reach
+    /// it: a stream read is capped at the arena's free space, so its reservation is always committed.
+    /// Neither says anything on the wire — the Raw profile owns no protocol, so a Datagram it cannot
+    /// hold is simply not delivered. A Session profile must answer differently, which is why this
+    /// policy is Raw's and not <see cref="Core.FrameArena"/>'s (ADR 0007).
     /// </para>
     /// <para>
     /// <b>The two counters on the success path belong here</b> because they are facts about bytes
@@ -682,7 +719,10 @@ public sealed class RawReactor : IDisposable
     /// Queues the <see cref="RawEventKind.SegmentReceived"/> event for a Payload the arena accepted.
     /// No Source is claimed, because a stream Link has one remote for its whole lifetime and nothing
     /// per-Segment to claim; and no Segment counter is kept, because a Segment is an artefact of how
-    /// much happened to be readable rather than anything the remote sent as a unit.
+    /// much happened to be readable rather than anything the remote sent as a unit. The read was
+    /// capped at the arena's free space, so the reservation is committed and the Segment is always
+    /// queued. The refusal check is the fail-closed path for an outcome with no arm in
+    /// <see cref="TryReserve"/>.
     /// </summary>
     private void DeliverSegment(SlotHandle handle, LinkSlot slot, ReadOnlySpan<byte> data)
     {
@@ -704,7 +744,7 @@ public sealed class RawReactor : IDisposable
     {
         if (_diagnostics.IsEnabled(DiagnosticLevel.Warn))
         {
-            _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(source, _scratchBuffer.Length));
+            _diagnostics.Log(DiagnosticRecord.ForDatagramTruncated(source, _acceptedSize));
         }
     }
 

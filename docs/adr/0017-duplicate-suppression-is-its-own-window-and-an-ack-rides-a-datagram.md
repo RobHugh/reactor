@@ -50,6 +50,10 @@ has records queued (ADR 0009's one-datagram-per-Peer-per-Pump flush). A receiver
 therefore never acknowledges anything, and the sender retransmits every reliable sequence on every
 deadline until some reverse traffic appears to carry an ack home.
 
+> Superseded in part by [ADR 0026](0026-a-receiver-with-nothing-to-send-acknowledges-on-its-next-pump.md):
+> a Peer that owes an ack and has nothing queued sends a header-only Datagram on its next Pump. The
+> deferral below, and the amendments' "still sends nothing" for ordinary traffic, no longer hold.
+
 **This is accepted rather than fixed here.** The fix is a datagram sent for a Peer with nothing to
 say, which is a Ping — slice 8's, where liveness is designed as a whole rather than bolted on as a
 side effect of acknowledgement needing a ride. Inventing a header-only keepalive now would put a

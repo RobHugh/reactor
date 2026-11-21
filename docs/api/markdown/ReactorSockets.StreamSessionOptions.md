@@ -101,8 +101,11 @@ is derived rather than guessed. Provenance: the platform's own CSPRNG.
 
 How long a closing Session stays alive to retransmit its Goodbye and absorb what is still in
 flight. Required, for the same reason as [`StreamSessionOptions.SendIdleInterval`](ReactorSockets.StreamSessionOptions.SendIdleInterval.md#ReactorSockets_StreamSessionOptions_SendIdleInterval): it trades a prompt
-teardown against a clean one. At most 2^32 - 1 milliseconds (about 49.7 days), the most a handshake
-may announce.
+teardown against a clean one. It also bounds a dial: a Peer this end dialled that has not
+established one Linger after [`StreamSessionReactor.Connect(IPEndPoint)`](ReactorSockets.StreamSessionReactor.Connect.md#ReactorSockets_StreamSessionReactor_Connect_System_Net_IPEndPoint_) closes with
+[`DisconnectReason.TransportFailed`](ReactorSockets.DisconnectReason.md), so a Linger shorter than the round trip plus the
+far end's Pump interval closes a dial before its answer arrives. At most 2^32 - 1 milliseconds
+(about 49.7 days), the most a handshake may announce.
 
  [MaxMessageSize](ReactorSockets.StreamSessionOptions.MaxMessageSize.md\#ReactorSockets\_StreamSessionOptions\_MaxMessageSize)
 
@@ -110,7 +113,8 @@ The largest Message, in bytes, this Reactor will accept or deliver. Required: it
 statement about the consumer's own protocol that nothing here can derive. It is also
 announced to the remote as a receive limit, and floors both the receive buffer and
 [`StreamSessionOptions.RetentionBytes`](ReactorSockets.StreamSessionOptions.RetentionBytes.md#ReactorSockets_StreamSessionOptions_RetentionBytes) — an arena that cannot hold one maximum Message could never
-deliver one.
+deliver one. At most 2 147 483 587, [`MaxLength`](https://learn.microsoft.com/dotnet/api/system.array.maxlength) less the 4-byte length prefix,
+so one framed maximum Message fits one array.
 
  [MaxPeersPerAddress](ReactorSockets.StreamSessionOptions.MaxPeersPerAddress.md\#ReactorSockets\_StreamSessionOptions\_MaxPeersPerAddress)
 
@@ -151,7 +155,11 @@ silently wraps through.
 
  [ReceiveBufferFloor](ReactorSockets.StreamSessionOptions.ReceiveBufferFloor.md\#ReactorSockets\_StreamSessionOptions\_ReceiveBufferFloor)
 
-The floor both [`StreamSessionOptions.RetentionBytes`](ReactorSockets.StreamSessionOptions.RetentionBytes.md#ReactorSockets_StreamSessionOptions_RetentionBytes) and the receive buffer are held to: one maximum Message plus its length prefix.
+The floor both [`StreamSessionOptions.RetentionBytes`](ReactorSockets.StreamSessionOptions.RetentionBytes.md#ReactorSockets_StreamSessionOptions_RetentionBytes) and the receive buffer are held to: one maximum
+Message plus its length prefix. The sum is computed in <a href="https://learn.microsoft.com/dotnet/csharp/language-reference/builtin-types/integral-numeric-types">long</a> and saturates at
+[`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int32.maxvalue), so on options not yet validated a [`StreamSessionOptions.MaxMessageSize`](ReactorSockets.StreamSessionOptions.MaxMessageSize.md#ReactorSockets_StreamSessionOptions_MaxMessageSize) near
+[`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int32.maxvalue) reads as [`MaxValue`](https://learn.microsoft.com/dotnet/api/system.int32.maxvalue) rather than wrapping negative.
+Construction rejects any [`StreamSessionOptions.MaxMessageSize`](ReactorSockets.StreamSessionOptions.MaxMessageSize.md#ReactorSockets_StreamSessionOptions_MaxMessageSize) whose floor would saturate.
 
  [ReceiveBufferSize](ReactorSockets.StreamSessionOptions.ReceiveBufferSize.md\#ReactorSockets\_StreamSessionOptions\_ReceiveBufferSize)
 
