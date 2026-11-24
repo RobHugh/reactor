@@ -74,3 +74,10 @@ docs/api/docfx/**/*.map
 
 # Agent working scratch
 .scratch/
+
+# Local agent skills and settings
+.claude/*
+!.claude/rules/
+.claude/rules/*
+!.claude/rules/CLAUDE-PROMPT-GUIDE.md
+.agents/
