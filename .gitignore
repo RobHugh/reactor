@@ -44,6 +44,7 @@ ScaffoldingReadMe.txt
 
 # Sandcastle orchestrator (see .sandcastle/orchestrate.ts)
 node_modules/
+package-lock.json
 .sandcastle/worktrees/
 .sandcastle/logs/
 .sandcastle/.env
@@ -81,3 +82,4 @@ docs/api/docfx/**/*.map
 .claude/rules/*
 !.claude/rules/CLAUDE-PROMPT-GUIDE.md
 .agents/
+skills-lock.json
