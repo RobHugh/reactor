@@ -81,5 +81,11 @@ docs/api/docfx/**/*.map
 !.claude/rules/
 .claude/rules/*
 !.claude/rules/CLAUDE-PROMPT-GUIDE.md
+# Shared Claude Code hooks: the verification gate, committed so worktrees get it too.
+!.claude/settings.json
+!.claude/hooks/
 .agents/
 skills-lock.json
+
+# Agent eval output
+evals/agent/results/

@@ -1,0 +1,12 @@
+#nullable enable
+ReactorSockets.DatagramSessionOptions.ResolvedUnreliableQueueBytes.get -> int
+ReactorSockets.DatagramSessionOptions.UnreliableQueueBudgetBytes.get -> long
+ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.get -> int?
+ReactorSockets.DatagramSessionOptions.UnreliableQueueBytes.init -> void
+ReactorSockets.DiagnosticId.OversizedFragment = 210 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.PendingAdmissionExpired = 309 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.PendingAdmissionLimitReached = 310 -> ReactorSockets.DiagnosticId
+ReactorSockets.SendOutcome.SendQueueFull = 6 -> ReactorSockets.SendOutcome
+static ReactorSockets.DiagnosticRecord.ForOversizedFragment(ReactorSockets.PeerId peer, long fragmentLength, long fragmentSize) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForPendingAdmissionExpired(ReactorSockets.Source source, int bytesReceived, long deadlineMilliseconds) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForPendingAdmissionLimitReached(int limit, int declined) -> ReactorSockets.DiagnosticRecord

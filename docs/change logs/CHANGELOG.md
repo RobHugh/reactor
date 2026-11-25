@@ -70,6 +70,29 @@
 - A smaller peer `FragmentSize` means more retention slots per Message, so `RetentionExhausted`
   arrives sooner. Receive memory is unchanged.
 
+### Build and tooling
+
+The verification steps below are recorded in ADR 0027.
+
+- `main` and `dev` require a pull request with passing `format`, `ubuntu-latest` and `windows-latest`
+  checks, and cannot be deleted or force-pushed. There is no bypass.
+- CI kills a test host that hangs for five minutes and uploads a mini dump with the test results.
+- The public API is tracked member by member with `Microsoft.CodeAnalysis.PublicApiAnalyzers`.
+  `PublicAPI.Shipped.txt` holds the 1.0.0 surface, and `PublicAPI.Unshipped.txt` holds the 11
+  members added since. An unlisted public symbol fails the build (RS0016), and so does a listed one
+  that no longer exists (RS0017).
+- Git hooks in `.githooks`, enabled with `git config core.hooksPath .githooks`. `pre-push` runs the
+  format check, the Release build and the Release tests. `commit-msg` rejects a `Co-Authored-By`
+  trailer.
+- Claude Code hooks in `.claude/settings.json`. Each edit to a C# file gets a whitespace format.
+  An agent that stops with code changed gets a full format, build and test run, and a failure blocks
+  the stop.
+- `DatagramSessionRandomFaultScenarioTests` asserts every delivery-mode promise over a seeded run
+  of random drops, duplicates, reorders and delays, on three fixed seeds in CI.
+- A weekly workflow runs the scenario suite on 100 fresh seeds per OS, and replays five closed issues
+  against the current agent setup as agent evals (`evals/agent`). The evals skip without an
+  `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` secret.
+
 This log covers the closed pull requests up to the 1.0.0 release on `main` (2026-11-10). It describes
 the code as it stands now. Where a later change replaced earlier behaviour, only the current
 behaviour is listed. The risks section lists what the pull requests left open and the current code
