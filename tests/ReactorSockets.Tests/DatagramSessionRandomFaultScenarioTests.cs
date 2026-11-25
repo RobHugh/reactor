@@ -285,32 +285,11 @@ public class DatagramSessionRandomFaultScenarioTests
             {
                 if (round == MaxSendRounds)
                 {
-                    run.UnexpectedOutcomes.AddRange(nextToSend
-                        .Where(pair => pair.Value < MessagesPerMode)
-                        .Select(pair => $"{pair.Key} Message {pair.Value}: still refused after {MaxSendRounds} rounds"));
+                    run.RecordStalledSends(nextToSend);
                     break;
                 }
 
-                foreach (DeliveryMode mode in _modes)
-                {
-                    int next = nextToSend[mode];
-                    if (next == MessagesPerMode)
-                    {
-                        continue;
-                    }
-
-                    SendOutcome outcome = sender.Reactor.Send(peer, mode, messages[mode][next]);
-                    if (outcome == SendOutcome.Sent)
-                    {
-                        nextToSend[mode] = next + 1;
-                    }
-                    else if (outcome is not (SendOutcome.RetentionExhausted or SendOutcome.SendQueueFull))
-                    {
-                        run.UnexpectedOutcomes.Add($"{mode} Message {next}: {outcome}");
-                        nextToSend[mode] = MessagesPerMode;
-                    }
-                }
-
+                run.SendNextOfEachMode(sender, peer, messages, nextToSend);
                 QueueRandomFault(proxy, random, RelayDirection.ClientToUpstream, faultPercent: 45);
                 QueueRandomFault(proxy, random, RelayDirection.UpstreamToClient, faultPercent: 30);
                 run.PumpRound(sender, proxy, receiver, messages);
@@ -329,15 +308,46 @@ public class DatagramSessionRandomFaultScenarioTests
                 clock.Advance(_settleRoundStep);
             }
 
-            foreach ((string side, DatagramSessionReactorHarness harness) in new[] { ("sender", sender), ("receiver", receiver) })
-            {
-                run.ErrorRecords.AddRange(harness.Sink.Received
-                    .Where(record => record.Level == DiagnosticLevel.Error)
-                    .Select(record => $"{side}: {record.Id}"));
-            }
-
+            run.RecordErrors("sender", sender);
+            run.RecordErrors("receiver", receiver);
             return run;
         }
+
+        /// <summary>
+        /// Sends each mode's next Message once. A Message refused for backpressure stays next and is
+        /// retried in the following round. Any other refusal is recorded and ends that mode's sending.
+        /// </summary>
+        private void SendNextOfEachMode(
+            DatagramSessionReactorHarness sender,
+            PeerId peer,
+            Dictionary<DeliveryMode, byte[][]> messages,
+            Dictionary<DeliveryMode, int> nextToSend)
+        {
+            foreach (DeliveryMode mode in _modes.Where(mode => nextToSend[mode] < MessagesPerMode))
+            {
+                int next = nextToSend[mode];
+                SendOutcome outcome = sender.Reactor.Send(peer, mode, messages[mode][next]);
+                if (outcome == SendOutcome.Sent)
+                {
+                    nextToSend[mode] = next + 1;
+                }
+                else if (outcome is not (SendOutcome.RetentionExhausted or SendOutcome.SendQueueFull))
+                {
+                    UnexpectedOutcomes.Add($"{mode} Message {next}: {outcome}");
+                    nextToSend[mode] = MessagesPerMode;
+                }
+            }
+        }
+
+        private void RecordStalledSends(Dictionary<DeliveryMode, int> nextToSend) =>
+            UnexpectedOutcomes.AddRange(nextToSend
+                .Where(pair => pair.Value < MessagesPerMode)
+                .Select(pair => $"{pair.Key} Message {pair.Value}: still refused after {MaxSendRounds} rounds"));
+
+        private void RecordErrors(string side, DatagramSessionReactorHarness harness) =>
+            ErrorRecords.AddRange(harness.Sink.Received
+                .Where(record => record.Level == DiagnosticLevel.Error)
+                .Select(record => $"{side}: {record.Id}"));
 
         private static int MaxSizeOf(DeliveryMode mode) =>
             mode is DeliveryMode.ReliableOrdered or DeliveryMode.ReliableUnordered ? MaxReliableMessageSize : MaxUnreliableMessageSize;
