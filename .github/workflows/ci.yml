@@ -75,12 +75,17 @@ jobs:
             New-NetIPAddress -InterfaceAlias 'Loopback Pseudo-Interface 1' -IPAddress $address -PrefixLength 128 | Out-Null
           }
 
+      # A test host still running after five minutes is hung. --blame-hang-timeout kills it, writes a
+      # dump and fails the run well inside the job timeout, so the logs and the dump still upload.
       - name: Test
         run: >
           dotnet test ReactorSockets.slnx
           --no-build
           --configuration Release
           --verbosity normal
+          --blame-crash
+          --blame-hang-timeout 5m
+          --blame-hang-dump-type mini
           --logger "trx;LogFileName=${{ matrix.os }}.trx"
           --results-directory ${{ github.workspace }}/test-results
 
