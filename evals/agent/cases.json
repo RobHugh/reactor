@@ -1,0 +1,42 @@
+[
+  {
+    "id": "issue-539",
+    "issue": 539,
+    "summary": "Saturate StreamSessionOptions.ReceiveBufferFloor at int.MaxValue",
+    "base": "d1674b42a25fbd18d869b83360522b4557e3ac13",
+    "fix": "4647f218b2ec6d3917ac4d06fb8c4d2ce18e8a70",
+    "tests": [ "tests/ReactorSockets.Tests/StreamSessionOptionsTests.cs" ]
+  },
+  {
+    "id": "issue-526",
+    "issue": 526,
+    "summary": "Bound ArenaSize and Raw scratchBufferSize at Array.MaxLength",
+    "base": "56ac87bf321da0dc8d8bd2bf91196be9d1e17056",
+    "fix": "4d162a94845f01fa6cc223956246d811c2d7323d",
+    "tests": [ "tests/ReactorSockets.Tests/ReactorOptionsTests.cs" ]
+  },
+  {
+    "id": "issue-513",
+    "issue": 513,
+    "summary": "Close a stream dial that has not established within its Linger",
+    "base": "de867cc8416144baeefc40f9c89b3ac361306275",
+    "fix": "d6a27a239c3ae35cb1de3345720aa7d0e7db0ae2",
+    "tests": [ "tests/ReactorSockets.Tests/StreamSessionDialTimeoutTests.cs" ]
+  },
+  {
+    "id": "issue-500",
+    "issue": 500,
+    "summary": "Resume an Interrupted accepted datagram Peer on data from its held address",
+    "base": "1144217c424896695b467d1b7c203ce5d8dba093",
+    "fix": "e8c1d7dfab997b7dd89778561de5946edfc66bef",
+    "tests": [ "tests/ReactorSockets.Tests/DatagramSessionInterruptedAccepterResumeOnDataTests.cs" ]
+  },
+  {
+    "id": "issue-503",
+    "issue": 503,
+    "summary": "Flush Messages sent while Interrupted once a stream Peer resumes",
+    "base": "83f90610af7e5d4cb6241d4732417ce1e38a9dcc",
+    "fix": "099688bd1938a4f91e9f5ea1541d51a623415901",
+    "tests": [ "tests/ReactorSockets.Tests/StreamSessionInterruptedSendFlushTests.cs" ]
+  }
+]

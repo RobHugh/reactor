@@ -1,0 +1,184 @@
+name: Weekly
+
+# The checks too slow or too costly for every push. scenarios runs the random-fault scenario suite
+# over a fresh range of seeds. agent-evals replays closed issues against today's agent setup and
+# grades the result (evals/agent/run-case.sh).
+
+on:
+  schedule:
+    - cron: "0 4 * * 1" # Mondays 04:00 UTC
+  workflow_dispatch:
+    inputs:
+      scenario_seed:
+        description: First scenario seed. Empty draws one from the clock.
+        required: false
+        default: ""
+      scenario_count:
+        description: Consecutive seeds each OS runs.
+        required: false
+        default: "100"
+      agent_cases:
+        description: Space-separated case ids from evals/agent/cases.json. Empty runs every case.
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  scenarios:
+    name: scenarios (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      # Each OS takes its own range, so one run covers twice the seeds. The range is in the summary, and
+      # a failing test's name carries its seed: rerun it with REACTOR_SCENARIO_SEED=<seed>.
+      - name: Pick the seeds
+        shell: bash
+        env:
+          INPUT_SEED: ${{ inputs.scenario_seed }}
+          INPUT_COUNT: ${{ inputs.scenario_count }}
+        run: |
+          count=${INPUT_COUNT:-100}
+          seed=${INPUT_SEED:-$(( $(date +%s) % 1000000000 ))}
+          if [ "$RUNNER_OS" = Windows ]; then
+            seed=$(( seed + count ))
+          fi
+          echo "REACTOR_SCENARIO_SEED=$seed" >> "$GITHUB_ENV"
+          echo "REACTOR_SCENARIO_COUNT=$count" >> "$GITHUB_ENV"
+          echo "Scenario seeds $seed to $(( seed + count - 1 )) on $RUNNER_OS." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore
+        run: dotnet restore ReactorSockets.slnx
+
+      - name: Build
+        run: dotnet build ReactorSockets.slnx --no-restore --configuration Release
+
+      - name: Test
+        run: >
+          dotnet test tests/ReactorSockets.Tests/ReactorSockets.Tests.csproj
+          --no-build
+          --configuration Release
+          --filter "FullyQualifiedName~DatagramSessionRandomFaultScenarioTests"
+          --blame-crash
+          --blame-hang-timeout 10m
+          --blame-hang-dump-type mini
+          --logger "trx;LogFileName=scenarios-${{ matrix.os }}.trx"
+          --results-directory ${{ github.workspace }}/test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenario-results-${{ matrix.os }}
+          path: test-results/
+
+  agent-cases:
+    name: agent eval cases
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cases: ${{ steps.list.outputs.cases }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: List the cases
+        id: list
+        env:
+          INPUT_CASES: ${{ inputs.agent_cases }}
+        run: |
+          node -e '
+            const all = JSON.parse(require("fs").readFileSync("evals/agent/cases.json", "utf8")).map(c => c.id);
+            const asked = (process.env.INPUT_CASES || "").split(/\s+/).filter(Boolean);
+            const unknown = asked.filter(id => !all.includes(id));
+            if (unknown.length > 0) { console.error(`unknown case: ${unknown.join(", ")}`); process.exit(1); }
+            console.log(`cases=${JSON.stringify(asked.length > 0 ? asked : all)}`);
+          ' >> "$GITHUB_OUTPUT"
+
+  agent-evals:
+    name: agent eval (${{ matrix.case }})
+    needs: agent-cases
+    # Windows, for the same reason as CI's format job: only a Windows checkout matches .editorconfig's CRLF.
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        case: ${{ fromJSON(needs.agent-cases.outputs.cases) }}
+    env:
+      EVAL_MODEL: ${{ vars.AGENT_EVAL_MODEL || 'claude-opus-5-5' }}
+
+    steps:
+      # The cases start from old commits, so the checkout needs the whole history.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check credentials
+        id: credentials
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Skipped: set the ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN repository secret to run agent evals." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Claude Code
+        if: steps.credentials.outputs.ready == 'true'
+        run: npm install --global @anthropic-ai/claude-code
+
+      - name: Run the case
+        if: steps.credentials.outputs.ready == 'true'
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          CASE: ${{ matrix.case }}
+        run: |
+          echo "Model: $EVAL_MODEL" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| case | solver | score | build | reference tests | format | rules | full suite | cost USD | turns |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|---|---|---|---|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          evals/agent/run-case.sh "$CASE" agent
+
+      - name: Upload the eval output
+        if: always() && steps.credentials.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-eval-${{ matrix.case }}
+          path: evals/agent/results/
