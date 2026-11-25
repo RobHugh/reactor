@@ -1,0 +1,56 @@
+#!/bin/sh
+# Runs CI's gates before a push: format verification, a Release build and the Release test suite.
+# Enable once per clone with: git config core.hooksPath .githooks
+# Skip one push with: git push --no-verify
+#
+# The checks run against the working tree, so the hook refuses a push it cannot vouch for: tracked
+# changes not yet committed, or a pushed commit other than HEAD. A HEAD that already passed is not
+# rebuilt, so pushing the same commit to a second remote or retrying a failed network push is quick.
+
+set -u
+
+zero=0000000000000000000000000000000000000000
+head=$(git rev-parse HEAD)
+pushes_head=false
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$local_sha" in
+        "$zero") continue ;; # a branch deletion pushes no code
+    esac
+
+    if [ "$local_sha" != "$head" ]; then
+        echo "pre-push: $local_ref is not HEAD, and these checks run against HEAD's working tree."
+        echo "pre-push: check out $local_ref and push again, or push with --no-verify."
+        exit 1
+    fi
+
+    pushes_head=true
+done
+
+if [ "$pushes_head" = false ]; then
+    exit 0
+fi
+
+if ! git diff --quiet HEAD --; then
+    echo "pre-push: tracked files have uncommitted changes, so a pass would not describe the pushed commit."
+    echo "pre-push: commit or stash them and push again, or push with --no-verify."
+    exit 1
+fi
+
+passed_file=$(git rev-parse --git-path reactor-pre-push-passed)
+if [ -f "$passed_file" ] && [ "$(cat "$passed_file")" = "$head" ]; then
+    echo "pre-push: $head already passed."
+    exit 0
+fi
+
+run() {
+    echo "pre-push: $*"
+    "$@" || { echo "pre-push: failed: $*"; exit 1; }
+}
+
+run dotnet format ReactorSockets.slnx --verify-no-changes
+run dotnet build ReactorSockets.slnx --configuration Release
+run dotnet test ReactorSockets.slnx --no-build --configuration Release
+
+echo "$head" > "$passed_file"
+echo "pre-push: passed."

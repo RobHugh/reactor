@@ -1,0 +1,8 @@
+#!/bin/sh
+# Rejects a commit message carrying a Co-Authored-By trailer: commits in this repository name no co-author.
+# Enable once per clone with: git config core.hooksPath .githooks
+
+if grep -qi '^[[:space:]]*co-authored-by:' "$1"; then
+    echo "commit-msg: remove the Co-Authored-By line. Commits in this repository name no co-author."
+    exit 1
+fi
