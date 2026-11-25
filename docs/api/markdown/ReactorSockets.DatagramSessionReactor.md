@@ -34,24 +34,21 @@ public sealed class DatagramSessionReactor : IDisposable
 
 ## Remarks
 
-<p>
-<b>Endpoints are declared, not registered.</b> Unlike [`RawReactor`](ReactorSockets.RawReactor.md), which hands back a
+**Endpoints are declared, not registered.** Unlike [`RawReactor`](ReactorSockets.RawReactor.md), which hands back a
 [`LinkId`](ReactorSockets.LinkId.md) for every socket a consumer registers, this Reactor takes its endpoints on
 [`DatagramSessionOptions.Endpoints`](ReactorSockets.DatagramSessionOptions.Endpoints.md#ReactorSockets_DatagramSessionOptions_Endpoints) at construction and never rebinds (ADR 0014).
 Binding returns no identity because there is nothing to address: a consumer addresses Peers, and a
 Peer is not a socket. A Reactor that declares no endpoints binds nothing until its first
 [`DatagramSessionReactor.Connect(IPEndPoint)`](ReactorSockets.DatagramSessionReactor.Connect.md#ReactorSockets_DatagramSessionReactor_Connect_System_Net_IPEndPoint_), which binds one wildcard, port-zero socket in the destination's address
 family and appends it to [`DatagramSessionReactor.BoundEndpoints`](ReactorSockets.DatagramSessionReactor.BoundEndpoints.md#ReactorSockets_DatagramSessionReactor_BoundEndpoints).
-</p>
-<p>
-<b>Capacity counts Peers.</b> The bound sockets are not share-holders and hold no read share
+
+**Capacity counts Peers.** The bound sockets are not share-holders and hold no read share
 (ADR 0014): a Peer's Messages arrive through whichever socket happens to carry them, so charging
 the arena per socket would give one Peer on a single-socket Reactor the whole arena and sixty-four
 Peers a sixty-fourth each — exactly inverted. The read share is the arena divided by
 [`ReactorOptions.Capacity`](ReactorSockets.ReactorOptions.Capacity.md#ReactorSockets_ReactorOptions_Capacity), and it belongs to the Peer.
-</p>
-<p>
-<b>What a stranger can make this Reactor do.</b> Very little, and that is the design. Anything an
+
+**What a stranger can make this Reactor do.** Very little, and that is the design. Anything an
 unauthenticated remote can generate at will goes to the Diagnostic Sink and never to the event
 stream, so a stranger cannot write into the consumer's protocol. Every reply to an unverified
 sender is exactly one control datagram of
@@ -60,14 +57,12 @@ datagram of the same size, so bytes sent never exceed bytes received and this Re
 used to amplify a flood at a spoofed third party. A bare Hello is answered with a Cookie whatever
 it claimed — never a Refusal — so nothing about this Reactor's version or occupancy is learnable
 without first proving the ability to receive at the address claimed.
-</p>
-<p>
-<b>The wire session id is not an authenticator.</b> It is a receiver-assigned random 32-bit
+
+**The wire session id is not an authenticator.** It is a receiver-assigned random 32-bit
 demultiplexing token: unguessable enough that an off-path attacker cannot address a Session it was
 never introduced to, and nothing more. This library does not encrypt, does not authenticate the
 data plane, and an on-path attacker who can read a datagram can forge one. Consumers needing
 confidentiality or integrity must layer it themselves.
-</p>
 
 ## Constructors
 

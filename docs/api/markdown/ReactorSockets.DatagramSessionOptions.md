@@ -28,7 +28,6 @@ public sealed class DatagramSessionOptions
 
 ## Remarks
 
-<p>
 A knob carries a default only when that default is <em>derived</em> — from machinery this library
 owns, from another knob, or from a citable standard. A value that trades the consumer's own
 resources against their own traffic, and that nothing in this library can derive, is required with
@@ -36,44 +35,35 @@ no default: [`DatagramSessionOptions.MaxMessageSize`](ReactorSockets.DatagramSes
 [`DatagramSessionOptions.SendIdleInterval`](ReactorSockets.DatagramSessionOptions.SendIdleInterval.md#ReactorSockets_DatagramSessionOptions_SendIdleInterval) and [`DatagramSessionOptions.Linger`](ReactorSockets.DatagramSessionOptions.Linger.md#ReactorSockets_DatagramSessionOptions_Linger) are all of that kind, and so is
 [`ReactorOptions.Capacity`](ReactorSockets.ReactorOptions.Capacity.md#ReactorSockets_ReactorOptions_Capacity). Guessing any of them would be guessing at the consumer's
 application.
-</p>
-<p>
+
 Values fixed by the wire format are not here at all and cannot be reached from here: the 32-bit
 acknowledgement width, the 64-entry duplicate window, the four sequence Spaces, zero as the
 reserved session id, the 20-byte data header and the thirty-second cookie epoch are protocol
 constants. Changing one changes what a datagram means, which is a version, not a setting.
-</p>
-<p>
-<b>The memory bill.</b> A Reactor built from these options preallocates, and the whole of it is
+
+**The memory bill.** A Reactor built from these options preallocates, and the whole of it is
 these three lines:
-</p>
-<ul><li>
-receive: <code>Capacity × 2 × ReceiveWindowFragments × FragmentSize</code> — two of the four Spaces are
-reliable and reassemble, and each holds a window of whole fragment slots per Peer.
-</li><li>
-send: <code>Capacity × 2 × RetentionBytes</code> — the same two Spaces retain what they have sent until
-it is acknowledged, per Peer.
-</li><li>
-unreliable queue: <code>Capacity × UnreliableQueueBytes</code> — the bytes of Messages Sent in the two
-unreliable modes that wait for the next Pump, per Peer.
-</li></ul>
-<p>
+
+- receive: <code>Capacity × 2 × ReceiveWindowFragments × FragmentSize</code> — two of the four Spaces are
+  reliable and reassemble, and each holds a window of whole fragment slots per Peer.
+- send: <code>Capacity × 2 × RetentionBytes</code> — the same two Spaces retain what they have sent until
+  it is acknowledged, per Peer.
+- unreliable queue: <code>Capacity × UnreliableQueueBytes</code> — the bytes of Messages Sent in the two
+  unreliable modes that wait for the next Pump, per Peer.
+
 <code>FragmentSize</code> is in one line and not the other because the window counts packets and retention
 counts bytes. Neither line has a traffic term: both are allocated at construction and never grow.
 Each line also carries a few bytes of bookkeeping per fragment slot, which
 [`DatagramSessionOptions.ReceiveBudgetBytes`](ReactorSockets.DatagramSessionOptions.ReceiveBudgetBytes.md#ReactorSockets_DatagramSessionOptions_ReceiveBudgetBytes) and [`DatagramSessionOptions.SendBudgetBytes`](ReactorSockets.DatagramSessionOptions.SendBudgetBytes.md#ReactorSockets_DatagramSessionOptions_SendBudgetBytes) include exactly — under 2% at the
 default fragment size.
-</p>
-<p>
+
 The frame arena ([`ReactorOptions.ArenaSize`](ReactorSockets.ReactorOptions.ArenaSize.md#ReactorSockets_ReactorOptions_ArenaSize)) is over and above those three lines and is
 shared across the whole Reactor rather than multiplied by capacity.
-</p>
-<p>
+
 One further cost is allocated only under traffic: ordinary <code>ReliableOrdered</code> records waiting
 behind a gap. It has a ceiling of its own, [`DatagramSessionOptions.HeldRecordBudgetBytes`](ReactorSockets.DatagramSessionOptions.HeldRecordBudgetBytes.md#ReactorSockets_DatagramSessionOptions_HeldRecordBudgetBytes), and reaching it refuses
 further records rather than growing.
-</p>
-<p>
+
 [`DatagramSessionOptions.MaxMessageSize`](ReactorSockets.DatagramSessionOptions.MaxMessageSize.md#ReactorSockets_DatagramSessionOptions_MaxMessageSize) reaches three places at once: it is announced to the remote as a
 receive limit, it floors the receive window at the fragments one maximum Message occupies
 ([`DatagramSessionOptions.ReceiveWindowFloor`](ReactorSockets.DatagramSessionOptions.ReceiveWindowFloor.md#ReactorSockets_DatagramSessionOptions_ReceiveWindowFloor)), and it floors the frame arena, because an arena that cannot
@@ -86,20 +76,17 @@ Retention is the exception this profile makes. [`DatagramSessionOptions.Retentio
 [`DatagramSessionOptions.ResolvedFragmentSize`](ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.md#ReactorSockets_DatagramSessionOptions_ResolvedFragmentSize) rather than by [`DatagramSessionOptions.MaxMessageSize`](ReactorSockets.DatagramSessionOptions.MaxMessageSize.md#ReactorSockets_DatagramSessionOptions_MaxMessageSize), because a
 reliable Space retransmits fragment by fragment and needs only one fragment to have something to
 resend.
-</p>
-<p>
-<b>Security.</b> The session field on every datagram is a demultiplexing token, not an
+
+**Security.** The session field on every datagram is a demultiplexing token, not an
 authenticator: it makes blind off-path injection a 32-bit guess, and does nothing against anyone who
 has seen one datagram of the Session. This library does not encrypt, and on-path attackers are out
 of scope (ADR 0009). A consumer who needs confidentiality or integrity against an on-path attacker
 provides it themselves, inside the Message.
-</p>
-<p>
+
 Every check below is deterministic and entirely the caller's, so failures throw at construction —
 [`ArgumentOutOfRangeException`](https://learn.microsoft.com/dotnet/api/system.argumentoutofrangeexception) for a single bad value and
 [`ArgumentException`](https://learn.microsoft.com/dotnet/api/system.argumentexception) for a combination that cannot work — rather than being reported
 through a <code>Result</code>.
-</p>
 
 ## Properties
 

@@ -44,12 +44,10 @@ during the handshake, and it never appears on this type. The generation is
 of any process, which is what lets generation 0 stay a reserved sentinel without a check guarding
 it (ADR 0015).
 
-<p>
 The Origin is what makes a [`PeerId`](ReactorSockets.PeerId.md) mean something to exactly one Reactor. Without
 it, index and generation are only unique within a single Reactor's table, and every table's first
 Peer is Slot 0 generation 1 — so one Reactor's [`PeerId`](ReactorSockets.PeerId.md) passed to another's
 <code>Close</code> named a live Peer of that second Reactor and closed it. A consumer running two
 Reactors gets the mistake back as nothing happening, which is what an id addressing no Peer has
 always meant here.
-</p>
 

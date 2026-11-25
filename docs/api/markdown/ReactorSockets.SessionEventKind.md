@@ -57,7 +57,7 @@ keeps answering for it, and its undelivered inbound Messages and outbound retent
 held rather than discarded (ADR 0010). Raised whenever an established Peer's transport ends
 without a Goodbye first: an inbound FIN carrying nothing further, a reset, a local write
 failure, or this end's own receive-idle deadline expiring (which closed the Peer outright before
-this kind existed). <b>Distinct from [`SessionEventKind.PeerClosing`](ReactorSockets.SessionEventKind.md)</b>: Closing means a Goodbye
+this kind existed). **Distinct from [`SessionEventKind.PeerClosing`](ReactorSockets.SessionEventKind.md)**: Closing means a Goodbye
 arrived and the Session is ending on purpose, with [`SessionEventKind.PeerClosed`](ReactorSockets.SessionEventKind.md) to follow once both
 sides drain — nothing here is ever resumable. Interrupted means the opposite — no Goodbye was
 ever seen, the Session is not ending, and the Peer sits ready for a Resume for as long as Linger

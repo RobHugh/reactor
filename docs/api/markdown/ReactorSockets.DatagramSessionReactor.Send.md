@@ -90,7 +90,7 @@ nothing retained or sequenced.
 
 ### Remarks
 
-<b>[`SendOutcome.RetentionExhausted`](ReactorSockets.SendOutcome.md) is reachable from one <code>Send</code> call</b> (ADR
+**[`SendOutcome.RetentionExhausted`](ReactorSockets.SendOutcome.md) is reachable from one <code>Send</code> call** (ADR
 0004's "one Message can fill the send window alone"): the retention budget is sized in
 Fragments, not Messages, so a single Message cut into more Fragments than its Space has free
 slots for exhausts that Space by itself, with nothing else needing to have sent anything first.
@@ -102,17 +102,14 @@ whole small Message keeps. A half-retained Message would be unrepairable: the re
 reassembly waits forever for a set that was never cut in full. A smaller Message that fits the
 Space's free slots still succeeds afterward — the refusal costs the Space nothing.
 
-<p>
 Sending to a <code class="paramref">peer</code> this Reactor is not currently holding open — unknown, or
 already closed — returns [`SendOutcome.Closed`](ReactorSockets.SendOutcome.md) rather than throwing, unlike
 [`DatagramSessionReactor.CountersOf(PeerId)`](ReactorSockets.DatagramSessionReactor.CountersOf.md#ReactorSockets_DatagramSessionReactor_CountersOf_ReactorSockets_PeerId_): a Peer closing under a caller is an ordinary race, the same reason
 [`DatagramSessionReactor.Close(PeerId)`](ReactorSockets.DatagramSessionReactor.Close.md#ReactorSockets_DatagramSessionReactor_Close_ReactorSockets_PeerId_) tolerates a stale [`PeerId`](ReactorSockets.PeerId.md).
-</p>
-<p>
+
 Sending to a <code class="paramref">peer</code> whose handshake has not reached
 `Open` returns [`SendOutcome.NotEstablished`](ReactorSockets.SendOutcome.md) under
 every mode, checked before any width gate. Before the handshake the Peer has no remote-announced
 <code>MaxMessageSize</code>, so a Send would otherwise be misreported as
 [`SendOutcome.RemoteMessageTooLarge`](ReactorSockets.SendOutcome.md).
-</p>
 

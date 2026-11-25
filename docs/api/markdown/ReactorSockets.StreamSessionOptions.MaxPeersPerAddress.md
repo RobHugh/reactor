@@ -23,14 +23,12 @@ public int? MaxPeersPerAddress { get; init; }
 
 ### Remarks
 
-<p>
 The count is by address, without the port: one host can open connections from as many ports as it
 can bind, so a limit that counted ports would limit nothing. The address family and IPv6 scope stay
 in the key, because they distinguish hosts (ADR 0014). IPv6 addresses are counted by the prefix
 [`StreamSessionOptions.PeerLimitIPv6PrefixLength`](ReactorSockets.StreamSessionOptions.PeerLimitIPv6PrefixLength.md#ReactorSockets_StreamSessionOptions_PeerLimitIPv6PrefixLength) sets, so a host that can bind a whole prefix gets the limit
 once. IPv4 addresses are counted whole.
-</p>
-<p>
+
 A Peer is charged to the address its connection was accepted from for as long as it holds its Slot,
 including while Interrupted or Closing and after a Resume moves it to another address. A Resume is
 never refused by this limit, because the Peer it names already owns its Slot (ADR 0011). A dialled
@@ -39,5 +37,4 @@ one at a full Reactor, and reported with [`DiagnosticId.AddressPeerLimitReached`
 The same limit applies to accepted connections still waiting for their first handshake record:
 one address may have at most this many of them held, and a further one that has not sent its
 whole record with its connection is closed at once with nothing sent.
-</p>
 

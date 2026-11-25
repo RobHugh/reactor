@@ -28,7 +28,6 @@ public sealed class ReactorOptions
 
 ## Remarks
 
-<p>
 A knob carries a default only when that default is derived — from machinery the library owns,
 from another knob, or from a citable standard (ADR 0011, ADR 0012). [`ReactorOptions.Capacity`](ReactorSockets.ReactorOptions.Capacity.md#ReactorSockets_ReactorOptions_Capacity) has
 no such derivation and is therefore required, with no default. Construction throws
@@ -36,9 +35,8 @@ no such derivation and is therefore required, with no default. Construction thro
 for a combination that cannot work, because every check here is deterministic and entirely the
 caller's — unlike <code>Send</code>, whose failures belong to the remote end or the network and are reported
 through a <code>Result</code> instead.
-</p>
-<p>
-<b>Every per-Pump cost a remote party can inflate is bounded at construction</b> (ADR 0012). Reading
+
+**Every per-Pump cost a remote party can inflate is bounded at construction** (ADR 0012). Reading
 is bounded by each share-holder's share of the arena — [`ReactorOptions.ArenaSize`](ReactorSockets.ReactorOptions.ArenaSize.md#ReactorSockets_ReactorOptions_ArenaSize) divided by
 [`ReactorOptions.Capacity`](ReactorSockets.ReactorOptions.Capacity.md#ReactorSockets_ReactorOptions_Capacity), with one whole unit always allowed — and accepts and handshakes are both
 bounded by [`ReactorOptions.AdmissionCap`](ReactorSockets.ReactorOptions.AdmissionCap.md#ReactorSockets_ReactorOptions_AdmissionCap). Three mechanisms with one reason, and the checklist for
@@ -47,7 +45,6 @@ needs a bound fixed here, because the failure is invisible until someone points 
 at it. The datagram profile adds a fourth on its own options,
 [`DatagramSessionOptions.MaxDatagramsPerPump`](ReactorSockets.DatagramSessionOptions.MaxDatagramsPerPump.md#ReactorSockets_DatagramSessionOptions_MaxDatagramsPerPump), because the arena share does not see
 control traffic.
-</p>
 
 ## Properties
 

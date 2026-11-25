@@ -30,11 +30,9 @@ The generation is <a href="https://learn.microsoft.com/dotnet/csharp/language-re
 wrap within the life of any process, which is what lets generation 0 stay a reserved sentinel
 without a check guarding it. ADR 0015 records the reasoning and the alternatives declined.
 
-<p>
 The Origin extends that same guarantee across Reactors. Index and generation are unique only
 within one Reactor's table, and every table's first Link is Slot 0 generation 1, so without it a
 [`LinkId`](ReactorSockets.LinkId.md) from one [`RawReactor`](ReactorSockets.RawReactor.md) addressed a live Link of another.
-</p>
 
 ## Constructors
 

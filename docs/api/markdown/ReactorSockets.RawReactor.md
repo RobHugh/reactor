@@ -37,8 +37,7 @@ public sealed class RawReactor : IDisposable
 
 ## Remarks
 
-<p>
-<b>How a bad [`LinkId`](ReactorSockets.LinkId.md) is reported.</b> A member that already returns a
+**How a bad [`LinkId`](ReactorSockets.LinkId.md) is reported.** A member that already returns a
 [`Result`](ReactorSockets.Result.md) reports it as a failed Result: the channel exists, and a Link closing under a
 caller is an ordinary race rather than a programmer error, so [`RawReactor.SendTo(LinkId, Source, ReadOnlySpan<byte>)`](ReactorSockets.RawReactor.SendTo.md#ReactorSockets_RawReactor_SendTo_ReactorSockets_LinkId_ReactorSockets_Source_System_ReadOnlySpan_System_Byte__),
 [`RawReactor.Send(LinkId, ReadOnlySpan<byte>)`](ReactorSockets.RawReactor.Send.md#ReactorSockets_RawReactor_Send_ReactorSockets_LinkId_System_ReadOnlySpan_System_Byte__) and [`RawReactor.Shutdown(LinkId)`](ReactorSockets.RawReactor.Shutdown.md#ReactorSockets_RawReactor_Shutdown_ReactorSockets_LinkId_) never throw for one. A member that returns data has
@@ -49,23 +48,20 @@ Link at all, or it does but the Link is the wrong kind to answer the question ([
 on a datagram or listening Link — the same wrong-kind case [`RawReactor.Send(LinkId, ReadOnlySpan<byte>)`](ReactorSockets.RawReactor.Send.md#ReactorSockets_RawReactor_Send_ReactorSockets_LinkId_System_ReadOnlySpan_System_Byte__), [`RawReactor.SendTo(LinkId, Source, ReadOnlySpan<byte>)`](ReactorSockets.RawReactor.SendTo.md#ReactorSockets_RawReactor_SendTo_ReactorSockets_LinkId_ReactorSockets_Source_System_ReadOnlySpan_System_Byte__)
 and [`RawReactor.Shutdown(LinkId)`](ReactorSockets.RawReactor.Shutdown.md#ReactorSockets_RawReactor_Shutdown_ReactorSockets_LinkId_) report as a failed Result instead, because they can). [`RawReactor.Close(LinkId)`](ReactorSockets.RawReactor.Close.md#ReactorSockets_RawReactor_Close_ReactorSockets_LinkId_)
 is neither: it is idempotent by design, so a stale [`LinkId`](ReactorSockets.LinkId.md) is simply a no-op.
-</p>
-<p>
-<b>Which members check the calling thread.</b> Every member that mutates this Reactor or its
+
+**Which members check the calling thread.** Every member that mutates this Reactor or its
 sockets enforces the constructing-thread rule (ADR 0002): [`RawReactor.Pump()`](ReactorSockets.RawReactor.Pump.md#ReactorSockets_RawReactor_Pump), [`RawReactor.Bind(IPEndPoint)`](ReactorSockets.RawReactor.Bind.md#ReactorSockets_RawReactor_Bind_System_Net_IPEndPoint_),
 [`RawReactor.SendTo(LinkId, Source, ReadOnlySpan<byte>)`](ReactorSockets.RawReactor.SendTo.md#ReactorSockets_RawReactor_SendTo_ReactorSockets_LinkId_ReactorSockets_Source_System_ReadOnlySpan_System_Byte__), [`RawReactor.Send(LinkId, ReadOnlySpan<byte>)`](ReactorSockets.RawReactor.Send.md#ReactorSockets_RawReactor_Send_ReactorSockets_LinkId_System_ReadOnlySpan_System_Byte__), [`RawReactor.Shutdown(LinkId)`](ReactorSockets.RawReactor.Shutdown.md#ReactorSockets_RawReactor_Shutdown_ReactorSockets_LinkId_), [`RawReactor.Close(LinkId)`](ReactorSockets.RawReactor.Close.md#ReactorSockets_RawReactor_Close_ReactorSockets_LinkId_) and
 [`RawReactor.Dispose()`](ReactorSockets.RawReactor.Dispose.md#ReactorSockets_RawReactor_Dispose). The pure reads — [`RawReactor.LocalOf(LinkId)`](ReactorSockets.RawReactor.LocalOf.md#ReactorSockets_RawReactor_LocalOf_ReactorSockets_LinkId_), [`RawReactor.RemoteOf(LinkId)`](ReactorSockets.RawReactor.RemoteOf.md#ReactorSockets_RawReactor_RemoteOf_ReactorSockets_LinkId_),
 [`RawReactor.CountersOf(LinkId)`](ReactorSockets.RawReactor.CountersOf.md#ReactorSockets_RawReactor_CountersOf_ReactorSockets_LinkId_) and [`RawReactor.Counters`](ReactorSockets.RawReactor.Counters.md#ReactorSockets_RawReactor_Counters) — deliberately do not, because each only
 copies out a value that the Reactor never mutates in place.
-</p>
-<p>
+
 That is not a claim that they are safe to call concurrently with a Pump. The counters behind
 [`RawReactor.Counters`](ReactorSockets.RawReactor.Counters.md#ReactorSockets_RawReactor_Counters) and [`RawReactor.CountersOf(LinkId)`](ReactorSockets.RawReactor.CountersOf.md#ReactorSockets_RawReactor_CountersOf_ReactorSockets_LinkId_) are plain fields incremented without a barrier,
 so a reader on another thread has no guarantee of freshness and may observe a snapshot whose
 fields come from either side of a Pump. What it will not observe is a half-written value or a
 disposed socket. Treat a cross-thread counter read as a sample, not as a consistent cut; a
 consumer that needs one should read from its own Pump thread between Pumps.
-</p>
 
 ## Constructors
 
