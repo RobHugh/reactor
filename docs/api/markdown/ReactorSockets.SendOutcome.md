@@ -89,14 +89,11 @@ Datagram profile only.
 
 ## Remarks
 
-<p>
 Deliberately its own type rather than folded into [`DisconnectReason`](ReactorSockets.DisconnectReason.md): exhausting
 retention does not end the Session, so it belongs on the return of the call that can produce it
 rather than mixed into the roster of reasons a Peer is gone.
-</p>
-<p>
+
 Explicit values throughout, the same house style as [`DisconnectReason`](ReactorSockets.DisconnectReason.md): a member is
 added at the end with the next free number, never inserted, so a value a consumer has already
 persisted keeps its meaning across a library upgrade.
-</p>
 

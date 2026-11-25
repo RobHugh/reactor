@@ -34,13 +34,11 @@ public sealed class StreamSessionReactor : IDisposable
 
 ## Remarks
 
-<p>
 There is no cookie, no ack, no sequence space, no fragment and no RTO in this profile: TCP already
 provides what those were built for. The datagram Session protocol is deliberately not carried over
 TCP, because that would put retransmission on top of retransmission.
-</p>
-<p>
-<b>Send timing (ADR 0011).</b> Nagle (<code>TCP_NODELAY</code>) is off, unconditionally, on every stream
+
+**Send timing (ADR 0011).** Nagle (<code>TCP_NODELAY</code>) is off, unconditionally, on every stream
 Session socket — it is not a knob on [`StreamSessionOptions`](ReactorSockets.StreamSessionOptions.md) and cannot be turned back
 on. In its place, every [`StreamSessionReactor.Send(PeerId, ReadOnlySpan<byte>)`](ReactorSockets.StreamSessionReactor.Send.md#ReactorSockets_StreamSessionReactor_Send_ReactorSockets_PeerId_System_ReadOnlySpan_System_Byte__) queued since the last [`StreamSessionReactor.Pump()`](ReactorSockets.StreamSessionReactor.Pump.md#ReactorSockets_StreamSessionReactor_Pump) is written to
 the wire together, once, by that [`StreamSessionReactor.Pump()`](ReactorSockets.StreamSessionReactor.Pump.md#ReactorSockets_StreamSessionReactor_Pump) call: batching we do ourselves, on our own
@@ -49,7 +47,6 @@ leave. That is a better version of what Nagle exists for, without Nagle's cost �
 waiting up to a round trip behind outstanding data — so a consumer measuring latency needs to know
 which of the two is doing the batching: theirs, by calling [`StreamSessionReactor.Pump()`](ReactorSockets.StreamSessionReactor.Pump.md#ReactorSockets_StreamSessionReactor_Pump) less often, or ours,
 always.
-</p>
 
 ## Constructors
 

@@ -23,17 +23,14 @@ public int? MaxPeersPerAddress { get; init; }
 
 ### Remarks
 
-<p>
 The count is by address, without the port: a host can answer a Cookie from as many ports as it can
 bind, so a limit that counted ports would limit nothing. The address family and IPv6 scope stay in
 the key, because they distinguish hosts (ADR 0014). IPv6 addresses are counted by the prefix
 [`DatagramSessionOptions.PeerLimitIPv6PrefixLength`](ReactorSockets.DatagramSessionOptions.PeerLimitIPv6PrefixLength.md#ReactorSockets_DatagramSessionOptions_PeerLimitIPv6PrefixLength) sets, so a host that can bind a whole prefix gets the limit
 once. IPv4 addresses are counted whole.
-</p>
-<p>
+
 A Peer is charged to the address its handshake came from for as long as it holds its Slot, including
 while Interrupted or Closing and after a Resume moves it to another address. A dialled Peer is not
 charged: this Reactor chose to make it. A handshake over the limit is refused the same way as one at
 a full Reactor, and reported with [`DiagnosticId.AddressPeerLimitReached`](ReactorSockets.DiagnosticId.md).
-</p>
 

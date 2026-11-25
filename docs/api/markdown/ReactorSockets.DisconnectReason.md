@@ -164,16 +164,13 @@ fragment size is what the consumer can actually change.
 
 ## Remarks
 
-<p>
 Explicit values throughout, house style since <code>RawLinkLegality</code>: a member is added at the end
 with the next free number, never inserted, so a value a consumer has already persisted keeps its
 meaning across a library upgrade.
-</p>
-<p>
+
 Every place this library maps something else onto a [`DisconnectReason`](ReactorSockets.DisconnectReason.md) — a wire
 `RefusalReason`, a malformed-framing outcome, a Goodbye control record — states
 that mapping as its own table with a discard arm that refuses rather than permits, the same house
 rule <code>RawLinkLegality</code> follows: an input this library does not recognise fails closed instead
 of being guessed at.
-</p>
 

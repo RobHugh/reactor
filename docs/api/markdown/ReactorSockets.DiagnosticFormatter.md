@@ -29,16 +29,13 @@ public static class DiagnosticFormatter
 
 ## Remarks
 
-<p>
 The output is permanent public surface — consumers grep it, alert on it and paste it into issues —
 and its shape is <code>{Level} {Id} ({number}), {subject}: {what happened} ({value slots})</code>, the
 subject segment omitted when the record has none. Numbers are rendered in the invariant culture.
-</p>
-<p>
+
 A Source is rendered as a claim — <code>claimed source 203.0.113.7:4242 (unauthenticated)</code> — never
 as a fact like "from 203.0.113.7:4242". A Source is a hint about origin that an attacker chooses,
 and the wording must not invite a consumer to firewall on it (<code>CONTEXT.md</code>, ADR 0013).
-</p>
 
 ## Methods
 

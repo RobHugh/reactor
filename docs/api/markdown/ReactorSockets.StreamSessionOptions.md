@@ -28,7 +28,6 @@ public sealed class StreamSessionOptions
 
 ## Remarks
 
-<p>
 A knob carries a default only when that default is <em>derived</em> — from machinery this library
 owns, from another knob, or from a citable standard. A value that trades the consumer's own
 resources against their own traffic, and that nothing in this library can derive, is required with
@@ -36,13 +35,11 @@ no default: [`StreamSessionOptions.MaxMessageSize`](ReactorSockets.StreamSession
 [`StreamSessionOptions.SendIdleInterval`](ReactorSockets.StreamSessionOptions.SendIdleInterval.md#ReactorSockets_StreamSessionOptions_SendIdleInterval) and [`StreamSessionOptions.Linger`](ReactorSockets.StreamSessionOptions.Linger.md#ReactorSockets_StreamSessionOptions_Linger) are all of that kind, and so is
 [`ReactorOptions.Capacity`](ReactorSockets.ReactorOptions.Capacity.md#ReactorSockets_ReactorOptions_Capacity). Guessing any of them would be guessing at the consumer's
 application.
-</p>
-<p>
+
 There is no cookie, no ack, no sequence space, no fragment and no RTO here: TCP already provides
 what those were built for, so a knob to configure one would have nothing under it.
-</p>
-<p>
-<b>The memory bill.</b> A Reactor built from these options holds at most
+
+**The memory bill.** A Reactor built from these options holds at most
 <code>Capacity × (RetentionBytes + receive buffer + Message-boundary ring)</code> bytes, all of it per
 Peer and none of it shared, so a <code>Send</code> on a healthy Peer never fails because of somebody
 else's traffic. Retention and the ring are allocated at construction and each receive buffer when
@@ -54,22 +51,18 @@ the local kernel merely accepted, and is driven by [`StreamSessionOptions.Retent
 per Message that could be outstanding in a Peer's retention region at once, which this profile's
 four-byte length prefix bounds at roughly one entry per four retained bytes, so it costs about as
 much as retention itself.
-</p>
-<p>
+
 [`StreamSessionOptions.MaxMessageSize`](ReactorSockets.StreamSessionOptions.MaxMessageSize.md#ReactorSockets_StreamSessionOptions_MaxMessageSize) appears in three places at once: announced to the remote as a receive
 limit, flooring the receive buffer, and flooring [`StreamSessionOptions.RetentionBytes`](ReactorSockets.StreamSessionOptions.RetentionBytes.md#ReactorSockets_StreamSessionOptions_RetentionBytes). It is therefore the
 one knob whose careless enlargement multiplies memory in two directions rather than one.
-</p>
-<p>
+
 Nagle is off on every stream Session socket and there is no knob to turn it on (ADR 0011): this
 library batches by writing everything queued since the last Pump once, so a latency measurement
 measures the consumer's Pump cadence, not TCP's acknowledgement clock.
-</p>
-<p>
+
 Every check below is deterministic and entirely the caller's, so failures throw at construction —
 [`ArgumentOutOfRangeException`](https://learn.microsoft.com/dotnet/api/system.argumentoutofrangeexception) for a single bad value and [`ArgumentException`](https://learn.microsoft.com/dotnet/api/system.argumentexception)
 for a combination that cannot work — rather than being reported through a <code>Result</code>.
-</p>
 
 ## Properties
 

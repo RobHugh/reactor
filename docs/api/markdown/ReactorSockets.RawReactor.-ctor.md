@@ -34,7 +34,7 @@ A value outside that range throws [`ArgumentOutOfRangeException`](https://learn.
 
 ### Remarks
 
-<b>The memory bill</b> is one scratch buffer plus one arena — <code>scratchBufferSize + 1 + ArenaSize</code>
+**The memory bill** is one scratch buffer plus one arena — <code>scratchBufferSize + 1 + ArenaSize</code>
 (the extra byte is how a truncated datagram is recognised) — neither multiplied by capacity,
 because Raw holds nothing for a Link across a Pump. That is what "invents nothing on the wire"
 looks like from the constructor (ADR 0012).

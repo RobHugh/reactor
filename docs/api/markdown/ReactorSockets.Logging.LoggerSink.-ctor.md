@@ -24,15 +24,12 @@ The logger every record is written to.
 
 ### Remarks
 
-<p>
 This Sink is bound by the same contract as any other (ADR 0005): the Reactor calls it synchronously,
 on the thread that called <code>Pump</code>, inside the Frame. Every provider the [`ILogger`](https://learn.microsoft.com/dotnet/api/microsoft.extensions.logging.ilogger) is
 wired to runs there too, so a provider that writes to a console or a file synchronously stalls the
 Frame for as long as the write takes. Configure providers that hand the write off and return.
-</p>
-<p>
+
 The category is the attribution. A record with a Link or Peer subject also names its Reactor in the
 <code>Reactor</code> field and the message, but a record with no subject or a Source subject names none, so
 one instance shared between Reactors leaves those unattributed.
-</p>
 

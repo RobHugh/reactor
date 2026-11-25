@@ -1,4 +1,5 @@
-// Rewrites the <xref> tags DocFX's Markdown output leaves unresolved into Markdown links.
+// Rewrites the <xref> tags DocFX's Markdown output leaves unresolved into Markdown links, and the
+// HTML paragraph and list blocks it writes into Markdown, so the links inside them render.
 // Run after `docfx docfx.json`, from the repository root:
 //   node docs/.docfx/resolve-markdown-xrefs.mjs
 // The HTML build's xrefmap.yml supplies each uid's page and display name. A uid outside this
@@ -56,15 +57,66 @@ function resolve(uid) {
   return `\`${entry?.name ?? shortName}\``;
 }
 
+// DocFX writes each <para> as a <p> line, a Markdown paragraph, and a </p> line, and each <list>
+// as <ul><li> ... </li><li> ... </li></ul> lines. A line that opens one of those tags starts an
+// HTML block, and Markdown renders an HTML block's contents as literal text, links included. This
+// rewrites the paragraphs as blank-line separated Markdown, the lists as "- " items, and <b> as **.
+const blockTags = new Map([
+  ["<p>", { blank: true }],
+  ["</p>", { blank: true }],
+  ["<ul><li>", { blank: true, opensList: true, bullet: true }],
+  ["</li><li>", { bullet: true }],
+  ["</li></ul>", { blank: true, closesList: true }],
+]);
+let blocksRewritten = 0;
+function rewriteHtmlBlocks(text) {
+  const out = [];
+  let inList = false;
+  let bullet = false;
+  let insertedBlank = false;
+  const lastIsBlank = () => out.length === 0 || out[out.length - 1].replace(/\r$/, "") === "";
+  const lines = text.split("\n");
+  // The element after the final newline is the end of the file, not a line, so it passes through.
+  const end = lines.pop();
+  for (const raw of lines) {
+    const eol = raw.endsWith("\r") ? "\r" : "";
+    const line = raw.replace(/\r$/, "");
+    const tag = blockTags.get(line);
+    if (tag) {
+      blocksRewritten++;
+      if (tag.blank && !lastIsBlank()) {
+        out.push(eol);
+        insertedBlank = true;
+      }
+      if (tag.opensList) inList = true;
+      if (tag.closesList) inList = false;
+      if (tag.bullet) bullet = true;
+      continue;
+    }
+    if (line === "" && insertedBlank && lastIsBlank()) continue;
+    insertedBlank = false;
+    let rewrittenLine = line.replace(/<b>(.*?)<\/b>/g, "**$1**");
+    if (inList && line !== "") {
+      rewrittenLine = (bullet ? "- " : "  ") + rewrittenLine;
+      bullet = false;
+    }
+    out.push(rewrittenLine + eol);
+  }
+  out.push(end);
+  return out.join("\n");
+}
+
 const xrefTag = /<xref href="([^"]*)"[^>]*><\/xref>/g;
 let rewritten = 0;
 for (const file of readdirSync(markdownDir).filter((name) => name.endsWith(".md"))) {
   const path = join(markdownDir, file);
   const text = readFileSync(path, "utf8");
-  const resolved = text.replace(xrefTag, (_, href) => {
-    rewritten++;
-    return resolve(decodeURIComponent(href));
-  });
+  const resolved = rewriteHtmlBlocks(
+    text.replace(xrefTag, (_, href) => {
+      rewritten++;
+      return resolve(decodeURIComponent(href));
+    }),
+  );
   if (resolved !== text) writeFileSync(path, resolved);
 }
 
@@ -78,5 +130,9 @@ writeFileSync(join(markdownDir, "README.md"), landing);
 const left = readdirSync(markdownDir)
   .filter((name) => name.endsWith(".md"))
   .reduce((count, name) => count + (readFileSync(join(markdownDir, name), "utf8").match(/<xref[ :]/g)?.length ?? 0), 0);
+const blocksLeft = readdirSync(markdownDir)
+  .filter((name) => name.endsWith(".md"))
+  .reduce((count, name) => count + (readFileSync(join(markdownDir, name), "utf8").match(/^<\/?(p|ul|li)>/gm)?.length ?? 0), 0);
 console.log(`Rewrote ${rewritten} xref tags; ${left} remain.`);
-if (left > 0) process.exitCode = 1;
+console.log(`Rewrote ${blocksRewritten} HTML block lines; ${blocksLeft} remain.`);
+if (left > 0 || blocksLeft > 0) process.exitCode = 1;

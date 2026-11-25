@@ -124,8 +124,8 @@ is to answer whether a consumer wants to see this, not whether this Reactor is a
 This Peer's `RetransmissionTimer` backed off: a Pump's expiry sweep
 (`CollectExpired`) found at least one overdue
 sequence on either reliable Space, so `BackOff` was called once
-for the Peer and every sequence the sweep reported re-armed at the single resulting RTO. Subject
-is the Peer. <code>Value0</code> is the new RTO in milliseconds —
+for the Peer. Each sequence the sweep reported arms again at the RTO current when its resend is
+packed. Subject is the Peer. <code>Value0</code> is the new RTO in milliseconds —
 `EffectiveTimeout` at the moment of the backoff; <code>Value1</code> is
 `ConsecutiveBackoffs` after this backoff.
 
@@ -156,17 +156,14 @@ attributed to the Session it named, and no byte of it is counted against that Pe
 <code>Value0</code> is the mode the record claimed, as the two mode bits' wire value — 0 for
 <code>Unreliable</code>, 1 for <code>UnreliableSequenced</code>; <code>Value1</code> is unused.
 
-<p>
 [`DiagnosticLevel.Warn`](ReactorSockets.DiagnosticLevel.md), for the same reason as [`DiagnosticId.DatagramMalformed`](ReactorSockets.DiagnosticId.md): a
 remote can produce this at will, and nothing is wrong with this Reactor.
-</p>
-<p>
+
 Distinct from [`DiagnosticId.DatagramMalformed`](ReactorSockets.DiagnosticId.md) rather than folded into it because the two say
 different things to a consumer. A malformed Datagram is rubbish from anywhere; this one is
 well-formed at every level but the rule, which means the sender is running a build that
 fragments in modes this profile does not — a misconfiguration a consumer can act on, and the
 send path already refuses to produce.
-</p>
 
 `OversizedMessage = 207` 
 
@@ -281,19 +278,15 @@ data Datagram for the Session from the exact address and port it sends to, and w
 Interrupted dialling end that has sent a Resume hears its session again. Nothing is rewound, because retransmission already re-sends
 anything unacknowledged, so <code>Value0</code> is 0 and <code>Value1</code> is unused.
 
-<p>
 [`DiagnosticLevel.Info`](ReactorSockets.DiagnosticLevel.md): a reconnection is the outcome reserving a Slot exists to
 produce, not a condition a consumer needs to act on.
-</p>
-<p>
+
 Shared with the datagram session profile rather than duplicated in the datagram block, as are
 [`DiagnosticId.LingerNegotiated`](ReactorSockets.DiagnosticId.md) and [`DiagnosticId.ResumeUnmatched`](ReactorSockets.DiagnosticId.md) (ADR 0020).
-</p>
-<p>
+
 Numbered 304 because 302 and 303 belong to [`DiagnosticId.MalformedFraming`](ReactorSockets.DiagnosticId.md) and
 [`DiagnosticId.DataAfterGoodbye`](ReactorSockets.DiagnosticId.md), and a value published in a closed permanent enum is never
 renumbered.
-</p>
 
 `ResumeUnmatched = 305` 
 
@@ -306,28 +299,23 @@ Linger expired. <code>Value1</code> is the wire record type the claim arrived as
 whose secret matched no held Peer, and 1 for a Hello presenting a secret that did match, which
 re-announces the parameters a Resume has no field for and is refused as a protocol violation.
 
-<p>
 [`DiagnosticLevel.Warn`](ReactorSockets.DiagnosticLevel.md) rather than the [`DiagnosticLevel.Info`](ReactorSockets.DiagnosticLevel.md) a version
 mismatch or a capacity refusal carries: those are routine outcomes of running this profile and
 a wrong secret is not.
-</p>
-<p>
+
 "Unmatched" names the outcome, not the comparison: the claim was not matched onto a Session.
 The Hello case reaches here having found the secret it announced, and is refused anyway because
 the record it arrived in re-announces parameters — <code>Value1</code> is what tells the two apart.
-</p>
-<p>
+
 <code>Value0</code> is reported to this end's own Sink and never to the wire: a refused party is
 closed on without being told anything, so it learns neither the count nor which of the three
 refusals it met.
-</p>
-<p>
+
 The datagram profile reports a Resume control datagram the same way, with <code>Value1</code> 6 (the
 Resume control type, <code>DatagramControlType.Resume</code>). <code>Value0</code> is 0 when the target
 session id names no Peer the Reactor holds, or names a dialled Peer (never a Resume target, since only
 the dialling end sends Resume), and 1 when it names a Peer but the presented secret
 does not equal the one that Peer issued.
-</p>
 
 `RedialAttempted = 306` 
 
@@ -367,16 +355,13 @@ this end's own Goodbye has already been queued for this Peer, that too) this end
 appended to this Peer's retention — the largest count a legitimate confirmation could ever sit
 at or below.
 
-<p>
 [`DiagnosticLevel.Warn`](ReactorSockets.DiagnosticLevel.md), for the same reason as [`DiagnosticId.MalformedFraming`](ReactorSockets.DiagnosticId.md): a
 remote can produce this at will by inflating its own counter.
-</p>
-<p>
+
 Numbered 308 rather than the next free 304: ADR 0013's roster reserves 304-307 for the Resume
 and redial Diagnostics ([`DiagnosticId.ResumeMatched`](ReactorSockets.DiagnosticId.md) and [`DiagnosticId.ResumeUnmatched`](ReactorSockets.DiagnosticId.md), then
 RedialAttempted and RedialFailed), and a value published in a closed permanent enum cannot be
 moved later to make room.
-</p>
 
 `PendingAdmissionExpired = 309` 
 
@@ -406,22 +391,18 @@ sending nothing. One record per Pump. The held connections close at their deadli
 
 ## Remarks
 
-<p>
-<b>Supported Sink style: range-check the blocks.</b> The enum grows inside its blocks, so a Sink
+**Supported Sink style: range-check the blocks.** The enum grows inside its blocks, so a Sink
 that classifies an id by the block it sits in, or that switches on members it cares about with a
 default arm for the rest, keeps working when a member is added. A Sink whose <code>switch</code> assumes
 it lists every member is not supported: the next additive release breaks it.
-</p>
-<p>
-<b>A block names the profile that defined a condition, not the profile that emitted a record</b>
+
+**A block names the profile that defined a condition, not the profile that emitted a record**
 (ADR 0020). [`DiagnosticId.LingerNegotiated`](ReactorSockets.DiagnosticId.md), [`DiagnosticId.ResumeMatched`](ReactorSockets.DiagnosticId.md) and
 [`DiagnosticId.ResumeUnmatched`](ReactorSockets.DiagnosticId.md) sit in the stream block and are emitted by the datagram session
 profile too, because each is one condition and a member names a condition. A Raw-only Sink's
 range check over 100-199 is exact, since nothing outside Raw shares that block. A Sink that needs
 to know which profile emitted a record knows which Reactor it was given to.
-</p>
-<p>
+
 Each member's documentation is the authority on its subject and value slots. ADR 0013's roster table
 is the one place to check them side by side and is kept in step with these docs.
-</p>
 
