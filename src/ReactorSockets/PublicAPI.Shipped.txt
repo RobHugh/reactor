@@ -1,0 +1,373 @@
+#nullable enable
+ReactorSockets.CloseReason
+ReactorSockets.CloseReason.Failed = 4 -> ReactorSockets.CloseReason
+ReactorSockets.CloseReason.LocalClose = 0 -> ReactorSockets.CloseReason
+ReactorSockets.CloseReason.Refused = 2 -> ReactorSockets.CloseReason
+ReactorSockets.CloseReason.ResetByRemote = 1 -> ReactorSockets.CloseReason
+ReactorSockets.CloseReason.Unreachable = 3 -> ReactorSockets.CloseReason
+ReactorSockets.DatagramSessionOptions
+ReactorSockets.DatagramSessionOptions.DatagramSessionOptions() -> void
+ReactorSockets.DatagramSessionOptions.Endpoints.get -> System.Collections.Generic.IReadOnlyList<System.Net.IPEndPoint!>!
+ReactorSockets.DatagramSessionOptions.Endpoints.init -> void
+ReactorSockets.DatagramSessionOptions.Entropy.get -> System.Security.Cryptography.RandomNumberGenerator!
+ReactorSockets.DatagramSessionOptions.Entropy.init -> void
+ReactorSockets.DatagramSessionOptions.FragmentSize.get -> int?
+ReactorSockets.DatagramSessionOptions.FragmentSize.init -> void
+ReactorSockets.DatagramSessionOptions.HeldRecordBudgetBytes.get -> long
+ReactorSockets.DatagramSessionOptions.Linger.get -> System.TimeSpan
+ReactorSockets.DatagramSessionOptions.Linger.init -> void
+ReactorSockets.DatagramSessionOptions.MaxDatagramsPerPump.get -> int?
+ReactorSockets.DatagramSessionOptions.MaxDatagramsPerPump.init -> void
+ReactorSockets.DatagramSessionOptions.MaxMessageSize.get -> int
+ReactorSockets.DatagramSessionOptions.MaxMessageSize.init -> void
+ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress.get -> int?
+ReactorSockets.DatagramSessionOptions.MaxPeersPerAddress.init -> void
+ReactorSockets.DatagramSessionOptions.MissedHeartbeats.get -> int?
+ReactorSockets.DatagramSessionOptions.MissedHeartbeats.init -> void
+ReactorSockets.DatagramSessionOptions.PeerLimitIPv6PrefixLength.get -> int?
+ReactorSockets.DatagramSessionOptions.PeerLimitIPv6PrefixLength.init -> void
+ReactorSockets.DatagramSessionOptions.Reactor.get -> ReactorSockets.ReactorOptions!
+ReactorSockets.DatagramSessionOptions.Reactor.init -> void
+ReactorSockets.DatagramSessionOptions.ReceiveBudgetBytes.get -> long
+ReactorSockets.DatagramSessionOptions.ReceiveWindowFloor.get -> int
+ReactorSockets.DatagramSessionOptions.ReceiveWindowFragments.get -> int?
+ReactorSockets.DatagramSessionOptions.ReceiveWindowFragments.init -> void
+ReactorSockets.DatagramSessionOptions.ResolvedFragmentSize.get -> int
+ReactorSockets.DatagramSessionOptions.ResolvedMaxDatagramsPerPump.get -> int
+ReactorSockets.DatagramSessionOptions.ResolvedMaxPeersPerAddress.get -> int
+ReactorSockets.DatagramSessionOptions.ResolvedMissedHeartbeats.get -> int
+ReactorSockets.DatagramSessionOptions.ResolvedPeerLimitIPv6PrefixLength.get -> int
+ReactorSockets.DatagramSessionOptions.ResolvedReceiveWindowFragments.get -> int
+ReactorSockets.DatagramSessionOptions.RetentionBytes.get -> int
+ReactorSockets.DatagramSessionOptions.RetentionBytes.init -> void
+ReactorSockets.DatagramSessionOptions.RetentionSlots.get -> int
+ReactorSockets.DatagramSessionOptions.SendBudgetBytes.get -> long
+ReactorSockets.DatagramSessionOptions.SendIdleInterval.get -> System.TimeSpan
+ReactorSockets.DatagramSessionOptions.SendIdleInterval.init -> void
+ReactorSockets.DatagramSessionReactor
+ReactorSockets.DatagramSessionReactor.BoundEndpoints.get -> System.Collections.Generic.IReadOnlyList<System.Net.IPEndPoint!>!
+ReactorSockets.DatagramSessionReactor.Close(ReactorSockets.PeerId peer) -> void
+ReactorSockets.DatagramSessionReactor.Connect(System.Net.IPEndPoint! destination) -> ReactorSockets.PeerId
+ReactorSockets.DatagramSessionReactor.Counters.get -> ReactorSockets.ReactorCounters
+ReactorSockets.DatagramSessionReactor.CountersOf(ReactorSockets.PeerId peer) -> ReactorSockets.PeerCounters
+ReactorSockets.DatagramSessionReactor.DatagramSessionReactor(ReactorSockets.DatagramSessionOptions! options) -> void
+ReactorSockets.DatagramSessionReactor.Dispose() -> void
+ReactorSockets.DatagramSessionReactor.Drain() -> ReactorSockets.SessionEventEnumerator
+ReactorSockets.DatagramSessionReactor.Pump() -> void
+ReactorSockets.DatagramSessionReactor.Send(ReactorSockets.PeerId peer, ReactorSockets.DeliveryMode mode, System.ReadOnlySpan<byte> message) -> ReactorSockets.SendOutcome
+ReactorSockets.DeliveryMode
+ReactorSockets.DeliveryMode.ReliableOrdered = 3 -> ReactorSockets.DeliveryMode
+ReactorSockets.DeliveryMode.ReliableUnordered = 2 -> ReactorSockets.DeliveryMode
+ReactorSockets.DeliveryMode.Unreliable = 0 -> ReactorSockets.DeliveryMode
+ReactorSockets.DeliveryMode.UnreliableSequenced = 1 -> ReactorSockets.DeliveryMode
+ReactorSockets.DiagnosticFormatter
+ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.AddressPeerLimitReached = 208 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.AdmissionCapReached = 1 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.ArenaExhausted = 2 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.CapacityExhausted = 3 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.CookieRejected = 201 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.DataAfterGoodbye = 303 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.DatagramMalformed = 200 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.DatagramReadLimitReached = 209 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.DatagramTruncated = 102 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.DeliveryCounterRefused = 308 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.DestinationUnreachable = 101 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.FragmentSetAbandoned = 203 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.LingerNegotiated = 301 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.LinkFailed = 100 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.MalformedFraming = 302 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.OversizedFragmentSet = 205 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.OversizedMessage = 207 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.PeerRefused = 300 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.RedialAttempted = 306 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.RedialFailed = 307 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.ResumeMatched = 304 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.ResumeUnmatched = 305 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.RetransmissionTimerBackedOff = 204 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.UnreliableFragment = 206 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticId.VersionRefused = 202 -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticLevel
+ReactorSockets.DiagnosticLevel.Error = 3 -> ReactorSockets.DiagnosticLevel
+ReactorSockets.DiagnosticLevel.Info = 1 -> ReactorSockets.DiagnosticLevel
+ReactorSockets.DiagnosticLevel.Trace = 0 -> ReactorSockets.DiagnosticLevel
+ReactorSockets.DiagnosticLevel.Warn = 2 -> ReactorSockets.DiagnosticLevel
+ReactorSockets.DiagnosticRecord
+ReactorSockets.DiagnosticRecord.DiagnosticRecord() -> void
+ReactorSockets.DiagnosticRecord.Id.get -> ReactorSockets.DiagnosticId
+ReactorSockets.DiagnosticRecord.Level.get -> ReactorSockets.DiagnosticLevel
+ReactorSockets.DiagnosticRecord.Link.get -> ReactorSockets.LinkId
+ReactorSockets.DiagnosticRecord.Peer.get -> ReactorSockets.PeerId
+ReactorSockets.DiagnosticRecord.Source.get -> ReactorSockets.Source
+ReactorSockets.DiagnosticRecord.SubjectKind.get -> ReactorSockets.DiagnosticSubjectKind
+ReactorSockets.DiagnosticRecord.Value0.get -> long
+ReactorSockets.DiagnosticRecord.Value1.get -> long
+ReactorSockets.DiagnosticSubjectKind
+ReactorSockets.DiagnosticSubjectKind.Link = 1 -> ReactorSockets.DiagnosticSubjectKind
+ReactorSockets.DiagnosticSubjectKind.None = 0 -> ReactorSockets.DiagnosticSubjectKind
+ReactorSockets.DiagnosticSubjectKind.Peer = 3 -> ReactorSockets.DiagnosticSubjectKind
+ReactorSockets.DiagnosticSubjectKind.Source = 2 -> ReactorSockets.DiagnosticSubjectKind
+ReactorSockets.DisconnectReason
+ReactorSockets.DisconnectReason.FragmentSizeUnviable = 8 -> ReactorSockets.DisconnectReason
+ReactorSockets.DisconnectReason.LingerExpired = 6 -> ReactorSockets.DisconnectReason
+ReactorSockets.DisconnectReason.LocalClose = 0 -> ReactorSockets.DisconnectReason
+ReactorSockets.DisconnectReason.PeerGoodbye = 5 -> ReactorSockets.DisconnectReason
+ReactorSockets.DisconnectReason.ProtocolViolation = 4 -> ReactorSockets.DisconnectReason
+ReactorSockets.DisconnectReason.RemoteAtCapacity = 2 -> ReactorSockets.DisconnectReason
+ReactorSockets.DisconnectReason.RetentionGap = 7 -> ReactorSockets.DisconnectReason
+ReactorSockets.DisconnectReason.TransportFailed = 3 -> ReactorSockets.DisconnectReason
+ReactorSockets.DisconnectReason.VersionMismatch = 1 -> ReactorSockets.DisconnectReason
+ReactorSockets.IReactorDiagnostics
+ReactorSockets.IReactorDiagnostics.IsEnabled(ReactorSockets.DiagnosticLevel level) -> bool
+ReactorSockets.IReactorDiagnostics.Log(in ReactorSockets.DiagnosticRecord record) -> void
+ReactorSockets.LinkCounters
+ReactorSockets.LinkCounters.BytesReceived.get -> ulong
+ReactorSockets.LinkCounters.BytesReceived.init -> void
+ReactorSockets.LinkCounters.BytesSent.get -> ulong
+ReactorSockets.LinkCounters.BytesSent.init -> void
+ReactorSockets.LinkCounters.LinkCounters() -> void
+ReactorSockets.LinkCounters.LinkCounters(ulong BytesSent, ulong BytesReceived) -> void
+ReactorSockets.LinkId
+ReactorSockets.LinkId.Generation.get -> ulong
+ReactorSockets.LinkId.Generation.init -> void
+ReactorSockets.LinkId.Index.get -> int
+ReactorSockets.LinkId.Index.init -> void
+ReactorSockets.LinkId.LinkId() -> void
+ReactorSockets.LinkId.LinkId(uint Origin, int Index, ulong Generation) -> void
+ReactorSockets.LinkId.Origin.get -> uint
+ReactorSockets.LinkId.Origin.init -> void
+ReactorSockets.PeerCounters
+ReactorSockets.PeerCounters.BytesReceived.get -> ulong
+ReactorSockets.PeerCounters.BytesReceived.init -> void
+ReactorSockets.PeerCounters.BytesSent.get -> ulong
+ReactorSockets.PeerCounters.BytesSent.init -> void
+ReactorSockets.PeerCounters.DuplicatePackets.get -> ulong
+ReactorSockets.PeerCounters.DuplicatePackets.init -> void
+ReactorSockets.PeerCounters.HorizonDeferrals.get -> ulong
+ReactorSockets.PeerCounters.HorizonDeferrals.init -> void
+ReactorSockets.PeerCounters.MessagesReceived.get -> ulong
+ReactorSockets.PeerCounters.MessagesReceived.init -> void
+ReactorSockets.PeerCounters.OutOfWindowPackets.get -> ulong
+ReactorSockets.PeerCounters.OutOfWindowPackets.init -> void
+ReactorSockets.PeerCounters.PacketsRetransmitted.get -> ulong
+ReactorSockets.PeerCounters.PacketsRetransmitted.init -> void
+ReactorSockets.PeerCounters.PeerCounters() -> void
+ReactorSockets.PeerCounters.PeerCounters(ulong MessagesReceived, ulong RetentionHighWaterBytes, ulong Resumes, ulong OutOfWindowPackets, ulong DuplicatePackets, ulong UnreliableLossPackets, ulong HorizonDeferrals, ulong PacketsRetransmitted, ulong BytesSent, ulong BytesReceived, ulong SocketWrites, ulong ReadShareExhaustions) -> void
+ReactorSockets.PeerCounters.ReadShareExhaustions.get -> ulong
+ReactorSockets.PeerCounters.ReadShareExhaustions.init -> void
+ReactorSockets.PeerCounters.Resumes.get -> ulong
+ReactorSockets.PeerCounters.Resumes.init -> void
+ReactorSockets.PeerCounters.RetentionHighWaterBytes.get -> ulong
+ReactorSockets.PeerCounters.RetentionHighWaterBytes.init -> void
+ReactorSockets.PeerCounters.SocketWrites.get -> ulong
+ReactorSockets.PeerCounters.SocketWrites.init -> void
+ReactorSockets.PeerCounters.UnreliableLossPackets.get -> ulong
+ReactorSockets.PeerCounters.UnreliableLossPackets.init -> void
+ReactorSockets.PeerId
+ReactorSockets.PeerId.Generation.get -> ulong
+ReactorSockets.PeerId.Generation.init -> void
+ReactorSockets.PeerId.Index.get -> int
+ReactorSockets.PeerId.Index.init -> void
+ReactorSockets.PeerId.Origin.get -> uint
+ReactorSockets.PeerId.Origin.init -> void
+ReactorSockets.PeerId.PeerId() -> void
+ReactorSockets.PeerId.PeerId(uint Origin, int Index, ulong Generation) -> void
+ReactorSockets.RawEvent
+ReactorSockets.RawEvent.Kind.get -> ReactorSockets.RawEventKind
+ReactorSockets.RawEvent.Link.get -> ReactorSockets.LinkId
+ReactorSockets.RawEvent.ListeningLink.get -> ReactorSockets.LinkId
+ReactorSockets.RawEvent.Payload.get -> System.ReadOnlySpan<byte>
+ReactorSockets.RawEvent.RawEvent() -> void
+ReactorSockets.RawEvent.Reason.get -> ReactorSockets.CloseReason
+ReactorSockets.RawEvent.Source.get -> ReactorSockets.Source
+ReactorSockets.RawEventEnumerator
+ReactorSockets.RawEventEnumerator.Current.get -> ReactorSockets.RawEvent
+ReactorSockets.RawEventEnumerator.GetEnumerator() -> ReactorSockets.RawEventEnumerator
+ReactorSockets.RawEventEnumerator.MoveNext() -> bool
+ReactorSockets.RawEventEnumerator.RawEventEnumerator() -> void
+ReactorSockets.RawEventKind
+ReactorSockets.RawEventKind.Accepted = 2 -> ReactorSockets.RawEventKind
+ReactorSockets.RawEventKind.Closed = 1 -> ReactorSockets.RawEventKind
+ReactorSockets.RawEventKind.Connected = 3 -> ReactorSockets.RawEventKind
+ReactorSockets.RawEventKind.DatagramReceived = 0 -> ReactorSockets.RawEventKind
+ReactorSockets.RawEventKind.EndOfStream = 5 -> ReactorSockets.RawEventKind
+ReactorSockets.RawEventKind.SegmentReceived = 4 -> ReactorSockets.RawEventKind
+ReactorSockets.RawEventKind.Writable = 6 -> ReactorSockets.RawEventKind
+ReactorSockets.RawReactor
+ReactorSockets.RawReactor.Bind(System.Net.IPEndPoint! endpoint) -> ReactorSockets.LinkId
+ReactorSockets.RawReactor.Close(ReactorSockets.LinkId link) -> void
+ReactorSockets.RawReactor.Connect(System.Net.IPEndPoint! endpoint) -> ReactorSockets.LinkId
+ReactorSockets.RawReactor.Counters.get -> ReactorSockets.ReactorCounters
+ReactorSockets.RawReactor.CountersOf(ReactorSockets.LinkId link) -> ReactorSockets.LinkCounters
+ReactorSockets.RawReactor.Dispose() -> void
+ReactorSockets.RawReactor.Drain() -> ReactorSockets.RawEventEnumerator
+ReactorSockets.RawReactor.Listen(System.Net.IPEndPoint! endpoint) -> ReactorSockets.LinkId
+ReactorSockets.RawReactor.LocalOf(ReactorSockets.LinkId link) -> System.Net.IPEndPoint!
+ReactorSockets.RawReactor.Pump() -> void
+ReactorSockets.RawReactor.RawReactor(ReactorSockets.ReactorOptions! options, int? scratchBufferSize = null) -> void
+ReactorSockets.RawReactor.RemoteOf(ReactorSockets.LinkId link) -> System.Net.IPEndPoint!
+ReactorSockets.RawReactor.Send(ReactorSockets.LinkId link, System.ReadOnlySpan<byte> payload) -> ReactorSockets.SendResult
+ReactorSockets.RawReactor.SendTo(ReactorSockets.LinkId link, ReactorSockets.Source destination, System.ReadOnlySpan<byte> payload) -> ReactorSockets.Result
+ReactorSockets.RawReactor.Shutdown(ReactorSockets.LinkId link) -> ReactorSockets.Result
+ReactorSockets.ReactorCounters
+ReactorSockets.ReactorCounters.AdmissionDeferrals.get -> ulong
+ReactorSockets.ReactorCounters.AdmissionDeferrals.init -> void
+ReactorSockets.ReactorCounters.AdmissionDiscards.get -> ulong
+ReactorSockets.ReactorCounters.AdmissionDiscards.init -> void
+ReactorSockets.ReactorCounters.ArenaHighWaterBytes.get -> ulong
+ReactorSockets.ReactorCounters.ArenaHighWaterBytes.init -> void
+ReactorSockets.ReactorCounters.DatagramsReceived.get -> ulong
+ReactorSockets.ReactorCounters.DatagramsReceived.init -> void
+ReactorSockets.ReactorCounters.DatagramsSent.get -> ulong
+ReactorSockets.ReactorCounters.DatagramsSent.init -> void
+ReactorSockets.ReactorCounters.MalformedSessionDatagrams.get -> ulong
+ReactorSockets.ReactorCounters.MalformedSessionDatagrams.init -> void
+ReactorSockets.ReactorCounters.ReactorCounters() -> void
+ReactorSockets.ReactorCounters.ReactorCounters(ulong SinkFaulted, ulong DatagramsSent, ulong DatagramsReceived, ulong ArenaHighWaterBytes, ulong AdmissionDeferrals, ulong AdmissionDiscards, ulong UnknownSourceDatagrams, ulong MalformedSessionDatagrams) -> void
+ReactorSockets.ReactorCounters.SinkFaulted.get -> ulong
+ReactorSockets.ReactorCounters.SinkFaulted.init -> void
+ReactorSockets.ReactorCounters.UnknownSourceDatagrams.get -> ulong
+ReactorSockets.ReactorCounters.UnknownSourceDatagrams.init -> void
+ReactorSockets.ReactorOptions
+ReactorSockets.ReactorOptions.AdmissionCap.get -> int?
+ReactorSockets.ReactorOptions.AdmissionCap.init -> void
+ReactorSockets.ReactorOptions.ArenaSize.get -> int?
+ReactorSockets.ReactorOptions.ArenaSize.init -> void
+ReactorSockets.ReactorOptions.Capacity.get -> int
+ReactorSockets.ReactorOptions.Capacity.init -> void
+ReactorSockets.ReactorOptions.MinimumLevel.get -> ReactorSockets.DiagnosticLevel?
+ReactorSockets.ReactorOptions.MinimumLevel.init -> void
+ReactorSockets.ReactorOptions.ReactorOptions() -> void
+ReactorSockets.ReactorOptions.ResolvedAdmissionCap.get -> int
+ReactorSockets.ReactorOptions.Sink.get -> ReactorSockets.IReactorDiagnostics?
+ReactorSockets.ReactorOptions.Sink.init -> void
+ReactorSockets.ReactorOptions.TimeProvider.get -> System.TimeProvider!
+ReactorSockets.ReactorOptions.TimeProvider.init -> void
+ReactorSockets.Result
+ReactorSockets.Result.Error.get -> string?
+ReactorSockets.Result.IsSuccess.get -> bool
+ReactorSockets.Result.Result() -> void
+ReactorSockets.SendOutcome
+ReactorSockets.SendOutcome.Closed = 2 -> ReactorSockets.SendOutcome
+ReactorSockets.SendOutcome.MessageTooLarge = 3 -> ReactorSockets.SendOutcome
+ReactorSockets.SendOutcome.NotEstablished = 5 -> ReactorSockets.SendOutcome
+ReactorSockets.SendOutcome.RemoteMessageTooLarge = 4 -> ReactorSockets.SendOutcome
+ReactorSockets.SendOutcome.RetentionExhausted = 1 -> ReactorSockets.SendOutcome
+ReactorSockets.SendOutcome.Sent = 0 -> ReactorSockets.SendOutcome
+ReactorSockets.SendResult
+ReactorSockets.SendResult.BytesSent.get -> int
+ReactorSockets.SendResult.Error.get -> string?
+ReactorSockets.SendResult.IsSuccess.get -> bool
+ReactorSockets.SendResult.SendResult() -> void
+ReactorSockets.SessionEvent
+ReactorSockets.SessionEvent.Kind.get -> ReactorSockets.SessionEventKind
+ReactorSockets.SessionEvent.Payload.get -> System.ReadOnlySpan<byte>
+ReactorSockets.SessionEvent.Peer.get -> ReactorSockets.PeerId
+ReactorSockets.SessionEvent.Reason.get -> ReactorSockets.DisconnectReason
+ReactorSockets.SessionEvent.SessionEvent() -> void
+ReactorSockets.SessionEventEnumerator
+ReactorSockets.SessionEventEnumerator.Current.get -> ReactorSockets.SessionEvent
+ReactorSockets.SessionEventEnumerator.GetEnumerator() -> ReactorSockets.SessionEventEnumerator
+ReactorSockets.SessionEventEnumerator.MoveNext() -> bool
+ReactorSockets.SessionEventEnumerator.SessionEventEnumerator() -> void
+ReactorSockets.SessionEventKind
+ReactorSockets.SessionEventKind.MessageReceived = 3 -> ReactorSockets.SessionEventKind
+ReactorSockets.SessionEventKind.PeerClosed = 2 -> ReactorSockets.SessionEventKind
+ReactorSockets.SessionEventKind.PeerClosing = 4 -> ReactorSockets.SessionEventKind
+ReactorSockets.SessionEventKind.PeerConnected = 1 -> ReactorSockets.SessionEventKind
+ReactorSockets.SessionEventKind.PeerInterrupted = 5 -> ReactorSockets.SessionEventKind
+ReactorSockets.SessionEventKind.PeerResumed = 6 -> ReactorSockets.SessionEventKind
+ReactorSockets.Source
+ReactorSockets.Source.AddressBytes.get -> System.UInt128
+ReactorSockets.Source.AddressBytes.init -> void
+ReactorSockets.Source.Family.get -> ReactorSockets.SourceFamily
+ReactorSockets.Source.Family.init -> void
+ReactorSockets.Source.Port.get -> int
+ReactorSockets.Source.Port.init -> void
+ReactorSockets.Source.ScopeId.get -> long
+ReactorSockets.Source.ScopeId.init -> void
+ReactorSockets.Source.Source() -> void
+ReactorSockets.Source.Source(ReactorSockets.SourceFamily Family, System.UInt128 AddressBytes, long ScopeId, int Port) -> void
+ReactorSockets.Source.ToIPEndPoint() -> System.Net.IPEndPoint!
+ReactorSockets.SourceFamily
+ReactorSockets.SourceFamily.IPv4 = 0 -> ReactorSockets.SourceFamily
+ReactorSockets.SourceFamily.IPv6 = 1 -> ReactorSockets.SourceFamily
+ReactorSockets.StreamSessionOptions
+ReactorSockets.StreamSessionOptions.BoundaryRingBudgetBytes.get -> long
+ReactorSockets.StreamSessionOptions.Endpoints.get -> System.Collections.Generic.IReadOnlyList<System.Net.IPEndPoint!>!
+ReactorSockets.StreamSessionOptions.Endpoints.init -> void
+ReactorSockets.StreamSessionOptions.Entropy.get -> System.Security.Cryptography.RandomNumberGenerator!
+ReactorSockets.StreamSessionOptions.Entropy.init -> void
+ReactorSockets.StreamSessionOptions.Linger.get -> System.TimeSpan
+ReactorSockets.StreamSessionOptions.Linger.init -> void
+ReactorSockets.StreamSessionOptions.MaxMessageSize.get -> int
+ReactorSockets.StreamSessionOptions.MaxMessageSize.init -> void
+ReactorSockets.StreamSessionOptions.MaxPeersPerAddress.get -> int?
+ReactorSockets.StreamSessionOptions.MaxPeersPerAddress.init -> void
+ReactorSockets.StreamSessionOptions.MissedHeartbeats.get -> int?
+ReactorSockets.StreamSessionOptions.MissedHeartbeats.init -> void
+ReactorSockets.StreamSessionOptions.PeerLimitIPv6PrefixLength.get -> int?
+ReactorSockets.StreamSessionOptions.PeerLimitIPv6PrefixLength.init -> void
+ReactorSockets.StreamSessionOptions.Reactor.get -> ReactorSockets.ReactorOptions!
+ReactorSockets.StreamSessionOptions.Reactor.init -> void
+ReactorSockets.StreamSessionOptions.ReceiveBudgetBytes.get -> long
+ReactorSockets.StreamSessionOptions.ReceiveBufferFloor.get -> int
+ReactorSockets.StreamSessionOptions.ReceiveBufferSize.get -> int?
+ReactorSockets.StreamSessionOptions.ReceiveBufferSize.init -> void
+ReactorSockets.StreamSessionOptions.ResolvedMaxPeersPerAddress.get -> int
+ReactorSockets.StreamSessionOptions.ResolvedMissedHeartbeats.get -> int
+ReactorSockets.StreamSessionOptions.ResolvedPeerLimitIPv6PrefixLength.get -> int
+ReactorSockets.StreamSessionOptions.ResolvedReceiveBufferSize.get -> int
+ReactorSockets.StreamSessionOptions.RetentionBytes.get -> int
+ReactorSockets.StreamSessionOptions.RetentionBytes.init -> void
+ReactorSockets.StreamSessionOptions.SendBudgetBytes.get -> long
+ReactorSockets.StreamSessionOptions.SendBufferSize.get -> int?
+ReactorSockets.StreamSessionOptions.SendBufferSize.init -> void
+ReactorSockets.StreamSessionOptions.SendIdleInterval.get -> System.TimeSpan
+ReactorSockets.StreamSessionOptions.SendIdleInterval.init -> void
+ReactorSockets.StreamSessionOptions.StreamSessionOptions() -> void
+ReactorSockets.StreamSessionReactor
+ReactorSockets.StreamSessionReactor.BoundEndpoints.get -> System.Collections.Generic.IReadOnlyList<System.Net.IPEndPoint!>!
+ReactorSockets.StreamSessionReactor.Close(ReactorSockets.PeerId peer) -> void
+ReactorSockets.StreamSessionReactor.Connect(System.Net.IPEndPoint! destination) -> ReactorSockets.PeerId
+ReactorSockets.StreamSessionReactor.Counters.get -> ReactorSockets.ReactorCounters
+ReactorSockets.StreamSessionReactor.CountersOf(ReactorSockets.PeerId peer) -> ReactorSockets.PeerCounters
+ReactorSockets.StreamSessionReactor.Dispose() -> void
+ReactorSockets.StreamSessionReactor.Drain() -> ReactorSockets.SessionEventEnumerator
+ReactorSockets.StreamSessionReactor.Pump() -> void
+ReactorSockets.StreamSessionReactor.Send(ReactorSockets.PeerId peer, System.ReadOnlySpan<byte> message) -> ReactorSockets.SendOutcome
+ReactorSockets.StreamSessionReactor.StreamSessionReactor(ReactorSockets.StreamSessionOptions! options) -> void
+const ReactorSockets.RawReactor.MaxUdpDatagramSize = 65507 -> int
+static ReactorSockets.DiagnosticFormatter.Format(in ReactorSockets.DiagnosticRecord record) -> string!
+static ReactorSockets.DiagnosticRecord.ForAddressPeerLimitReached(ReactorSockets.Source source, int limit, int prefixLength) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForAdmissionCapReached(int cap, int declined) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForArenaExhausted(ReactorSockets.LinkId link, int bytesRequested, int bytesFree) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForArenaExhausted(ReactorSockets.PeerId peer, int bytesRequested, int bytesFree) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForCapacityExhausted(int capacity, int declined) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForCookieRejected(ReactorSockets.Source source, long epochOffered, long epochCurrent) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForDataAfterGoodbye(ReactorSockets.PeerId peer) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForDatagramMalformed(ReactorSockets.Source source, int bytesReceived) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForDatagramReadLimitReached(int limit, int socketIndex) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForDatagramTruncated(ReactorSockets.Source source, int bufferSize) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForDeliveryCounterRefused(ReactorSockets.PeerId peer, long claimedCount, long appendedMessageCount) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForDestinationUnreachable(ReactorSockets.LinkId link, System.Net.Sockets.SocketError error) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForFragmentSetAbandoned(ReactorSockets.PeerId peer, long fragmentsHeld, long fragmentsExpected) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForLingerNegotiated(ReactorSockets.PeerId peer, long oursMilliseconds, long effectiveMilliseconds) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForLinkFailed(ReactorSockets.LinkId link, System.Net.Sockets.SocketError error) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForMalformedFraming(ReactorSockets.PeerId peer, long announcedLength, long maxMessageSize) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForOversizedFragmentSet(ReactorSockets.PeerId peer, long declaredFragmentCount, long maxLegalFragmentCount) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForOversizedMessage(ReactorSockets.PeerId peer, long messageLength, long maxMessageSize) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForPeerRefusedCapacity(ReactorSockets.Source source, int capacity) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForPeerRefusedVersion(ReactorSockets.Source source, long versionOffered, long versionRequired) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForRedialAttempted(ReactorSockets.PeerId peer, long attemptNumber, long delayMilliseconds) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForRedialFailed(ReactorSockets.PeerId peer, System.Net.Sockets.SocketError error, long attemptNumber) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForResumeMatched(ReactorSockets.PeerId peer, long bytesRewound) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForResumeUnmatched(ReactorSockets.Source source, long candidatesChecked, long recordType) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForRetransmissionTimerBackedOff(ReactorSockets.PeerId peer, long newRtoMilliseconds, long consecutiveBackoffs) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForUnreliableFragment(ReactorSockets.Source source, long modeBits) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.DiagnosticRecord.ForVersionRefused(ReactorSockets.Source source, long versionOffered, long versionRequired) -> ReactorSockets.DiagnosticRecord
+static ReactorSockets.Result.Failure(string! error) -> ReactorSockets.Result
+static ReactorSockets.Result.Success() -> ReactorSockets.Result
+static ReactorSockets.SendResult.Failure(string! error) -> ReactorSockets.SendResult
+static ReactorSockets.SendResult.Success(int bytesSent) -> ReactorSockets.SendResult
+static ReactorSockets.Source.FromIPEndPoint(System.Net.IPEndPoint! endpoint) -> ReactorSockets.Source

@@ -1,0 +1,5 @@
+#nullable enable
+ReactorSockets.Logging.LoggerSink
+ReactorSockets.Logging.LoggerSink.IsEnabled(ReactorSockets.DiagnosticLevel level) -> bool
+ReactorSockets.Logging.LoggerSink.Log(in ReactorSockets.DiagnosticRecord record) -> void
+ReactorSockets.Logging.LoggerSink.LoggerSink(Microsoft.Extensions.Logging.ILogger! logger) -> void

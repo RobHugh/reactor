@@ -18,4 +18,15 @@
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
   </PropertyGroup>
 
+  <!--
+    The public API, member by member (ADR 0003). RS0016 fails the build for a public symbol missing from
+    PublicAPI.Unshipped.txt and RS0017 for a listed one that no longer exists, so every change to the
+    surface is an edit to these files that a review sees.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" Version="3.3.4" PrivateAssets="all" />
+    <AdditionalFiles Include="PublicAPI.Shipped.txt" />
+    <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
+  </ItemGroup>
+
 </Project>
